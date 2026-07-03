@@ -9,6 +9,12 @@ from typing import Any
 from ._arborist_core import ArboristCore
 
 
+class JsonRpcError(ValueError):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class ArboristGateway:
     def __init__(self) -> None:
         self._core = ArboristCore()
@@ -107,6 +113,8 @@ class ArboristGateway:
                 return self._error_response(request_id, -32601, f"method not found: {method}")
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        except JsonRpcError as exc:
+            return self._error_response(request_id, exc.code, str(exc))
         except Exception as exc:  # noqa: BLE001
             return self._error_response(request_id, -32000, str(exc))
 
@@ -192,9 +200,9 @@ class ArboristGateway:
         patch = params.get("patch")
         trace = params.get("trace")
         if not isinstance(patch, dict):
-            raise ValueError("missing required object param: patch")
+            raise JsonRpcError(-32602, "missing required object param: patch")
         if not isinstance(trace, dict):
-            raise ValueError("missing required object param: trace")
+            raise JsonRpcError(-32602, "missing required object param: trace")
         payload = self._core.replay_patch_evidence_against_trace_json(
             json.dumps(patch, ensure_ascii=False),
             json.dumps(trace, ensure_ascii=False),
@@ -207,9 +215,9 @@ class ArboristGateway:
         patch = params.get("patch")
         trace = params.get("trace")
         if not isinstance(patch, dict):
-            raise ValueError("missing required object param: patch")
+            raise JsonRpcError(-32602, "missing required object param: patch")
         if not isinstance(trace, dict):
-            raise ValueError("missing required object param: trace")
+            raise JsonRpcError(-32602, "missing required object param: trace")
         payload = self._core.validate_patch_commit_with_trace_json(
             json.dumps(patch, ensure_ascii=False),
             json.dumps(trace, ensure_ascii=False),
@@ -278,7 +286,7 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         edits = params.get("edits")
         if not isinstance(edits, list):
-            raise ValueError("missing required list param: edits")
+            raise JsonRpcError(-32602, "missing required list param: edits")
         payload = self._core.apply_position_edits_json(
             file_path,
             json.dumps(edits, ensure_ascii=False),
@@ -287,12 +295,12 @@ class ArboristGateway:
 
     def _did_close(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
-        persist = bool(params.get("persist", False))
+        persist = self._optional_bool(params, "persist", default=False)
         payload = self._core.close_virtual_file_json(file_path, persist)
         return json.loads(payload)
 
     def _list_virtual_files(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        dirty_only = bool(params.get("dirty_only", False))
+        dirty_only = self._optional_bool(params, "dirty_only", default=False)
         payload = self._core.list_virtual_files_json(dirty_only)
         return json.loads(payload)
 
@@ -330,14 +338,21 @@ class ArboristGateway:
     ) -> str:
         value = params.get(key)
         if not isinstance(value, str) or (not allow_empty and not value):
-            raise ValueError(f"missing required string param: {key}")
+            raise JsonRpcError(-32602, f"missing required string param: {key}")
         return value
 
     @staticmethod
     def _require_int(params: dict[str, Any], key: str) -> int:
         value = params.get(key)
-        if not isinstance(value, int):
-            raise ValueError(f"missing required int param: {key}")
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise JsonRpcError(-32602, f"missing required int param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_bool(params: dict[str, Any], key: str, default: bool) -> bool:
+        value = params.get(key, default)
+        if not isinstance(value, bool):
+            raise JsonRpcError(-32602, f"invalid bool param: {key}")
         return value
 
     @staticmethod
@@ -346,7 +361,7 @@ class ArboristGateway:
         if value is None:
             return None
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-            raise ValueError(f"invalid string list param: {key}")
+            raise JsonRpcError(-32602, f"invalid string list param: {key}")
         return value
 
 

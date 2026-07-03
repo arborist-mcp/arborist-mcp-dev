@@ -55,6 +55,40 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32601)
         self.assertIn("method not found", response["error"]["message"])
 
+    def test_reports_missing_required_param_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 9)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path", response["error"]["message"])
+
+    def test_rejects_string_bool_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "arborist/list_virtual_files",
+                "params": {"dirty_only": "false"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 11)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("dirty_only", response["error"]["message"])
+
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
