@@ -2252,6 +2252,28 @@ def orchestrate(value):\n    match value:\n        case int() as target:\n      
     }
 
     #[test]
+    fn ignores_python_match_keyword_capture_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("match_keyword_capture.py");
+
+        fs::write(
+            &source,
+            "class Point:\n    __match_args__ = ()\n\ndef target():\n    return 1\n\n\
+def orchestrate(value):\n    match value:\n        case Point(value=target):\n            return target\n        case _:\n            return 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
     fn traces_python_decorator_references() {
         let dir = temporary_dir();
         let source = dir.join("decorated.py");

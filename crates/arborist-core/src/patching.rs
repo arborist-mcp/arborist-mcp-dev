@@ -2084,6 +2084,10 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
+    if is_python_match_keyword_name(node) {
+        return false;
+    }
+
     if matches!(parent.kind(), "import_statement" | "import_from_statement") {
         return false;
     }
@@ -2305,6 +2309,7 @@ fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<Str
     let child = only_named_child(case_pattern)?;
     match child.kind() {
         "as_pattern" => python_as_pattern_alias_name(child, source),
+        "keyword_pattern" => python_keyword_pattern_capture_name(child, source),
         "pattern" => node_text(child, source)
             .ok()
             .map(str::trim)
@@ -2319,6 +2324,14 @@ fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<Str
     }
 }
 
+fn python_keyword_pattern_capture_name(keyword_pattern: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = keyword_pattern.walk();
+    keyword_pattern
+        .named_children(&mut cursor)
+        .last()
+        .and_then(|value| python_match_pattern_node_capture_name(value, source))
+}
+
 fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<String> {
     let mut cursor = as_pattern.walk();
     as_pattern
@@ -2329,6 +2342,22 @@ fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<St
         .map(str::trim)
         .filter(|name| is_python_capture_name_text(name))
         .map(str::to_string)
+}
+
+fn python_match_pattern_node_capture_name(node: Node<'_>, source: &str) -> Option<String> {
+    match node.kind() {
+        "case_pattern" => python_match_capture_name(node, source),
+        "pattern" | "dotted_name" => {
+            let name = if node.kind() == "dotted_name" {
+                let identifier = only_named_child(node)?;
+                node_text(identifier, source).ok()?.trim()
+            } else {
+                node_text(node, source).ok()?.trim()
+            };
+            is_python_capture_name_text(name).then(|| name.to_string())
+        }
+        _ => None,
+    }
 }
 
 fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {
@@ -2373,6 +2402,21 @@ fn is_python_match_capture_name(node: Node<'_>, source: &str) -> bool {
     }
 
     false
+}
+
+fn is_python_match_keyword_name(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != "keyword_pattern" {
+        return false;
+    }
+
+    let mut cursor = parent.walk();
+    parent
+        .named_children(&mut cursor)
+        .next()
+        .is_some_and(|keyword| keyword.id() == node.id())
 }
 
 fn is_python_as_pattern_alias(node: Node<'_>, ancestor: Node<'_>, source: &str) -> bool {
