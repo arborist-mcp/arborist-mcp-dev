@@ -2307,6 +2307,23 @@ def orchestrate(value):\n    match value:\n        case Point(value=target):\n  
     }
 
     #[test]
+    fn ignores_python_match_splat_capture_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("match_splat_capture.py");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate(value):\n    match value:\n        case [*target]:\n            return target\n        case _:\n            return 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
     fn traces_python_decorator_references() {
         let dir = temporary_dir();
         let source = dir.join("decorated.py");

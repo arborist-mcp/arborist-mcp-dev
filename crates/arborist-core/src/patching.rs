@@ -2310,6 +2310,7 @@ fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<Str
     match child.kind() {
         "as_pattern" => python_as_pattern_alias_name(child, source),
         "keyword_pattern" => python_keyword_pattern_capture_name(child, source),
+        "splat_pattern" => python_splat_pattern_capture_name(child, source),
         "pattern" => node_text(child, source)
             .ok()
             .map(str::trim)
@@ -2332,6 +2333,12 @@ fn python_keyword_pattern_capture_name(keyword_pattern: Node<'_>, source: &str) 
         .and_then(|value| python_match_pattern_node_capture_name(value, source))
 }
 
+fn python_splat_pattern_capture_name(splat_pattern: Node<'_>, source: &str) -> Option<String> {
+    let identifier = only_named_child(splat_pattern)?;
+    let name = node_text(identifier, source).ok()?.trim();
+    is_python_capture_name_text(name).then(|| name.to_string())
+}
+
 fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<String> {
     let mut cursor = as_pattern.walk();
     as_pattern
@@ -2347,6 +2354,7 @@ fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<St
 fn python_match_pattern_node_capture_name(node: Node<'_>, source: &str) -> Option<String> {
     match node.kind() {
         "case_pattern" => python_match_capture_name(node, source),
+        "splat_pattern" => python_splat_pattern_capture_name(node, source),
         "pattern" | "dotted_name" => {
             let name = if node.kind() == "dotted_name" {
                 let identifier = only_named_child(node)?;
