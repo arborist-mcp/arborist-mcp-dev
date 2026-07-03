@@ -1641,6 +1641,36 @@ def top_level() -> object:
     }
 
     #[test]
+    fn resolves_python_block_local_bindings() {
+        let source = r#"
+def top_level(flag: bool) -> int:
+    return 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(flag: bool) -> int:\n    if flag:\n        branch_value = 2\n    return branch_value\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let branch_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "branch_value")
+            .unwrap();
+        assert_eq!(branch_binding.symbol.node_kind, "assignment");
+        assert_eq!(
+            branch_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");

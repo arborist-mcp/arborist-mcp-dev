@@ -1037,6 +1037,15 @@ fn collect_python_statement_symbols(
                     symbols,
                 )?;
             }
+            collect_python_child_block_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
+                symbols,
+            )?;
         }
         "with_statement" => {
             collect_python_with_target_symbols(
@@ -1048,6 +1057,15 @@ fn collect_python_statement_symbols(
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
             )?;
+            collect_python_child_block_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
+                symbols,
+            )?;
         }
         "try_statement" => {
             collect_python_except_target_symbols(
@@ -1057,6 +1075,26 @@ fn collect_python_statement_symbols(
                 scope_path,
                 origin_type,
                 scope_rank + 300_000 + statement_node.start_byte(),
+                symbols,
+            )?;
+            collect_python_child_block_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
+                symbols,
+            )?;
+        }
+        "if_statement" | "while_statement" => {
+            collect_python_child_block_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
                 symbols,
             )?;
         }
@@ -1086,6 +1124,38 @@ fn collect_python_statement_symbols(
             }
         }
         _ => {}
+    }
+
+    Ok(())
+}
+
+fn collect_python_child_block_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    scope_rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() != "block" {
+            continue;
+        }
+
+        let mut block_cursor = child.walk();
+        for statement in child.named_children(&mut block_cursor) {
+            collect_python_statement_symbols(
+                statement,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
+                symbols,
+            )?;
+        }
     }
 
     Ok(())
