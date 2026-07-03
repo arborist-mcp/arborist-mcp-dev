@@ -2144,6 +2144,28 @@ def orchestrate():\n    helper = 2\n    return helper\n",
     }
 
     #[test]
+    fn traces_python_global_declared_references() {
+        let dir = temporary_dir();
+        let source = dir.join("global_decl.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def orchestrate():\n    global helper\n    helper = helper\n    return helper()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");

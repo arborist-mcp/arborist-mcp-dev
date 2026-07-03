@@ -1816,7 +1816,36 @@ fn collect_python_local_binding_names(
         )?;
     }
 
-    Ok(symbols.into_iter().map(|symbol| symbol.name).collect())
+    let external_bindings = collect_python_external_binding_names(body_node, source)?;
+    Ok(symbols
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .filter(|name| !external_bindings.contains(name))
+        .collect())
+}
+
+fn collect_python_external_binding_names(
+    body_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    let mut callback = |candidate: Node<'_>| {
+        if !matches!(candidate.kind(), "global_statement" | "nonlocal_statement") {
+            return;
+        }
+
+        let mut cursor = candidate.walk();
+        for child in candidate.named_children(&mut cursor) {
+            if child.kind() != "identifier" {
+                continue;
+            }
+            if let Ok(name) = node_text(child, source) {
+                names.insert(name.trim().to_string());
+            }
+        }
+    };
+    visit_tree(body_node, &mut callback);
+    Ok(names)
 }
 
 fn collect_visible_python_import_bindings(
