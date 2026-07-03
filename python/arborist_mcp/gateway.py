@@ -21,6 +21,9 @@ class ArboristGateway:
         request_id = request.get("id")
         params = request.get("params", {})
 
+        if not isinstance(method, str) or not method:
+            return self._error_response(request_id, -32600, "invalid request: missing method")
+
         if not isinstance(params, dict):
             return self._error_response(request_id, -32602, "invalid params: expected object")
 
@@ -101,7 +104,7 @@ class ArboristGateway:
             elif method == "arborist/execute_tree_query":
                 result = self._execute_tree_query(params)
             else:
-                raise ValueError(f"unknown method: {method}")
+                return self._error_response(request_id, -32601, f"method not found: {method}")
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except Exception as exc:  # noqa: BLE001

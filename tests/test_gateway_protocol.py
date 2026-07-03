@@ -33,6 +33,28 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("invalid params", response["error"]["message"])
 
+    def test_rejects_missing_method_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request({"jsonrpc": "2.0", "id": 3, "params": {}})
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 3)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("missing method", response["error"]["message"])
+
+    def test_reports_unknown_method_with_method_not_found_code(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"jsonrpc": "2.0", "id": 5, "method": "arborist/nope", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 5)
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("method not found", response["error"]["message"])
+
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
