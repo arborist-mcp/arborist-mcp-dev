@@ -813,7 +813,7 @@ fn collect_python_reference_targets_inner<'tree>(
         }
     }
 
-    if node.kind() == "identifier" && should_count_python_reference(node) {
+    if node.kind() == "identifier" && should_count_python_reference(node, source) {
         let name = node_text(node, source)?.trim().to_string();
         let imported_symbol = match bindings.get(&name) {
             Some(PythonImportBinding::Symbol {
@@ -1037,6 +1037,17 @@ fn collect_python_statement_symbols(
                     symbols,
                 )?;
             }
+        }
+        "with_statement" => {
+            collect_python_with_target_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank + 300_000 + statement_node.start_byte(),
+                symbols,
+            )?;
         }
         "import_statement" | "import_from_statement" => {
             collect_python_import_symbols(
@@ -1370,6 +1381,39 @@ fn collect_python_target_symbols(
     Ok(())
 }
 
+fn collect_python_with_target_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "identifier" || !is_python_with_target_name(candidate, source) {
+            return;
+        }
+
+        if let Ok(name) = node_text(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.trim().to_string(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    name.trim(),
+                    "with_target",
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
+        }
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
 fn collect_python_import_symbols(
     node: Node<'_>,
     source: &str,
@@ -1470,7 +1514,7 @@ fn collect_python_reference_entries(
         }
     }
 
-    if node.kind() == "identifier" && should_count_python_reference(node) {
+    if node.kind() == "identifier" && should_count_python_reference(node, source) {
         let name = node_text(node, source)?.trim().to_string();
         if let Some(binding) = bindings.get(&name) {
             match binding {
@@ -1704,7 +1748,7 @@ fn join_python_module_reference(module_name: &str, imported_name: &str) -> Strin
     }
 }
 
-fn should_count_python_reference(node: Node<'_>) -> bool {
+fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
@@ -1719,6 +1763,10 @@ fn should_count_python_reference(node: Node<'_>) -> bool {
     }
 
     if is_field_node(parent, "attribute", node) && parent.kind() == "attribute" {
+        return false;
+    }
+
+    if is_python_with_target_name(node, source) {
         return false;
     }
 
@@ -1849,6 +1897,35 @@ fn is_python_default_parameter_value(node: Node<'_>) -> bool {
         if matches!(
             candidate.kind(),
             "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn is_python_with_target_name(node: Node<'_>, source: &str) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if matches!(candidate.kind(), "as_pattern" | "with_item") {
+            if let Some(alias) = candidate.child_by_field_name("alias") {
+                return contains_node(alias, node);
+            }
+            if source
+                .get(candidate.start_byte()..node.start_byte())
+                .is_some_and(|prefix| prefix.contains(" as "))
+            {
+                return true;
+            }
+        }
+
+        if matches!(
+            candidate.kind(),
+            "with_statement" | "function_definition" | "class_definition" | "module"
         ) {
             return false;
         }

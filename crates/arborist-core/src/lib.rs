@@ -1567,6 +1567,43 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn resolves_python_with_statement_bindings() {
+        let source = r#"
+def manager():
+    return object()
+
+def top_level() -> object:
+    return manager()
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> object:\n    with manager() as handle:\n        return handle\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "manager" && decision.status == "resolved")
+        );
+        let handle_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "handle")
+            .unwrap();
+        assert_eq!(handle_binding.symbol.node_kind, "with_target");
+        assert_eq!(handle_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
