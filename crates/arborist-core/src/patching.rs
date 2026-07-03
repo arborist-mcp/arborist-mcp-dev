@@ -1097,6 +1097,26 @@ fn collect_python_statement_symbols(
                 symbols,
             )?;
         }
+        "match_statement" => {
+            collect_python_match_target_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank + 300_000 + statement_node.start_byte(),
+                symbols,
+            )?;
+            collect_python_child_block_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank,
+                symbols,
+            )?;
+        }
         "if_statement" | "while_statement" => {
             collect_python_child_block_symbols(
                 statement_node,
@@ -1579,6 +1599,39 @@ fn collect_python_except_target_symbols(
     Ok(())
 }
 
+fn collect_python_match_target_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "case_pattern" {
+            return;
+        }
+
+        if let Some(name) = python_match_capture_name(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.clone(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    &name,
+                    "match_capture",
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
+        }
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
 fn collect_python_import_symbols(
     node: Node<'_>,
     source: &str,
@@ -1992,6 +2045,10 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
+    if is_python_match_capture_name(node, source) {
+        return false;
+    }
+
     if matches!(parent.kind(), "import_statement" | "import_from_statement") {
         return false;
     }
@@ -2199,6 +2256,67 @@ fn is_python_except_target_name(node: Node<'_>, source: &str) -> bool {
         if matches!(
             candidate.kind(),
             "try_statement" | "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<String> {
+    let child = only_named_child(case_pattern)?;
+    match child.kind() {
+        "pattern" => node_text(child, source)
+            .ok()
+            .map(str::trim)
+            .filter(|name| is_python_capture_name_text(name))
+            .map(str::to_string),
+        "dotted_name" => {
+            let identifier = only_named_child(child)?;
+            let name = node_text(identifier, source).ok()?.trim();
+            is_python_capture_name_text(name).then(|| name.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = node.walk();
+    let mut children = node.named_children(&mut cursor);
+    let child = children.next()?;
+    children.next().is_none().then_some(child)
+}
+
+fn is_python_capture_name_text(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first == '_' && chars.clone().next().is_some()
+        || first.is_ascii_alphabetic() && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn is_python_match_capture_name(node: Node<'_>, source: &str) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+
+    let mut current = Some(parent);
+    while let Some(candidate) = current {
+        if candidate.kind() == "case_pattern" {
+            return python_match_capture_name(candidate, source).is_some_and(|name| {
+                node_text(node, source)
+                    .ok()
+                    .is_some_and(|node_name| node_name.trim() == name)
+            });
+        }
+
+        if matches!(
+            candidate.kind(),
+            "case_clause" | "function_definition" | "class_definition" | "module"
         ) {
             return false;
         }
