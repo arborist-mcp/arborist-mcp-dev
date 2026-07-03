@@ -1049,6 +1049,17 @@ fn collect_python_statement_symbols(
                 symbols,
             )?;
         }
+        "try_statement" => {
+            collect_python_except_target_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank + 300_000 + statement_node.start_byte(),
+                symbols,
+            )?;
+        }
         "import_statement" | "import_from_statement" => {
             collect_python_import_symbols(
                 statement_node,
@@ -1403,6 +1414,39 @@ fn collect_python_with_target_symbols(
                     scope_path,
                     name.trim(),
                     "with_target",
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
+        }
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
+fn collect_python_except_target_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "as_pattern_target" {
+            return;
+        }
+
+        if let Ok(name) = node_text(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.trim().to_string(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    name.trim(),
+                    "except_target",
                     origin_type,
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
@@ -1770,6 +1814,10 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
+    if is_python_except_target_name(node, source) {
+        return false;
+    }
+
     if matches!(parent.kind(), "import_statement" | "import_from_statement") {
         return false;
     }
@@ -1934,6 +1982,48 @@ fn is_python_with_target_name(node: Node<'_>, source: &str) -> bool {
     }
 
     false
+}
+
+fn is_python_except_target_name(node: Node<'_>, source: &str) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "except_clause" {
+            if node.kind() == "as_pattern_target" {
+                return true;
+            }
+            return is_python_as_pattern_alias(node, candidate, source);
+        }
+
+        if matches!(
+            candidate.kind(),
+            "try_statement" | "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn is_python_as_pattern_alias(node: Node<'_>, ancestor: Node<'_>, source: &str) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if parent.kind() != "as_pattern" || !contains_node(ancestor, parent) {
+        return false;
+    }
+
+    let Some(pattern_text) = source.get(parent.start_byte()..parent.end_byte()) else {
+        return false;
+    };
+    let Some(as_index) = pattern_text.rfind(" as ") else {
+        return false;
+    };
+    let relative_start = node.start_byte().saturating_sub(parent.start_byte());
+    relative_start > as_index
 }
 
 fn collect_c_top_level_names(
@@ -2264,6 +2354,23 @@ const PYTHON_PARAMETER_KINDS: &[&str] = &[
 ];
 
 const PYTHON_BUILTINS: &[&str] = &[
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "BaseException",
+    "Exception",
+    "ImportError",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "NameError",
+    "OSError",
+    "RuntimeError",
+    "StopIteration",
+    "SyntaxError",
+    "TypeError",
+    "ValueError",
+    "ZeroDivisionError",
     "abs",
     "all",
     "any",

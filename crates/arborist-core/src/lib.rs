@@ -1604,6 +1604,43 @@ def top_level() -> object:
     }
 
     #[test]
+    fn resolves_python_except_clause_bindings() {
+        let source = r#"
+def risky():
+    raise ValueError()
+
+def top_level() -> object:
+    return risky()
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> object:\n    try:\n        risky()\n    except ValueError as exc:\n        return exc\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "risky" && decision.status == "resolved")
+        );
+        let exc_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "exc")
+            .unwrap();
+        assert_eq!(exc_binding.symbol.node_kind, "except_target");
+        assert_eq!(exc_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
