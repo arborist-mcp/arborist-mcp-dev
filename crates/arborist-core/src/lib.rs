@@ -1377,6 +1377,41 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn ignores_python_type_annotations_during_patch_binding_validation() {
+        let source = r#"
+def top_level(value: int) -> int:
+    return value
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: MissingType) -> MissingReturn:\n    return value\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "value" && decision.status == "resolved")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .all(|decision| decision.name != "MissingType"
+                    && decision.name != "MissingReturn")
+        );
+    }
+
+    #[test]
     fn resolves_python_patch_bindings_with_semantic_metadata() {
         let source = r#"
 def helper(value: int) -> int:

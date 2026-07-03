@@ -1725,6 +1725,10 @@ fn should_count_python_reference(node: Node<'_>) -> bool {
         return false;
     }
 
+    if has_python_type_annotation_ancestor(node) {
+        return false;
+    }
+
     if matches!(
         parent.kind(),
         "parameters"
@@ -1750,6 +1754,27 @@ fn should_count_python_reference(node: Node<'_>) -> bool {
     }
 
     true
+}
+
+fn has_python_type_annotation_ancestor(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "type" {
+            return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
 }
 
 fn is_python_parameter_name(node: Node<'_>) -> bool {
