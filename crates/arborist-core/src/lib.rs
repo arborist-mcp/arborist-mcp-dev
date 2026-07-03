@@ -1671,6 +1671,36 @@ def top_level(flag: bool) -> int:
     }
 
     #[test]
+    fn resolves_python_global_declared_patch_bindings() {
+        let source = r#"
+def helper() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    global helper\n    helper = helper\n    return helper()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+        assert_eq!(helper_binding.symbol.node_kind, "function_definition");
+    }
+
+    #[test]
     fn resolves_python_named_expression_bindings() {
         let source = r#"
 def top_level(items: list[int]) -> int:

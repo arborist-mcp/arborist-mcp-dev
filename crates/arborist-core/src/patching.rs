@@ -968,8 +968,10 @@ fn collect_python_scope_symbols(
         return Ok(());
     };
 
+    let external_bindings = collect_python_external_binding_names(body_node, source)?;
     let mut cursor = body_node.walk();
     for child in body_node.named_children(&mut cursor) {
+        let mut statement_symbols = Vec::new();
         collect_python_statement_symbols(
             child,
             source,
@@ -977,8 +979,12 @@ fn collect_python_scope_symbols(
             scope_path.as_deref(),
             origin_type,
             scope_rank,
-            symbols,
+            &mut statement_symbols,
         )?;
+        if scope_node.kind() != "module" && !external_bindings.is_empty() {
+            statement_symbols.retain(|symbol| !external_bindings.contains(&symbol.name));
+        }
+        symbols.extend(statement_symbols);
     }
 
     Ok(())
