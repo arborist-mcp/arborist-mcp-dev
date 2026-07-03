@@ -1412,6 +1412,37 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn validates_python_default_parameter_references() {
+        let source = r#"
+def top_level(value: int) -> int:
+    return value
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int = missing_default) -> int:\n    return value\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(
+            result.validation.unresolved_identifiers,
+            vec!["missing_default"]
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "missing_default"
+                    && decision.status == "unresolved")
+        );
+    }
+
+    #[test]
     fn resolves_python_patch_bindings_with_semantic_metadata() {
         let source = r#"
 def helper(value: int) -> int:

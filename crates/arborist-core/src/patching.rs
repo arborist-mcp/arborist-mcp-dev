@@ -1312,7 +1312,7 @@ fn collect_python_parameter_symbols(
     };
 
     let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "identifier" || !is_python_parameter_name(candidate) {
+        if candidate.kind() != "identifier" || !is_python_parameter_symbol_name(candidate) {
             return;
         }
 
@@ -1729,17 +1729,16 @@ fn should_count_python_reference(node: Node<'_>) -> bool {
         return false;
     }
 
-    if matches!(
-        parent.kind(),
-        "parameters"
-            | "lambda_parameters"
-            | "typed_parameter"
-            | "default_parameter"
-            | "typed_default_parameter"
-            | "list_splat_pattern"
-            | "dictionary_splat_pattern"
-            | "tuple_pattern"
-    ) {
+    if is_python_parameter_name(node) {
+        return false;
+    }
+
+    if is_python_parameter_declaration_node(node) {
+        return false;
+    }
+
+    if matches!(parent.kind(), "list_splat_pattern" | "dictionary_splat_pattern" | "tuple_pattern")
+    {
         return false;
     }
 
@@ -1781,7 +1780,57 @@ fn is_python_parameter_name(node: Node<'_>) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
-    PYTHON_PARAMETER_KINDS.contains(&parent.kind())
+    if !PYTHON_PARAMETER_KINDS.contains(&parent.kind()) {
+        return false;
+    }
+
+    parent
+        .child_by_field_name("name")
+        .is_some_and(|candidate| candidate.id() == node.id())
+}
+
+fn is_python_parameter_symbol_name(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if !PYTHON_PARAMETER_KINDS.contains(&parent.kind()) {
+        return false;
+    }
+
+    parent
+        .child_by_field_name("value")
+        .is_none_or(|value| !contains_node(value, node))
+        && !has_python_type_annotation_ancestor(node)
+}
+
+fn is_python_parameter_declaration_node(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "default_parameter"
+            || candidate.kind() == "typed_default_parameter"
+        {
+            if let Some(value) = candidate.child_by_field_name("value") {
+                return !contains_node(value, node);
+            }
+            return true;
+        }
+
+        if matches!(candidate.kind(), "parameters" | "lambda_parameters") {
+            return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
 }
 
 fn collect_c_top_level_names(
