@@ -2127,6 +2127,23 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn ignores_python_local_variable_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("shadow.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def orchestrate():\n    helper = 2\n    return helper\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
     fn traces_python_alias_import_calls_across_files() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");

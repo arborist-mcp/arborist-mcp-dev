@@ -1649,13 +1649,15 @@ pub(crate) fn collect_python_references(
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
-    collect_python_reference_entries(node, source, &bindings, references)
+    let local_bindings = collect_python_local_binding_names(current_path, node, source)?;
+    collect_python_reference_entries(node, source, &bindings, &local_bindings, references)
 }
 
 fn collect_python_reference_entries(
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
+    local_bindings: &BTreeSet<String>,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     if node.kind() == "attribute" {
@@ -1674,7 +1676,13 @@ fn collect_python_reference_entries(
                 }
             }
 
-            collect_python_reference_entries(object_node, source, bindings, references)?;
+            collect_python_reference_entries(
+                object_node,
+                source,
+                bindings,
+                local_bindings,
+                references,
+            )?;
             return Ok(());
         }
     }
@@ -1697,6 +1705,8 @@ fn collect_python_reference_entries(
                     }
                 }
             }
+        } else if local_bindings.contains(&name) {
+            return Ok(());
         } else {
             references.insert(name);
         }
@@ -1706,11 +1716,54 @@ fn collect_python_reference_entries(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_reference_entries(child, source, bindings, references)?;
+            collect_python_reference_entries(child, source, bindings, local_bindings, references)?;
         }
     }
 
     Ok(())
+}
+
+fn collect_python_local_binding_names(
+    current_path: &Path,
+    node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let normalized_path = normalize_path(current_path);
+    let scope_path = if node.kind() == "module" {
+        None
+    } else if matches!(node.kind(), "function_definition" | "class_definition") {
+        Some(semantic_path(node, source)?)
+    } else {
+        None
+    };
+    let origin_type = if node.kind() == "module" {
+        "module_scope"
+    } else {
+        "local_scope"
+    };
+    let body_node = if node.kind() == "module" {
+        node
+    } else if let Some(body) = node.child_by_field_name("body") {
+        body
+    } else {
+        return Ok(BTreeSet::new());
+    };
+
+    let mut symbols = Vec::new();
+    let mut cursor = body_node.walk();
+    for statement in body_node.named_children(&mut cursor) {
+        collect_python_statement_symbols(
+            statement,
+            source,
+            &normalized_path,
+            scope_path.as_deref(),
+            origin_type,
+            0,
+            &mut symbols,
+        )?;
+    }
+
+    Ok(symbols.into_iter().map(|symbol| symbol.name).collect())
 }
 
 fn collect_visible_python_import_bindings(
