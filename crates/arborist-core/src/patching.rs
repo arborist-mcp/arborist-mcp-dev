@@ -2304,6 +2304,7 @@ fn is_python_except_target_name(node: Node<'_>, source: &str) -> bool {
 fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<String> {
     let child = only_named_child(case_pattern)?;
     match child.kind() {
+        "as_pattern" => python_as_pattern_alias_name(child, source),
         "pattern" => node_text(child, source)
             .ok()
             .map(str::trim)
@@ -2316,6 +2317,18 @@ fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<Str
         }
         _ => None,
     }
+}
+
+fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = as_pattern.walk();
+    as_pattern
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "identifier" || child.kind() == "as_pattern_target")
+        .last()
+        .and_then(|alias| node_text(alias, source).ok())
+        .map(str::trim)
+        .filter(|name| is_python_capture_name_text(name))
+        .map(str::to_string)
 }
 
 fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {
