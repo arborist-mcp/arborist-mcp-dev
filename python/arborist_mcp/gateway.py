@@ -13,10 +13,16 @@ class ArboristGateway:
     def __init__(self) -> None:
         self._core = ArboristCore()
 
-    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+    def handle_request(self, request: Any) -> dict[str, Any]:
+        if not isinstance(request, dict):
+            return self._error_response(None, -32600, "invalid request: expected object")
+
         method = request.get("method")
         request_id = request.get("id")
         params = request.get("params", {})
+
+        if not isinstance(params, dict):
+            return self._error_response(request_id, -32602, "invalid params: expected object")
 
         try:
             if method == "initialize":
@@ -30,17 +36,17 @@ class ArboristGateway:
                             "arborist/get_semantic_skeleton",
                             "arborist/patch_ast_node",
                             "arborist/patch_virtual_ast_node",
-                        "arborist/register_symbol_index",
-                        "arborist/refresh_symbol_index_for_file",
-                        "arborist/unregister_symbol_index",
-                        "arborist/list_symbol_indexes",
-                        "arborist/did_open",
-                        "arborist/did_change",
-                        "arborist/did_close",
-                        "arborist/list_virtual_files",
-                        "arborist/read_virtual_file",
-                        "arborist/apply_buffer_edit",
-                        "arborist/commit_virtual_file",
+                            "arborist/register_symbol_index",
+                            "arborist/refresh_symbol_index_for_file",
+                            "arborist/unregister_symbol_index",
+                            "arborist/list_symbol_indexes",
+                            "arborist/did_open",
+                            "arborist/did_change",
+                            "arborist/did_close",
+                            "arborist/list_virtual_files",
+                            "arborist/read_virtual_file",
+                            "arborist/apply_buffer_edit",
+                            "arborist/commit_virtual_file",
                             "arborist/discard_virtual_file",
                             "arborist/rebuild_symbol_index",
                             "arborist/trace_symbol_graph",
@@ -99,14 +105,22 @@ class ArboristGateway:
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except Exception as exc:  # noqa: BLE001
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32000,
-                    "message": str(exc),
-                },
-            }
+            return self._error_response(request_id, -32000, str(exc))
+
+    @staticmethod
+    def _error_response(
+        request_id: Any,
+        code: int,
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {
+                "code": code,
+                "message": message,
+            },
+        }
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -356,14 +370,11 @@ def run_stdio() -> int:
         try:
             request = json.loads(line)
         except json.JSONDecodeError as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"invalid JSON: {exc}",
-                },
-            }
+            response = ArboristGateway._error_response(
+                None,
+                -32700,
+                f"invalid JSON: {exc}",
+            )
         else:
             response = gateway.handle_request(request)
 
