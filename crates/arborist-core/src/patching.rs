@@ -885,12 +885,13 @@ fn python_binding_candidates_for_reference(
     let mut seen_function_scope = false;
     let mut scope_rank = 3_000_000usize;
     let mut current = Some(reference_target.node);
+    let skip_current_function_scope = is_python_default_parameter_value(reference_target.node);
 
     while let Some(node) = current {
         let include_scope = match node.kind() {
             "function_definition" => {
                 seen_function_scope = true;
-                true
+                !skip_current_function_scope
             }
             "class_definition" => !seen_function_scope,
             "module" => true,
@@ -1818,6 +1819,31 @@ fn is_python_parameter_declaration_node(node: Node<'_>) -> bool {
 
         if matches!(candidate.kind(), "parameters" | "lambda_parameters") {
             return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn is_python_default_parameter_value(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "default_parameter"
+            || candidate.kind() == "typed_default_parameter"
+        {
+            return candidate
+                .child_by_field_name("value")
+                .is_some_and(|value| contains_node(value, node));
         }
 
         if matches!(

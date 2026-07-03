@@ -1443,6 +1443,62 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn validates_python_default_parameter_scope() {
+        let source = r#"
+MODULE_DEFAULT = 1
+
+def top_level(value: int) -> int:
+    return value
+"#;
+
+        let allowed = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int = MODULE_DEFAULT) -> int:\n    return value\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(allowed.applied);
+        assert!(
+            allowed
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "MODULE_DEFAULT"
+                    && decision.status == "resolved")
+        );
+
+        let rejected = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int, other=value) -> int:\n    return other\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!rejected.applied);
+        assert_eq!(rejected.validation.unresolved_identifiers, vec!["value"]);
+        assert!(
+            rejected
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "value"
+                    && decision.status == "unresolved")
+        );
+        assert!(
+            rejected
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "other" && decision.status == "resolved")
+        );
+    }
+
+    #[test]
     fn resolves_python_patch_bindings_with_semantic_metadata() {
         let source = r#"
 def helper(value: int) -> int:
