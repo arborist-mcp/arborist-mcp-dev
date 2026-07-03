@@ -2144,6 +2144,29 @@ def orchestrate():\n    helper = 2\n    return helper\n",
     }
 
     #[test]
+    fn traces_python_decorator_references() {
+        let dir = temporary_dir();
+        let source = dir.join("decorated.py");
+
+        fs::write(
+            &source,
+            "def decorator(func):\n    return func\n\n\
+@decorator\n\
+def orchestrate(value: int) -> int:\n    return value\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "decorator")
+        );
+    }
+
+    #[test]
     fn traces_python_alias_import_calls_across_files() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");

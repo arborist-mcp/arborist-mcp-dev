@@ -342,7 +342,8 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
         }
 
         let mut references = BTreeSet::new();
-        let _ = collect_python_references(path, node, source, &mut references);
+        let reference_node = python_reference_node(node);
+        let _ = collect_python_references(path, reference_node, source, &mut references);
         let signature = python_header(node, source).ok();
         let path = match semantic_path(node, source) {
             Ok(path) => path,
@@ -371,6 +372,12 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
 
     visit_tree(root, &mut callback);
     Ok(symbols)
+}
+
+fn python_reference_node(node: Node<'_>) -> Node<'_> {
+    node.parent()
+        .filter(|parent| parent.kind() == "decorated_definition")
+        .unwrap_or(node)
 }
 
 fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
