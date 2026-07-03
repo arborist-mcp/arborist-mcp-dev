@@ -9,7 +9,7 @@ use crate::language::{
     last_type_identifier, node_text, normalize_path, parse_document, read_source,
     resolve_local_c_include,
 };
-use crate::model::{LanguageId, SemanticSkeleton};
+use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
 pub fn get_semantic_skeleton(
     path: &Path,
@@ -71,6 +71,129 @@ pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("function_definition missing body"))?;
     let prefix = source[node.start_byte()..body.start_byte()].trim_end();
     Ok(format!("{prefix};"))
+}
+
+fn skeleton_symbol(
+    symbol_id: String,
+    semantic_path: String,
+    scope_path: Option<String>,
+    node: Node<'_>,
+    signature: Option<String>,
+    parameters: Vec<String>,
+    return_type: Option<String>,
+    docstring: Option<String>,
+) -> SemanticSkeletonSymbol {
+    SemanticSkeletonSymbol {
+        symbol_id,
+        semantic_path,
+        scope_path,
+        node_kind: node.kind().to_string(),
+        byte_range: (node.start_byte(), node.end_byte()),
+        signature,
+        parameters,
+        return_type,
+        docstring,
+    }
+}
+
+pub(crate) fn semantic_parent_path(path: &str) -> Option<String> {
+    if path.contains("::") {
+        return None;
+    }
+
+    path.rsplit_once('.')
+        .map(|(parent, _)| parent.to_string())
+        .filter(|parent| !parent.is_empty())
+}
+
+pub(crate) fn python_docstring(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Ok(None);
+    };
+    let Some(first_statement) = body.named_child(0) else {
+        return Ok(None);
+    };
+    if first_statement.kind() != "expression_statement" {
+        return Ok(None);
+    }
+
+    let Some(first_expr) = first_statement.named_child(0) else {
+        return Ok(None);
+    };
+    if !matches!(first_expr.kind(), "string" | "concatenated_string") {
+        return Ok(None);
+    }
+
+    Ok(Some(node_text(first_expr, source)?.trim().to_string()))
+}
+
+pub(crate) fn python_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
+    let Some(parameters) = node.child_by_field_name("parameters") else {
+        return Ok(Vec::new());
+    };
+
+    let mut cursor = parameters.walk();
+    let mut values = Vec::new();
+    for child in parameters.named_children(&mut cursor) {
+        values.push(node_text(child, source)?.trim().to_string());
+    }
+    Ok(values)
+}
+
+pub(crate) fn python_return_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(return_type) = node.child_by_field_name("return_type") else {
+        return Ok(None);
+    };
+
+    Ok(Some(node_text(return_type, source)?.trim().to_string()))
+}
+
+fn find_first_descendant_by_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(found) = find_first_descendant_by_kind(child, kind) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+fn c_function_declarator(node: Node<'_>) -> Option<Node<'_>> {
+    find_first_descendant_by_kind(node, "function_declarator")
+}
+
+pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
+    let Some(function_declarator) = c_function_declarator(node) else {
+        return Ok(Vec::new());
+    };
+    let Some(parameters) = function_declarator.child_by_field_name("parameters") else {
+        return Ok(Vec::new());
+    };
+
+    let mut cursor = parameters.walk();
+    let mut values = Vec::new();
+    for child in parameters.named_children(&mut cursor) {
+        values.push(node_text(child, source)?.trim().to_string());
+    }
+    Ok(values)
+}
+
+pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(function_declarator) = c_function_declarator(node) else {
+        return Ok(None);
+    };
+
+    let prefix = source[node.start_byte()..function_declarator.start_byte()].trim();
+    if prefix.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(prefix.to_string()))
 }
 
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -188,6 +311,7 @@ fn build_python_skeleton(
     let mut cursor = QueryCursor::new();
     let mut symbol_items = Vec::new();
     let mut available_paths = Vec::new();
+    let mut available_symbols = Vec::new();
     let expand_set: BTreeSet<_> = expand_nodes.iter().map(String::as_str).collect();
 
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
@@ -210,13 +334,29 @@ fn build_python_skeleton(
         }
 
         let path = semantic_path(item, source)?;
+        let symbol_id = path.clone();
+        let scope_path = semantic_parent_path(&path);
+        let signature = Some(python_header(item, source)?);
+        let parameters = python_parameters(item, source)?;
+        let return_type = python_return_type(item, source)?;
+        let docstring = python_docstring(item, source)?;
         available_paths.push(path.clone());
-        symbol_items.push((item, path));
+        available_symbols.push(skeleton_symbol(
+            symbol_id.clone(),
+            path.clone(),
+            scope_path,
+            item,
+            signature.clone(),
+            parameters,
+            return_type,
+            docstring,
+        ));
+        symbol_items.push((item, path, symbol_id));
     }
 
     let mut skeleton_items = Vec::new();
     let mut expanded_items = Vec::new();
-    for (item, path) in symbol_items {
+    for (item, path, symbol_id) in symbol_items {
         if expanded_items
             .iter()
             .any(|ancestor: &Node<'_>| contains_node(*ancestor, item))
@@ -224,7 +364,7 @@ fn build_python_skeleton(
             continue;
         }
 
-        if expand_set.contains(path.as_str()) {
+        if expand_set.contains(path.as_str()) || expand_set.contains(symbol_id.as_str()) {
             skeleton_items.push(node_text(item, source)?.trim().to_string());
             expanded_items.push(item);
         } else {
@@ -237,6 +377,7 @@ fn build_python_skeleton(
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),
         available_paths,
+        available_symbols,
     })
 }
 
@@ -250,30 +391,81 @@ fn build_c_skeleton(
     let mut cursor = root.walk();
     let mut skeleton_items = Vec::new();
     let mut available_paths = Vec::new();
+    let mut available_symbols = Vec::new();
     let expand_set: BTreeSet<_> = expand_nodes.iter().map(String::as_str).collect();
 
     for child in root.named_children(&mut cursor) {
         match child.kind() {
             "type_definition" => {
-                skeleton_items.push(node_text(child, source)?.trim().to_string());
+                let text = node_text(child, source)?.trim().to_string();
+                skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    available_paths.push(symbol);
+                    let symbol_id = c_symbol_id_for_node(path, child, source)?
+                        .unwrap_or_else(|| symbol.clone());
+                    let scope_path = semantic_parent_path(&symbol);
+                    let parameters = c_parameters(child, source)?;
+                    let return_type = c_return_type(child, source)?;
+                    available_paths.push(symbol.clone());
+                    available_symbols.push(skeleton_symbol(
+                        symbol_id,
+                        symbol,
+                        scope_path,
+                        child,
+                        Some(text),
+                        parameters,
+                        return_type,
+                        None,
+                    ));
                 }
             }
             "declaration" if contains_kind(child, "function_declarator") => {
-                skeleton_items.push(node_text(child, source)?.trim().to_string());
+                let text = node_text(child, source)?.trim().to_string();
+                skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    available_paths.push(symbol);
+                    let symbol_id = c_symbol_id_for_node(path, child, source)?
+                        .unwrap_or_else(|| symbol.clone());
+                    let scope_path = semantic_parent_path(&symbol);
+                    let parameters = c_parameters(child, source)?;
+                    let return_type = c_return_type(child, source)?;
+                    available_paths.push(symbol.clone());
+                    available_symbols.push(skeleton_symbol(
+                        symbol_id,
+                        symbol,
+                        scope_path,
+                        child,
+                        Some(text),
+                        parameters,
+                        return_type,
+                        None,
+                    ));
                 }
             }
             "function_definition" => {
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
-                    if expand_set.contains(symbol.as_str()) {
+                    let symbol_id = c_symbol_id_for_node(path, child, source)?
+                        .unwrap_or_else(|| symbol.clone());
+                    let scope_path = semantic_parent_path(&symbol);
+                    let signature = c_function_header(child, source)?;
+                    let parameters = c_parameters(child, source)?;
+                    let return_type = c_return_type(child, source)?;
+                    if expand_set.contains(symbol.as_str())
+                        || expand_set.contains(symbol_id.as_str())
+                    {
                         skeleton_items.push(node_text(child, source)?.trim().to_string());
                     } else {
-                        skeleton_items.push(c_function_header(child, source)?);
+                        skeleton_items.push(signature.clone());
                     }
-                    available_paths.push(symbol);
+                    available_paths.push(symbol.clone());
+                    available_symbols.push(skeleton_symbol(
+                        symbol_id,
+                        symbol,
+                        scope_path,
+                        child,
+                        Some(signature),
+                        parameters,
+                        return_type,
+                        None,
+                    ));
                 }
             }
             _ => {}
@@ -284,6 +476,7 @@ fn build_c_skeleton(
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),
         available_paths,
+        available_symbols,
     })
 }
 

@@ -31,9 +31,11 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `execute_tree_query`
 - Python and C language routing based on file extension
 - Selective semantic skeleton expansion via `expand_nodes`
+- Semantic skeleton responses now include `available_symbols` metadata with stable selectors, scope paths, node kinds, byte ranges, signatures, structured parameters/return types, and docstrings when available
 - Trace results now expose stable `symbol_id` values so duplicate globals can be targeted precisely
 - Patch results now expose `resolved_symbol_id`, and C patch targeting accepts precise `symbol_id` selectors
 - Patch validation now returns structured `resolved_identifiers` / `ambiguous_identifiers` feedback for C bindings
+- Patch validation now also returns structured resolved binding metadata for Python names, including module symbols, parameters, local assignments, and local, relative, or `from ... import <module> as ...` aliases when Arborist can identify them
 - Patch validation now also emits a unified `binding_decisions` audit stream for
   resolved, ambiguous, and unresolved references
 - Patch validation now emits a structured `commit_gate` report that explains
@@ -42,6 +44,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - The commit gate now records per-binding `evidence_invariants`, showing whether
   candidate evidence keys passed, blocked, or failed the write gate
 - Symbol summaries now carry optional `signature` data across trace and validation feedback
+- Symbol summaries now also carry optional `scope_path`, structured `parameters`, optional `return_type`, and optional `docstring` metadata across trace and validation feedback
 - Symbol summaries now also carry `byte_range` evidence so callers can jump back to the exact source span
 - Trace and patch binding candidates now expose `origin_type` evidence such as `local_file`,
   `include_header`, or `companion_source`
@@ -60,6 +63,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Virtual dry-run patch validation with syntax interception
 - Heuristic local symbol validation and bypass support
 - Workspace-level symbol graph indexing for Python and C
+- Python trace/index resolution now follows local imported-module aliases such as `import graph_b as gb`, imported symbol aliases such as `from graph_b import helper as h`, and imported submodule aliases such as `from pkg import graph_c as gc`
 - SQLite-backed persisted symbol registry
 - Incremental rebuilds keyed by persisted file fingerprints
 - Session-scoped VFS with disk/virtual state and incremental Tree-sitter edits
@@ -122,7 +126,10 @@ python -m arborist_mcp.gateway --help
 
 For C, `patch_ast_node` and `patch_virtual_ast_node` accept either a plain selector such as `helper` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both a forward declaration and a definition for the same symbol, patch targeting now prefers the definition by default.
 
-When C validation can bind a reference confidently, the patch response now includes it under `validation.resolved_identifiers`. When multiple same-rank candidates remain, the patch is rejected unless bypassed and the competing bindings are returned under `validation.ambiguous_identifiers`.
+`get_semantic_skeleton` now returns both `available_paths` and `available_symbols`. Each `available_symbols` item includes the symbol's stable `symbol_id`, `semantic_path`, optional `scope_path`, `node_kind`, `byte_range`, structured `parameters`, optional `return_type`, and optional `signature` / `docstring`, which lets an agent round-trip directly from lightweight exploration into later trace or patch requests without reconstructing selectors from raw text.
+For C, `expand_nodes` accepts either a plain semantic path such as `helper` or the same precise `symbol_id` returned in `available_symbols`.
+
+When patch validation can bind a reference confidently, the patch response includes it under `validation.resolved_identifiers`. Python now reports resolved module, parameter, and local-assignment bindings with semantic metadata, and it can resolve local or relative import aliases such as `gb.helper(...)`, `h(...)`, `from .local_mod import helper2 as h2`, `from ..graph_b import helper as h`, `from pkg import graph_c as gc`, or `from pkg import worker` when `pkg/__init__.py` re-exports that symbol back to the imported workspace symbol. C continues to report resolved declaration/definition candidates. When multiple same-rank candidates remain, the patch is rejected unless bypassed and the competing bindings are returned under `validation.ambiguous_identifiers`.
 Patch validation also emits `validation.binding_decisions`, a single audit stream where every checked reference records its `status`, `reason`, `selected_symbol_id`, and candidate evidence. This gives repair loops one stable place to inspect the binding path before deciding whether a patch is safe to commit.
 The final patch decision is mirrored in `validation.commit_gate`, which records `allowed`, `status`, `reason`, optional `bypass_reason`, syntax error count, and the blocking binding decisions that prevented a normal commit.
 The gate also emits `evidence_invariants`: resolved bindings must provide exactly one selected candidate evidence key, while ambiguous and unresolved bindings are recorded as blocked evidence that can be replayed by future trace checks.
@@ -131,6 +138,8 @@ They also include `byte_range`, while `node_kind` already distinguishes cases su
 Binding candidates now also include `origin_type` so callers can distinguish local definitions, included headers, and companion source definitions. Ambiguous C bindings include a `reason` plus `disambiguation_context`, which now reports the visible include-family chain, the candidate include families, and exact candidate `symbol_id` selectors for explainable repair loops.
 Trace summaries and patch binding candidates also include `evidence_key`, a stable, human-readable comparison key derived from `symbol_id`, `file_path`, `node_kind`, `origin_type`, `byte_range`, and `signature`. This gives future trace/patch invariant checks a single field to compare before allowing semantic writes.
 `trace_symbol_graph` also returns `evidence_keys`, grouping the traced root symbol key plus caller and callee keys. Repair loops can compare `commit_gate.evidence_invariants[*].candidate_evidence_keys` against `trace.evidence_keys.callees` without reconstructing the graph evidence shape client-side.
+Trace symbols and validation candidates now also expose optional `scope_path`, structured `parameters`, optional `return_type`, and optional `docstring` fields, so callers can keep using one semantic contract as they move from exploration to graph tracing to patch safety checks.
+Python trace/index resolution also follows local import aliases and package re-exports for module-qualified or imported-symbol calls, so `gb.helper(...)`, `h(...)`, and `from pkg import worker` can resolve back to the same underlying workspace symbol when those imports come from local files.
 `replay_patch_evidence_against_trace` consumes a patch result plus a trace result and reports whether each patch evidence invariant is `matched`, `blocked`, `missing`, or `failed` against the trace graph keys.
 `validate_patch_commit_with_trace` builds on that replay check and returns a single `allowed/status/reason` decision, making it the first optional strong gate for trace-backed semantic writes.
 `validate_patch_with_trace_context` removes the manual orchestration step entirely: it runs patch validation, traces the patched symbol against the workspace with the updated file held in-memory, and returns the patch result plus the trace-backed validation decision in one call.
@@ -153,6 +162,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - VFS buffer lifecycle with read/edit/discard/commit semantics
 - Incremental reparsing via `Tree::edit()` + parse reuse for buffer edits
 - `get_semantic_skeleton` can keep the file mostly skeletal while fully expanding selected semantic paths
+- Skeleton discovery now returns structured symbol metadata, including scope, docstring, and input/output signature context, so read-path exploration can hand precise selectors straight into trace and patch flows
 - `did_open` accepts editor buffer contents without forcing a disk write first
 - `did_change` applies ordered line/column edits onto the current virtual buffer
 - `did_close` can discard or persist the session buffer and unload it from memory
@@ -161,10 +171,13 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - `patch_virtual_ast_node` keeps the validated patch in `VirtualState` until an explicit commit
 - Patch responses now report `resolved_symbol_id`, so callers can round-trip a precise C trace target into a later patch request
 - C patch validation now reports structured binding feedback, including resolved `symbol_id` matches and ambiguous same-name candidates
+- Python patch validation now reports structured resolved binding feedback for visible module symbols, parameters, local assignments, local or relative aliases, and package `__init__.py` re-exports
 - Patch validation now records every checked binding in `binding_decisions`, unifying resolved, ambiguous, and unresolved evidence into one audit trail
 - Patch validation now records a structured `commit_gate`, and `applied` is driven by that gate's `allowed` decision
 - `commit_gate.evidence_invariants` now records per-binding evidence-key checks as the foundation for trace/patch replay validation
 - Trace summaries and validation candidates now include signatures when available, which makes same-name symbol disambiguation more actionable for the LLM
+- Trace summaries and validation candidates now also include scope, structured parameters, return types, and optional docstrings when Arborist can recover them
+- Python traces now follow local imported-module and imported-symbol aliases instead of treating those calls as opaque bare names
 - Trace summaries and validation candidates now include source byte ranges, making it easier to round-trip from feedback back into an exact patch target
 - Trace summaries and validation candidates now include `origin_type`, and ambiguous C patch feedback includes a structured `reason` plus `disambiguation_context` with include-family visibility and precise selector hints
 - Trace summaries and validation candidates now include a shared `evidence_key` so patch evidence can be compared directly against trace evidence

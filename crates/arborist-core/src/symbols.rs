@@ -16,18 +16,28 @@ use crate::model::{
     SymbolIndexStats, SymbolMeta, SymbolSummary, TraceDirection, TraceEvidenceKeys,
     TraceSymbolGraphResult,
 };
-use crate::patching::{collect_c_references, collect_python_references};
-use crate::semantic::{c_function_header, c_semantic_path, python_header, semantic_path};
+use crate::patching::{
+    collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
+    resolve_local_python_module_path,
+};
+use crate::semantic::{
+    c_function_header, c_parameters, c_return_type, c_semantic_path, python_docstring,
+    python_header, python_parameters, python_return_type, semantic_parent_path, semantic_path,
+};
 
 #[derive(Debug, Clone)]
 struct IndexedSymbol {
     symbol_id: String,
     semantic_path: String,
     base_name: String,
+    scope_path: Option<String>,
     file_path: String,
     node_kind: String,
     byte_range: (usize, usize),
     signature: Option<String>,
+    parameters: Vec<String>,
+    return_type: Option<String>,
+    docstring: Option<String>,
     references_by_name: BTreeSet<String>,
 }
 
@@ -332,21 +342,29 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
         }
 
         let mut references = BTreeSet::new();
-        let _ = collect_python_references(node, source, &mut references);
+        let _ = collect_python_references(path, node, source, &mut references);
         let signature = python_header(node, source).ok();
         let path = match semantic_path(node, source) {
             Ok(path) => path,
             Err(_) => return,
         };
+        let scope_path = semantic_parent_path(&path);
+        let parameters = python_parameters(node, source).unwrap_or_default();
+        let return_type = python_return_type(node, source).ok().flatten();
+        let docstring = python_docstring(node, source).ok().flatten();
 
         symbols.push(IndexedSymbol {
             symbol_id: String::new(),
             base_name: path.rsplit('.').next().unwrap_or(&path).to_string(),
             semantic_path: path,
+            scope_path,
             file_path: normalized_path.clone(),
             node_kind: node.kind().to_string(),
             byte_range: (node.start_byte(), node.end_byte()),
             signature,
+            parameters,
+            return_type,
+            docstring,
             references_by_name: references,
         });
     };
@@ -368,24 +386,33 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                         symbol_id: String::new(),
                         base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
                         semantic_path: name,
+                        scope_path: None,
                         file_path: normalized_path.clone(),
                         node_kind: child.kind().to_string(),
                         byte_range: (child.start_byte(), child.end_byte()),
                         signature: Some(node_text(child, source)?.trim().to_string()),
+                        parameters: Vec::new(),
+                        return_type: None,
+                        docstring: None,
                         references_by_name: BTreeSet::new(),
                     });
                 }
             }
             "declaration" if contains_kind(child, "function_declarator") => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
+                    let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
                         symbol_id: String::new(),
                         base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
                         semantic_path: name,
+                        scope_path,
                         file_path: normalized_path.clone(),
                         node_kind: child.kind().to_string(),
                         byte_range: (child.start_byte(), child.end_byte()),
                         signature: Some(node_text(child, source)?.trim().to_string()),
+                        parameters: c_parameters(child, source)?,
+                        return_type: c_return_type(child, source)?,
+                        docstring: None,
                         references_by_name: BTreeSet::new(),
                     });
                 }
@@ -394,14 +421,19 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let mut references = BTreeSet::new();
                     collect_c_references(child, source, &mut references)?;
+                    let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
                         symbol_id: String::new(),
                         base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
                         semantic_path: name,
+                        scope_path,
                         file_path: normalized_path.clone(),
                         node_kind: child.kind().to_string(),
                         byte_range: (child.start_byte(), child.end_byte()),
                         signature: Some(c_function_header(child, source)?),
+                        parameters: c_parameters(child, source)?,
+                        return_type: c_return_type(child, source)?,
+                        docstring: None,
                         references_by_name: references,
                     });
                 }
@@ -419,7 +451,13 @@ fn resolve_reference_path(
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
 ) -> Option<String> {
-    let candidates = name_index.get(reference_name)?;
+    let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
+    let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
+        python_reference_lookup(reference_name)
+    } else {
+        (reference_name, None)
+    };
+    let candidates = name_index.get(lookup_name)?;
     let visible_candidates: Vec<usize> = candidates
         .iter()
         .copied()
@@ -429,14 +467,42 @@ fn resolve_reference_path(
                 || !candidate.semantic_path.contains("::")
         })
         .collect();
-    let candidates = if visible_candidates.is_empty() {
+    let candidate_slice = if visible_candidates.is_empty() {
         candidates.as_slice()
     } else {
         visible_candidates.as_slice()
     };
+    let hinted_candidates = if let Some(module_hint) = module_hint {
+        let imported_summary = resolve_local_python_imported_symbol(
+            Path::new(&source_symbol.file_path),
+            module_hint,
+            lookup_name,
+        )
+        .ok()
+        .flatten();
+        let filtered = candidate_slice
+            .iter()
+            .copied()
+            .filter(|index| {
+                python_symbol_matches_module_hint(
+                    source_symbol,
+                    &raw_symbols[*index],
+                    module_hint,
+                    imported_summary.as_ref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            candidate_slice.to_vec()
+        } else {
+            filtered
+        }
+    } else {
+        candidate_slice.to_vec()
+    };
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
-    candidates
+    hinted_candidates
         .iter()
         .copied()
         .max_by_key(|index| {
@@ -447,6 +513,33 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn python_reference_lookup(reference_name: &str) -> (&str, Option<&str>) {
+    reference_name
+        .rsplit_once('.')
+        .map(|(module_hint, symbol_name)| (symbol_name, Some(module_hint)))
+        .unwrap_or((reference_name, None))
+}
+
+fn python_symbol_matches_module_hint(
+    source_symbol: &IndexedSymbol,
+    symbol: &IndexedSymbol,
+    module_hint: &str,
+    imported_summary: Option<&SymbolSummary>,
+) -> bool {
+    if let Some(imported_summary) = imported_summary {
+        return imported_summary.file_path == symbol.file_path
+            && imported_summary.semantic_path == symbol.semantic_path;
+    }
+
+    let Some(resolved_module_path) =
+        resolve_local_python_module_path(Path::new(&source_symbol.file_path), module_hint)
+    else {
+        return false;
+    };
+
+    normalize_path(&resolved_module_path) == symbol.file_path
 }
 
 fn summarize_symbols(
@@ -482,11 +575,15 @@ fn choose_symbol_summary(
             SymbolSummary::new(
                 symbol.symbol_id.clone(),
                 symbol.semantic_path.clone(),
+                symbol.scope_path.clone(),
                 symbol.file_path.clone(),
                 symbol.node_kind.clone(),
                 symbol_origin_type(symbol, context_file, include_context).to_string(),
                 symbol.byte_range,
                 symbol.signature.clone(),
+                symbol.parameters.clone(),
+                symbol.return_type.clone(),
+                symbol.docstring.clone(),
             )
         })
 }
@@ -785,10 +882,14 @@ fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
     SymbolMeta {
         symbol_id: symbol.symbol_id.clone(),
         semantic_path: symbol.semantic_path.clone(),
+        scope_path: symbol.scope_path.clone(),
         file_path: symbol.file_path.clone(),
         node_kind: symbol.node_kind.clone(),
         byte_range: symbol.byte_range,
         signature: symbol.signature.clone(),
+        parameters: symbol.parameters.clone(),
+        return_type: symbol.return_type.clone(),
+        docstring: symbol.docstring.clone(),
         dependencies: Vec::new(),
         references: Vec::new(),
     }
@@ -853,10 +954,14 @@ fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta>
         .map(|symbol| SymbolMeta {
             symbol_id: symbol.symbol_id.clone(),
             semantic_path: symbol.semantic_path.clone(),
+            scope_path: symbol.scope_path.clone(),
             file_path: symbol.file_path.clone(),
             node_kind: symbol.node_kind.clone(),
             byte_range: symbol.byte_range,
             signature: symbol.signature.clone(),
+            parameters: symbol.parameters.clone(),
+            return_type: symbol.return_type.clone(),
+            docstring: symbol.docstring.clone(),
             dependencies: dependency_map
                 .get(&symbol.symbol_id)
                 .map(|dependencies| dependencies.iter().cloned().collect())
@@ -884,7 +989,13 @@ fn impacted_symbol_ids(
     let changed_reference_names: BTreeSet<_> = old_changed_symbols
         .iter()
         .chain(new_changed_symbols.iter())
-        .flat_map(|symbol| symbol.references_by_name.iter().cloned())
+        .flat_map(|symbol| {
+            symbol
+                .references_by_name
+                .iter()
+                .map(|reference| reference_base_name(reference))
+                .collect::<Vec<_>>()
+        })
         .collect();
 
     let mut impacted_ids: BTreeSet<_> = old_changed_symbols
@@ -903,7 +1014,7 @@ fn impacted_symbol_ids(
         if symbol
             .references_by_name
             .iter()
-            .any(|reference_name| impacted_names.contains(reference_name))
+            .any(|reference_name| impacted_names.contains(&reference_base_name(reference_name)))
             || changed_reference_names.contains(&symbol.base_name)
         {
             impacted_ids.insert(symbol.symbol_id.clone());
@@ -1022,10 +1133,14 @@ fn materialize_resolved_symbol_rows(
                 .map(|resolved_symbol| SymbolMeta {
                     symbol_id: raw_symbol.symbol_id.clone(),
                     semantic_path: raw_symbol.semantic_path.clone(),
+                    scope_path: raw_symbol.scope_path.clone(),
                     file_path: raw_symbol.file_path.clone(),
                     node_kind: raw_symbol.node_kind.clone(),
                     byte_range: raw_symbol.byte_range,
                     signature: raw_symbol.signature.clone(),
+                    parameters: raw_symbol.parameters.clone(),
+                    return_type: raw_symbol.return_type.clone(),
+                    docstring: raw_symbol.docstring.clone(),
                     dependencies: resolved_symbol.dependencies.clone(),
                     references: resolved_symbol.references.clone(),
                 })
@@ -1090,11 +1205,15 @@ fn trace_root_evidence_key(symbol: &SymbolMeta) -> String {
     SymbolSummary::new(
         symbol.symbol_id.clone(),
         symbol.semantic_path.clone(),
+        symbol.scope_path.clone(),
         symbol.file_path.clone(),
         symbol.node_kind.clone(),
         "trace_root".to_string(),
         symbol.byte_range,
         symbol.signature.clone(),
+        symbol.parameters.clone(),
+        symbol.return_type.clone(),
+        symbol.docstring.clone(),
     )
     .evidence_key
 }
@@ -1128,9 +1247,10 @@ fn persist_symbol_index(
     {
         let mut statement = tx.prepare(
             "INSERT INTO symbols (
-                symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte, signature,
-                dependencies_json, references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, dependencies_json,
+                references_json, reference_names_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )?;
 
         for symbol in symbols {
@@ -1140,11 +1260,15 @@ fn persist_symbol_index(
             statement.execute(params![
                 symbol.symbol_id,
                 symbol.semantic_path,
+                symbol.scope_path,
                 symbol.file_path,
                 symbol.node_kind,
                 symbol.byte_range.0 as i64,
                 symbol.byte_range.1 as i64,
                 symbol.signature,
+                serde_json::to_string(&symbol.parameters)?,
+                symbol.return_type,
+                symbol.docstring,
                 serde_json::to_string(&symbol.dependencies)?,
                 serde_json::to_string(&symbol.references)?,
                 serde_json::to_string(&reference_names(raw_symbol))?,
@@ -1206,9 +1330,10 @@ fn persist_symbol_refresh(
     {
         let mut insert_statement = tx.prepare(
             "INSERT INTO symbols (
-                symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte, signature,
-                dependencies_json, references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, dependencies_json,
+                references_json, reference_names_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         )?;
 
         for symbol in &changed_symbols {
@@ -1218,11 +1343,15 @@ fn persist_symbol_refresh(
             insert_statement.execute(params![
                 symbol.symbol_id,
                 symbol.semantic_path,
+                symbol.scope_path,
                 symbol.file_path,
                 symbol.node_kind,
                 symbol.byte_range.0 as i64,
                 symbol.byte_range.1 as i64,
                 symbol.signature,
+                serde_json::to_string(&symbol.parameters)?,
+                symbol.return_type,
+                symbol.docstring,
                 serde_json::to_string(&symbol.dependencies)?,
                 serde_json::to_string(&symbol.references)?,
                 serde_json::to_string(&reference_names(raw_symbol))?,
@@ -1283,11 +1412,15 @@ fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS symbols (
             symbol_id TEXT NOT NULL,
             semantic_path TEXT NOT NULL,
+            scope_path TEXT,
             file_path TEXT NOT NULL,
             node_kind TEXT NOT NULL,
             start_byte INTEGER NOT NULL,
             end_byte INTEGER NOT NULL,
             signature TEXT,
+            parameters_json TEXT NOT NULL DEFAULT '[]',
+            return_type TEXT,
+            docstring TEXT,
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
@@ -1301,6 +1434,10 @@ fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     )?;
     ensure_reference_names_column(connection)?;
     ensure_symbol_id_column(connection)?;
+    ensure_scope_path_column(connection)?;
+    ensure_parameters_json_column(connection)?;
+    ensure_return_type_column(connection)?;
+    ensure_docstring_column(connection)?;
     ensure_symbols_primary_key_layout(connection)?;
     Ok(())
 }
@@ -1324,12 +1461,15 @@ fn load_indexed_symbols_grouped_by_file(
     connection: &Connection,
 ) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
     let mut statement = connection.prepare(
-        "SELECT symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte, signature, reference_names_json
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, reference_names_json
          FROM symbols
          ORDER BY file_path, semantic_path",
     )?;
     let rows = statement.query_map([], |row| {
-        let reference_names_json: String = row.get(7)?;
+        let parameters_json: String = row.get(8)?;
+        let reference_names_json: String = row.get(11)?;
+        let parameters: Vec<String> = serde_json::from_str(&parameters_json).unwrap_or_default();
         let reference_names: Vec<String> =
             serde_json::from_str(&reference_names_json).unwrap_or_default();
         let semantic_path: String = row.get(1)?;
@@ -1337,13 +1477,17 @@ fn load_indexed_symbols_grouped_by_file(
             symbol_id: row.get(0)?,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,
-            file_path: row.get(2)?,
-            node_kind: row.get(3)?,
+            scope_path: row.get(2)?,
+            file_path: row.get(3)?,
+            node_kind: row.get(4)?,
             byte_range: (
-                row.get::<_, i64>(4)? as usize,
                 row.get::<_, i64>(5)? as usize,
+                row.get::<_, i64>(6)? as usize,
             ),
-            signature: row.get(6)?,
+            signature: row.get(7)?,
+            parameters,
+            return_type: row.get(9)?,
+            docstring: row.get(10)?,
             references_by_name: reference_names.into_iter().collect(),
         })
     })?;
@@ -1371,23 +1515,29 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
         .unwrap_or(0);
 
     let mut statement = connection.prepare(
-        "SELECT symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte, signature,
-                dependencies_json, references_json
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, dependencies_json,
+                references_json
          FROM symbols",
     )?;
     let rows = statement.query_map([], |row| {
-        let dependencies_json: String = row.get(7)?;
-        let references_json: String = row.get(8)?;
+        let parameters_json: String = row.get(8)?;
+        let dependencies_json: String = row.get(11)?;
+        let references_json: String = row.get(12)?;
         Ok(SymbolMeta {
             symbol_id: row.get(0)?,
             semantic_path: row.get(1)?,
-            file_path: row.get(2)?,
-            node_kind: row.get(3)?,
+            scope_path: row.get(2)?,
+            file_path: row.get(3)?,
+            node_kind: row.get(4)?,
             byte_range: (
-                row.get::<_, i64>(4)? as usize,
                 row.get::<_, i64>(5)? as usize,
+                row.get::<_, i64>(6)? as usize,
             ),
-            signature: row.get(6)?,
+            signature: row.get(7)?,
+            parameters: serde_json::from_str(&parameters_json).unwrap_or_default(),
+            return_type: row.get(9)?,
+            docstring: row.get(10)?,
             dependencies: serde_json::from_str(&dependencies_json).unwrap_or_default(),
             references: serde_json::from_str(&references_json).unwrap_or_default(),
         })
@@ -1437,6 +1587,61 @@ fn ensure_symbol_id_column(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn ensure_scope_path_column(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "scope_path" {
+            return Ok(());
+        }
+    }
+
+    connection.execute("ALTER TABLE symbols ADD COLUMN scope_path TEXT", [])?;
+    Ok(())
+}
+
+fn ensure_parameters_json_column(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "parameters_json" {
+            return Ok(());
+        }
+    }
+
+    connection.execute(
+        "ALTER TABLE symbols ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
+        [],
+    )?;
+    Ok(())
+}
+
+fn ensure_return_type_column(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "return_type" {
+            return Ok(());
+        }
+    }
+
+    connection.execute("ALTER TABLE symbols ADD COLUMN return_type TEXT", [])?;
+    Ok(())
+}
+
+fn ensure_docstring_column(connection: &Connection) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "docstring" {
+            return Ok(());
+        }
+    }
+
+    connection.execute("ALTER TABLE symbols ADD COLUMN docstring TEXT", [])?;
+    Ok(())
+}
+
 fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
     let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
     let columns = statement.query_map([], |row| {
@@ -1468,23 +1673,29 @@ fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
         CREATE TABLE symbols (
             symbol_id TEXT NOT NULL,
             semantic_path TEXT NOT NULL,
+            scope_path TEXT,
             file_path TEXT NOT NULL,
             node_kind TEXT NOT NULL,
             start_byte INTEGER NOT NULL,
             end_byte INTEGER NOT NULL,
             signature TEXT,
+            parameters_json TEXT NOT NULL DEFAULT '[]',
+            return_type TEXT,
+            docstring TEXT,
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY (semantic_path, file_path)
         );
         INSERT INTO symbols (
-            symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte, signature,
-            dependencies_json, references_json, reference_names_json
+            symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+            signature, parameters_json, return_type, docstring, dependencies_json,
+            references_json, reference_names_json
         )
         SELECT
             COALESCE(NULLIF(symbol_id, ''), semantic_path),
-            semantic_path, file_path, node_kind, start_byte, end_byte, signature,
+            semantic_path, scope_path, file_path, node_kind, start_byte, end_byte, signature,
+            COALESCE(parameters_json, '[]'), return_type, docstring,
             dependencies_json, references_json,
             COALESCE(reference_names_json, '[]')
         FROM symbols_legacy;
@@ -1551,6 +1762,14 @@ fn choose_trace_symbol<'a>(symbols: &'a [SymbolMeta], symbol_path: &str) -> Opti
 
 fn reference_names(symbol: &IndexedSymbol) -> Vec<String> {
     symbol.references_by_name.iter().cloned().collect()
+}
+
+fn reference_base_name(reference_name: &str) -> String {
+    reference_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(reference_name)
+        .to_string()
 }
 
 fn symbol_row_key(symbol: &SymbolMeta) -> (String, String, usize, usize) {

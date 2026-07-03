@@ -13,11 +13,11 @@ use anyhow::Result;
 
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
-    PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton, SymbolIndexStats,
-    SymbolMeta, SymbolSummary, TraceBackedPatchResult, TraceDirection,
-    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-    ValidationAmbiguity, ValidationBinding, ValidationIssue, VirtualEditResult,
-    VirtualFileSnapshot, VirtualFileStatus,
+    PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
+    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSummary, TraceBackedPatchResult,
+    TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
+    TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
+    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
@@ -272,11 +272,17 @@ mod tests {
     fn builds_python_skeleton_with_nested_members() {
         let source = r#"
 class Greeter:
+    """Helpful greeter."""
+
     def greet(self, name: str) -> str:
+        """Return a greeting."""
         return f"hello, {name}"
 
 def top_level(value: int) -> int:
+    """Top level orchestration."""
+
     def nested(inner: int) -> int:
+        """Inner increment helper."""
         return inner + 1
 
     return nested(value)
@@ -298,6 +304,42 @@ def top_level(value: int) -> int:
         assert_eq!(
             skeleton.available_paths,
             vec!["Greeter", "Greeter.greet", "top_level", "top_level.nested"]
+        );
+        assert_eq!(skeleton.available_symbols.len(), 4);
+        assert_eq!(skeleton.available_symbols[0].symbol_id, "Greeter");
+        assert_eq!(skeleton.available_symbols[0].semantic_path, "Greeter");
+        assert_eq!(skeleton.available_symbols[0].scope_path, None);
+        assert_eq!(skeleton.available_symbols[0].node_kind, "class_definition");
+        assert_eq!(
+            skeleton.available_symbols[0].signature.as_deref(),
+            Some("class Greeter:")
+        );
+        assert!(skeleton.available_symbols[0].parameters.is_empty());
+        assert_eq!(skeleton.available_symbols[0].return_type, None);
+        assert_eq!(
+            skeleton.available_symbols[0].docstring.as_deref(),
+            Some("\"\"\"Helpful greeter.\"\"\"")
+        );
+        assert_eq!(skeleton.available_symbols[3].symbol_id, "top_level.nested");
+        assert_eq!(
+            skeleton.available_symbols[3].scope_path.as_deref(),
+            Some("top_level")
+        );
+        assert_eq!(
+            skeleton.available_symbols[3].signature.as_deref(),
+            Some("def nested(inner: int) -> int:")
+        );
+        assert_eq!(
+            skeleton.available_symbols[3].parameters,
+            vec!["inner: int".to_string()]
+        );
+        assert_eq!(
+            skeleton.available_symbols[3].return_type.as_deref(),
+            Some("int")
+        );
+        assert_eq!(
+            skeleton.available_symbols[3].docstring.as_deref(),
+            Some("\"\"\"Inner increment helper.\"\"\"")
         );
     }
 
@@ -352,6 +394,58 @@ int helper(int value) {
         assert!(skeleton.skeleton.contains("typedef struct item"));
         assert!(
             skeleton
+                .skeleton
+                .contains("int helper(int value) {\n    return value + 1;\n}")
+        );
+        assert_eq!(skeleton.available_symbols.len(), 2);
+        assert_eq!(skeleton.available_symbols[1].semantic_path, "helper");
+        assert_eq!(skeleton.available_symbols[1].scope_path, None);
+        assert_eq!(
+            skeleton.available_symbols[1].node_kind,
+            "function_definition"
+        );
+        assert_eq!(
+            skeleton.available_symbols[1].signature.as_deref(),
+            Some("int helper(int value);")
+        );
+        assert_eq!(
+            skeleton.available_symbols[1].parameters,
+            vec!["int value".to_string()]
+        );
+        assert_eq!(
+            skeleton.available_symbols[1].return_type.as_deref(),
+            Some("int")
+        );
+        assert_eq!(skeleton.available_symbols[1].docstring, None);
+    }
+
+    #[test]
+    fn expands_c_function_definition_by_precise_symbol_id() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let source_text = fs::read_to_string(&source).unwrap();
+        let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+        let precise_symbol_id = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "helper")
+            .map(|symbol| symbol.symbol_id.clone())
+            .unwrap();
+
+        let expanded =
+            get_semantic_skeleton(&source, &source_text, 1, &[precise_symbol_id]).unwrap();
+
+        assert!(
+            expanded
                 .skeleton
                 .contains("int helper(int value) {\n    return value + 1;\n}")
         );
@@ -1263,17 +1357,422 @@ def top_level(value: int) -> int:
             result.validation.unresolved_identifiers,
             vec!["missing_helper"]
         );
-        assert_eq!(result.validation.binding_decisions.len(), 1);
-        assert_eq!(
-            result.validation.binding_decisions[0].name,
-            "missing_helper"
+        assert_eq!(result.validation.binding_decisions.len(), 2);
+        let missing_helper_decision = result
+            .validation
+            .binding_decisions
+            .iter()
+            .find(|decision| decision.name == "missing_helper")
+            .unwrap();
+        assert_eq!(missing_helper_decision.status, "unresolved");
+        assert_eq!(missing_helper_decision.selected_symbol_id, None);
+        assert!(missing_helper_decision.candidates.is_empty());
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "value" && decision.status == "resolved")
         );
-        assert_eq!(result.validation.binding_decisions[0].status, "unresolved");
+    }
+
+    #[test]
+    fn resolves_python_patch_bindings_with_semantic_metadata() {
+        let source = r#"
+def helper(value: int) -> int:
+    """Shared helper."""
+    return value + 1
+
+def top_level(value: int) -> int:
+    local_bonus = 2
+    return helper(value) + local_bonus
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    local_bonus = 3\n    return helper(value) + local_bonus\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert_eq!(result.validation.unresolved_identifiers.len(), 0);
+        assert_eq!(result.validation.ambiguous_identifiers.len(), 0);
+        assert_eq!(result.validation.resolved_identifiers.len(), 3);
+
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+        assert_eq!(helper_binding.symbol.scope_path, None);
         assert_eq!(
-            result.validation.binding_decisions[0].selected_symbol_id,
-            None
+            helper_binding.symbol.signature.as_deref(),
+            Some("def helper(value: int) -> int:")
         );
-        assert!(result.validation.binding_decisions[0].candidates.is_empty());
+        assert_eq!(
+            helper_binding.symbol.parameters,
+            vec!["value: int".to_string()]
+        );
+        assert_eq!(helper_binding.symbol.return_type.as_deref(), Some("int"));
+        assert_eq!(
+            helper_binding.symbol.docstring.as_deref(),
+            Some("\"\"\"Shared helper.\"\"\"")
+        );
+
+        let local_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "local_bonus")
+            .unwrap();
+        assert_eq!(local_binding.symbol.semantic_path, "local_bonus");
+        assert_eq!(
+            local_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
+        assert_eq!(local_binding.symbol.node_kind, "assignment");
+        assert_eq!(local_binding.symbol.origin_type, "local_scope");
+        assert!(local_binding.symbol.signature.is_none());
+        assert!(local_binding.symbol.parameters.is_empty());
+        assert!(local_binding.symbol.return_type.is_none());
+        assert!(local_binding.symbol.docstring.is_none());
+    }
+
+    #[test]
+    fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    \"\"\"Imported helper.\"\"\"\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import graph_b as gb\nfrom graph_b import helper as h\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return gb.helper(value) + h(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let alias_attribute = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "gb.helper")
+            .unwrap();
+        assert_eq!(alias_attribute.symbol.semantic_path, "helper");
+        assert_eq!(
+            alias_attribute.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(alias_attribute.symbol.origin_type, "imported_module");
+        assert_eq!(
+            alias_attribute.symbol.docstring.as_deref(),
+            Some("\"\"\"Imported helper.\"\"\"")
+        );
+
+        let alias_import = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "h")
+            .unwrap();
+        assert_eq!(alias_import.symbol.semantic_path, "helper");
+        assert_eq!(
+            alias_import.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(alias_import.symbol.origin_type, "imported_module");
+    }
+
+    #[test]
+    fn resolves_python_relative_import_alias_patch_bindings_to_local_module_symbols() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let subpackage = package.join("sub");
+        let helper = package.join("graph_b.py");
+        let local_helper = subpackage.join("local_mod.py");
+        let caller = subpackage.join("caller.py");
+
+        fs::create_dir_all(&subpackage).unwrap();
+        fs::write(package.join("__init__.py"), "").unwrap();
+        fs::write(subpackage.join("__init__.py"), "").unwrap();
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    \"\"\"Parent package helper.\"\"\"\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &local_helper,
+            "def helper2(value: int) -> int:\n    \"\"\"Sibling package helper.\"\"\"\n    return value + 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from ..graph_b import helper as h\nfrom .local_mod import helper2 as h2\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return h(value) + h2(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let imported_helper = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "h")
+            .unwrap();
+        assert_eq!(imported_helper.symbol.semantic_path, "helper");
+        assert_eq!(
+            imported_helper.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(imported_helper.symbol.origin_type, "imported_module");
+        assert_eq!(
+            imported_helper.symbol.docstring.as_deref(),
+            Some("\"\"\"Parent package helper.\"\"\"")
+        );
+
+        let sibling_helper = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "h2")
+            .unwrap();
+        assert_eq!(sibling_helper.symbol.semantic_path, "helper2");
+        assert_eq!(
+            sibling_helper.symbol.file_path,
+            local_helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(sibling_helper.symbol.origin_type, "imported_module");
+        assert_eq!(
+            sibling_helper.symbol.docstring.as_deref(),
+            Some("\"\"\"Sibling package helper.\"\"\"")
+        );
+    }
+
+    #[test]
+    fn resolves_python_absolute_package_import_alias_patch_bindings_to_local_module_symbols() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let subpackage = package.join("sub");
+        let helper = package.join("graph_c.py");
+        let caller = subpackage.join("caller.py");
+
+        fs::create_dir_all(&subpackage).unwrap();
+        fs::write(package.join("__init__.py"), "").unwrap();
+        fs::write(subpackage.join("__init__.py"), "").unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    \"\"\"Absolute package worker.\"\"\"\n    return value + 3\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import pkg.graph_c as gc\nfrom pkg.graph_c import worker as w\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return gc.worker(value) + w(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let module_alias = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "gc.worker")
+            .unwrap();
+        assert_eq!(module_alias.symbol.semantic_path, "worker");
+        assert_eq!(
+            module_alias.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(module_alias.symbol.origin_type, "imported_module");
+
+        let symbol_alias = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "w")
+            .unwrap();
+        assert_eq!(symbol_alias.symbol.semantic_path, "worker");
+        assert_eq!(
+            symbol_alias.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(symbol_alias.symbol.origin_type, "imported_module");
+        assert_eq!(
+            symbol_alias.symbol.docstring.as_deref(),
+            Some("\"\"\"Absolute package worker.\"\"\"")
+        );
+    }
+
+    #[test]
+    fn resolves_python_import_from_module_alias_patch_bindings_to_local_module_symbols() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let subpackage = package.join("sub");
+        let helper = package.join("graph_c.py");
+        let local_helper = subpackage.join("local_mod.py");
+        let caller = subpackage.join("caller.py");
+
+        fs::create_dir_all(&subpackage).unwrap();
+        fs::write(package.join("__init__.py"), "").unwrap();
+        fs::write(subpackage.join("__init__.py"), "").unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    \"\"\"Absolute package worker.\"\"\"\n    return value + 3\n",
+        )
+        .unwrap();
+        fs::write(
+            &local_helper,
+            "def helper2(value: int) -> int:\n    \"\"\"Sibling module helper.\"\"\"\n    return value + 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from pkg import graph_c as gc\nfrom . import local_mod as lm\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return gc.worker(value) + lm.helper2(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let package_module_alias = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "gc.worker")
+            .unwrap();
+        assert_eq!(package_module_alias.symbol.semantic_path, "worker");
+        assert_eq!(
+            package_module_alias.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(package_module_alias.symbol.origin_type, "imported_module");
+
+        let sibling_module_alias = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "lm.helper2")
+            .unwrap();
+        assert_eq!(sibling_module_alias.symbol.semantic_path, "helper2");
+        assert_eq!(
+            sibling_module_alias.symbol.file_path,
+            local_helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(sibling_module_alias.symbol.origin_type, "imported_module");
+    }
+
+    #[test]
+    fn resolves_python_package_reexport_patch_bindings_to_underlying_local_symbols() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let helper = package.join("graph_c.py");
+        let caller = dir.join("caller.py");
+
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("__init__.py"),
+            "from .graph_c import worker as worker\n",
+        )
+        .unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    \"\"\"Re-exported package worker.\"\"\"\n    return value + 4\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from pkg import worker\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return worker(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let imported_worker = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "worker")
+            .unwrap();
+        assert_eq!(imported_worker.symbol.semantic_path, "worker");
+        assert_eq!(
+            imported_worker.symbol.file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(imported_worker.symbol.origin_type, "imported_module");
+        assert_eq!(
+            imported_worker.symbol.docstring.as_deref(),
+            Some("\"\"\"Re-exported package worker.\"\"\"")
+        );
     }
 
     #[test]
@@ -1332,11 +1831,26 @@ def top_level(value: int) -> int:
             trace_symbol_graph(workspace_root, "orchestrate", TraceDirection::Both).unwrap();
 
         assert_eq!(trace.symbol.semantic_path, "orchestrate");
+        assert_eq!(trace.symbol.scope_path, None);
+        assert_eq!(trace.symbol.parameters, vec!["value: int".to_string()]);
+        assert_eq!(trace.symbol.return_type.as_deref(), Some("int"));
         assert!(
             trace
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "helper")
+        );
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.parameters == vec!["value: int".to_string()])
+        );
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.return_type.as_deref() == Some("int"))
         );
 
         let leaf_trace =
@@ -1346,6 +1860,183 @@ def top_level(value: int) -> int:
                 .callers
                 .iter()
                 .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn traces_python_alias_import_calls_across_files() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import graph_b as gb\nfrom graph_b import helper as h\n\n\ndef orchestrate(value: int) -> int:\n    return gb.helper(value) + h(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.callees.len(), 1);
+        assert_eq!(live_trace.callees[0].semantic_path, "helper");
+        assert_eq!(
+            live_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.callees.len(), 1);
+        assert_eq!(persisted_trace.callees[0].semantic_path, "helper");
+        assert_eq!(
+            persisted_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+    }
+
+    #[test]
+    fn traces_python_absolute_package_alias_import_calls_across_files() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let subpackage = package.join("sub");
+        let helper = package.join("graph_c.py");
+        let caller = subpackage.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&subpackage).unwrap();
+        fs::write(package.join("__init__.py"), "").unwrap();
+        fs::write(subpackage.join("__init__.py"), "").unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    return value + 3\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import pkg.graph_c as gc\nfrom pkg.graph_c import worker as w\n\n\ndef orchestrate(value: int) -> int:\n    return gc.worker(value) + w(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.callees.len(), 1);
+        assert_eq!(live_trace.callees[0].semantic_path, "worker");
+        assert_eq!(
+            live_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.callees.len(), 1);
+        assert_eq!(persisted_trace.callees[0].semantic_path, "worker");
+        assert_eq!(
+            persisted_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+    }
+
+    #[test]
+    fn traces_python_import_from_module_alias_calls_across_files() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let subpackage = package.join("sub");
+        let helper = package.join("graph_c.py");
+        let local_helper = subpackage.join("local_mod.py");
+        let caller = subpackage.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&subpackage).unwrap();
+        fs::write(package.join("__init__.py"), "").unwrap();
+        fs::write(subpackage.join("__init__.py"), "").unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    return value + 3\n",
+        )
+        .unwrap();
+        fs::write(
+            &local_helper,
+            "def helper2(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from pkg import graph_c as gc\nfrom . import local_mod as lm\n\n\ndef orchestrate(value: int) -> int:\n    return gc.worker(value) + lm.helper2(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.callees.len(), 2);
+        assert!(live_trace.callees.iter().any(|symbol| {
+            symbol.semantic_path == "worker"
+                && symbol.file_path == helper.to_string_lossy().replace('\\', "/")
+        }));
+        assert!(live_trace.callees.iter().any(|symbol| {
+            symbol.semantic_path == "helper2"
+                && symbol.file_path == local_helper.to_string_lossy().replace('\\', "/")
+        }));
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.callees.len(), 2);
+        assert!(persisted_trace.callees.iter().any(|symbol| {
+            symbol.semantic_path == "worker"
+                && symbol.file_path == helper.to_string_lossy().replace('\\', "/")
+        }));
+        assert!(persisted_trace.callees.iter().any(|symbol| {
+            symbol.semantic_path == "helper2"
+                && symbol.file_path == local_helper.to_string_lossy().replace('\\', "/")
+        }));
+    }
+
+    #[test]
+    fn traces_python_package_reexport_calls_across_files() {
+        let dir = temporary_dir();
+        let package = dir.join("pkg");
+        let helper = package.join("graph_c.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("__init__.py"),
+            "from .graph_c import worker as worker\n",
+        )
+        .unwrap();
+        fs::write(
+            &helper,
+            "def worker(value: int) -> int:\n    return value + 4\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from pkg import worker\n\n\ndef orchestrate(value: int) -> int:\n    return worker(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.callees.len(), 1);
+        assert_eq!(live_trace.callees[0].semantic_path, "worker");
+        assert_eq!(
+            live_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.callees.len(), 1);
+        assert_eq!(persisted_trace.callees[0].semantic_path, "worker");
+        assert_eq!(
+            persisted_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
         );
     }
 
@@ -1367,11 +2058,82 @@ def top_level(value: int) -> int:
 
         let trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(trace.symbol.parameters, vec!["value: int".to_string()]);
+        assert_eq!(trace.symbol.return_type.as_deref(), Some("int"));
         assert!(
             trace
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "helper")
+        );
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.parameters == vec!["value: int".to_string()])
+        );
+    }
+
+    #[test]
+    fn traces_python_symbol_metadata_through_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    \"\"\"Shared helper.\"\"\"\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    \"\"\"Coordinate the helper call.\"\"\"\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(
+            live_trace.symbol.docstring.as_deref(),
+            Some("\"\"\"Coordinate the helper call.\"\"\"")
+        );
+        assert_eq!(live_trace.symbol.parameters, vec!["value: int".to_string()]);
+        assert_eq!(live_trace.symbol.return_type.as_deref(), Some("int"));
+        assert_eq!(live_trace.callees.len(), 1);
+        assert_eq!(
+            live_trace.callees[0].docstring.as_deref(),
+            Some("\"\"\"Shared helper.\"\"\"")
+        );
+        assert_eq!(
+            live_trace.callees[0].parameters,
+            vec!["value: int".to_string()]
+        );
+        assert_eq!(live_trace.callees[0].return_type.as_deref(), Some("int"));
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace.symbol.docstring.as_deref(),
+            Some("\"\"\"Coordinate the helper call.\"\"\"")
+        );
+        assert_eq!(
+            persisted_trace.symbol.parameters,
+            vec!["value: int".to_string()]
+        );
+        assert_eq!(persisted_trace.symbol.return_type.as_deref(), Some("int"));
+        assert_eq!(persisted_trace.callees.len(), 1);
+        assert_eq!(
+            persisted_trace.callees[0].docstring.as_deref(),
+            Some("\"\"\"Shared helper.\"\"\"")
+        );
+        assert_eq!(
+            persisted_trace.callees[0].parameters,
+            vec!["value: int".to_string()]
+        );
+        assert_eq!(
+            persisted_trace.callees[0].return_type.as_deref(),
+            Some("int")
         );
     }
 

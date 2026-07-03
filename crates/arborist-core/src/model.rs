@@ -24,6 +24,37 @@ pub struct SemanticSkeleton {
     pub file: String,
     pub skeleton: String,
     pub available_paths: Vec<String>,
+    pub available_symbols: Vec<SemanticSkeletonSymbol>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SemanticSkeletonSymbol {
+    pub symbol_id: String,
+    pub semantic_path: String,
+    pub scope_path: Option<String>,
+    pub node_kind: String,
+    pub byte_range: (usize, usize),
+    pub signature: Option<String>,
+    pub parameters: Vec<String>,
+    pub return_type: Option<String>,
+    pub docstring: Option<String>,
+}
+
+impl Default for SemanticSkeletonSymbol {
+    fn default() -> Self {
+        Self {
+            symbol_id: String::new(),
+            semantic_path: String::new(),
+            scope_path: None,
+            node_kind: String::new(),
+            byte_range: (0, 0),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -145,38 +176,71 @@ pub enum TraceDirection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct SymbolMeta {
     pub symbol_id: String,
     pub semantic_path: String,
+    pub scope_path: Option<String>,
     pub file_path: String,
     pub node_kind: String,
     pub byte_range: (usize, usize),
     pub signature: Option<String>,
+    pub parameters: Vec<String>,
+    pub return_type: Option<String>,
+    pub docstring: Option<String>,
     pub dependencies: Vec<String>,
     pub references: Vec<String>,
 }
 
+impl Default for SymbolMeta {
+    fn default() -> Self {
+        Self {
+            symbol_id: String::new(),
+            semantic_path: String::new(),
+            scope_path: None,
+            file_path: String::new(),
+            node_kind: String::new(),
+            byte_range: (0, 0),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct SymbolSummary {
     pub symbol_id: String,
     pub semantic_path: String,
+    pub scope_path: Option<String>,
     pub file_path: String,
     pub node_kind: String,
     pub origin_type: String,
     pub evidence_key: String,
     pub byte_range: (usize, usize),
     pub signature: Option<String>,
+    pub parameters: Vec<String>,
+    pub return_type: Option<String>,
+    pub docstring: Option<String>,
 }
 
 impl SymbolSummary {
     pub fn new(
         symbol_id: String,
         semantic_path: String,
+        scope_path: Option<String>,
         file_path: String,
         node_kind: String,
         origin_type: String,
         byte_range: (usize, usize),
         signature: Option<String>,
+        parameters: Vec<String>,
+        return_type: Option<String>,
+        docstring: Option<String>,
     ) -> Self {
         let evidence_key = symbol_evidence_key(
             &symbol_id,
@@ -190,12 +254,35 @@ impl SymbolSummary {
         Self {
             symbol_id,
             semantic_path,
+            scope_path,
             file_path,
             node_kind,
             origin_type,
             evidence_key,
             byte_range,
             signature,
+            parameters,
+            return_type,
+            docstring,
+        }
+    }
+}
+
+impl Default for SymbolSummary {
+    fn default() -> Self {
+        Self {
+            symbol_id: String::new(),
+            semantic_path: String::new(),
+            scope_path: None,
+            file_path: String::new(),
+            node_kind: String::new(),
+            origin_type: String::new(),
+            evidence_key: String::new(),
+            byte_range: (0, 0),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
         }
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::ops::Range;
 use std::path::Path;
@@ -17,7 +17,9 @@ use crate::model::{
     ValidationBinding, ValidationBindingDecision, ValidationIssue,
 };
 use crate::semantic::{
-    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node, semantic_path,
+    ascend_to_symbol, c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node,
+    find_semantic_node, python_docstring, python_header, python_parameters, python_return_type,
+    semantic_parent_path, semantic_path,
 };
 
 #[derive(Default)]
@@ -33,6 +35,32 @@ struct CAccessibleSymbol {
     name: String,
     summary: SymbolSummary,
     rank: usize,
+}
+
+#[derive(Debug, Clone)]
+struct PythonAccessibleSymbol {
+    name: String,
+    summary: SymbolSummary,
+    rank: usize,
+}
+
+#[derive(Debug, Clone)]
+enum PythonImportBinding {
+    Module {
+        module_name: String,
+    },
+    Symbol {
+        module_name: Option<String>,
+        symbol_name: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct PythonReferenceTarget<'tree> {
+    name: String,
+    node: Node<'tree>,
+    imported_symbol: Option<(String, String)>,
+    import_fallback_name: Option<String>,
 }
 
 pub fn patch_ast_node_from_path(
@@ -421,41 +449,76 @@ fn collect_reference_validation(
     symbol_node: Node<'_>,
 ) -> Result<ReferenceValidation> {
     match document.language_id {
-        LanguageId::Python => collect_python_reference_validation(document, source, symbol_node),
+        LanguageId::Python => {
+            collect_python_reference_validation(path, document, source, symbol_node)
+        }
         LanguageId::C => collect_c_reference_validation(path, document, source, symbol_node),
     }
 }
 
 fn collect_python_reference_validation(
-    document: &ParsedDocument,
+    path: &Path,
+    _document: &ParsedDocument,
     source: &str,
     symbol_node: Node<'_>,
 ) -> Result<ReferenceValidation> {
-    let mut accessible = BTreeSet::new();
-    collect_python_module_names(document.tree.root_node(), source, &mut accessible)?;
+    let bindings = collect_visible_python_import_bindings(path, symbol_node, source)?;
+    let reference_targets = collect_python_reference_targets(symbol_node, source, &bindings)?;
+    let normalized_path = normalize_path(path);
+    let mut validation = ReferenceValidation::default();
 
-    let mut current = Some(symbol_node);
-    while let Some(node) = current {
-        collect_python_definitions(node, source, &mut accessible)?;
-        current = node.parent();
+    for reference_target in reference_targets {
+        let name = reference_target.name.clone();
+        if PYTHON_BUILTINS.contains(&name.as_str()) {
+            continue;
+        }
+
+        let candidates = python_binding_candidates_for_reference(
+            path,
+            source,
+            &normalized_path,
+            &reference_target,
+        )?;
+        match candidates.as_slice() {
+            [] => {
+                validation
+                    .binding_decisions
+                    .push(unresolved_binding_decision(&name));
+                validation.unresolved_identifiers.push(name);
+            }
+            [single] => {
+                validation
+                    .binding_decisions
+                    .push(resolved_binding_decision(&name, &single.summary));
+                validation.resolved_identifiers.push(ValidationBinding {
+                    name,
+                    symbol: single.summary.clone(),
+                });
+            }
+            _ => {
+                let candidate_summaries = candidates
+                    .into_iter()
+                    .map(|candidate| candidate.summary)
+                    .collect::<Vec<_>>();
+                let reason = "multiple equally-ranked visible Python bindings".to_string();
+                validation
+                    .binding_decisions
+                    .push(ambiguous_binding_decision(
+                        &name,
+                        &reason,
+                        &candidate_summaries,
+                    ));
+                validation.ambiguous_identifiers.push(ValidationAmbiguity {
+                    name,
+                    reason,
+                    disambiguation_context: DisambiguationContext::default(),
+                    candidates: candidate_summaries,
+                });
+            }
+        }
     }
 
-    let mut references = BTreeSet::new();
-    collect_python_references(symbol_node, source, &mut references)?;
-
-    let unresolved_identifiers = references
-        .into_iter()
-        .filter(|name| !accessible.contains(name) && !PYTHON_BUILTINS.contains(&name.as_str()))
-        .collect::<Vec<_>>();
-
-    Ok(ReferenceValidation {
-        binding_decisions: unresolved_identifiers
-            .iter()
-            .map(|name| unresolved_binding_decision(name))
-            .collect(),
-        unresolved_identifiers,
-        ..ReferenceValidation::default()
-    })
+    Ok(validation)
 }
 
 fn collect_c_reference_validation(
@@ -691,137 +754,953 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
-fn collect_python_module_names(
-    root: Node<'_>,
+fn collect_python_reference_targets<'tree>(
+    symbol_node: Node<'tree>,
     source: &str,
-    names: &mut BTreeSet<String>,
+    bindings: &BTreeMap<String, PythonImportBinding>,
+) -> Result<Vec<PythonReferenceTarget<'tree>>> {
+    let mut references = Vec::new();
+    let mut seen_names = BTreeSet::new();
+    collect_python_reference_targets_inner(
+        symbol_node,
+        source,
+        bindings,
+        &mut seen_names,
+        &mut references,
+    )?;
+    Ok(references)
+}
+
+fn collect_python_reference_targets_inner<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    bindings: &BTreeMap<String, PythonImportBinding>,
+    seen_names: &mut BTreeSet<String>,
+    references: &mut Vec<PythonReferenceTarget<'tree>>,
 ) -> Result<()> {
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
-        collect_python_module_child_names(child, source, names)?;
+    if node.kind() == "attribute" {
+        if let (Some(object_node), Some(attribute_node)) = (
+            node.child_by_field_name("object"),
+            node.child_by_field_name("attribute"),
+        ) {
+            if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
+                let object_name = node_text(object_node, source)?.trim().to_string();
+                let attribute_name = node_text(attribute_node, source)?.trim().to_string();
+                if let Some(PythonImportBinding::Module { module_name }) =
+                    bindings.get(&object_name)
+                {
+                    let display_name = format!("{object_name}.{attribute_name}");
+                    if seen_names.insert(display_name.clone()) {
+                        references.push(PythonReferenceTarget {
+                            name: display_name,
+                            node: node,
+                            imported_symbol: Some((module_name.clone(), attribute_name)),
+                            import_fallback_name: Some(object_name),
+                        });
+                    }
+                    return Ok(());
+                }
+            }
+
+            collect_python_reference_targets_inner(
+                object_node,
+                source,
+                bindings,
+                seen_names,
+                references,
+            )?;
+            return Ok(());
+        }
     }
+
+    if node.kind() == "identifier" && should_count_python_reference(node) {
+        let name = node_text(node, source)?.trim().to_string();
+        let imported_symbol = match bindings.get(&name) {
+            Some(PythonImportBinding::Symbol {
+                module_name: Some(module_name),
+                symbol_name,
+            }) => Some((module_name.clone(), symbol_name.clone())),
+            _ => None,
+        };
+        if seen_names.insert(name.clone()) {
+            references.push(PythonReferenceTarget {
+                name,
+                node,
+                imported_symbol,
+                import_fallback_name: None,
+            });
+        }
+        return Ok(());
+    }
+
+    let child_count = node.child_count();
+    for index in 0..child_count {
+        if let Some(child) = node.child(index) {
+            collect_python_reference_targets_inner(
+                child, source, bindings, seen_names, references,
+            )?;
+        }
+    }
+
     Ok(())
 }
 
-fn collect_python_module_child_names(
-    node: Node<'_>,
+fn python_binding_candidates_for_reference(
+    path: &Path,
     source: &str,
-    names: &mut BTreeSet<String>,
-) -> Result<()> {
-    match node.kind() {
-        "function_definition" | "class_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                names.insert(node_text(name_node, source)?.trim().to_string());
-            }
+    normalized_path: &str,
+    reference_target: &PythonReferenceTarget<'_>,
+) -> Result<Vec<PythonAccessibleSymbol>> {
+    if let Some((module_name, symbol_name)) = &reference_target.imported_symbol {
+        if let Some(summary) = resolve_local_python_imported_symbol(path, module_name, symbol_name)?
+        {
+            return Ok(vec![PythonAccessibleSymbol {
+                name: reference_target.name.clone(),
+                summary,
+                rank: 4_000_000,
+            }]);
         }
-        "assignment" | "augmented_assignment" => {
-            if let Some(left) = node.child_by_field_name("left") {
-                collect_python_target_names(left, source, names)?;
-            }
-        }
-        "import_statement" | "import_from_statement" => {
-            collect_python_import_names(node, source, names)?;
-        }
-        _ => {}
     }
-    Ok(())
-}
 
-fn collect_python_definitions(
-    node: Node<'_>,
-    source: &str,
-    names: &mut BTreeSet<String>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        let _ = collect_python_definition_node(candidate, source, names);
+    if let Some(fallback_name) = &reference_target.import_fallback_name {
+        let fallback = PythonReferenceTarget {
+            name: fallback_name.clone(),
+            node: reference_target.node,
+            imported_symbol: None,
+            import_fallback_name: None,
+        };
+        let fallback_candidates =
+            python_binding_candidates_for_reference(path, source, normalized_path, &fallback)?;
+        if !fallback_candidates.is_empty() {
+            return Ok(fallback_candidates);
+        }
+    }
+
+    let name = if let Some((_, symbol_name)) = &reference_target.imported_symbol {
+        symbol_name.clone()
+    } else {
+        reference_target.name.clone()
     };
-    visit_tree(node, &mut callback);
+    let mut candidates = Vec::new();
+    let mut seen_function_scope = false;
+    let mut scope_rank = 3_000_000usize;
+    let mut current = Some(reference_target.node);
+
+    while let Some(node) = current {
+        let include_scope = match node.kind() {
+            "function_definition" => {
+                seen_function_scope = true;
+                true
+            }
+            "class_definition" => !seen_function_scope,
+            "module" => true,
+            _ => false,
+        };
+
+        if include_scope {
+            collect_python_scope_symbols(
+                node,
+                source,
+                normalized_path,
+                scope_rank,
+                &mut candidates,
+            )?;
+            scope_rank = scope_rank.saturating_sub(1_000_000);
+        }
+
+        current = node.parent();
+    }
+
+    candidates.retain(|candidate| candidate.name == name);
+    candidates.sort_by(|left, right| {
+        right
+            .rank
+            .cmp(&left.rank)
+            .then_with(|| left.summary.symbol_id.cmp(&right.summary.symbol_id))
+    });
+
+    let Some(best_rank) = candidates.first().map(|candidate| candidate.rank) else {
+        return Ok(Vec::new());
+    };
+
+    Ok(candidates
+        .into_iter()
+        .filter(|candidate| candidate.rank == best_rank)
+        .collect())
+}
+
+fn collect_python_scope_symbols(
+    scope_node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let scope_path = if scope_node.kind() == "module" {
+        None
+    } else {
+        Some(semantic_path(scope_node, source)?)
+    };
+    let origin_type = if scope_node.kind() == "module" {
+        "module_scope"
+    } else {
+        "local_scope"
+    };
+
+    if scope_node.kind() == "function_definition" {
+        collect_python_parameter_symbols(
+            scope_node,
+            source,
+            normalized_path,
+            scope_path.as_deref(),
+            origin_type,
+            scope_rank + 500_000,
+            symbols,
+        )?;
+    }
+
+    let body_node = if scope_node.kind() == "module" {
+        scope_node
+    } else if let Some(body) = scope_node.child_by_field_name("body") {
+        body
+    } else {
+        return Ok(());
+    };
+
+    let mut cursor = body_node.walk();
+    for child in body_node.named_children(&mut cursor) {
+        collect_python_statement_symbols(
+            child,
+            source,
+            normalized_path,
+            scope_path.as_deref(),
+            origin_type,
+            scope_rank,
+            symbols,
+        )?;
+    }
+
     Ok(())
 }
 
-fn collect_python_definition_node(
-    node: Node<'_>,
+fn collect_python_statement_symbols(
+    statement_node: Node<'_>,
     source: &str,
-    names: &mut BTreeSet<String>,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    scope_rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
 ) -> Result<()> {
-    match node.kind() {
+    match statement_node.kind() {
         "function_definition" | "class_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                names.insert(node_text(name_node, source)?.trim().to_string());
+            if let Some(summary) =
+                python_symbol_summary(statement_node, source, normalized_path, origin_type)?
+            {
+                symbols.push(PythonAccessibleSymbol {
+                    name: summary
+                        .semantic_path
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(&summary.semantic_path)
+                        .to_string(),
+                    summary,
+                    rank: scope_rank + 400_000 + statement_node.start_byte(),
+                });
             }
         }
         "assignment" | "augmented_assignment" => {
-            if let Some(left) = node.child_by_field_name("left") {
-                collect_python_target_names(left, source, names)?;
+            if let Some(left) = statement_node.child_by_field_name("left") {
+                collect_python_target_symbols(
+                    left,
+                    source,
+                    normalized_path,
+                    scope_path,
+                    origin_type,
+                    "assignment",
+                    scope_rank + 300_000 + statement_node.start_byte(),
+                    symbols,
+                )?;
             }
         }
         "for_statement" => {
-            if let Some(left) = node.child_by_field_name("left") {
-                collect_python_target_names(left, source, names)?;
+            if let Some(left) = statement_node.child_by_field_name("left") {
+                collect_python_target_symbols(
+                    left,
+                    source,
+                    normalized_path,
+                    scope_path,
+                    origin_type,
+                    "for_target",
+                    scope_rank + 300_000 + statement_node.start_byte(),
+                    symbols,
+                )?;
             }
         }
         "import_statement" | "import_from_statement" => {
-            collect_python_import_names(node, source, names)?;
+            collect_python_import_symbols(
+                statement_node,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                scope_rank + 300_000 + statement_node.start_byte(),
+                symbols,
+            )?;
         }
-        parameter_kind if PYTHON_PARAMETER_KINDS.contains(&parameter_kind) => {
-            if node.kind() == "identifier" {
-                names.insert(node_text(node, source)?.trim().to_string());
+        "expression_statement" => {
+            let mut cursor = statement_node.walk();
+            for child in statement_node.named_children(&mut cursor) {
+                collect_python_statement_symbols(
+                    child,
+                    source,
+                    normalized_path,
+                    scope_path,
+                    origin_type,
+                    scope_rank,
+                    symbols,
+                )?;
             }
-        }
-        "identifier" if is_python_parameter_name(node) => {
-            names.insert(node_text(node, source)?.trim().to_string());
         }
         _ => {}
     }
+
     Ok(())
 }
 
-fn collect_python_target_names(
+fn python_symbol_summary(
     node: Node<'_>,
     source: &str,
-    names: &mut BTreeSet<String>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() == "identifier" {
-            let _ = node_text(candidate, source).map(|text| names.insert(text.trim().to_string()));
-        }
+    normalized_path: &str,
+    origin_type: &str,
+) -> Result<Option<SymbolSummary>> {
+    if !matches!(node.kind(), "function_definition" | "class_definition") {
+        return Ok(None);
+    }
+
+    let semantic_path = semantic_path(node, source)?;
+    let scope_path = semantic_parent_path(&semantic_path);
+    let signature = Some(python_header(node, source)?);
+    let parameters = python_parameters(node, source)?;
+    let return_type = python_return_type(node, source)?;
+    let docstring = python_docstring(node, source)?;
+
+    Ok(Some(SymbolSummary::new(
+        semantic_path.clone(),
+        semantic_path,
+        scope_path,
+        normalized_path.to_string(),
+        node.kind().to_string(),
+        origin_type.to_string(),
+        (node.start_byte(), node.end_byte()),
+        signature,
+        parameters,
+        return_type,
+        docstring,
+    )))
+}
+
+pub(crate) fn resolve_local_python_imported_symbol(
+    current_path: &Path,
+    module_name: &str,
+    symbol_name: &str,
+) -> Result<Option<SymbolSummary>> {
+    let mut visited = BTreeSet::new();
+    resolve_local_python_imported_symbol_inner(current_path, module_name, symbol_name, &mut visited)
+}
+
+fn resolve_local_python_imported_symbol_inner(
+    current_path: &Path,
+    module_name: &str,
+    symbol_name: &str,
+    visited: &mut BTreeSet<String>,
+) -> Result<Option<SymbolSummary>> {
+    let Some(module_path) = resolve_local_python_module_path(current_path, module_name) else {
+        return Ok(None);
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+
+    let visit_key = format!("{}::{symbol_name}", normalize_path(&module_path));
+    if !visited.insert(visit_key) {
+        return Ok(None);
+    }
+
+    let module_source = read_source(&module_path)?;
+    let document = parse_document(&module_path, &module_source)?;
+    if document.language_id != LanguageId::Python {
+        return Ok(None);
+    }
+
+    let normalized_module_path = normalize_path(&module_path);
+    let root = document.tree.root_node();
+    let mut cursor = root.walk();
+    let children = root.named_children(&mut cursor).collect::<Vec<_>>();
+
+    for child in &children {
+        if !matches!(child.kind(), "function_definition" | "class_definition") {
+            continue;
+        }
+
+        let Some(summary) = python_symbol_summary(
+            *child,
+            &module_source,
+            &normalized_module_path,
+            "imported_module",
+        )?
+        else {
+            continue;
+        };
+
+        if summary.semantic_path == symbol_name {
+            return Ok(Some(summary));
+        }
+    }
+
+    for child in children {
+        let Some(binding) =
+            python_reexport_binding_for_name(&module_path, child, &module_source, symbol_name)?
+        else {
+            continue;
+        };
+
+        let PythonImportBinding::Symbol {
+            module_name: Some(reexport_module),
+            symbol_name: reexported_symbol,
+        } = binding
+        else {
+            continue;
+        };
+
+        if let Some(summary) = resolve_local_python_imported_symbol_inner(
+            &module_path,
+            &reexport_module,
+            &reexported_symbol,
+            visited,
+        )? {
+            return Ok(Some(summary));
+        }
+    }
+
+    Ok(None)
 }
 
-fn collect_python_import_names(
-    node: Node<'_>,
+fn python_reexport_binding_for_name(
+    current_path: &Path,
+    statement_node: Node<'_>,
     source: &str,
-    names: &mut BTreeSet<String>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() == "identifier" {
-            let parent = candidate.parent();
-            if parent.is_some_and(|p| p.kind() == "dotted_name") {
-                return;
+    symbol_name: &str,
+) -> Result<Option<PythonImportBinding>> {
+    if statement_node.kind() != "import_from_statement" {
+        return Ok(None);
+    }
+
+    let mut cursor = statement_node.walk();
+    let named_children = statement_node
+        .named_children(&mut cursor)
+        .collect::<Vec<_>>();
+    let Some(module_node) = named_children.first() else {
+        return Ok(None);
+    };
+    let module_name = node_text(*module_node, source)?.trim().to_string();
+
+    for child in named_children.into_iter().skip(1) {
+        match child.kind() {
+            "aliased_import" => {
+                let mut alias_cursor = child.walk();
+                let alias_children = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
+                if alias_children.len() < 2 {
+                    continue;
+                }
+
+                let imported_name = node_text(alias_children[0], source)?.trim().to_string();
+                let alias_name = node_text(*alias_children.last().unwrap(), source)?
+                    .trim()
+                    .to_string();
+                if alias_name == symbol_name {
+                    return Ok(Some(python_import_from_binding(
+                        current_path,
+                        &module_name,
+                        &imported_name,
+                    )));
+                }
             }
-            let _ = node_text(candidate, source).map(|text| names.insert(text.trim().to_string()));
+            "dotted_name" | "identifier" => {
+                let imported_name = node_text(child, source)?.trim().to_string();
+                let binding_name = python_imported_symbol_name(&imported_name);
+                if binding_name == symbol_name {
+                    return Ok(Some(python_import_from_binding(
+                        current_path,
+                        &module_name,
+                        &imported_name,
+                    )));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(None)
+}
+
+pub(crate) fn resolve_local_python_module_path(
+    current_path: &Path,
+    module_name: &str,
+) -> Option<std::path::PathBuf> {
+    let parent = current_path.parent()?;
+    let (relative_levels, module_parts) = split_python_module_reference(module_name);
+    if relative_levels > 0 {
+        let mut candidate = parent.to_path_buf();
+        for _ in 0..relative_levels.saturating_sub(1) {
+            candidate = candidate.parent()?.to_path_buf();
+        }
+        return resolve_python_module_candidate(candidate, &module_parts);
+    }
+
+    let mut search_root = Some(parent);
+    while let Some(root) = search_root {
+        if let Some(candidate) = resolve_python_module_candidate(root.to_path_buf(), &module_parts)
+        {
+            return Some(candidate);
+        }
+        search_root = root.parent();
+    }
+
+    None
+}
+
+fn split_python_module_reference(module_name: &str) -> (usize, Vec<&str>) {
+    let relative_levels = module_name.chars().take_while(|ch| *ch == '.').count();
+    let trimmed = module_name.trim_start_matches('.');
+    let parts = if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        trimmed
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+    };
+    (relative_levels, parts)
+}
+
+fn resolve_python_module_candidate(
+    mut base_dir: std::path::PathBuf,
+    module_parts: &[&str],
+) -> Option<std::path::PathBuf> {
+    for part in module_parts {
+        base_dir.push(part);
+    }
+
+    let file_candidate = base_dir.with_extension("py");
+    if file_candidate.exists() {
+        return Some(file_candidate);
+    }
+
+    let package_candidate = base_dir.join("__init__.py");
+    package_candidate.exists().then_some(package_candidate)
+}
+
+fn collect_python_parameter_symbols(
+    function_node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let Some(parameters_node) = function_node.child_by_field_name("parameters") else {
+        return Ok(());
+    };
+
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "identifier" || !is_python_parameter_name(candidate) {
+            return;
+        }
+
+        if let Ok(name) = node_text(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.trim().to_string(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    name.trim(),
+                    "parameter",
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
+        }
+    };
+    visit_tree(parameters_node, &mut callback);
+    Ok(())
+}
+
+fn collect_python_target_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    node_kind: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "identifier" {
+            return;
+        }
+
+        if let Ok(name) = node_text(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.trim().to_string(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    name.trim(),
+                    node_kind,
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
         }
     };
     visit_tree(node, &mut callback);
     Ok(())
+}
+
+fn collect_python_import_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "identifier" {
+            return;
+        }
+        if candidate
+            .parent()
+            .is_some_and(|parent| parent.kind() == "dotted_name")
+        {
+            return;
+        }
+
+        if let Ok(name) = node_text(candidate, source) {
+            symbols.push(PythonAccessibleSymbol {
+                name: name.trim().to_string(),
+                summary: python_synthetic_symbol_summary(
+                    normalized_path,
+                    scope_path,
+                    name.trim(),
+                    "import",
+                    origin_type,
+                    (candidate.start_byte(), candidate.end_byte()),
+                ),
+                rank: rank + candidate.start_byte(),
+            });
+        }
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
+fn python_synthetic_symbol_summary(
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    name: &str,
+    node_kind: &str,
+    origin_type: &str,
+    byte_range: (usize, usize),
+) -> SymbolSummary {
+    let scope_fragment = scope_path.unwrap_or("<module>");
+    SymbolSummary::new(
+        format!("{normalized_path}::python::{scope_fragment}::{node_kind}::{name}"),
+        name.to_string(),
+        scope_path.map(str::to_string),
+        normalized_path.to_string(),
+        node_kind.to_string(),
+        origin_type.to_string(),
+        byte_range,
+        None,
+        Vec::new(),
+        None,
+        None,
+    )
 }
 
 pub(crate) fn collect_python_references(
+    current_path: &Path,
     node: Node<'_>,
     source: &str,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "identifier" || !should_count_python_reference(candidate) {
-            return;
-        }
+    let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
+    collect_python_reference_entries(node, source, &bindings, references)
+}
 
-        let _ = node_text(candidate, source).map(|text| references.insert(text.trim().to_string()));
-    };
-    visit_tree(node, &mut callback);
+fn collect_python_reference_entries(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, PythonImportBinding>,
+    references: &mut BTreeSet<String>,
+) -> Result<()> {
+    if node.kind() == "attribute" {
+        if let (Some(object_node), Some(attribute_node)) = (
+            node.child_by_field_name("object"),
+            node.child_by_field_name("attribute"),
+        ) {
+            if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
+                let object_name = node_text(object_node, source)?.trim().to_string();
+                let attribute_name = node_text(attribute_node, source)?.trim().to_string();
+                if let Some(PythonImportBinding::Module { module_name }) =
+                    bindings.get(&object_name)
+                {
+                    references.insert(format!("{module_name}.{attribute_name}"));
+                    return Ok(());
+                }
+            }
+
+            collect_python_reference_entries(object_node, source, bindings, references)?;
+            return Ok(());
+        }
+    }
+
+    if node.kind() == "identifier" && should_count_python_reference(node) {
+        let name = node_text(node, source)?.trim().to_string();
+        if let Some(binding) = bindings.get(&name) {
+            match binding {
+                PythonImportBinding::Module { .. } => {
+                    references.insert(name);
+                }
+                PythonImportBinding::Symbol {
+                    module_name,
+                    symbol_name,
+                } => {
+                    if let Some(module_name) = module_name {
+                        references.insert(format!("{module_name}.{symbol_name}"));
+                    } else {
+                        references.insert(symbol_name.clone());
+                    }
+                }
+            }
+        } else {
+            references.insert(name);
+        }
+        return Ok(());
+    }
+
+    let child_count = node.child_count();
+    for index in 0..child_count {
+        if let Some(child) = node.child(index) {
+            collect_python_reference_entries(child, source, bindings, references)?;
+        }
+    }
+
     Ok(())
+}
+
+fn collect_visible_python_import_bindings(
+    current_path: &Path,
+    node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, PythonImportBinding>> {
+    let mut scopes = Vec::new();
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            "module" | "function_definition" | "class_definition"
+        ) {
+            scopes.push(candidate);
+        }
+        current = candidate.parent();
+    }
+    scopes.reverse();
+
+    let mut bindings = BTreeMap::new();
+    for scope in scopes {
+        collect_python_scope_import_bindings(current_path, scope, source, &mut bindings)?;
+    }
+
+    Ok(bindings)
+}
+
+fn collect_python_scope_import_bindings(
+    current_path: &Path,
+    scope_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, PythonImportBinding>,
+) -> Result<()> {
+    let body_node = if scope_node.kind() == "module" {
+        scope_node
+    } else if let Some(body) = scope_node.child_by_field_name("body") {
+        body
+    } else {
+        return Ok(());
+    };
+
+    let mut cursor = body_node.walk();
+    for child in body_node.named_children(&mut cursor) {
+        collect_python_import_bindings_from_statement(current_path, child, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn collect_python_import_bindings_from_statement(
+    current_path: &Path,
+    statement_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, PythonImportBinding>,
+) -> Result<()> {
+    match statement_node.kind() {
+        "import_statement" => {
+            collect_python_import_statement_bindings(statement_node, source, bindings)
+        }
+        "import_from_statement" => collect_python_import_from_statement_bindings(
+            current_path,
+            statement_node,
+            source,
+            bindings,
+        ),
+        "expression_statement" => {
+            let mut cursor = statement_node.walk();
+            for child in statement_node.named_children(&mut cursor) {
+                collect_python_import_bindings_from_statement(
+                    current_path,
+                    child,
+                    source,
+                    bindings,
+                )?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn collect_python_import_statement_bindings(
+    statement_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, PythonImportBinding>,
+) -> Result<()> {
+    let mut cursor = statement_node.walk();
+    for child in statement_node.named_children(&mut cursor) {
+        match child.kind() {
+            "aliased_import" => {
+                let mut alias_cursor = child.walk();
+                let named_children = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
+                if named_children.len() >= 2 {
+                    let module_name = node_text(named_children[0], source)?.trim().to_string();
+                    let alias_name = node_text(*named_children.last().unwrap(), source)?
+                        .trim()
+                        .to_string();
+                    bindings.insert(alias_name, PythonImportBinding::Module { module_name });
+                }
+            }
+            "dotted_name" | "identifier" => {
+                let module_name = node_text(child, source)?.trim().to_string();
+                let binding_name = python_import_statement_binding_name(&module_name);
+                bindings.insert(binding_name, PythonImportBinding::Module { module_name });
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_python_import_from_statement_bindings(
+    current_path: &Path,
+    statement_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, PythonImportBinding>,
+) -> Result<()> {
+    let mut cursor = statement_node.walk();
+    let named_children = statement_node
+        .named_children(&mut cursor)
+        .collect::<Vec<_>>();
+    let Some(module_node) = named_children.first() else {
+        return Ok(());
+    };
+    let module_name = node_text(*module_node, source)?.trim().to_string();
+
+    for child in named_children.into_iter().skip(1) {
+        match child.kind() {
+            "aliased_import" => {
+                let mut alias_cursor = child.walk();
+                let alias_children = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
+                if alias_children.len() >= 2 {
+                    let imported_name = node_text(alias_children[0], source)?.trim().to_string();
+                    let alias_name = node_text(*alias_children.last().unwrap(), source)?
+                        .trim()
+                        .to_string();
+                    bindings.insert(
+                        alias_name,
+                        python_import_from_binding(current_path, &module_name, &imported_name),
+                    );
+                }
+            }
+            "dotted_name" | "identifier" => {
+                let imported_name = node_text(child, source)?.trim().to_string();
+                let binding_name = python_imported_symbol_name(&imported_name);
+                bindings.insert(
+                    binding_name.clone(),
+                    python_import_from_binding(current_path, &module_name, &imported_name),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn python_import_from_binding(
+    current_path: &Path,
+    module_name: &str,
+    imported_name: &str,
+) -> PythonImportBinding {
+    let imported_symbol_name = python_imported_symbol_name(imported_name);
+    let module_candidate = join_python_module_reference(module_name, imported_name);
+    if resolve_local_python_module_path(current_path, &module_candidate).is_some() {
+        PythonImportBinding::Module {
+            module_name: module_candidate,
+        }
+    } else {
+        PythonImportBinding::Symbol {
+            module_name: Some(module_name.to_string()),
+            symbol_name: imported_symbol_name,
+        }
+    }
+}
+
+fn python_import_statement_binding_name(module_name: &str) -> String {
+    module_name
+        .split('.')
+        .next()
+        .unwrap_or(module_name)
+        .to_string()
+}
+
+fn python_imported_symbol_name(imported_name: &str) -> String {
+    imported_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(imported_name)
+        .to_string()
+}
+
+fn join_python_module_reference(module_name: &str, imported_name: &str) -> String {
+    if module_name.is_empty() {
+        imported_name.to_string()
+    } else if module_name.ends_with('.') {
+        format!("{module_name}{imported_name}")
+    } else {
+        format!("{module_name}.{imported_name}")
+    }
 }
 
 fn should_count_python_reference(node: Node<'_>) -> bool {
@@ -1067,17 +1946,22 @@ fn collect_c_symbol_candidates_from_root(
         let Some(symbol_id) = c_symbol_id_for_node(path, child, source)? else {
             continue;
         };
+        let scope_path = semantic_parent_path(&semantic_path);
 
         symbols.push(CAccessibleSymbol {
             name,
             summary: SymbolSummary::new(
                 symbol_id,
                 semantic_path,
+                scope_path,
                 normalized_path.clone(),
                 child.kind().to_string(),
                 origin_type.to_string(),
                 (child.start_byte(), child.end_byte()),
                 c_candidate_signature(child, source)?,
+                c_parameters(child, source)?,
+                c_return_type(child, source)?,
+                None,
             ),
             rank: base_rank + c_candidate_node_rank(child.kind()),
         });
