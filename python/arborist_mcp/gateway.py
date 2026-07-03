@@ -1,0 +1,390 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+from ._arborist_core import ArboristCore
+
+
+class ArboristGateway:
+    def __init__(self) -> None:
+        self._core = ArboristCore()
+
+    def handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        method = request.get("method")
+        request_id = request.get("id")
+        params = request.get("params", {})
+
+        try:
+            if method == "initialize":
+                result = {
+                    "serverInfo": {
+                        "name": "arborist-mcp",
+                        "version": "0.1.0",
+                    },
+                    "capabilities": {
+                        "tools": [
+                            "arborist/get_semantic_skeleton",
+                            "arborist/patch_ast_node",
+                            "arborist/patch_virtual_ast_node",
+                        "arborist/register_symbol_index",
+                        "arborist/refresh_symbol_index_for_file",
+                        "arborist/unregister_symbol_index",
+                        "arborist/list_symbol_indexes",
+                        "arborist/did_open",
+                        "arborist/did_change",
+                        "arborist/did_close",
+                        "arborist/list_virtual_files",
+                        "arborist/read_virtual_file",
+                        "arborist/apply_buffer_edit",
+                        "arborist/commit_virtual_file",
+                            "arborist/discard_virtual_file",
+                            "arborist/rebuild_symbol_index",
+                            "arborist/trace_symbol_graph",
+                            "arborist/replay_patch_evidence_against_trace",
+                            "arborist/validate_patch_commit_with_trace",
+                            "arborist/validate_patch_with_trace_context",
+                            "arborist/execute_tree_query",
+                        ]
+                    },
+                    "supportedLanguages": self._core.supported_languages(),
+                }
+            elif method == "arborist/get_semantic_skeleton":
+                result = self._get_semantic_skeleton(params)
+            elif method == "arborist/patch_ast_node":
+                result = self._patch_ast_node(params)
+            elif method == "arborist/patch_virtual_ast_node":
+                result = self._patch_virtual_ast_node(params)
+            elif method == "arborist/register_symbol_index":
+                result = self._register_symbol_index(params)
+            elif method == "arborist/refresh_symbol_index_for_file":
+                result = self._refresh_symbol_index_for_file(params)
+            elif method == "arborist/unregister_symbol_index":
+                result = self._unregister_symbol_index(params)
+            elif method == "arborist/list_symbol_indexes":
+                result = self._list_symbol_indexes()
+            elif method == "arborist/did_open":
+                result = self._did_open(params)
+            elif method == "arborist/did_change":
+                result = self._did_change(params)
+            elif method == "arborist/did_close":
+                result = self._did_close(params)
+            elif method == "arborist/list_virtual_files":
+                result = self._list_virtual_files(params)
+            elif method == "arborist/read_virtual_file":
+                result = self._read_virtual_file(params)
+            elif method == "arborist/apply_buffer_edit":
+                result = self._apply_buffer_edit(params)
+            elif method == "arborist/commit_virtual_file":
+                result = self._commit_virtual_file(params)
+            elif method == "arborist/discard_virtual_file":
+                result = self._discard_virtual_file(params)
+            elif method == "arborist/rebuild_symbol_index":
+                result = self._rebuild_symbol_index(params)
+            elif method == "arborist/trace_symbol_graph":
+                result = self._trace_symbol_graph(params)
+            elif method == "arborist/replay_patch_evidence_against_trace":
+                result = self._replay_patch_evidence_against_trace(params)
+            elif method == "arborist/validate_patch_commit_with_trace":
+                result = self._validate_patch_commit_with_trace(params)
+            elif method == "arborist/validate_patch_with_trace_context":
+                result = self._validate_patch_with_trace_context(params)
+            elif method == "arborist/execute_tree_query":
+                result = self._execute_tree_query(params)
+            else:
+                raise ValueError(f"unknown method: {method}")
+
+            return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32000,
+                    "message": str(exc),
+                },
+            }
+
+    def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        depth_limit = int(params.get("depth_limit", 2))
+        source = params.get("source")
+        expand_nodes = self._optional_string_list(params, "expand_nodes")
+        payload = self._core.get_semantic_skeleton_json(
+            file_path,
+            source,
+            depth_limit,
+            expand_nodes,
+        )
+        return json.loads(payload)
+
+    def _execute_tree_query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        file_path = self._require_string(params, "file_path")
+        query = self._require_string(params, "query")
+        source = params.get("source")
+        payload = self._core.execute_tree_query_json(file_path, query, source)
+        return json.loads(payload)
+
+    def _patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        semantic_path = self._require_string(params, "semantic_path")
+        new_code = self._require_string(params, "new_code")
+        source = params.get("source")
+        bypass_reason = params.get("bypass_reason")
+        payload = self._core.patch_ast_node_json(
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+        )
+        return json.loads(payload)
+
+    def _patch_virtual_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        semantic_path = self._require_string(params, "semantic_path")
+        new_code = self._require_string(params, "new_code")
+        bypass_reason = params.get("bypass_reason")
+        payload = self._core.patch_virtual_ast_node_json(
+            file_path,
+            semantic_path,
+            new_code,
+            bypass_reason,
+        )
+        return json.loads(payload)
+
+    def _trace_symbol_graph(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = str(params.get("workspace_root", "."))
+        symbol_path = self._require_string(params, "symbol_path")
+        direction = str(params.get("direction", "both"))
+        index_db_path = params.get("index_db_path")
+        payload = self._core.trace_symbol_graph_json(
+            workspace_root,
+            symbol_path,
+            direction,
+            index_db_path,
+        )
+        return json.loads(payload)
+
+    def _replay_patch_evidence_against_trace(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        patch = params.get("patch")
+        trace = params.get("trace")
+        if not isinstance(patch, dict):
+            raise ValueError("missing required object param: patch")
+        if not isinstance(trace, dict):
+            raise ValueError("missing required object param: trace")
+        payload = self._core.replay_patch_evidence_against_trace_json(
+            json.dumps(patch, ensure_ascii=False),
+            json.dumps(trace, ensure_ascii=False),
+        )
+        return json.loads(payload)
+
+    def _validate_patch_commit_with_trace(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        patch = params.get("patch")
+        trace = params.get("trace")
+        if not isinstance(patch, dict):
+            raise ValueError("missing required object param: patch")
+        if not isinstance(trace, dict):
+            raise ValueError("missing required object param: trace")
+        payload = self._core.validate_patch_commit_with_trace_json(
+            json.dumps(patch, ensure_ascii=False),
+            json.dumps(trace, ensure_ascii=False),
+        )
+        return json.loads(payload)
+
+    def _validate_patch_with_trace_context(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = str(params.get("workspace_root", "."))
+        file_path = self._require_string(params, "file_path")
+        semantic_path = self._require_string(params, "semantic_path")
+        new_code = self._require_string(params, "new_code")
+        source = params.get("source")
+        bypass_reason = params.get("bypass_reason")
+        direction = str(params.get("direction", "both"))
+        payload = self._core.validate_patch_with_trace_context_json(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+        )
+        return json.loads(payload)
+
+    def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = str(params.get("workspace_root", "."))
+        db_path = self._require_string(params, "db_path")
+        payload = self._core.rebuild_symbol_index_json(workspace_root, db_path)
+        return json.loads(payload)
+
+    def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = str(params.get("workspace_root", "."))
+        db_path = self._require_string(params, "db_path")
+        payload = self._core.register_symbol_index_json(workspace_root, db_path)
+        return json.loads(payload)
+
+    def _refresh_symbol_index_for_file(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = str(params.get("workspace_root", "."))
+        db_path = self._require_string(params, "db_path")
+        file_path = self._require_string(params, "file_path")
+        payload = self._core.refresh_symbol_index_for_file_json(
+            workspace_root,
+            db_path,
+            file_path,
+        )
+        return json.loads(payload)
+
+    def _unregister_symbol_index(self, params: dict[str, Any]) -> bool:
+        workspace_root = str(params.get("workspace_root", "."))
+        return self._core.unregister_symbol_index_json(workspace_root)
+
+    def _list_symbol_indexes(self) -> list[dict[str, Any]]:
+        payload = self._core.list_symbol_indexes_json()
+        return json.loads(payload)
+
+    def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        source = params.get("source")
+        payload = self._core.open_virtual_file_json(file_path, source)
+        return json.loads(payload)
+
+    def _did_change(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        edits = params.get("edits")
+        if not isinstance(edits, list):
+            raise ValueError("missing required list param: edits")
+        payload = self._core.apply_position_edits_json(
+            file_path,
+            json.dumps(edits, ensure_ascii=False),
+        )
+        return json.loads(payload)
+
+    def _did_close(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        persist = bool(params.get("persist", False))
+        payload = self._core.close_virtual_file_json(file_path, persist)
+        return json.loads(payload)
+
+    def _list_virtual_files(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        dirty_only = bool(params.get("dirty_only", False))
+        payload = self._core.list_virtual_files_json(dirty_only)
+        return json.loads(payload)
+
+    def _read_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        payload = self._core.read_virtual_file_json(file_path)
+        return json.loads(payload)
+
+    def _apply_buffer_edit(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        start_byte = self._require_int(params, "start_byte")
+        old_end_byte = self._require_int(params, "old_end_byte")
+        new_text = self._require_string(params, "new_text", allow_empty=True)
+        payload = self._core.apply_buffer_edit_json(
+            file_path,
+            start_byte,
+            old_end_byte,
+            new_text,
+        )
+        return json.loads(payload)
+
+    def _commit_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        payload = self._core.commit_virtual_file_json(file_path)
+        return json.loads(payload)
+
+    def _discard_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        payload = self._core.discard_virtual_file_json(file_path)
+        return json.loads(payload)
+
+    @staticmethod
+    def _require_string(
+        params: dict[str, Any], key: str, allow_empty: bool = False
+    ) -> str:
+        value = params.get(key)
+        if not isinstance(value, str) or (not allow_empty and not value):
+            raise ValueError(f"missing required string param: {key}")
+        return value
+
+    @staticmethod
+    def _require_int(params: dict[str, Any], key: str) -> int:
+        value = params.get(key)
+        if not isinstance(value, int):
+            raise ValueError(f"missing required int param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_string_list(params: dict[str, Any], key: str) -> list[str] | None:
+        value = params.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"invalid string list param: {key}")
+        return value
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Thin stdio JSON-RPC gateway for the Arborist Rust core."
+    )
+    parser.add_argument(
+        "--once",
+        type=Path,
+        help="Read one request from a JSON file and print the response.",
+    )
+    return parser
+
+
+def run_stdio() -> int:
+    gateway = ArboristGateway()
+
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as exc:
+            response = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32700,
+                    "message": f"invalid JSON: {exc}",
+                },
+            }
+        else:
+            response = gateway.handle_request(request)
+
+        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.once:
+        gateway = ArboristGateway()
+        request = json.loads(args.once.read_text(encoding="utf-8"))
+        print(json.dumps(gateway.handle_request(request), ensure_ascii=False, indent=2))
+        return 0
+
+    return run_stdio()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

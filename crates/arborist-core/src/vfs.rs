@@ -1,0 +1,751 @@
+use std::collections::{BTreeMap, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, anyhow, bail};
+use tree_sitter::{InputEdit, Tree};
+
+use crate::language::{
+    normalize_path, offset_for_position, parse_document, parser_for_language, point_for_offset,
+    read_source,
+};
+use crate::model::LanguageId;
+use crate::model::{
+    PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
+    SymbolIndexStats, TraceDirection, TraceSymbolGraphResult, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
+};
+use crate::patching::{
+    build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
+};
+use crate::symbols::{
+    rebuild_symbol_index, refresh_symbol_index_for_file, trace_symbol_graph_with_overrides,
+};
+
+#[derive(Default)]
+pub struct VirtualFileSystem {
+    entries: HashMap<String, VirtualFileEntry>,
+    symbol_indexes: HashMap<String, PathBuf>,
+}
+
+struct VirtualFileEntry {
+    path: PathBuf,
+    language_id: LanguageId,
+    disk_source: String,
+    source: String,
+    tree: Tree,
+    version: u64,
+    dirty: bool,
+}
+
+impl VirtualFileSystem {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn open_file(&mut self, path: &Path, source: Option<&str>) -> Result<VirtualFileSnapshot> {
+        let normalized = normalize_path(path);
+        self.ensure_loaded(path, source)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let entry = self
+            .entries
+            .get(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+        Ok(snapshot_from_entry(&normalized, entry))
+    }
+
+    pub fn read_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
+        self.open_file(path, None)
+    }
+
+    pub fn apply_edit(
+        &mut self,
+        path: &Path,
+        start_byte: usize,
+        old_end_byte: usize,
+        new_text: &str,
+    ) -> Result<VirtualEditResult> {
+        let normalized = normalize_path(path);
+        self.ensure_loaded(path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let entry = self
+            .entries
+            .get_mut(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+
+        validate_edit_range(&entry.source, start_byte, old_end_byte)?;
+        let updated_source = splice_source(&entry.source, start_byte..old_end_byte, new_text);
+
+        let edit = InputEdit {
+            start_byte,
+            old_end_byte,
+            new_end_byte: start_byte + new_text.len(),
+            start_position: point_for_offset(&entry.source, start_byte)?,
+            old_end_position: point_for_offset(&entry.source, old_end_byte)?,
+            new_end_position: point_for_offset(&updated_source, start_byte + new_text.len())?,
+        };
+
+        entry.tree.edit(&edit);
+        let mut parser = parser_for_language(entry.language_id)?;
+        let new_tree = parser
+            .parse(&updated_source, Some(&entry.tree))
+            .ok_or_else(|| anyhow!("incremental parse failed for {}", entry.path.display()))?;
+
+        let syntax_errors = collect_syntax_errors(new_tree.root_node(), &updated_source);
+        entry.source = updated_source.clone();
+        entry.tree = new_tree;
+        entry.version += 1;
+        entry.dirty = entry.source != entry.disk_source;
+
+        Ok(VirtualEditResult {
+            file: normalized,
+            source: updated_source,
+            dirty: entry.dirty,
+            version: entry.version,
+            incremental_parse: true,
+            validation: PatchValidationReport {
+                syntax_errors,
+                unresolved_identifiers: Vec::new(),
+                resolved_identifiers: Vec::new(),
+                ambiguous_identifiers: Vec::new(),
+                binding_decisions: Vec::new(),
+                commit_gate: Default::default(),
+            },
+        })
+    }
+
+    pub fn apply_position_edits(
+        &mut self,
+        path: &Path,
+        edits: &[PositionEdit],
+    ) -> Result<VirtualEditResult> {
+        if edits.is_empty() {
+            return self.read_file(path).map(|snapshot| VirtualEditResult {
+                file: snapshot.file,
+                source: snapshot.source,
+                dirty: snapshot.dirty,
+                version: snapshot.version,
+                incremental_parse: true,
+                validation: PatchValidationReport::default(),
+            });
+        }
+
+        let mut last_result = None;
+        for edit in edits {
+            let snapshot = self.read_file(path)?;
+            let start_byte = offset_for_position(&snapshot.source, &edit.start)?;
+            let old_end_byte = offset_for_position(&snapshot.source, &edit.end)?;
+            last_result = Some(self.apply_edit(path, start_byte, old_end_byte, &edit.new_text)?);
+        }
+
+        last_result.ok_or_else(|| anyhow!("position edits did not produce a result"))
+    }
+
+    pub fn patch_node(
+        &mut self,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+    ) -> Result<PatchAstNodeResult> {
+        let normalized = normalize_path(path);
+        self.ensure_loaded(path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let (start_byte, end_byte) = {
+            let entry = self
+                .entries
+                .get(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            semantic_target_range(&entry.path, &entry.source, semantic_target)?
+        };
+
+        let previous = {
+            let entry = self
+                .entries
+                .get(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            (
+                entry.source.clone(),
+                entry.tree.clone(),
+                entry.version,
+                entry.dirty,
+            )
+        };
+
+        self.apply_edit(path, start_byte, end_byte, new_code)?;
+
+        let result = {
+            let entry = self
+                .entries
+                .get(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            build_patch_result(
+                &entry.path,
+                semantic_target,
+                entry.source.clone(),
+                bypass_reason,
+                start_byte,
+                new_code.len(),
+            )?
+        };
+
+        if !result.applied {
+            let entry = self
+                .entries
+                .get_mut(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            entry.source = previous.0;
+            entry.tree = previous.1;
+            entry.version = previous.2;
+            entry.dirty = previous.3;
+        }
+
+        Ok(result)
+    }
+
+    pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
+        let normalized = normalize_path(path);
+        self.ensure_loaded(path, None)?;
+
+        let committed_path = {
+            let entry = self
+                .entries
+                .get_mut(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+
+            if entry.dirty {
+                fs::write(&entry.path, &entry.source)
+                    .with_context(|| format!("failed to write {}", entry.path.display()))?;
+                entry.disk_source = entry.source.clone();
+                entry.dirty = false;
+            }
+
+            entry.path.clone()
+        };
+
+        self.sync_registered_indexes(&committed_path)?;
+
+        let entry = self
+            .entries
+            .get(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+        Ok(snapshot_from_entry(&normalized, entry))
+    }
+
+    pub fn discard_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
+        let normalized = normalize_path(path);
+        self.ensure_loaded(path, None)?;
+
+        let entry = self
+            .entries
+            .get_mut(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+
+        let document = parse_document(&entry.path, &entry.disk_source)?;
+        entry.language_id = document.language_id;
+        entry.source = entry.disk_source.clone();
+        entry.tree = document.tree;
+        entry.version += 1;
+        entry.dirty = false;
+
+        Ok(snapshot_from_entry(&normalized, entry))
+    }
+
+    pub fn close_file(&mut self, path: &Path, persist: bool) -> Result<VirtualFileSnapshot> {
+        let snapshot = if persist {
+            self.commit_file(path)?
+        } else {
+            self.discard_file(path)?
+        };
+        self.entries.remove(&snapshot.file);
+        Ok(snapshot)
+    }
+
+    pub fn register_symbol_index(
+        &mut self,
+        workspace_root: &Path,
+        db_path: &Path,
+    ) -> Result<SymbolIndexStats> {
+        let workspace_root = absolutize_path(workspace_root)?;
+        let db_path = absolutize_path(db_path)?;
+        let stats = rebuild_symbol_index(&workspace_root, &db_path)?;
+        self.symbol_indexes
+            .insert(normalize_path(&workspace_root), db_path);
+        Ok(stats)
+    }
+
+    pub fn unregister_symbol_index(&mut self, workspace_root: &Path) -> Result<bool> {
+        let workspace_root = absolutize_path(workspace_root)?;
+        Ok(self
+            .symbol_indexes
+            .remove(&normalize_path(&workspace_root))
+            .is_some())
+    }
+
+    pub fn registered_symbol_indexes(&self) -> Vec<RegisteredSymbolIndex> {
+        let mut indexes: Vec<_> = self
+            .symbol_indexes
+            .iter()
+            .map(|(workspace_root, db_path)| RegisteredSymbolIndex {
+                workspace_root: workspace_root.clone(),
+                db_path: normalize_path(db_path),
+            })
+            .collect();
+        indexes.sort_by(|left, right| left.workspace_root.cmp(&right.workspace_root));
+        indexes
+    }
+
+    pub fn virtual_file_statuses(&self, dirty_only: bool) -> Vec<VirtualFileStatus> {
+        let mut statuses: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|(file, entry)| {
+                if dirty_only && !entry.dirty {
+                    return None;
+                }
+
+                Some(VirtualFileStatus {
+                    file: file.clone(),
+                    dirty: entry.dirty,
+                    version: entry.version,
+                    syntax_error_count: collect_syntax_errors(
+                        entry.tree.root_node(),
+                        &entry.source,
+                    )
+                    .len(),
+                })
+            })
+            .collect();
+        statuses.sort_by(|left, right| left.file.cmp(&right.file));
+        statuses
+    }
+
+    pub fn trace_symbol_graph(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+    ) -> Result<TraceSymbolGraphResult> {
+        let workspace_root = absolutize_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        trace_symbol_graph_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+    }
+
+    fn ensure_loaded(&mut self, path: &Path, source_override: Option<&str>) -> Result<()> {
+        let normalized = normalize_path(path);
+        match self.entries.get_mut(&normalized) {
+            Some(entry) => {
+                if let Some(source_override) = source_override {
+                    let document = parse_document(path, source_override)?;
+                    entry.path = path.to_path_buf();
+                    entry.language_id = document.language_id;
+                    entry.source = source_override.to_string();
+                    entry.tree = document.tree;
+                    entry.version += 1;
+                    entry.dirty = entry.source != entry.disk_source;
+                }
+            }
+            None => {
+                let disk_source = match fs::read_to_string(path) {
+                    Ok(source) => source,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("failed to read source file {}", path.display())
+                        });
+                    }
+                };
+                let initial_source = source_override.unwrap_or(&disk_source).to_string();
+                let document = parse_document(path, &initial_source)?;
+                let dirty = initial_source != disk_source;
+                self.entries.insert(
+                    normalized,
+                    VirtualFileEntry {
+                        path: path.to_path_buf(),
+                        language_id: document.language_id,
+                        disk_source,
+                        source: initial_source,
+                        tree: document.tree,
+                        version: 0,
+                        dirty,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh_if_clean(&mut self, normalized: &str) -> Result<()> {
+        let Some(entry) = self.entries.get_mut(normalized) else {
+            return Ok(());
+        };
+        if entry.dirty {
+            return Ok(());
+        }
+
+        let disk_source = read_source(&entry.path)?;
+        if disk_source == entry.disk_source {
+            return Ok(());
+        }
+
+        let document = parse_document(&entry.path, &disk_source)?;
+        entry.language_id = document.language_id;
+        entry.disk_source = disk_source.clone();
+        entry.source = disk_source;
+        entry.tree = document.tree;
+        entry.version += 1;
+        Ok(())
+    }
+
+    fn sync_registered_indexes(&self, file_path: &Path) -> Result<()> {
+        let file_path = absolutize_path(file_path)?;
+        for (workspace_root, db_path) in &self.symbol_indexes {
+            let workspace_root_path = Path::new(workspace_root);
+            if file_path.starts_with(workspace_root_path) {
+                refresh_symbol_index_for_file(workspace_root_path, db_path, &file_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn virtual_overrides_for_workspace(
+        &mut self,
+        workspace_root: &Path,
+    ) -> Result<BTreeMap<String, String>> {
+        let loaded_files: Vec<_> = self.entries.keys().cloned().collect();
+        for normalized in &loaded_files {
+            self.refresh_if_clean(normalized)?;
+        }
+
+        let mut overrides = BTreeMap::new();
+        for entry in self.entries.values() {
+            if !entry.dirty {
+                continue;
+            }
+
+            let absolute_path = absolutize_path(&entry.path)?;
+            if absolute_path.starts_with(workspace_root) {
+                overrides.insert(normalize_path(&absolute_path), entry.source.clone());
+            }
+        }
+
+        Ok(overrides)
+    }
+}
+
+fn snapshot_from_entry(file: &str, entry: &VirtualFileEntry) -> VirtualFileSnapshot {
+    VirtualFileSnapshot {
+        file: file.to_string(),
+        source: entry.source.clone(),
+        disk_source: entry.disk_source.clone(),
+        dirty: entry.dirty,
+        version: entry.version,
+        syntax_error_count: collect_syntax_errors(entry.tree.root_node(), &entry.source).len(),
+    }
+}
+
+fn validate_edit_range(source: &str, start_byte: usize, old_end_byte: usize) -> Result<()> {
+    if start_byte > old_end_byte {
+        bail!(
+            "edit start_byte {} is after old_end_byte {}",
+            start_byte,
+            old_end_byte
+        );
+    }
+    if old_end_byte > source.len() {
+        bail!(
+            "edit old_end_byte {} is out of bounds for source of length {}",
+            old_end_byte,
+            source.len()
+        );
+    }
+    if !source.is_char_boundary(start_byte) || !source.is_char_boundary(old_end_byte) {
+        bail!("edit range must align to UTF-8 character boundaries");
+    }
+    Ok(())
+}
+
+fn absolutize_path(path: &Path) -> Result<PathBuf> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+
+    Ok(std::env::current_dir()?.join(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::VirtualFileSystem;
+    use crate::{Position, PositionEdit, TraceDirection, trace_symbol_graph_from_index};
+
+    #[test]
+    fn applies_incremental_edit_and_commits() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(!snapshot.dirty);
+        assert_eq!(snapshot.version, 0);
+        let digit_offset = snapshot.source.rfind('1').unwrap();
+
+        let result = vfs
+            .apply_edit(&file, digit_offset, digit_offset + 1, "2")
+            .unwrap();
+        assert!(result.incremental_parse);
+        assert!(result.dirty);
+        assert_eq!(result.version, 1);
+        assert!(result.source.contains("return 2"));
+
+        let committed = vfs.commit_file(&file).unwrap();
+        assert!(!committed.dirty);
+        assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
+    }
+
+    #[test]
+    fn discards_virtual_changes() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        let digit_offset = snapshot.source.rfind('1').unwrap();
+        vfs.apply_edit(&file, digit_offset, digit_offset + 1, "9")
+            .unwrap();
+        let discarded = vfs.discard_file(&file).unwrap();
+
+        assert!(!discarded.dirty);
+        assert!(discarded.source.contains("return 1"));
+    }
+
+    #[test]
+    fn patches_virtual_symbol_without_immediate_commit() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let result = vfs
+            .patch_node(&file, "value", "def value() -> int:\n    return 3\n", None)
+            .unwrap();
+
+        assert!(result.applied);
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(snapshot.dirty);
+        assert!(snapshot.source.contains("return 3"));
+        assert!(fs::read_to_string(&file).unwrap().contains("return 1"));
+    }
+
+    #[test]
+    fn rolls_back_invalid_virtual_patch() {
+        let file = temp_file(
+            "def helper(value: int) -> int:\n    return value + 1\n\ndef value() -> int:\n    return helper(1)\n",
+        );
+        let mut vfs = VirtualFileSystem::new();
+
+        let result = vfs
+            .patch_node(
+                &file,
+                "value",
+                "def value() -> int:\n    return missing_helper(1)\n",
+                None,
+            )
+            .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(
+            result.validation.unresolved_identifiers,
+            vec!["missing_helper"]
+        );
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(!snapshot.dirty);
+        assert!(snapshot.source.contains("return helper(1)"));
+    }
+
+    #[test]
+    fn opens_with_virtual_source_and_lists_dirty_files() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs
+            .open_file(&file, Some("def value() -> int:\n    return 7\n"))
+            .unwrap();
+        assert!(snapshot.dirty);
+        assert!(snapshot.source.contains("return 7"));
+        assert!(snapshot.disk_source.contains("return 1"));
+
+        let dirty_files = vfs.virtual_file_statuses(true);
+        assert_eq!(dirty_files.len(), 1);
+        assert_eq!(dirty_files[0].file, snapshot.file);
+        assert!(dirty_files[0].dirty);
+    }
+
+    #[test]
+    fn applies_position_edits_in_sequence() {
+        let file = temp_file("def value() -> int:\n    return 10\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let result = vfs
+            .apply_position_edits(
+                &file,
+                &[
+                    PositionEdit {
+                        start: Position { row: 1, column: 11 },
+                        end: Position { row: 1, column: 13 },
+                        new_text: "20".to_string(),
+                    },
+                    PositionEdit {
+                        start: Position { row: 1, column: 0 },
+                        end: Position { row: 1, column: 0 },
+                        new_text: "# staged\n".to_string(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert!(result.source.contains("return 20"));
+        assert!(result.source.contains("# staged"));
+        assert!(result.dirty);
+    }
+
+    #[test]
+    fn closes_virtual_file_without_persisting_changes() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        vfs.open_file(&file, Some("def value() -> int:\n    return 8\n"))
+            .unwrap();
+        let snapshot = vfs.close_file(&file, false).unwrap();
+
+        assert!(!snapshot.dirty);
+        assert!(snapshot.source.contains("return 1"));
+        assert!(vfs.virtual_file_statuses(false).is_empty());
+        assert!(fs::read_to_string(&file).unwrap().contains("return 1"));
+    }
+
+    #[test]
+    fn traces_symbol_graph_from_unsaved_virtual_changes() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let caller_path = workspace.join("caller.py");
+
+        fs::write(
+            &helper_path,
+            "def helper(value: int) -> int:\n    return leaf(value)\n\n\ndef leaf(value: int) -> int:\n    return value + 1\n\n\ndef branch(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller_path,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.patch_node(
+            &helper_path,
+            "helper",
+            "def helper(value: int) -> int:\n    return branch(value)\n",
+            None,
+        )
+        .unwrap();
+
+        let trace = vfs
+            .trace_symbol_graph(&workspace, "helper", TraceDirection::Both)
+            .unwrap();
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "branch")
+        );
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "leaf")
+        );
+        assert!(
+            fs::read_to_string(&helper_path)
+                .unwrap()
+                .contains("return leaf")
+        );
+    }
+
+    #[test]
+    fn commits_refresh_registered_symbol_index() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let caller_path = workspace.join("caller.py");
+        let db_path = workspace.join("symbols.db");
+
+        fs::write(
+            &helper_path,
+            "def helper(value: int) -> int:\n    return leaf(value)\n\n\ndef leaf(value: int) -> int:\n    return value + 1\n\n\ndef branch(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller_path,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let stats = vfs.register_symbol_index(&workspace, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 2);
+        assert_eq!(stats.reused_files, 0);
+        assert_eq!(vfs.registered_symbol_indexes().len(), 1);
+
+        vfs.patch_node(
+            &helper_path,
+            "helper",
+            "def helper(value: int) -> int:\n    return branch(value)\n",
+            None,
+        )
+        .unwrap();
+        vfs.commit_file(&helper_path).unwrap();
+
+        let trace =
+            trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).unwrap();
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "branch")
+        );
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "leaf")
+        );
+
+        assert!(vfs.unregister_symbol_index(&workspace).unwrap());
+        assert!(vfs.registered_symbol_indexes().is_empty());
+    }
+
+    fn temp_file(contents: &str) -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("arborist-vfs-{suffix}"));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(Path::new("buffer.py"));
+        fs::write(&file, contents).unwrap();
+        file
+    }
+
+    fn temp_workspace() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("arborist-vfs-workspace-{suffix}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+}
