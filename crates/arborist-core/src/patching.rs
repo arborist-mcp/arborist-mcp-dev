@@ -993,6 +993,16 @@ fn collect_python_statement_symbols(
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
 ) -> Result<()> {
+    collect_python_named_expression_symbols(
+        statement_node,
+        source,
+        normalized_path,
+        scope_path,
+        origin_type,
+        scope_rank + 350_000 + statement_node.start_byte(),
+        symbols,
+    )?;
+
     match statement_node.kind() {
         "function_definition" | "class_definition" => {
             if let Some(summary) =
@@ -1158,6 +1168,47 @@ fn collect_python_child_block_symbols(
         }
     }
 
+    Ok(())
+}
+
+fn collect_python_named_expression_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "named_expression" {
+            return;
+        }
+        let Some(left) = candidate.child_by_field_name("name") else {
+            return;
+        };
+        let mut target_callback = |target: Node<'_>| {
+            if target.kind() != "identifier" {
+                return;
+            }
+            if let Ok(name) = node_text(target, source) {
+                symbols.push(PythonAccessibleSymbol {
+                    name: name.trim().to_string(),
+                    summary: python_synthetic_symbol_summary(
+                        normalized_path,
+                        scope_path,
+                        name.trim(),
+                        "named_expression",
+                        origin_type,
+                        (target.start_byte(), target.end_byte()),
+                    ),
+                    rank: rank + target.start_byte(),
+                });
+            }
+        };
+        visit_tree(left, &mut target_callback);
+    };
+    visit_tree(node, &mut callback);
     Ok(())
 }
 
@@ -1904,6 +1955,10 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
+    if is_python_named_expression_target(node) {
+        return false;
+    }
+
     if matches!(parent.kind(), "list_splat_pattern" | "dictionary_splat_pattern" | "tuple_pattern")
     {
         return false;
@@ -1985,6 +2040,29 @@ fn is_python_parameter_declaration_node(node: Node<'_>) -> bool {
 
         if matches!(candidate.kind(), "parameters" | "lambda_parameters") {
             return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn is_python_named_expression_target(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "named_expression" {
+            return candidate
+                .child_by_field_name("name")
+                .is_some_and(|left| contains_node(left, node));
         }
 
         if matches!(

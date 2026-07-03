@@ -1671,6 +1671,43 @@ def top_level(flag: bool) -> int:
     }
 
     #[test]
+    fn resolves_python_named_expression_bindings() {
+        let source = r#"
+def top_level(items: list[int]) -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(items: list[int]) -> int:\n    if (count := len(items)):\n        return count\n    return 0\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let count_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "count")
+            .unwrap();
+        assert_eq!(count_binding.symbol.node_kind, "named_expression");
+        assert_eq!(
+            count_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "items" && decision.status == "resolved")
+        );
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
