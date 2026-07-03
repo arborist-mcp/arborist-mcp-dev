@@ -89,6 +89,70 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("dirty_only", response["error"]["message"])
 
+    def test_rejects_string_int_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 13,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py", "depth_limit": "2"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 13)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("depth_limit", response["error"]["message"])
+
+    def test_rejects_non_string_optional_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": 123, "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 15)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
+    def test_passes_typed_optional_defaults_to_core(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(
+                self,
+                file_path: str,
+                source: str | None,
+                depth_limit: int,
+                expand_nodes: list[str] | None,
+            ) -> str:
+                self.args = (file_path, source, depth_limit, expand_nodes)
+                return "{}"
+
+        core = StubCore()
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = core
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 17,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 17)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(core.args, ("sample.py", None, 2, None))
+
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:

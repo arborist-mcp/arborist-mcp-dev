@@ -135,8 +135,8 @@ class ArboristGateway:
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
-        depth_limit = int(params.get("depth_limit", 2))
-        source = params.get("source")
+        depth_limit = self._optional_int(params, "depth_limit", default=2)
+        source = self._optional_string(params, "source", allow_empty=True)
         expand_nodes = self._optional_string_list(params, "expand_nodes")
         payload = self._core.get_semantic_skeleton_json(
             file_path,
@@ -149,7 +149,7 @@ class ArboristGateway:
     def _execute_tree_query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         file_path = self._require_string(params, "file_path")
         query = self._require_string(params, "query")
-        source = params.get("source")
+        source = self._optional_string(params, "source", allow_empty=True)
         payload = self._core.execute_tree_query_json(file_path, query, source)
         return json.loads(payload)
 
@@ -157,8 +157,8 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         semantic_path = self._require_string(params, "semantic_path")
         new_code = self._require_string(params, "new_code")
-        source = params.get("source")
-        bypass_reason = params.get("bypass_reason")
+        source = self._optional_string(params, "source", allow_empty=True)
+        bypass_reason = self._optional_string(params, "bypass_reason")
         payload = self._core.patch_ast_node_json(
             file_path,
             semantic_path,
@@ -172,7 +172,7 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         semantic_path = self._require_string(params, "semantic_path")
         new_code = self._require_string(params, "new_code")
-        bypass_reason = params.get("bypass_reason")
+        bypass_reason = self._optional_string(params, "bypass_reason")
         payload = self._core.patch_virtual_ast_node_json(
             file_path,
             semantic_path,
@@ -182,10 +182,10 @@ class ArboristGateway:
         return json.loads(payload)
 
     def _trace_symbol_graph(self, params: dict[str, Any]) -> dict[str, Any]:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         symbol_path = self._require_string(params, "symbol_path")
-        direction = str(params.get("direction", "both"))
-        index_db_path = params.get("index_db_path")
+        direction = self._optional_string(params, "direction", default="both")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._core.trace_symbol_graph_json(
             workspace_root,
             symbol_path,
@@ -227,13 +227,13 @@ class ArboristGateway:
     def _validate_patch_with_trace_context(
         self, params: dict[str, Any]
     ) -> dict[str, Any]:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         file_path = self._require_string(params, "file_path")
         semantic_path = self._require_string(params, "semantic_path")
         new_code = self._require_string(params, "new_code")
-        source = params.get("source")
-        bypass_reason = params.get("bypass_reason")
-        direction = str(params.get("direction", "both"))
+        source = self._optional_string(params, "source", allow_empty=True)
+        bypass_reason = self._optional_string(params, "bypass_reason")
+        direction = self._optional_string(params, "direction", default="both")
         payload = self._core.validate_patch_with_trace_context_json(
             workspace_root,
             file_path,
@@ -246,19 +246,19 @@ class ArboristGateway:
         return json.loads(payload)
 
     def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         payload = self._core.rebuild_symbol_index_json(workspace_root, db_path)
         return json.loads(payload)
 
     def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         payload = self._core.register_symbol_index_json(workspace_root, db_path)
         return json.loads(payload)
 
     def _refresh_symbol_index_for_file(self, params: dict[str, Any]) -> dict[str, Any]:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         file_path = self._require_string(params, "file_path")
         payload = self._core.refresh_symbol_index_for_file_json(
@@ -269,7 +269,7 @@ class ArboristGateway:
         return json.loads(payload)
 
     def _unregister_symbol_index(self, params: dict[str, Any]) -> bool:
-        workspace_root = str(params.get("workspace_root", "."))
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
         return self._core.unregister_symbol_index_json(workspace_root)
 
     def _list_symbol_indexes(self) -> list[dict[str, Any]]:
@@ -278,7 +278,7 @@ class ArboristGateway:
 
     def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
-        source = params.get("source")
+        source = self._optional_string(params, "source", allow_empty=True)
         payload = self._core.open_virtual_file_json(file_path, source)
         return json.loads(payload)
 
@@ -346,6 +346,27 @@ class ArboristGateway:
         value = params.get(key)
         if not isinstance(value, int) or isinstance(value, bool):
             raise JsonRpcError(-32602, f"missing required int param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_string(
+        params: dict[str, Any],
+        key: str,
+        default: str | None = None,
+        allow_empty: bool = False,
+    ) -> str | None:
+        value = params.get(key, default)
+        if value is None:
+            return None
+        if not isinstance(value, str) or (not allow_empty and not value):
+            raise JsonRpcError(-32602, f"invalid string param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_int(params: dict[str, Any], key: str, default: int) -> int:
+        value = params.get(key, default)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise JsonRpcError(-32602, f"invalid int param: {key}")
         return value
 
     @staticmethod
