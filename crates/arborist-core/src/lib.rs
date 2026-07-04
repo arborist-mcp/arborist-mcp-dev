@@ -1681,6 +1681,46 @@ def top_level() -> int:
     }
 
     #[test]
+    fn rejects_python_pre_except_target_references() {
+        let source = r#"
+def exc() -> int:
+    return 1
+
+def risky() -> int:
+    return 2
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    before = exc\n    try:\n        risky()\n    except ValueError as exc:\n        return before\n    return 0\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(result.validation.unresolved_identifiers, vec!["exc"]);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "risky" && decision.status == "resolved")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "exc" && decision.status == "unresolved")
+        );
+    }
+
+    #[test]
     fn resolves_python_block_local_bindings() {
         let source = r#"
 def top_level(flag: bool) -> int:
@@ -2768,6 +2808,35 @@ def orchestrate():\n    try:\n        risky()\n    except ValueError as exc:\n  
     }
 
     #[test]
+    fn ignores_python_pre_except_target_global_fallback_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("pre_except_target.py");
+
+        fs::write(
+            &source,
+            "def exc():\n    return 1\n\n\
+def risky():\n    raise ValueError()\n\n\
+def orchestrate():\n    before = exc\n    try:\n        risky()\n    except ValueError as exc:\n        return before\n    return 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "risky")
+        );
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "exc")
+        );
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -3138,6 +3207,51 @@ def top_level():\n    helper = 2\n\n    def inner():\n        global helper\n   
             "def exc():\n    return 1\n\n\
 def risky():\n    raise ValueError()\n\n\
 def orchestrate():\n    try:\n        risky()\n    except ValueError as exc:\n        return 0\n    return exc()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "risky")
+        );
+        assert!(
+            !live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "exc")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "risky")
+        );
+        assert!(
+            !persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "exc")
+        );
+    }
+
+    #[test]
+    fn ignores_python_pre_except_target_global_fallback_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("pre_except_target.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def exc():\n    return 1\n\n\
+def risky():\n    raise ValueError()\n\n\
+def orchestrate():\n    before = exc\n    try:\n        risky()\n    except ValueError as exc:\n        return before\n    return 0\n",
         )
         .unwrap();
 

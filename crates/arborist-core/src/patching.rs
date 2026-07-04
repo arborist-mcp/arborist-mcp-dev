@@ -54,7 +54,6 @@ enum PythonSymbolVisibility {
     },
     ExceptTarget {
         except_clause_range: (usize, usize),
-        scope_end: usize,
     },
     MatchCapture {
         case_clause_range: (usize, usize),
@@ -1730,7 +1729,7 @@ fn collect_python_except_target_symbols(
         let Some(except_clause) = python_enclosing_except_clause(candidate) else {
             return;
         };
-        let Some(scope_node) = python_nearest_scope_node(candidate) else {
+        let Some(_scope_node) = python_nearest_scope_node(candidate) else {
             return;
         };
 
@@ -1748,7 +1747,6 @@ fn collect_python_except_target_symbols(
                 rank: rank + candidate.start_byte(),
                 visibility: PythonSymbolVisibility::ExceptTarget {
                     except_clause_range: (except_clause.start_byte(), except_clause.end_byte()),
-                    scope_end: scope_node.end_byte(),
                 },
             });
         }
@@ -2724,13 +2722,7 @@ fn python_accessible_symbol_suppresses_at(
         PythonSymbolVisibility::ComprehensionTarget { .. } => {
             python_accessible_symbol_resolves_at(symbol, reference_node)
         }
-        PythonSymbolVisibility::ExceptTarget {
-            except_clause_range,
-            scope_end,
-        } => {
-            let start = reference_node.start_byte();
-            start >= except_clause_range.0 && start <= scope_end
-        }
+        PythonSymbolVisibility::ExceptTarget { except_clause_range: _ } => true,
         PythonSymbolVisibility::MatchCapture { .. } => true,
     }
 }
