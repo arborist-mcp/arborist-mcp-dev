@@ -2119,6 +2119,36 @@ def top_level() -> int:
     }
 
     #[test]
+    fn resolves_python_comprehension_target_patch_bindings() {
+        let source = r#"
+def item() -> int:
+    return 1
+
+def top_level(values: list[int]) -> object:
+    return values
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(values: list[int]) -> object:\n    return [item for item in values]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let item_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "item")
+            .unwrap();
+        assert_eq!(item_binding.symbol.node_kind, "comprehension_target");
+        assert_eq!(item_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_named_expression_bindings() {
         let source = r#"
 def top_level(items: list[int]) -> int:
@@ -2754,6 +2784,23 @@ def orchestrate(items: list[int]) -> list[int]:\n    return [helper(item) for it
     }
 
     #[test]
+    fn ignores_python_comprehension_target_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("comprehension_shadow.py");
+
+        fs::write(
+            &source,
+            "def item():\n    return 1\n\n\
+def orchestrate(values):\n    return [item for item in values]\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
     fn ignores_python_match_capture_shadowing_in_traces() {
         let dir = temporary_dir();
         let source = dir.join("match_capture.py");
@@ -3078,6 +3125,28 @@ def orchestrate():\n    try:\n        risky()\n    except ValueError as exc:\n  
                 .iter()
                 .any(|symbol| symbol.semantic_path == "exc")
         );
+    }
+
+    #[test]
+    fn ignores_python_comprehension_target_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("comprehension_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def item():\n    return 1\n\n\
+def orchestrate(values):\n    return [item for item in values]\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
     }
 
     #[test]

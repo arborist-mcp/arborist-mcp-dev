@@ -48,6 +48,10 @@ struct PythonAccessibleSymbol {
 #[derive(Debug, Clone)]
 enum PythonSymbolVisibility {
     Always,
+    ComprehensionTarget {
+        comprehension_range: (usize, usize),
+        clause_index: usize,
+    },
     ExceptTarget {
         except_clause_range: (usize, usize),
         scope_end: usize,
@@ -1054,6 +1058,15 @@ fn collect_python_statement_symbols(
         scope_rank + 350_000 + statement_node.start_byte(),
         symbols,
     )?;
+    collect_python_comprehension_target_symbols(
+        statement_node,
+        source,
+        normalized_path,
+        scope_path,
+        origin_type,
+        scope_rank + 325_000 + statement_node.start_byte(),
+        symbols,
+    )?;
 
     match statement_node.kind() {
         "function_definition" | "class_definition" => {
@@ -1209,6 +1222,59 @@ fn collect_python_statement_symbols(
         _ => {}
     }
 
+    Ok(())
+}
+
+fn collect_python_comprehension_target_symbols(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    rank: usize,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if !matches!(
+            candidate.kind(),
+            "list_comprehension"
+                | "set_comprehension"
+                | "dictionary_comprehension"
+                | "generator_expression"
+        ) {
+            return;
+        }
+
+        let comprehension_range = (candidate.start_byte(), candidate.end_byte());
+        let mut clause_index = 0usize;
+        let mut cursor = candidate.walk();
+        for child in candidate.named_children(&mut cursor) {
+            if child.kind() != "for_in_clause" {
+                continue;
+            }
+            let Some(left) = child.child_by_field_name("left") else {
+                clause_index += 1;
+                continue;
+            };
+            collect_python_target_symbols_with_visibility(
+                left,
+                source,
+                normalized_path,
+                scope_path,
+                origin_type,
+                "comprehension_target",
+                rank + child.start_byte(),
+                PythonSymbolVisibility::ComprehensionTarget {
+                    comprehension_range,
+                    clause_index,
+                },
+                symbols,
+            )
+            .ok();
+            clause_index += 1;
+        }
+    };
+    visit_tree(node, &mut callback);
     Ok(())
 }
 
@@ -1564,6 +1630,30 @@ fn collect_python_target_symbols(
     rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
 ) -> Result<()> {
+    collect_python_target_symbols_with_visibility(
+        node,
+        source,
+        normalized_path,
+        scope_path,
+        origin_type,
+        node_kind,
+        rank,
+        PythonSymbolVisibility::Always,
+        symbols,
+    )
+}
+
+fn collect_python_target_symbols_with_visibility(
+    node: Node<'_>,
+    source: &str,
+    normalized_path: &str,
+    scope_path: Option<&str>,
+    origin_type: &str,
+    node_kind: &str,
+    rank: usize,
+    visibility: PythonSymbolVisibility,
+    symbols: &mut Vec<PythonAccessibleSymbol>,
+) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() != "identifier" {
             return;
@@ -1581,7 +1671,7 @@ fn collect_python_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
-                visibility: PythonSymbolVisibility::Always,
+                visibility: visibility.clone(),
             });
         }
     };
@@ -2230,7 +2320,7 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
     if let Some(left) = parent.child_by_field_name("left") {
         if matches!(
             parent.kind(),
-            "assignment" | "augmented_assignment" | "for_statement"
+            "assignment" | "augmented_assignment" | "for_statement" | "for_in_clause"
         ) && contains_node(left, node)
         {
             return false;
@@ -2533,12 +2623,78 @@ fn python_enclosing_except_clause(node: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
+fn python_enclosing_comprehension(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            "list_comprehension"
+                | "set_comprehension"
+                | "dictionary_comprehension"
+                | "generator_expression"
+        ) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn python_comprehension_visible_clause_count(
+    comprehension: Node<'_>,
+    reference_node: Node<'_>,
+) -> Option<usize> {
+    if !contains_node(comprehension, reference_node) {
+        return None;
+    }
+
+    if comprehension
+        .child_by_field_name("body")
+        .is_some_and(|body| contains_node(body, reference_node))
+    {
+        let mut total_for_clauses = 0usize;
+        let mut cursor = comprehension.walk();
+        for child in comprehension.named_children(&mut cursor) {
+            if child.kind() == "for_in_clause" {
+                total_for_clauses += 1;
+            }
+        }
+        return Some(total_for_clauses);
+    }
+
+    let mut completed_for_clauses = 0usize;
+    let mut cursor = comprehension.walk();
+    for child in comprehension.named_children(&mut cursor) {
+        if child.kind() == "for_in_clause" {
+            if contains_node(child, reference_node) {
+                return Some(completed_for_clauses);
+            }
+            completed_for_clauses += 1;
+            continue;
+        }
+
+        if child.kind() == "if_clause" && contains_node(child, reference_node) {
+            return Some(completed_for_clauses);
+        }
+    }
+
+    None
+}
+
 fn python_accessible_symbol_resolves_at(
     symbol: &PythonAccessibleSymbol,
     reference_node: Node<'_>,
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ComprehensionTarget {
+            comprehension_range,
+            clause_index,
+        } => python_enclosing_comprehension(reference_node).is_some_and(|comprehension| {
+            (comprehension.start_byte(), comprehension.end_byte()) == comprehension_range
+                && python_comprehension_visible_clause_count(comprehension, reference_node)
+                    .is_some_and(|visible_clause_count| clause_index < visible_clause_count)
+        }),
         PythonSymbolVisibility::ExceptTarget {
             except_clause_range,
             ..
@@ -2565,6 +2721,9 @@ fn python_accessible_symbol_suppresses_at(
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ComprehensionTarget { .. } => {
+            python_accessible_symbol_resolves_at(symbol, reference_node)
+        }
         PythonSymbolVisibility::ExceptTarget {
             except_clause_range,
             scope_end,
