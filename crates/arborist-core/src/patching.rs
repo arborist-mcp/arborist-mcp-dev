@@ -892,6 +892,8 @@ fn python_binding_candidates_for_reference(
     } else {
         reference_target.name.clone()
     };
+    let force_module_scope =
+        python_reference_is_global_declared(reference_target.node, source, &name);
     let mut candidates = Vec::new();
     let mut seen_function_scope = false;
     let mut scope_rank = 3_000_000usize;
@@ -899,14 +901,18 @@ fn python_binding_candidates_for_reference(
     let skip_current_function_scope = is_python_default_parameter_value(reference_target.node);
 
     while let Some(node) = current {
-        let include_scope = match node.kind() {
-            "function_definition" => {
-                seen_function_scope = true;
-                !skip_current_function_scope
+        let include_scope = if force_module_scope {
+            node.kind() == "module"
+        } else {
+            match node.kind() {
+                "function_definition" => {
+                    seen_function_scope = true;
+                    !skip_current_function_scope
+                }
+                "class_definition" => !seen_function_scope,
+                "module" => true,
+                _ => false,
             }
-            "class_definition" => !seen_function_scope,
-            "module" => true,
-            _ => false,
         };
 
         if include_scope {
@@ -2514,6 +2520,10 @@ fn python_enclosing_local_binding_should_suppress_reference(
     source: &str,
     name: &str,
 ) -> Result<bool> {
+    if python_reference_is_global_declared(reference_node, source, name) {
+        return Ok(false);
+    }
+
     let normalized_path = normalize_path(current_path);
     let mut candidates = Vec::new();
     let mut seen_scope = false;
@@ -2565,6 +2575,83 @@ fn python_enclosing_local_binding_should_suppress_reference(
         best.summary.node_kind.as_str(),
         "function_definition" | "class_definition"
     ))
+}
+
+fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str) -> bool {
+    python_nearest_scope_node(node).is_some_and(|scope| {
+        python_scope_declares_external_name(scope, source, name, "global_statement")
+    })
+}
+
+fn python_nearest_scope_node(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = Some(node);
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn python_scope_declares_external_name(
+    scope_node: Node<'_>,
+    source: &str,
+    name: &str,
+    statement_kind: &str,
+) -> bool {
+    let body_node = if scope_node.kind() == "module" {
+        scope_node
+    } else if let Some(body) = scope_node.child_by_field_name("body") {
+        body
+    } else {
+        return false;
+    };
+
+    python_scope_declares_external_name_in_scope(body_node, source, name, statement_kind)
+}
+
+fn python_scope_declares_external_name_in_scope(
+    node: Node<'_>,
+    source: &str,
+    name: &str,
+    statement_kind: &str,
+) -> bool {
+    if matches!(
+        node.kind(),
+        "function_definition" | "class_definition" | "lambda"
+    ) {
+        return false;
+    }
+
+    if node.kind() == statement_kind {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() != "identifier" {
+                continue;
+            }
+            if node_text(child, source)
+                .ok()
+                .is_some_and(|text| text.trim() == name)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    for index in 0..node.child_count() {
+        if let Some(child) = node.child(index) {
+            if python_scope_declares_external_name_in_scope(child, source, name, statement_kind) {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {

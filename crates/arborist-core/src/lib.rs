@@ -2049,6 +2049,36 @@ def top_level(value) -> int:
     }
 
     #[test]
+    fn resolves_python_global_references_inside_nested_functions_despite_outer_shadowing() {
+        let source = r#"
+def helper() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    helper = 2\n\n    def inner() -> int:\n        global helper\n        return helper()\n\n    return inner()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+        assert_eq!(helper_binding.symbol.node_kind, "function_definition");
+    }
+
+    #[test]
     fn resolves_python_named_expression_bindings() {
         let source = r#"
 def top_level(items: list[int]) -> int:
@@ -2611,6 +2641,28 @@ def top_level():\n    def helper():\n        return 2\n\n    def inner():\n     
     }
 
     #[test]
+    fn traces_python_global_references_inside_nested_functions_despite_outer_shadowing() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_global_shadow.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 2\n\n    def inner():\n        global helper\n        return helper()\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -2872,6 +2924,40 @@ def orchestrate(value=helper()):\n    helper = 2\n    return value\n",
         rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn traces_python_global_references_inside_nested_functions_despite_outer_shadowing_in_persisted_traces()
+     {
+        let dir = temporary_dir();
+        let source = dir.join("nested_global_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 2\n\n    def inner():\n        global helper\n        return helper()\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "top_level.inner", TraceDirection::Both)
+                .unwrap();
         assert!(
             persisted_trace
                 .callees
