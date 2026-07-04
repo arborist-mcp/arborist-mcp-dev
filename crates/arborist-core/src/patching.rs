@@ -51,6 +51,7 @@ enum PythonSymbolVisibility {
     NamedExpression {
         expression_range: (usize, usize),
         comprehension_range: Option<(usize, usize)>,
+        comprehension_part_index: Option<usize>,
     },
     ComprehensionTarget {
         comprehension_range: (usize, usize),
@@ -1370,9 +1371,12 @@ fn collect_python_named_expression_symbols(
                     rank: rank + target.start_byte(),
                     visibility: PythonSymbolVisibility::NamedExpression {
                         expression_range: (candidate.start_byte(), candidate.end_byte()),
-                        comprehension_range: python_enclosing_comprehension(candidate)
-                            .map(|comprehension| {
-                                (comprehension.start_byte(), comprehension.end_byte())
+                        comprehension_range: python_enclosing_comprehension(candidate).map(
+                            |comprehension| (comprehension.start_byte(), comprehension.end_byte()),
+                        ),
+                        comprehension_part_index: python_enclosing_comprehension(candidate)
+                            .and_then(|comprehension| {
+                                python_comprehension_part_index(comprehension, candidate)
                             }),
                     },
                 });
@@ -2712,6 +2716,40 @@ fn python_comprehension_visible_clause_count(
     None
 }
 
+fn python_comprehension_part_index(comprehension: Node<'_>, node: Node<'_>) -> Option<usize> {
+    if !contains_node(comprehension, node) {
+        return None;
+    }
+
+    let mut part_index = 0usize;
+    let mut cursor = comprehension.walk();
+    for child in comprehension.named_children(&mut cursor) {
+        if child.kind() == "for_in_clause" {
+            if child
+                .child_by_field_name("right")
+                .is_some_and(|right| contains_node(right, node))
+            {
+                return Some(part_index);
+            }
+            part_index += 1;
+            continue;
+        }
+
+        if child.kind() == "if_clause" {
+            if contains_node(child, node) {
+                return Some(part_index);
+            }
+            part_index += 1;
+            continue;
+        }
+    }
+
+    comprehension
+        .child_by_field_name("body")
+        .filter(|body| contains_node(*body, node))
+        .map(|_| part_index)
+}
+
 fn python_accessible_symbol_resolves_at(
     symbol: &PythonAccessibleSymbol,
     reference_node: Node<'_>,
@@ -2721,10 +2759,19 @@ fn python_accessible_symbol_resolves_at(
         PythonSymbolVisibility::NamedExpression {
             expression_range,
             comprehension_range,
+            comprehension_part_index,
         } => {
-            if let Some(expected_range) = comprehension_range {
+            if let (Some(expected_range), Some(named_part_index)) =
+                (comprehension_range, comprehension_part_index)
+            {
                 if python_enclosing_comprehension(reference_node).is_some_and(|comprehension| {
                     (comprehension.start_byte(), comprehension.end_byte()) == expected_range
+                        && python_comprehension_part_index(comprehension, reference_node)
+                            .is_some_and(|reference_part_index| {
+                                reference_part_index > named_part_index
+                                    || (reference_part_index == named_part_index
+                                        && reference_node.start_byte() > expression_range.1)
+                            })
                 }) {
                     return true;
                 }

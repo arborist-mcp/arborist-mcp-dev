@@ -2245,6 +2245,60 @@ def top_level(values: list[int]) -> object:
     }
 
     #[test]
+    fn resolves_python_comprehension_target_body_bindings_without_global_shadowing() {
+        let source = r#"
+def top_level(values: list[int]) -> object:
+    return values
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(values: list[int]) -> object:\n    return [item for item in values]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let item_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "item")
+            .unwrap();
+        assert_eq!(item_binding.symbol.node_kind, "comprehension_target");
+        assert_eq!(item_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
+    fn resolves_python_comprehension_target_filter_bindings() {
+        let source = r#"
+def top_level(values: list[int]) -> object:
+    return values
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(values: list[int]) -> object:\n    return [item for item in values if item]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let item_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "item")
+            .unwrap();
+        assert_eq!(item_binding.symbol.node_kind, "comprehension_target");
+        assert_eq!(item_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_named_expression_bindings() {
         let source = r#"
 def top_level(items: list[int]) -> int:
@@ -2316,6 +2370,76 @@ def top_level(flag: bool) -> int:
                 .iter()
                 .any(|decision| decision.name == "target" && decision.status == "unresolved")
         );
+    }
+
+    #[test]
+    fn rejects_python_pre_named_expression_references_inside_comprehensions() {
+        let source = r#"
+def target() -> int:
+    return 1
+
+def top_level(values: list[int]) -> object:
+    return values
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(values: list[int]) -> object:\n    return [target + (target := item) for item in values]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(result.validation.unresolved_identifiers, vec!["target"]);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "item" && decision.status == "resolved")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "target" && decision.status == "unresolved")
+        );
+    }
+
+    #[test]
+    fn resolves_python_named_expression_references_after_binding_inside_comprehensions() {
+        let source = r#"
+def top_level(values: list[int]) -> object:
+    return values
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(values: list[int]) -> object:\n    return [(target := item) + target for item in values]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.node_kind, "named_expression");
+        let item_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "item")
+            .unwrap();
+        assert_eq!(item_binding.symbol.node_kind, "comprehension_target");
     }
 
     #[test]
