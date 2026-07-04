@@ -2731,9 +2731,7 @@ fn python_accessible_symbol_suppresses_at(
             let start = reference_node.start_byte();
             start >= except_clause_range.0 && start <= scope_end
         }
-        PythonSymbolVisibility::MatchCapture { .. } => {
-            python_accessible_symbol_resolves_at(symbol, reference_node)
-        }
+        PythonSymbolVisibility::MatchCapture { .. } => true,
     }
 }
 
