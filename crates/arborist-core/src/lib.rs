@@ -2566,6 +2566,51 @@ def orchestrate(value=helper()):\n    helper = 2\n    return value\n",
     }
 
     #[test]
+    fn ignores_python_nonlocal_outer_variable_references_in_nested_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nonlocal_outer_variable.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 2\n\n    def inner():\n        nonlocal helper\n        return helper\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_nonlocal_outer_function_references_in_nested_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nonlocal_outer_function.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    def helper():\n        return 2\n\n    def inner():\n        nonlocal helper\n        return helper()\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "top_level.helper")
+        );
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -2832,6 +2877,62 @@ def orchestrate(value=helper()):\n    helper = 2\n    return value\n",
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn ignores_python_nonlocal_outer_variable_references_in_persisted_nested_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nonlocal_outer_variable.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 2\n\n    def inner():\n        nonlocal helper\n        return helper\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "top_level.inner", TraceDirection::Both)
+                .unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_nonlocal_outer_function_references_in_persisted_nested_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nonlocal_outer_function.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    def helper():\n        return 2\n\n    def inner():\n        nonlocal helper\n        return helper()\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "top_level.helper")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "top_level.inner", TraceDirection::Both)
+                .unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "top_level.helper")
         );
     }
 

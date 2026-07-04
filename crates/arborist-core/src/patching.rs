@@ -1738,10 +1738,18 @@ pub(crate) fn collect_python_references(
 ) -> Result<()> {
     let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
     let local_bindings = collect_python_local_bindings(current_path, node, source)?;
-    collect_python_reference_entries(node, source, &bindings, &local_bindings, references)
+    collect_python_reference_entries(
+        current_path,
+        node,
+        source,
+        &bindings,
+        &local_bindings,
+        references,
+    )
 }
 
 fn collect_python_reference_entries(
+    current_path: &Path,
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
@@ -1765,6 +1773,7 @@ fn collect_python_reference_entries(
             }
 
             collect_python_reference_entries(
+                current_path,
                 object_node,
                 source,
                 bindings,
@@ -1797,6 +1806,13 @@ fn collect_python_reference_entries(
             && python_local_binding_visible(local_bindings, &name, node)
         {
             return Ok(());
+        } else if python_enclosing_local_binding_should_suppress_reference(
+            current_path,
+            node,
+            source,
+            &name,
+        )? {
+            return Ok(());
         } else {
             references.insert(name);
         }
@@ -1806,7 +1822,14 @@ fn collect_python_reference_entries(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_reference_entries(child, source, bindings, local_bindings, references)?;
+            collect_python_reference_entries(
+                current_path,
+                child,
+                source,
+                bindings,
+                local_bindings,
+                references,
+            )?;
         }
     }
 
@@ -1865,13 +1888,25 @@ fn collect_python_external_binding_names(
     source: &str,
 ) -> Result<BTreeSet<String>> {
     let mut names = BTreeSet::new();
-    let mut callback = |candidate: Node<'_>| {
-        if !matches!(candidate.kind(), "global_statement" | "nonlocal_statement") {
-            return;
-        }
+    collect_python_external_binding_names_in_scope(body_node, source, &mut names)?;
+    Ok(names)
+}
 
-        let mut cursor = candidate.walk();
-        for child in candidate.named_children(&mut cursor) {
+fn collect_python_external_binding_names_in_scope(
+    node: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_definition" | "class_definition" | "lambda"
+    ) {
+        return Ok(());
+    }
+
+    if matches!(node.kind(), "global_statement" | "nonlocal_statement") {
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
             if child.kind() != "identifier" {
                 continue;
             }
@@ -1879,9 +1914,16 @@ fn collect_python_external_binding_names(
                 names.insert(name.trim().to_string());
             }
         }
-    };
-    visit_tree(body_node, &mut callback);
-    Ok(names)
+        return Ok(());
+    }
+
+    for index in 0..node.child_count() {
+        if let Some(child) = node.child(index) {
+            collect_python_external_binding_names_in_scope(child, source, names)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_visible_python_import_bindings(
@@ -2464,6 +2506,65 @@ fn python_local_binding_visible(
     local_bindings.iter().any(|binding| {
         binding.name == name && python_accessible_symbol_visible_at(binding, reference_node)
     })
+}
+
+fn python_enclosing_local_binding_should_suppress_reference(
+    current_path: &Path,
+    reference_node: Node<'_>,
+    source: &str,
+    name: &str,
+) -> Result<bool> {
+    let normalized_path = normalize_path(current_path);
+    let mut candidates = Vec::new();
+    let mut seen_scope = false;
+    let mut scope_rank = 2_000_000usize;
+    let mut current = reference_node.parent();
+
+    while let Some(node) = current {
+        let include_scope = match node.kind() {
+            "function_definition" | "class_definition" | "module" => {
+                if seen_scope {
+                    true
+                } else {
+                    seen_scope = true;
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if include_scope {
+            collect_python_scope_symbols(
+                node,
+                source,
+                &normalized_path,
+                scope_rank,
+                &mut candidates,
+            )?;
+            scope_rank = scope_rank.saturating_sub(1_000_000);
+        }
+
+        current = node.parent();
+    }
+
+    candidates.retain(|candidate| {
+        candidate.name == name && python_accessible_symbol_visible_at(candidate, reference_node)
+    });
+    candidates.sort_by(|left, right| {
+        right
+            .rank
+            .cmp(&left.rank)
+            .then_with(|| left.summary.symbol_id.cmp(&right.summary.symbol_id))
+    });
+
+    let Some(best) = candidates.first() else {
+        return Ok(false);
+    };
+
+    Ok(!matches!(
+        best.summary.node_kind.as_str(),
+        "function_definition" | "class_definition"
+    ))
 }
 
 fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {
