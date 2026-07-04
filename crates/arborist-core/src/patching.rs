@@ -1619,7 +1619,7 @@ fn collect_python_match_target_symbols(
             return;
         }
 
-        if let Some(name) = python_match_capture_name(candidate, source) {
+        for name in python_match_capture_names(candidate, source) {
             symbols.push(PythonAccessibleSymbol {
                 name: name.clone(),
                 summary: python_synthetic_symbol_summary(
@@ -2305,32 +2305,13 @@ fn is_python_except_target_name(node: Node<'_>, source: &str) -> bool {
     false
 }
 
-fn python_match_capture_name(case_pattern: Node<'_>, source: &str) -> Option<String> {
-    let child = only_named_child(case_pattern)?;
-    match child.kind() {
-        "as_pattern" => python_as_pattern_alias_name(child, source),
-        "keyword_pattern" => python_keyword_pattern_capture_name(child, source),
-        "splat_pattern" => python_splat_pattern_capture_name(child, source),
-        "pattern" => node_text(child, source)
-            .ok()
-            .map(str::trim)
-            .filter(|name| is_python_capture_name_text(name))
-            .map(str::to_string),
-        "dotted_name" => {
-            let identifier = only_named_child(child)?;
-            let name = node_text(identifier, source).ok()?.trim();
-            is_python_capture_name_text(name).then(|| name.to_string())
-        }
-        _ => None,
+fn python_match_capture_names(case_pattern: Node<'_>, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = case_pattern.walk();
+    for child in case_pattern.named_children(&mut cursor) {
+        python_collect_direct_match_capture_names(child, source, &mut names);
     }
-}
-
-fn python_keyword_pattern_capture_name(keyword_pattern: Node<'_>, source: &str) -> Option<String> {
-    let mut cursor = keyword_pattern.walk();
-    keyword_pattern
-        .named_children(&mut cursor)
-        .last()
-        .and_then(|value| python_match_pattern_node_capture_name(value, source))
+    names
 }
 
 fn python_splat_pattern_capture_name(splat_pattern: Node<'_>, source: &str) -> Option<String> {
@@ -2351,20 +2332,68 @@ fn python_as_pattern_alias_name(as_pattern: Node<'_>, source: &str) -> Option<St
         .map(str::to_string)
 }
 
-fn python_match_pattern_node_capture_name(node: Node<'_>, source: &str) -> Option<String> {
+fn python_collect_direct_match_capture_names(
+    node: Node<'_>,
+    source: &str,
+    names: &mut Vec<String>,
+) {
     match node.kind() {
-        "case_pattern" => python_match_capture_name(node, source),
-        "splat_pattern" => python_splat_pattern_capture_name(node, source),
-        "pattern" | "dotted_name" => {
-            let name = if node.kind() == "dotted_name" {
-                let identifier = only_named_child(node)?;
-                node_text(identifier, source).ok()?.trim()
-            } else {
-                node_text(node, source).ok()?.trim()
-            };
-            is_python_capture_name_text(name).then(|| name.to_string())
+        "case_pattern" => {}
+        "as_pattern" => {
+            if let Some(name) = python_as_pattern_alias_name(node, source) {
+                push_python_match_capture_name(names, &name);
+            }
         }
-        _ => None,
+        "keyword_pattern" => {
+            let mut cursor = node.walk();
+            if let Some(value) = node.named_children(&mut cursor).last() {
+                python_collect_direct_match_capture_names(value, source, names);
+            }
+        }
+        "splat_pattern" => {
+            if let Some(name) = python_splat_pattern_capture_name(node, source) {
+                push_python_match_capture_name(names, &name);
+            }
+        }
+        "pattern" => {
+            if let Ok(name) = node_text(node, source) {
+                push_python_match_capture_name(names, name.trim());
+            }
+        }
+        "dotted_name" => {
+            if let Some(identifier) = only_named_child(node) {
+                if let Ok(name) = node_text(identifier, source) {
+                    push_python_match_capture_name(names, name.trim());
+                }
+            }
+        }
+        "class_pattern" => {
+            let mut cursor = node.walk();
+            for (index, child) in node.named_children(&mut cursor).enumerate() {
+                if index == 0 || child.kind() == "case_pattern" {
+                    continue;
+                }
+                python_collect_direct_match_capture_names(child, source, names);
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() == "case_pattern" {
+                    continue;
+                }
+                python_collect_direct_match_capture_names(child, source, names);
+            }
+        }
+    }
+}
+
+fn push_python_match_capture_name(names: &mut Vec<String>, name: &str) {
+    if !is_python_capture_name_text(name) {
+        return;
+    }
+    if !names.iter().any(|existing| existing == name) {
+        names.push(name.to_string());
     }
 }
 
@@ -2392,11 +2421,13 @@ fn is_python_match_capture_name(node: Node<'_>, source: &str) -> bool {
     let mut current = Some(parent);
     while let Some(candidate) = current {
         if candidate.kind() == "case_pattern" {
-            return python_match_capture_name(candidate, source).is_some_and(|name| {
-                node_text(node, source)
-                    .ok()
-                    .is_some_and(|node_name| node_name.trim() == name)
-            });
+            return python_match_capture_names(candidate, source)
+                .into_iter()
+                .any(|name| {
+                    node_text(node, source)
+                        .ok()
+                        .is_some_and(|node_name| node_name.trim() == name)
+                });
         }
 
         if matches!(
