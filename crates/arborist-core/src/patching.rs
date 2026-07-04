@@ -505,16 +505,36 @@ fn collect_python_reference_validation(
                 validation
                     .binding_decisions
                     .push(unresolved_binding_decision(&name));
-                validation.unresolved_identifiers.push(name);
+                validation
+                    .resolved_identifiers
+                    .retain(|binding| binding.name != name);
+                validation
+                    .ambiguous_identifiers
+                    .retain(|binding| binding.name != name);
+                if !validation.unresolved_identifiers.contains(&name) {
+                    validation.unresolved_identifiers.push(name);
+                }
             }
             [single] => {
                 validation
                     .binding_decisions
                     .push(resolved_binding_decision(&name, &single.summary));
-                validation.resolved_identifiers.push(ValidationBinding {
-                    name,
-                    symbol: single.summary.clone(),
-                });
+                let is_blocked = validation.unresolved_identifiers.iter().any(|item| item == &name)
+                    || validation
+                        .ambiguous_identifiers
+                        .iter()
+                        .any(|binding| binding.name == name);
+                if !is_blocked
+                    && !validation
+                        .resolved_identifiers
+                        .iter()
+                        .any(|binding| binding.name == name)
+                {
+                    validation.resolved_identifiers.push(ValidationBinding {
+                        name,
+                        symbol: single.summary.clone(),
+                    });
+                }
             }
             _ => {
                 let candidate_summaries = candidates
@@ -529,12 +549,23 @@ fn collect_python_reference_validation(
                         &reason,
                         &candidate_summaries,
                     ));
-                validation.ambiguous_identifiers.push(ValidationAmbiguity {
-                    name,
-                    reason,
-                    disambiguation_context: DisambiguationContext::default(),
-                    candidates: candidate_summaries,
-                });
+                if !validation.unresolved_identifiers.iter().any(|item| item == &name) {
+                    validation
+                        .resolved_identifiers
+                        .retain(|binding| binding.name != name);
+                    if !validation
+                        .ambiguous_identifiers
+                        .iter()
+                        .any(|binding| binding.name == name)
+                    {
+                        validation.ambiguous_identifiers.push(ValidationAmbiguity {
+                            name,
+                            reason,
+                            disambiguation_context: DisambiguationContext::default(),
+                            candidates: candidate_summaries,
+                        });
+                    }
+                }
             }
         }
     }
@@ -781,12 +812,10 @@ fn collect_python_reference_targets<'tree>(
     bindings: &BTreeMap<String, PythonImportBinding>,
 ) -> Result<Vec<PythonReferenceTarget<'tree>>> {
     let mut references = Vec::new();
-    let mut seen_names = BTreeSet::new();
     collect_python_reference_targets_inner(
         symbol_node,
         source,
         bindings,
-        &mut seen_names,
         &mut references,
     )?;
     Ok(references)
@@ -796,7 +825,6 @@ fn collect_python_reference_targets_inner<'tree>(
     node: Node<'tree>,
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
-    seen_names: &mut BTreeSet<String>,
     references: &mut Vec<PythonReferenceTarget<'tree>>,
 ) -> Result<()> {
     if node.kind() == "attribute" {
@@ -811,14 +839,12 @@ fn collect_python_reference_targets_inner<'tree>(
                     bindings.get(&object_name)
                 {
                     let display_name = format!("{object_name}.{attribute_name}");
-                    if seen_names.insert(display_name.clone()) {
-                        references.push(PythonReferenceTarget {
-                            name: display_name,
-                            node: node,
-                            imported_symbol: Some((module_name.clone(), attribute_name)),
-                            import_fallback_name: Some(object_name),
-                        });
-                    }
+                    references.push(PythonReferenceTarget {
+                        name: display_name,
+                        node: node,
+                        imported_symbol: Some((module_name.clone(), attribute_name)),
+                        import_fallback_name: Some(object_name),
+                    });
                     return Ok(());
                 }
             }
@@ -827,7 +853,6 @@ fn collect_python_reference_targets_inner<'tree>(
                 object_node,
                 source,
                 bindings,
-                seen_names,
                 references,
             )?;
             return Ok(());
@@ -843,14 +868,12 @@ fn collect_python_reference_targets_inner<'tree>(
             }) => Some((module_name.clone(), symbol_name.clone())),
             _ => None,
         };
-        if seen_names.insert(name.clone()) {
-            references.push(PythonReferenceTarget {
-                name,
-                node,
-                imported_symbol,
-                import_fallback_name: None,
-            });
-        }
+        references.push(PythonReferenceTarget {
+            name,
+            node,
+            imported_symbol,
+            import_fallback_name: None,
+        });
         return Ok(());
     }
 
@@ -858,7 +881,7 @@ fn collect_python_reference_targets_inner<'tree>(
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
             collect_python_reference_targets_inner(
-                child, source, bindings, seen_names, references,
+                child, source, bindings, references,
             )?;
         }
     }

@@ -1721,6 +1721,56 @@ def top_level() -> int:
     }
 
     #[test]
+    fn rejects_python_mixed_except_target_reference_states() {
+        let source = r#"
+def exc() -> int:
+    return 1
+
+def risky() -> int:
+    return 2
+
+def handle(value: object) -> object:
+    return value
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    try:\n        risky()\n    except ValueError as exc:\n        handle(exc)\n    return exc()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(result.validation.unresolved_identifiers, vec!["exc"]);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "risky" && decision.status == "resolved")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "handle" && decision.status == "resolved")
+        );
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "exc" && decision.status == "unresolved")
+        );
+    }
+
+    #[test]
     fn resolves_python_block_local_bindings() {
         let source = r#"
 def top_level(flag: bool) -> int:
