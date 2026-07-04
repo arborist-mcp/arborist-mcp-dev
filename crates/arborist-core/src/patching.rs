@@ -1793,7 +1793,9 @@ fn collect_python_reference_entries(
                     }
                 }
             }
-        } else if python_local_binding_visible(local_bindings, &name, node) {
+        } else if !is_python_default_parameter_value(node)
+            && python_local_binding_visible(local_bindings, &name, node)
+        {
             return Ok(());
         } else {
             references.insert(name);

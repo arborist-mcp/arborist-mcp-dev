@@ -2544,6 +2544,28 @@ def orchestrate():\n    global helper\n    helper = helper\n    return helper()\
     }
 
     #[test]
+    fn traces_python_default_parameter_references_despite_local_shadowing() {
+        let dir = temporary_dir();
+        let source = dir.join("default_param_shadow.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def orchestrate(value=helper()):\n    helper = 2\n    return value\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -2779,6 +2801,38 @@ def orchestrate(value):\n    match value:\n        case {\"target\": target}:\n 
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
         assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_default_parameter_references_despite_local_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("default_param_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def orchestrate(value=helper()):\n    helper = 2\n    return value\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
     }
 
     #[test]
