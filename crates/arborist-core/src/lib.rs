@@ -1797,6 +1797,42 @@ def top_level(value) -> int:
     }
 
     #[test]
+    fn resolves_python_match_union_patch_bindings() {
+        let source = r#"
+class Point:
+    __match_args__ = ("value",)
+
+class Value:
+    __match_args__ = ("value",)
+
+def target() -> int:
+    return 1
+
+def top_level(value) -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value) -> int:\n    match value:\n        case Point(target) | Value(target):\n            return target\n        case _:\n            return 0\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.node_kind, "match_capture");
+        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_match_mixed_mapping_patch_bindings() {
         let source = r#"
 def target() -> int:
@@ -2459,6 +2495,36 @@ def orchestrate(value):\n    match value:\n        case Point(target):\n        
 
         assert!(
             trace.callees.iter().any(|symbol| symbol.semantic_path == "Point")
+        );
+        assert!(
+            !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn ignores_python_match_union_capture_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("match_union_capture.py");
+
+        fs::write(
+            &source,
+            "class Point:\n    __match_args__ = (\"value\",)\n\n\
+class Value:\n    __match_args__ = (\"value\",)\n\n\
+def target():\n    return 1\n\n\
+def orchestrate(value):\n    match value:\n        case Point(target) | Value(target):\n            return target\n        case _:\n            return 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace.callees.iter().any(|symbol| symbol.semantic_path == "Point")
+        );
+        assert!(
+            trace.callees.iter().any(|symbol| symbol.semantic_path == "Value")
         );
         assert!(
             !trace
