@@ -48,6 +48,10 @@ struct PythonAccessibleSymbol {
 #[derive(Debug, Clone)]
 enum PythonSymbolVisibility {
     Always,
+    ExceptTarget {
+        except_clause_range: (usize, usize),
+        scope_end: usize,
+    },
     MatchCapture {
         case_clause_range: (usize, usize),
         match_statement_end: usize,
@@ -929,22 +933,44 @@ fn python_binding_candidates_for_reference(
         current = node.parent();
     }
 
-    candidates.retain(|candidate| {
-        candidate.name == name
-            && python_accessible_symbol_visible_at(candidate, reference_target.node)
-    });
-    candidates.sort_by(|left, right| {
+    candidates.retain(|candidate| candidate.name == name);
+    let mut resolving_candidates = candidates
+        .iter()
+        .filter(|candidate| python_accessible_symbol_resolves_at(candidate, reference_target.node))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut suppressing_candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            python_accessible_symbol_suppresses_at(candidate, reference_target.node)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    resolving_candidates.sort_by(|left, right| {
         right
             .rank
             .cmp(&left.rank)
             .then_with(|| left.summary.symbol_id.cmp(&right.summary.symbol_id))
     });
 
-    let Some(best_rank) = candidates.first().map(|candidate| candidate.rank) else {
+    suppressing_candidates.sort_by(|left, right| {
+        right
+            .rank
+            .cmp(&left.rank)
+            .then_with(|| left.summary.symbol_id.cmp(&right.summary.symbol_id))
+    });
+
+    let best_suppressing_rank = suppressing_candidates.first().map(|candidate| candidate.rank);
+    let Some(best_rank) = resolving_candidates.first().map(|candidate| candidate.rank) else {
         return Ok(Vec::new());
     };
 
-    Ok(candidates
+    if best_suppressing_rank.is_some_and(|rank| rank > best_rank) {
+        return Ok(Vec::new());
+    }
+
+    Ok(resolving_candidates
         .into_iter()
         .filter(|candidate| candidate.rank == best_rank)
         .collect())
@@ -1611,6 +1637,13 @@ fn collect_python_except_target_symbols(
             return;
         }
 
+        let Some(except_clause) = python_enclosing_except_clause(candidate) else {
+            return;
+        };
+        let Some(scope_node) = python_nearest_scope_node(candidate) else {
+            return;
+        };
+
         if let Ok(name) = node_text(candidate, source) {
             symbols.push(PythonAccessibleSymbol {
                 name: name.trim().to_string(),
@@ -1623,7 +1656,10 @@ fn collect_python_except_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
-                visibility: PythonSymbolVisibility::Always,
+                visibility: PythonSymbolVisibility::ExceptTarget {
+                    except_clause_range: (except_clause.start_byte(), except_clause.end_byte()),
+                    scope_end: scope_node.end_byte(),
+                },
             });
         }
     };
@@ -2486,12 +2522,31 @@ fn python_enclosing_case_clause(node: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
-fn python_accessible_symbol_visible_at(
+fn python_enclosing_except_clause(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "except_clause" {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn python_accessible_symbol_resolves_at(
     symbol: &PythonAccessibleSymbol,
     reference_node: Node<'_>,
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ExceptTarget {
+            except_clause_range,
+            ..
+        } => {
+            let start = reference_node.start_byte();
+            let end = reference_node.end_byte();
+            start >= except_clause_range.0 && end <= except_clause_range.1
+        }
         PythonSymbolVisibility::MatchCapture {
             case_clause_range,
             match_statement_end,
@@ -2504,13 +2559,32 @@ fn python_accessible_symbol_visible_at(
     }
 }
 
+fn python_accessible_symbol_suppresses_at(
+    symbol: &PythonAccessibleSymbol,
+    reference_node: Node<'_>,
+) -> bool {
+    match symbol.visibility {
+        PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ExceptTarget {
+            except_clause_range,
+            scope_end,
+        } => {
+            let start = reference_node.start_byte();
+            start >= except_clause_range.0 && start <= scope_end
+        }
+        PythonSymbolVisibility::MatchCapture { .. } => {
+            python_accessible_symbol_resolves_at(symbol, reference_node)
+        }
+    }
+}
+
 fn python_local_binding_visible(
     local_bindings: &[PythonAccessibleSymbol],
     name: &str,
     reference_node: Node<'_>,
 ) -> bool {
     local_bindings.iter().any(|binding| {
-        binding.name == name && python_accessible_symbol_visible_at(binding, reference_node)
+        binding.name == name && python_accessible_symbol_suppresses_at(binding, reference_node)
     })
 }
 
@@ -2558,7 +2632,7 @@ fn python_enclosing_local_binding_should_suppress_reference(
     }
 
     candidates.retain(|candidate| {
-        candidate.name == name && python_accessible_symbol_visible_at(candidate, reference_node)
+        candidate.name == name && python_accessible_symbol_suppresses_at(candidate, reference_node)
     });
     candidates.sort_by(|left, right| {
         right
