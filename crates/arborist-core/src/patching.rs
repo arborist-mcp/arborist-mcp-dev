@@ -48,6 +48,10 @@ struct PythonAccessibleSymbol {
 #[derive(Debug, Clone)]
 enum PythonSymbolVisibility {
     Always,
+    NamedExpression {
+        expression_range: (usize, usize),
+        comprehension_range: Option<(usize, usize)>,
+    },
     ComprehensionTarget {
         comprehension_range: (usize, usize),
         clause_index: usize,
@@ -1341,7 +1345,13 @@ fn collect_python_named_expression_symbols(
                         (target.start_byte(), target.end_byte()),
                     ),
                     rank: rank + target.start_byte(),
-                    visibility: PythonSymbolVisibility::Always,
+                    visibility: PythonSymbolVisibility::NamedExpression {
+                        expression_range: (candidate.start_byte(), candidate.end_byte()),
+                        comprehension_range: python_enclosing_comprehension(candidate)
+                            .map(|comprehension| {
+                                (comprehension.start_byte(), comprehension.end_byte())
+                            }),
+                    },
                 });
             }
         };
@@ -2685,6 +2695,20 @@ fn python_accessible_symbol_resolves_at(
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::NamedExpression {
+            expression_range,
+            comprehension_range,
+        } => {
+            if let Some(expected_range) = comprehension_range {
+                if python_enclosing_comprehension(reference_node).is_some_and(|comprehension| {
+                    (comprehension.start_byte(), comprehension.end_byte()) == expected_range
+                }) {
+                    return true;
+                }
+            }
+
+            reference_node.start_byte() > expression_range.1
+        }
         PythonSymbolVisibility::ComprehensionTarget {
             comprehension_range,
             clause_index,
@@ -2719,6 +2743,7 @@ fn python_accessible_symbol_suppresses_at(
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::NamedExpression { .. } => true,
         PythonSymbolVisibility::ComprehensionTarget { .. } => {
             python_accessible_symbol_resolves_at(symbol, reference_node)
         }
