@@ -1406,8 +1406,7 @@ def top_level(value: int) -> int:
                 .validation
                 .binding_decisions
                 .iter()
-                .all(|decision| decision.name != "MissingType"
-                    && decision.name != "MissingReturn")
+                .all(|decision| decision.name != "MissingType" && decision.name != "MissingReturn")
         );
     }
 
@@ -1466,8 +1465,7 @@ def top_level(value: int) -> int:
                 .validation
                 .binding_decisions
                 .iter()
-                .any(|decision| decision.name == "MODULE_DEFAULT"
-                    && decision.status == "resolved")
+                .any(|decision| decision.name == "MODULE_DEFAULT" && decision.status == "resolved")
         );
 
         let rejected = patch_ast_node(
@@ -1486,8 +1484,7 @@ def top_level(value: int) -> int:
                 .validation
                 .binding_decisions
                 .iter()
-                .any(|decision| decision.name == "value"
-                    && decision.status == "unresolved")
+                .any(|decision| decision.name == "value" && decision.status == "unresolved")
         );
         assert!(
             rejected
@@ -1600,7 +1597,10 @@ def top_level() -> object:
             .find(|binding| binding.name == "handle")
             .unwrap();
         assert_eq!(handle_binding.symbol.node_kind, "with_target");
-        assert_eq!(handle_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            handle_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1730,7 +1730,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1760,7 +1763,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1790,7 +1796,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1820,7 +1829,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1850,7 +1862,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1880,7 +1895,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1913,7 +1931,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -1949,7 +1970,40 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
+    }
+
+    #[test]
+    fn resolves_python_match_guard_references_after_prior_capture() {
+        let source = r#"
+def target() -> int:
+    return 1
+
+def top_level(value) -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value) -> int:\n    match value:\n        case [target]:\n            return 0\n        case _ if target():\n            return 1\n        case _:\n            return 2\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.semantic_path, "target");
+        assert_eq!(target_binding.symbol.node_kind, "function_definition");
     }
 
     #[test]
@@ -1979,7 +2033,10 @@ def top_level(value) -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "match_capture");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
 
         let x_binding = result
             .validation
@@ -2631,7 +2688,10 @@ def orchestrate(value):\n    match value:\n        case Point(target):\n        
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
 
         assert!(
-            trace.callees.iter().any(|symbol| symbol.semantic_path == "Point")
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Point")
         );
         assert!(
             !trace
@@ -2658,13 +2718,41 @@ def orchestrate(value):\n    match value:\n        case Point(target) | Value(ta
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
 
         assert!(
-            trace.callees.iter().any(|symbol| symbol.semantic_path == "Point")
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Point")
         );
         assert!(
-            trace.callees.iter().any(|symbol| symbol.semantic_path == "Value")
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Value")
         );
         assert!(
             !trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn traces_python_match_guard_references_after_prior_capture() {
+        let dir = temporary_dir();
+        let source = dir.join("match_guard_reference.py");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate(value):\n    match value:\n        case [target]:\n            return 0\n        case _ if target():\n            return 1\n        case _:\n            return 2\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "target")
@@ -2732,6 +2820,38 @@ def orchestrate(value):\n    match value:\n        case Point(target):\n        
         );
         assert!(
             !persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn traces_python_match_guard_references_after_prior_capture_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("match_guard_reference.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate(value):\n    match value:\n        case [target]:\n            return 0\n        case _ if target():\n            return 1\n        case _:\n            return 2\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "target")

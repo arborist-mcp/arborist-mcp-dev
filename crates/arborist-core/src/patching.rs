@@ -42,6 +42,16 @@ struct PythonAccessibleSymbol {
     name: String,
     summary: SymbolSummary,
     rank: usize,
+    visibility: PythonSymbolVisibility,
+}
+
+#[derive(Debug, Clone)]
+enum PythonSymbolVisibility {
+    Always,
+    MatchCapture {
+        case_clause_range: (usize, usize),
+        match_statement_end: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -858,6 +868,7 @@ fn python_binding_candidates_for_reference(
                 name: reference_target.name.clone(),
                 summary,
                 rank: 4_000_000,
+                visibility: PythonSymbolVisibility::Always,
             }]);
         }
     }
@@ -912,7 +923,10 @@ fn python_binding_candidates_for_reference(
         current = node.parent();
     }
 
-    candidates.retain(|candidate| candidate.name == name);
+    candidates.retain(|candidate| {
+        candidate.name == name
+            && python_accessible_symbol_visible_at(candidate, reference_target.node)
+    });
     candidates.sort_by(|left, right| {
         right
             .rank
@@ -1023,6 +1037,7 @@ fn collect_python_statement_symbols(
                         .to_string(),
                     summary,
                     rank: scope_rank + 400_000 + statement_node.start_byte(),
+                    visibility: PythonSymbolVisibility::Always,
                 });
             }
         }
@@ -1229,6 +1244,7 @@ fn collect_python_named_expression_symbols(
                         (target.start_byte(), target.end_byte()),
                     ),
                     rank: rank + target.start_byte(),
+                    visibility: PythonSymbolVisibility::Always,
                 });
             }
         };
@@ -1498,6 +1514,7 @@ fn collect_python_parameter_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::Always,
             });
         }
     };
@@ -1532,6 +1549,7 @@ fn collect_python_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::Always,
             });
         }
     };
@@ -1565,6 +1583,7 @@ fn collect_python_with_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::Always,
             });
         }
     };
@@ -1598,6 +1617,7 @@ fn collect_python_except_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::Always,
             });
         }
     };
@@ -1619,6 +1639,10 @@ fn collect_python_match_target_symbols(
             return;
         }
 
+        let Some(case_clause) = python_enclosing_case_clause(candidate) else {
+            return;
+        };
+
         for name in python_match_capture_names(candidate, source) {
             symbols.push(PythonAccessibleSymbol {
                 name: name.clone(),
@@ -1631,6 +1655,10 @@ fn collect_python_match_target_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::MatchCapture {
+                    case_clause_range: (case_clause.start_byte(), case_clause.end_byte()),
+                    match_statement_end: node.end_byte(),
+                },
             });
         }
     };
@@ -1670,6 +1698,7 @@ fn collect_python_import_symbols(
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
                 rank: rank + candidate.start_byte(),
+                visibility: PythonSymbolVisibility::Always,
             });
         }
     };
@@ -1708,7 +1737,7 @@ pub(crate) fn collect_python_references(
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
-    let local_bindings = collect_python_local_binding_names(current_path, node, source)?;
+    let local_bindings = collect_python_local_bindings(current_path, node, source)?;
     collect_python_reference_entries(node, source, &bindings, &local_bindings, references)
 }
 
@@ -1716,7 +1745,7 @@ fn collect_python_reference_entries(
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
-    local_bindings: &BTreeSet<String>,
+    local_bindings: &[PythonAccessibleSymbol],
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     if node.kind() == "attribute" {
@@ -1764,7 +1793,7 @@ fn collect_python_reference_entries(
                     }
                 }
             }
-        } else if local_bindings.contains(&name) {
+        } else if python_local_binding_visible(local_bindings, &name, node) {
             return Ok(());
         } else {
             references.insert(name);
@@ -1782,11 +1811,11 @@ fn collect_python_reference_entries(
     Ok(())
 }
 
-fn collect_python_local_binding_names(
+fn collect_python_local_bindings(
     current_path: &Path,
     node: Node<'_>,
     source: &str,
-) -> Result<BTreeSet<String>> {
+) -> Result<Vec<PythonAccessibleSymbol>> {
     let normalized_path = normalize_path(current_path);
     let scope_path = if node.kind() == "module" {
         None
@@ -1805,7 +1834,7 @@ fn collect_python_local_binding_names(
     } else if let Some(body) = node.child_by_field_name("body") {
         body
     } else {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     };
 
     let mut symbols = Vec::new();
@@ -1823,11 +1852,10 @@ fn collect_python_local_binding_names(
     }
 
     let external_bindings = collect_python_external_binding_names(body_node, source)?;
-    Ok(symbols
-        .into_iter()
-        .map(|symbol| symbol.name)
-        .filter(|name| !external_bindings.contains(name))
-        .collect())
+    if !external_bindings.is_empty() {
+        symbols.retain(|symbol| !external_bindings.contains(&symbol.name));
+    }
+    Ok(symbols)
 }
 
 fn collect_python_external_binding_names(
@@ -2395,6 +2423,45 @@ fn push_python_match_capture_name(names: &mut Vec<String>, name: &str) {
     if !names.iter().any(|existing| existing == name) {
         names.push(name.to_string());
     }
+}
+
+fn python_enclosing_case_clause(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "case_clause" {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn python_accessible_symbol_visible_at(
+    symbol: &PythonAccessibleSymbol,
+    reference_node: Node<'_>,
+) -> bool {
+    match symbol.visibility {
+        PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::MatchCapture {
+            case_clause_range,
+            match_statement_end,
+        } => {
+            let start = reference_node.start_byte();
+            let end = reference_node.end_byte();
+            (start >= case_clause_range.0 && end <= case_clause_range.1)
+                || start > match_statement_end
+        }
+    }
+}
+
+fn python_local_binding_visible(
+    local_bindings: &[PythonAccessibleSymbol],
+    name: &str,
+    reference_node: Node<'_>,
+) -> bool {
+    local_bindings.iter().any(|binding| {
+        binding.name == name && python_accessible_symbol_visible_at(binding, reference_node)
+    })
 }
 
 fn only_named_child(node: Node<'_>) -> Option<Node<'_>> {
