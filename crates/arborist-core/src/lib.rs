@@ -2443,6 +2443,36 @@ def top_level(values: list[int]) -> object:
     }
 
     #[test]
+    fn resolves_python_lambda_parameter_bindings() {
+        let source = r#"
+def target() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    return (lambda target: target)(3)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.node_kind, "parameter");
+        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
@@ -3065,6 +3095,23 @@ def orchestrate(flag):\n    before = target\n    if flag and (target := 3):\n   
     }
 
     #[test]
+    fn ignores_python_lambda_parameter_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("lambda_param_shadow.py");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda target: target)(3)\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -3524,6 +3571,28 @@ def orchestrate():\n    before = exc\n    try:\n        risky()\n    except Valu
             &source,
             "def target():\n    return 1\n\n\
 def orchestrate(flag):\n    before = target\n    if flag and (target := 3):\n        return before\n    return before\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_lambda_parameter_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("lambda_param_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda target: target)(3)\n",
         )
         .unwrap();
 

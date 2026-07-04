@@ -944,6 +944,10 @@ fn python_binding_candidates_for_reference(
                     seen_function_scope = true;
                     !skip_current_function_scope
                 }
+                "lambda" => {
+                    seen_function_scope = true;
+                    !skip_current_function_scope
+                }
                 "class_definition" => !seen_function_scope,
                 "module" => true,
                 _ => false,
@@ -1014,18 +1018,14 @@ fn collect_python_scope_symbols(
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
 ) -> Result<()> {
-    let scope_path = if scope_node.kind() == "module" {
-        None
-    } else {
-        Some(semantic_path(scope_node, source)?)
-    };
+    let scope_path = python_binding_scope_path(scope_node, source)?;
     let origin_type = if scope_node.kind() == "module" {
         "module_scope"
     } else {
         "local_scope"
     };
 
-    if scope_node.kind() == "function_definition" {
+    if matches!(scope_node.kind(), "function_definition" | "lambda") {
         collect_python_parameter_symbols(
             scope_node,
             source,
@@ -1035,6 +1035,22 @@ fn collect_python_scope_symbols(
             scope_rank + 500_000,
             symbols,
         )?;
+    }
+
+    if scope_node.kind() == "lambda" {
+        let Some(body_node) = scope_node.child_by_field_name("body") else {
+            return Ok(());
+        };
+        collect_python_statement_symbols(
+            body_node,
+            source,
+            normalized_path,
+            scope_path.as_deref(),
+            origin_type,
+            scope_rank,
+            symbols,
+        )?;
+        return Ok(());
     }
 
     let body_node = if scope_node.kind() == "module" {
@@ -2009,18 +2025,22 @@ fn collect_python_local_bindings(
     source: &str,
 ) -> Result<Vec<PythonAccessibleSymbol>> {
     let normalized_path = normalize_path(current_path);
-    let scope_path = if node.kind() == "module" {
-        None
-    } else if matches!(node.kind(), "function_definition" | "class_definition") {
-        Some(semantic_path(node, source)?)
-    } else {
-        None
-    };
+    let scope_path = python_binding_scope_path(node, source)?;
     let origin_type = if node.kind() == "module" {
         "module_scope"
     } else {
         "local_scope"
     };
+
+    let mut symbols = Vec::new();
+    if node.kind() == "lambda" {
+        if node.child_by_field_name("body").is_none() {
+            return Ok(Vec::new());
+        }
+        collect_python_scope_symbols(node, source, &normalized_path, 0, &mut symbols)?;
+        return Ok(symbols);
+    }
+
     let body_node = if node.kind() == "module" {
         node
     } else if let Some(body) = node.child_by_field_name("body") {
@@ -2029,7 +2049,6 @@ fn collect_python_local_bindings(
         return Ok(Vec::new());
     };
 
-    let mut symbols = Vec::new();
     let mut cursor = body_node.walk();
     for statement in body_node.named_children(&mut cursor) {
         collect_python_statement_symbols(
@@ -2103,7 +2122,7 @@ fn collect_visible_python_import_bindings(
     while let Some(candidate) = current {
         if matches!(
             candidate.kind(),
-            "module" | "function_definition" | "class_definition"
+            "module" | "function_definition" | "class_definition" | "lambda"
         ) {
             scopes.push(candidate);
         }
@@ -2850,6 +2869,10 @@ fn python_enclosing_local_binding_should_suppress_reference(
 
     while let Some(node) = current {
         let include_scope = match node.kind() {
+            "lambda" => {
+                seen_scope = true;
+                true
+            }
             "function_definition" | "class_definition" | "module" => {
                 if seen_scope {
                     true
@@ -2906,13 +2929,38 @@ fn python_nearest_scope_node(node: Node<'_>) -> Option<Node<'_>> {
     while let Some(candidate) = current {
         if matches!(
             candidate.kind(),
-            "function_definition" | "class_definition" | "module"
+            "function_definition" | "class_definition" | "module" | "lambda"
         ) {
             return Some(candidate);
         }
         current = candidate.parent();
     }
     None
+}
+
+fn python_binding_scope_path(scope_node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if scope_node.kind() == "module" {
+        return Ok(None);
+    }
+
+    if matches!(scope_node.kind(), "function_definition" | "class_definition") {
+        return Ok(Some(semantic_path(scope_node, source)?));
+    }
+
+    if scope_node.kind() == "lambda" {
+        let mut current = scope_node.parent();
+        while let Some(candidate) = current {
+            if candidate.kind() == "module" {
+                return Ok(None);
+            }
+            if matches!(candidate.kind(), "function_definition" | "class_definition") {
+                return Ok(Some(semantic_path(candidate, source)?));
+            }
+            current = candidate.parent();
+        }
+    }
+
+    Ok(None)
 }
 
 fn python_scope_declares_external_name(
