@@ -81,7 +81,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - VFS buffers are keyed by normalized absolute paths, so aliases such as `child/../sample.py` share the same dirty buffer and commit state
 - Persisted trace reads reject missing `index_db_path` databases without creating empty SQLite files
 - Workspace indexing skips common cache, build, dependency, and virtual-environment directories
-- The stdio gateway rejects non-standard JSON constants such as `NaN` and `Infinity`, including inside nested JSON parameters forwarded to the Rust core
+- The stdio gateway rejects non-standard JSON constants such as `NaN` and `Infinity`, malformed `did_change` edit payloads, and negative numeric parameters before forwarding requests to the Rust core
 - Mixed Rust/Python build via `maturin`
 
 ## Local setup
