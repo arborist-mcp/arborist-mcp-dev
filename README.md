@@ -74,6 +74,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - File-scoped persisted index refresh for tighter post-commit sync
 - Partial SQLite persistence updates for changed or deleted file refreshes
 - C file refresh now follows the local `#include` reverse-dependency chain so header edits or deletions can rebuild affected dependents in one pass
+- Local C include paths are normalized before dependency tracking, so parent-relative includes such as `#include "../include/wrapper.h"` refresh the right dependents
 - Missing system includes such as `#include <stdio.h>` are not treated as local workspace dependencies during refresh
 - Workspace path checks normalize `.` and `..` segments before enforcing containment
 - Mixed Rust/Python build via `maturin`
@@ -194,6 +195,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Persisted symbol rows now retain raw reference names so file refreshes can reconnect callers when a previously missing symbol becomes resolvable
 - File refresh now re-resolves only the changed symbols plus their impacted graph neighborhood before writing the updated rows back to SQLite
 - C header refresh now expands through the local reverse `#include` DAG, so touching or deleting `wrapper.h` can rebuild dependent files such as `caller.c` during the same partial refresh
+- Parent-relative local include paths are normalized before reverse-dependency matching, so `#include "../include/wrapper.h"` links back to the same refreshed header path as `include/wrapper.h`
 - Missing angle-bracket system includes are ignored for local reverse-dependency expansion, while missing quote-style local includes are still tracked so deleted headers can invalidate dependents
 - Workspace containment checks now normalize `.` and `..` path segments before comparing paths, so refresh requests cannot escape a workspace through lexical path tricks
 - C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions
