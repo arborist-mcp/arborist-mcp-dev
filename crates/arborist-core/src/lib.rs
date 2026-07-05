@@ -5802,6 +5802,26 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_from_index_rejects_invalid_indexed_files_metadata() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute(
+                "UPDATE metadata SET value = 'many' WHERE key = 'indexed_files'",
+                [],
+            )
+            .unwrap();
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("invalid indexed_files metadata should be rejected");
+
+        assert!(error.to_string().contains("invalid indexed_files metadata"));
+    }
+
+    #[test]
     fn traces_python_symbol_metadata_through_persisted_index() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");

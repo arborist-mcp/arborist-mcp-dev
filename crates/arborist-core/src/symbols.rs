@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, Row, params, types::Type};
+use rusqlite::{Connection, OptionalExtension, Row, params, types::Type};
 use serde::de::DeserializeOwned;
 use tree_sitter::Node;
 
@@ -1600,8 +1600,13 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
             [],
             |row| row.get::<_, String>(0),
         )
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
+        .optional()?
+        .map(|value| {
+            value
+                .parse::<usize>()
+                .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
+        })
+        .transpose()?
         .unwrap_or(0);
 
     let mut statement = connection.prepare(
