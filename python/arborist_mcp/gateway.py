@@ -356,8 +356,8 @@ class ArboristGateway:
 
     def _apply_buffer_edit(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
-        start_byte = self._require_int(params, "start_byte")
-        old_end_byte = self._require_int(params, "old_end_byte")
+        start_byte = self._require_nonnegative_int(params, "start_byte")
+        old_end_byte = self._require_nonnegative_int(params, "old_end_byte")
         new_text = self._require_string(params, "new_text", allow_empty=True)
         payload = self._require_core().apply_buffer_edit_json(
             file_path,
@@ -394,6 +394,13 @@ class ArboristGateway:
         return value
 
     @staticmethod
+    def _require_nonnegative_int(params: dict[str, Any], key: str) -> int:
+        value = ArboristGateway._require_int(params, key)
+        if value < 0:
+            raise JsonRpcError(-32602, f"invalid non-negative int param: {key}")
+        return value
+
+    @staticmethod
     def _optional_string(
         params: dict[str, Any],
         key: str,
@@ -412,6 +419,8 @@ class ArboristGateway:
         value = params.get(key, default)
         if not isinstance(value, int) or isinstance(value, bool):
             raise JsonRpcError(-32602, f"invalid int param: {key}")
+        if value < 0:
+            raise JsonRpcError(-32602, f"invalid non-negative int param: {key}")
         return value
 
     @staticmethod

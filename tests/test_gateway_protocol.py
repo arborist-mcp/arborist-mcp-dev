@@ -275,6 +275,23 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("depth_limit", response["error"]["message"])
 
+    def test_rejects_negative_optional_int_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py", "depth_limit": -1},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 14)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("depth_limit", response["error"]["message"])
+
     def test_rejects_non_string_optional_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -375,6 +392,28 @@ class GatewayProtocolTests(unittest.TestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 19)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("start_byte", response["error"]["message"])
+
+    def test_rejects_negative_buffer_edit_offsets(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 27,
+                "method": "arborist/apply_buffer_edit",
+                "params": {
+                    "file_path": "tests/fixtures/sample.py",
+                    "start_byte": -1,
+                    "old_end_byte": 2,
+                    "new_text": "x",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 27)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("start_byte", response["error"]["message"])
 
