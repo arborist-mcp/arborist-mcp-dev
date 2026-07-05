@@ -403,6 +403,17 @@ def is_notification_request(request: Any) -> bool:
     )
 
 
+def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
+    try:
+        return json.loads(raw_request), None
+    except json.JSONDecodeError as exc:
+        return None, ArboristGateway._error_response(
+            None,
+            -32700,
+            f"invalid JSON: {exc}",
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Thin stdio JSON-RPC gateway for the Arborist Rust core."
@@ -423,15 +434,8 @@ def run_stdio() -> int:
         if not line:
             continue
 
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError as exc:
-            response = ArboristGateway._error_response(
-                None,
-                -32700,
-                f"invalid JSON: {exc}",
-            )
-        else:
+        request, response = parse_request_json(line)
+        if response is None:
             response = gateway.handle_request(request)
 
         if response is not None and not is_notification_request(request):
@@ -447,8 +451,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.once:
         gateway = ArboristGateway()
-        request = json.loads(args.once.read_text(encoding="utf-8"))
-        response = gateway.handle_request(request)
+        request, response = parse_request_json(args.once.read_text(encoding="utf-8"))
+        if response is None:
+            response = gateway.handle_request(request)
         if response is not None and not is_notification_request(request):
             print(json.dumps(response, ensure_ascii=False, indent=2))
         return 0
