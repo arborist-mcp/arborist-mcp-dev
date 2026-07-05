@@ -559,7 +559,7 @@ def run_stdio() -> int:
             response = gateway.handle_request(request)
 
         if response is not None and not is_notification_request(request):
-            if not _write_response(json.dumps(response, ensure_ascii=False) + "\n"):
+            if not _write_response(_serialize_response(response) + "\n"):
                 return 0
 
     return 0
@@ -583,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
             gateway = ArboristGateway()
             response = gateway.handle_request(request)
         if response is not None and not is_notification_request(request):
-            if not _print_response(json.dumps(response, ensure_ascii=False, indent=2)):
+            if not _print_response(_serialize_response(response, indent=2)):
                 return 0
         return 0
 
@@ -597,6 +597,21 @@ def _write_response(payload: str) -> bool:
     except BrokenPipeError:
         return False
     return True
+
+
+def _serialize_response(response: dict[str, Any], indent: int | None = None) -> str:
+    try:
+        return json.dumps(response, ensure_ascii=False, allow_nan=False, indent=indent)
+    except (TypeError, ValueError) as exc:
+        fallback = {
+            "jsonrpc": "2.0",
+            "id": response.get("id"),
+            "error": {
+                "code": -32000,
+                "message": f"failed to serialize response: {exc}",
+            },
+        }
+        return json.dumps(fallback, ensure_ascii=False, allow_nan=False, indent=indent)
 
 
 def _print_response(payload: str) -> bool:

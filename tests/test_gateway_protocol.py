@@ -922,6 +922,27 @@ class GatewayProtocolTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
 
+    def test_stdio_nonstandard_response_value_emits_internal_error(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": 31, "result": {"value": float("nan")}}
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO('{"jsonrpc":"2.0","id":31,"method":"initialize","params":{}}\n')
+        stdout = io.StringIO()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 31)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("failed to serialize response", response["error"]["message"])
+
     def test_once_broken_pipe_exits_cleanly(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:
@@ -939,6 +960,30 @@ class GatewayProtocolTests(unittest.TestCase):
                     exit_code = gateway_module.main(["--once", "dummy.json"])
 
         self.assertEqual(exit_code, 0)
+
+    def test_once_nonstandard_response_value_prints_internal_error(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": 32, "result": {"value": float("inf")}}
+
+        fake_gateway = StubGateway()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value='{"jsonrpc":"2.0","id":32,"method":"initialize","params":{}}',
+            ):
+                with mock.patch("builtins.print") as mock_print:
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once()
+        response = gateway_module.json.loads(mock_print.call_args.args[0])
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 32)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("failed to serialize response", response["error"]["message"])
 
     def test_stdio_rejects_nan_as_parse_error(self) -> None:
         stdin = io.StringIO(
