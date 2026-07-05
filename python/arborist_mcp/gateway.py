@@ -412,10 +412,17 @@ def is_valid_request_id(request_id: Any) -> bool:
     )
 
 
+def _reject_nonstandard_json_constant(name: str) -> Any:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
     try:
-        return json.loads(raw_request), None
-    except json.JSONDecodeError as exc:
+        return json.loads(
+            raw_request,
+            parse_constant=_reject_nonstandard_json_constant,
+        ), None
+    except (json.JSONDecodeError, ValueError) as exc:
         return None, ArboristGateway._error_response(
             None,
             -32700,

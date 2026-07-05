@@ -322,6 +322,40 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("invalid JSON", response["error"]["message"])
 
+    def test_stdio_rejects_nan_as_parse_error(self) -> None:
+        stdin = io.StringIO(
+            '{"jsonrpc":"2.0","id":NaN,"method":"arborist/list_symbol_indexes","params":{}}\n'
+        )
+        stdout = io.StringIO()
+
+        with mock.patch.object(gateway_module.ArboristGateway, "__init__", return_value=None):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("non-standard JSON constant", response["error"]["message"])
+
+    def test_once_rejects_infinity_as_parse_error(self) -> None:
+        with mock.patch.object(gateway_module.ArboristGateway, "__init__", return_value=None):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value='{"jsonrpc":"2.0","id":Infinity,"method":"initialize","params":{}}',
+            ):
+                with mock.patch("builtins.print") as mock_print:
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once()
+        response = gateway_module.json.loads(mock_print.call_args.args[0])
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("non-standard JSON constant", response["error"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
