@@ -775,6 +775,30 @@ mod tests {
         assert!(vfs.registered_symbol_indexes().is_empty());
     }
 
+    #[test]
+    fn commits_skip_registered_index_refresh_for_ignored_dirs() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let venv_path = workspace.join("venv").join("installed.py");
+        let db_path = workspace.join("symbols.db");
+
+        fs::create_dir_all(venv_path.parent().unwrap()).unwrap();
+        fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let stats = vfs.register_symbol_index(&workspace, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 1);
+
+        vfs.open_file(&venv_path, Some("def installed() -> int:\n    return 2\n"))
+            .unwrap();
+        vfs.commit_file(&venv_path).unwrap();
+
+        assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_ok());
+        assert!(
+            trace_symbol_graph_from_index(&db_path, "installed", TraceDirection::Both).is_err()
+        );
+    }
+
     fn temp_file(contents: &str) -> std::path::PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
