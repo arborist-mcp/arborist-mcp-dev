@@ -58,6 +58,35 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32601)
         self.assertIn("method not found", response["error"]["message"])
 
+    def test_rejects_missing_jsonrpc_version(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"id": 6, "method": "arborist/list_symbol_indexes", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 6)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_rejects_non_2_0_jsonrpc_version(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "1.0",
+                "id": 8,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 8)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
     def test_reports_missing_required_param_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

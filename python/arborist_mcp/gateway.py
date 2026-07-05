@@ -23,6 +23,14 @@ class ArboristGateway:
         if not isinstance(request, dict):
             return self._error_response(None, -32600, "invalid request: expected object")
 
+        jsonrpc_version = request.get("jsonrpc")
+        if jsonrpc_version != "2.0":
+            return self._error_response(
+                request.get("id"),
+                -32600,
+                "invalid request: expected jsonrpc='2.0'",
+            )
+
         method = request.get("method")
         request_id = request.get("id")
         params = request.get("params", {})
