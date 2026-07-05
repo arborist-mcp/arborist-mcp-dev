@@ -1608,9 +1608,10 @@ fn python_reexport_binding_for_name(
                 }
 
                 let imported_name = node_text(alias_children[0], source)?.trim().to_string();
-                let alias_name = node_text(*alias_children.last().unwrap(), source)?
-                    .trim()
-                    .to_string();
+                let Some(alias_node) = alias_children.last().copied() else {
+                    continue;
+                };
+                let alias_name = node_text(alias_node, source)?.trim().to_string();
                 if alias_name == symbol_name {
                     return Ok(Some(python_import_from_binding(
                         current_path,
@@ -2275,9 +2276,10 @@ fn collect_python_import_statement_bindings(
                 let named_children = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
                 if named_children.len() >= 2 {
                     let module_name = node_text(named_children[0], source)?.trim().to_string();
-                    let alias_name = node_text(*named_children.last().unwrap(), source)?
-                        .trim()
-                        .to_string();
+                    let Some(alias_node) = named_children.last().copied() else {
+                        continue;
+                    };
+                    let alias_name = node_text(alias_node, source)?.trim().to_string();
                     bindings.insert(alias_name, PythonImportBinding::Module { module_name });
                 }
             }
@@ -2314,9 +2316,10 @@ fn collect_python_import_from_statement_bindings(
                 let alias_children = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
                 if alias_children.len() >= 2 {
                     let imported_name = node_text(alias_children[0], source)?.trim().to_string();
-                    let alias_name = node_text(*alias_children.last().unwrap(), source)?
-                        .trim()
-                        .to_string();
+                    let Some(alias_node) = alias_children.last().copied() else {
+                        continue;
+                    };
+                    let alias_name = node_text(alias_node, source)?.trim().to_string();
                     bindings.insert(
                         alias_name,
                         python_import_from_binding(current_path, &module_name, &imported_name),
