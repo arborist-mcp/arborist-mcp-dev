@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, Row, params, types::Type};
+use serde::de::DeserializeOwned;
 use tree_sitter::Node;
 
 use crate::language::{
@@ -1541,9 +1542,8 @@ fn load_indexed_symbols_grouped_by_file(
     let rows = statement.query_map([], |row| {
         let parameters_json: String = row.get(8)?;
         let reference_names_json: String = row.get(11)?;
-        let parameters: Vec<String> = serde_json::from_str(&parameters_json).unwrap_or_default();
-        let reference_names: Vec<String> =
-            serde_json::from_str(&reference_names_json).unwrap_or_default();
+        let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
+        let reference_names: Vec<String> = json_from_column(&reference_names_json, 11)?;
         let semantic_path: String = row.get(1)?;
         Ok(IndexedSymbol {
             symbol_id: row.get(0)?,
@@ -1602,11 +1602,11 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
             "workspace_symbol".to_string(),
             byte_range_from_row(row, 5, 6)?,
             row.get(7)?,
-            serde_json::from_str(&parameters_json).unwrap_or_default(),
+            json_from_column(&parameters_json, 8)?,
             row.get(9)?,
             row.get(10)?,
-            serde_json::from_str(&dependencies_json).unwrap_or_default(),
-            serde_json::from_str(&references_json).unwrap_or_default(),
+            json_from_column(&dependencies_json, 11)?,
+            json_from_column(&references_json, 12)?,
         ))
     })?;
 
@@ -1616,6 +1616,12 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
     }
 
     Ok((symbols, indexed_files))
+}
+
+fn json_from_column<T: DeserializeOwned>(json: &str, column: usize) -> rusqlite::Result<T> {
+    serde_json::from_str(json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
+    })
 }
 
 fn byte_range_from_row(

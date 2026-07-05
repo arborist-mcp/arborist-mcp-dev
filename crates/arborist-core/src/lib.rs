@@ -5753,35 +5753,10 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let db_path = dir.join("symbols.db");
         let connection = Connection::open(&db_path).unwrap();
 
+        create_minimal_symbol_index_schema(&connection);
         connection
             .execute_batch(
                 "
-                CREATE TABLE metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-                CREATE TABLE symbols (
-                    symbol_id TEXT NOT NULL,
-                    semantic_path TEXT NOT NULL,
-                    scope_path TEXT,
-                    file_path TEXT NOT NULL,
-                    node_kind TEXT NOT NULL,
-                    start_byte INTEGER NOT NULL,
-                    end_byte INTEGER NOT NULL,
-                    signature TEXT,
-                    parameters_json TEXT NOT NULL DEFAULT '[]',
-                    return_type TEXT,
-                    docstring TEXT,
-                    dependencies_json TEXT NOT NULL,
-                    references_json TEXT NOT NULL,
-                    reference_names_json TEXT NOT NULL DEFAULT '[]',
-                    PRIMARY KEY (semantic_path, file_path)
-                );
-                CREATE TABLE file_state (
-                    file_path TEXT PRIMARY KEY,
-                    fingerprint INTEGER NOT NULL
-                );
-                INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
                 INSERT INTO symbols (
                     symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
                     parameters_json, dependencies_json, references_json, reference_names_json
@@ -5797,6 +5772,33 @@ def orchestrate(value: int) -> int:\n    return value\n",
             .expect_err("negative persisted byte ranges should be rejected");
 
         assert!(error.to_string().contains("non-negative integer"));
+    }
+
+    #[test]
+    fn trace_from_index_rejects_invalid_persisted_json_columns() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute_batch(
+                "
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
+                    parameters_json, dependencies_json, references_json, reference_names_json
+                ) VALUES (
+                    'helper', 'helper', 'helper.py', 'function_definition', 0, 5,
+                    '[]', '{not-json', '[]', '[]'
+                );
+                ",
+            )
+            .unwrap();
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("invalid persisted JSON columns should be rejected");
+
+        assert!(error.to_string().contains("Conversion error"));
     }
 
     #[test]
@@ -6364,5 +6366,40 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let dir = std::env::temp_dir().join(format!("arborist-mcp-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn create_minimal_symbol_index_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte INTEGER NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    reference_names_json TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (semantic_path, file_path)
+                );
+                CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY,
+                    fingerprint INTEGER NOT NULL
+                );
+                INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
+                ",
+            )
+            .unwrap();
     }
 }
