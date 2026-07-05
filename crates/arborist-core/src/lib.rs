@@ -264,6 +264,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use rusqlite::Connection;
+
     use super::{
         TraceDirection, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
         get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
@@ -5743,6 +5745,58 @@ def orchestrate(value: int) -> int:\n    return value\n",
 
         assert!(error.to_string().contains("does not exist"));
         assert!(!missing_db_path.exists());
+    }
+
+    #[test]
+    fn trace_from_index_rejects_negative_persisted_byte_ranges() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte INTEGER NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    reference_names_json TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (semantic_path, file_path)
+                );
+                CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY,
+                    fingerprint INTEGER NOT NULL
+                );
+                INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
+                    parameters_json, dependencies_json, references_json, reference_names_json
+                ) VALUES (
+                    'helper', 'helper', 'helper.py', 'function_definition', -1, 5,
+                    '[]', '[]', '[]', '[]'
+                );
+                ",
+            )
+            .unwrap();
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("negative persisted byte ranges should be rejected");
+
+        assert!(error.to_string().contains("non-negative integer"));
     }
 
     #[test]

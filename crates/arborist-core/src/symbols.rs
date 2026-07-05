@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Row, params, types::Type};
 use tree_sitter::Node;
 
 use crate::language::{
@@ -1552,10 +1552,7 @@ fn load_indexed_symbols_grouped_by_file(
             scope_path: row.get(2)?,
             file_path: row.get(3)?,
             node_kind: row.get(4)?,
-            byte_range: (
-                row.get::<_, i64>(5)? as usize,
-                row.get::<_, i64>(6)? as usize,
-            ),
+            byte_range: byte_range_from_row(row, 5, 6)?,
             signature: row.get(7)?,
             parameters,
             return_type: row.get(9)?,
@@ -1603,10 +1600,7 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
             row.get(3)?,
             row.get(4)?,
             "workspace_symbol".to_string(),
-            (
-                row.get::<_, i64>(5)? as usize,
-                row.get::<_, i64>(6)? as usize,
-            ),
+            byte_range_from_row(row, 5, 6)?,
             row.get(7)?,
             serde_json::from_str(&parameters_json).unwrap_or_default(),
             row.get(9)?,
@@ -1622,6 +1616,43 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
     }
 
     Ok((symbols, indexed_files))
+}
+
+fn byte_range_from_row(
+    row: &Row<'_>,
+    start_column: usize,
+    end_column: usize,
+) -> rusqlite::Result<(usize, usize)> {
+    let start = nonnegative_i64_as_usize(row.get(start_column)?, start_column)?;
+    let end = nonnegative_i64_as_usize(row.get(end_column)?, end_column)?;
+    if start > end {
+        return Err(integer_conversion_error(
+            end_column,
+            format!("end_byte {end} is before start_byte {start}"),
+        ));
+    }
+    Ok((start, end))
+}
+
+fn nonnegative_i64_as_usize(value: i64, column: usize) -> rusqlite::Result<usize> {
+    if value < 0 {
+        return Err(integer_conversion_error(
+            column,
+            format!("expected non-negative integer, got {value}"),
+        ));
+    }
+    usize::try_from(value).map_err(|error| integer_conversion_error(column, error.to_string()))
+}
+
+fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        Type::Integer,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    )
 }
 
 fn ensure_reference_names_column(connection: &Connection) -> Result<()> {
