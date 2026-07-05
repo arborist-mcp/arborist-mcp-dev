@@ -326,6 +326,37 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("edits[0].new_text", response["error"]["message"])
 
+    def test_rejects_reversed_position_edit_range(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 37,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 2, "column": 0},
+                            "end": {"row": 1, "column": 9},
+                            "new_text": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 37)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].start", response["error"]["message"])
+
     def test_rejects_string_bool_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

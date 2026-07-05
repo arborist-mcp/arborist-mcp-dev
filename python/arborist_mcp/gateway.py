@@ -472,8 +472,19 @@ class ArboristGateway:
                 raise JsonRpcError(-32602, f"invalid position edit at index {index}")
             ArboristGateway._validate_position(edit.get("start"), f"edits[{index}].start")
             ArboristGateway._validate_position(edit.get("end"), f"edits[{index}].end")
+            if ArboristGateway._position_tuple(edit["start"]) > ArboristGateway._position_tuple(
+                edit["end"]
+            ):
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid position edit range: edits[{index}].start is after edits[{index}].end",
+                )
             if not isinstance(edit.get("new_text"), str):
                 raise JsonRpcError(-32602, f"invalid string param: edits[{index}].new_text")
+
+    @staticmethod
+    def _position_tuple(value: dict[str, Any]) -> tuple[int, int]:
+        return (value["row"], value["column"])
 
     @staticmethod
     def _validate_position(value: Any, key: str) -> None:
