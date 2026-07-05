@@ -6101,6 +6101,31 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(error.to_string().contains("outside workspace"));
     }
 
+    #[test]
+    fn rejects_refresh_path_outside_workspace_before_missing_index_rebuild() {
+        let dir = temporary_dir();
+        let workspace = dir.join("workspace");
+        let outside = dir.join("outside.py");
+        let missing_db_path = workspace.join("missing-symbols.db");
+
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            workspace.join("helper.py"),
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &outside,
+            "def outside(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+
+        let error = refresh_symbol_index_for_file(&workspace, &missing_db_path, &outside)
+            .expect_err("refresh should reject outside files before rebuilding a missing index");
+        assert!(error.to_string().contains("outside workspace"));
+        assert!(!missing_db_path.exists());
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -117,16 +117,16 @@ pub fn refresh_symbol_index_for_file(
     let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
 
-    if !db_path.exists() {
-        return rebuild_symbol_index(&workspace_root, &db_path);
-    }
-
     if !file_path.starts_with(&workspace_root) {
         return Err(anyhow!(
             "file {} is outside workspace {}",
             file_path.display(),
             workspace_root.display()
         ));
+    }
+
+    if !db_path.exists() {
+        return rebuild_symbol_index(&workspace_root, &db_path);
     }
 
     let connection = Connection::open(&db_path)?;
