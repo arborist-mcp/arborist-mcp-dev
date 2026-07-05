@@ -389,6 +389,32 @@ async def top_level(value: int) -> int:
     }
 
     #[test]
+    fn builds_python_skeleton_with_decorated_members() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def top_level(value: int) -> int:
+    return value
+"#;
+
+        let skeleton = get_semantic_skeleton(Path::new("sample.py"), source, 1, &[]).unwrap();
+
+        assert!(skeleton.skeleton.contains("@decorator"));
+        assert!(skeleton.skeleton.contains("def top_level(value: int) -> int: ..."));
+        let top_level = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "top_level")
+            .unwrap();
+        assert_eq!(
+            top_level.signature.as_deref(),
+            Some("@decorator\ndef top_level(value: int) -> int:")
+        );
+    }
+
+    #[test]
     fn expands_selected_python_nodes_without_duplicating_children() {
         let source = r#"
 class Greeter:
@@ -418,6 +444,25 @@ def top_level(value: int) -> int:
                 .skeleton
                 .contains("def nested(inner: int) -> int:\n        return inner + 1")
         );
+    }
+
+    #[test]
+    fn expands_decorated_python_nodes_with_decorators() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def top_level(value: int) -> int:
+    return value + 1
+"#;
+
+        let skeleton =
+            get_semantic_skeleton(Path::new("sample.py"), source, 1, &["top_level".to_string()])
+                .unwrap();
+
+        assert!(skeleton.skeleton.contains("@decorator\ndef top_level"));
+        assert!(skeleton.skeleton.contains("return value + 1"));
     }
 
     #[test]
@@ -2632,6 +2677,53 @@ class Container:
         assert!(result.applied);
         assert!(!result.updated_source.contains("@decorator"));
         assert_eq!(result.resolved_path, "Container");
+    }
+
+    #[test]
+    fn replaces_python_decorated_async_function_without_retaining_old_decorators() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+async def top_level() -> int:
+    return 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "async def top_level() -> int:\n    return 2\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(!result.updated_source.contains("@decorator"));
+        assert_eq!(result.resolved_path, "top_level");
+    }
+
+    #[test]
+    fn replaces_python_async_function_without_retaining_old_async_keyword() {
+        let source = r#"
+async def top_level() -> int:
+    return 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    return 2\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(!result.updated_source.contains("async def top_level() -> int:\n    return 2"));
+        assert!(result.updated_source.contains("def top_level() -> int:\n    return 2"));
+        assert_eq!(result.resolved_path, "top_level");
     }
 
     #[test]

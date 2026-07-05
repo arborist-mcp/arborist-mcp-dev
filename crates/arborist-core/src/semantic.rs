@@ -65,6 +65,22 @@ pub fn python_header(node: Node<'_>, source: &str) -> Result<String> {
         .to_string())
 }
 
+fn python_display_node(node: Node<'_>) -> Node<'_> {
+    node.parent()
+        .filter(|parent| parent.kind() == "decorated_definition")
+        .unwrap_or(node)
+}
+
+fn python_display_header(node: Node<'_>, source: &str) -> Result<String> {
+    let body = node
+        .child_by_field_name("body")
+        .ok_or_else(|| anyhow!("python symbol missing body"))?;
+    let display_node = python_display_node(node);
+    Ok(source[display_node.start_byte()..body.start_byte()]
+        .trim_end()
+        .to_string())
+}
+
 pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
     let body = node
         .child_by_field_name("body")
@@ -336,7 +352,7 @@ fn build_python_skeleton(
         let path = semantic_path(item, source)?;
         let symbol_id = path.clone();
         let scope_path = semantic_parent_path(&path);
-        let signature = Some(python_header(item, source)?);
+        let signature = Some(python_display_header(item, source)?);
         let parameters = python_parameters(item, source)?;
         let return_type = python_return_type(item, source)?;
         let docstring = python_docstring(item, source)?;
@@ -364,11 +380,12 @@ fn build_python_skeleton(
             continue;
         }
 
+        let display_item = python_display_node(item);
         if expand_set.contains(path.as_str()) || expand_set.contains(symbol_id.as_str()) {
-            skeleton_items.push(node_text(item, source)?.trim().to_string());
+            skeleton_items.push(node_text(display_item, source)?.trim().to_string());
             expanded_items.push(item);
         } else {
-            let header = python_header(item, source)?;
+            let header = python_display_header(item, source)?;
             skeleton_items.push(format!("{header} ..."));
         }
     }
