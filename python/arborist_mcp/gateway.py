@@ -331,6 +331,7 @@ class ArboristGateway:
         edits = params.get("edits")
         if not isinstance(edits, list):
             raise JsonRpcError(-32602, "missing required list param: edits")
+        self._validate_position_edits(edits)
         edits_json = self._encode_json_param(edits, "edits")
         payload = self._require_core().apply_position_edits_json(
             file_path,
@@ -452,6 +453,32 @@ class ArboristGateway:
             choices = "|".join(allowed)
             raise JsonRpcError(-32602, f"invalid {key} param: expected {choices}")
         return value
+
+    @staticmethod
+    def _validate_position_edits(edits: list[Any]) -> None:
+        for index, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                raise JsonRpcError(-32602, f"invalid position edit at index {index}")
+            ArboristGateway._validate_position(edit.get("start"), f"edits[{index}].start")
+            ArboristGateway._validate_position(edit.get("end"), f"edits[{index}].end")
+            if not isinstance(edit.get("new_text"), str):
+                raise JsonRpcError(-32602, f"invalid string param: edits[{index}].new_text")
+
+    @staticmethod
+    def _validate_position(value: Any, key: str) -> None:
+        if not isinstance(value, dict):
+            raise JsonRpcError(-32602, f"invalid position param: {key}")
+        for coordinate in ("row", "column"):
+            coordinate_value = value.get(coordinate)
+            if (
+                not isinstance(coordinate_value, int)
+                or isinstance(coordinate_value, bool)
+                or coordinate_value < 0
+            ):
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid non-negative int param: {key}.{coordinate}",
+                )
 
     @staticmethod
     def _encode_json_param(value: Any, key: str) -> str:
