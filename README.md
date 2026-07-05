@@ -94,6 +94,7 @@ Or use the bootstrap script:
 ```
 
 `sync-extension.ps1` keeps the checked-in local gateway extension in sync with the latest Rust build so `python -m arborist_mcp.gateway` works directly from the repository root.
+It now rebuilds the debug `arborist-py` extension before copying it into `python/arborist_mcp/`, so re-running the script after Rust changes is enough to refresh the repo-root gateway entrypoint.
 
 ## Quick check
 

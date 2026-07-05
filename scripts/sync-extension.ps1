@@ -2,11 +2,16 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$source = Join-Path $PSScriptRoot "..\target\debug\_arborist_core.dll"
-$destination = Join-Path $PSScriptRoot "..\python\arborist_mcp\_arborist_core.pyd"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$source = Join-Path $repoRoot "target\debug\_arborist_core.dll"
+$destination = Join-Path $repoRoot "python\arborist_mcp\_arborist_core.pyd"
 
-if (-not (Test-Path $source)) {
-    throw "Compiled extension not found at $source. Run `maturin develop` first."
+Push-Location $repoRoot
+try {
+    Write-Host "Building arborist-py debug extension..."
+    & cargo build -p arborist-py
+} finally {
+    Pop-Location
 }
 
 Copy-Item $source $destination -Force

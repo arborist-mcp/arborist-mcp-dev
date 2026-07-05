@@ -448,6 +448,31 @@ class GatewayProtocolTests(unittest.TestCase):
             response["result"]["capabilities"]["tools"],
         )
 
+    def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
+        gateway = ArboristGateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 23,
+                "method": "arborist/execute_tree_query",
+                "params": {
+                    "file_path": "tests/fixtures/sample.py",
+                    "source": "@logged\ndef top_level(value):\n    return value\n",
+                    "query": "(decorator (identifier) @decorator)",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 23)
+        self.assertEqual(len(response["result"]), 1)
+        self.assertEqual(response["result"][0]["capture_name"], "decorator")
+        self.assertEqual(response["result"][0]["text"], "logged")
+        self.assertEqual(response["result"][0]["owner_symbol_id"], "top_level")
+        self.assertEqual(response["result"][0]["owner_semantic_path"], "top_level")
+        self.assertIsNone(response["result"][0]["owner_scope_path"])
+
     def test_stdio_notification_does_not_emit_response(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:
