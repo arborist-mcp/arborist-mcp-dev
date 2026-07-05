@@ -636,7 +636,7 @@ class GatewayProtocolTests(unittest.TestCase):
             ),
         )
 
-    def test_rejects_empty_expand_node_selectors(self) -> None:
+    def test_rejects_blank_expand_node_selectors(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
@@ -644,19 +644,21 @@ class GatewayProtocolTests(unittest.TestCase):
         gateway = ArboristGateway.__new__(ArboristGateway)
         gateway._core = StubCore()
 
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 36,
-                "method": "arborist/get_semantic_skeleton",
-                "params": {"file_path": "sample.py", "expand_nodes": [""]},
-            }
-        )
+        for selector in ("", " \t"):
+            with self.subTest(selector=selector):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 36,
+                        "method": "arborist/get_semantic_skeleton",
+                        "params": {"file_path": "sample.py", "expand_nodes": [selector]},
+                    }
+                )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 36)
-        self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("expand_nodes", response["error"]["message"])
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 36)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("expand_nodes", response["error"]["message"])
 
     def test_passes_valid_position_edits_to_core(self) -> None:
         class StubCore:
