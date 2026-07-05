@@ -128,6 +128,8 @@ class ArboristGateway:
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except JsonRpcError as exc:
             return self._error_response(response_id, exc.code, str(exc))
+        except ValueError as exc:
+            return self._error_response(response_id, -32602, str(exc))
         except Exception as exc:  # noqa: BLE001
             return self._error_response(response_id, -32000, str(exc))
 

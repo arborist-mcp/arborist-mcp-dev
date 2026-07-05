@@ -316,6 +316,48 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("direction", response["error"]["message"])
 
+    def test_core_invalid_query_maps_to_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 18,
+                "method": "arborist/execute_tree_query",
+                "params": {
+                    "file_path": "tests/fixtures/sample.py",
+                    "query": "(function_definition @",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 18)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("query", response["error"]["message"].lower())
+
+    def test_core_invalid_buffer_edit_maps_to_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 19,
+                "method": "arborist/apply_buffer_edit",
+                "params": {
+                    "file_path": "tests/fixtures/sample.py",
+                    "start_byte": 10,
+                    "old_end_byte": 2,
+                    "new_text": "x",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 19)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("start_byte", response["error"]["message"])
+
     def test_passes_typed_optional_defaults_to_core(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(
@@ -335,14 +377,14 @@ class GatewayProtocolTests(unittest.TestCase):
         response = gateway.handle_request(
             {
                 "jsonrpc": "2.0",
-                "id": 18,
+                "id": 20,
                 "method": "arborist/get_semantic_skeleton",
                 "params": {"file_path": "sample.py"},
             }
         )
 
         self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 18)
+        self.assertEqual(response["id"], 20)
         self.assertEqual(response["result"], {})
         self.assertEqual(core.args, ("sample.py", None, 2, None))
 
@@ -352,7 +394,7 @@ class GatewayProtocolTests(unittest.TestCase):
         response = gateway.handle_request(
             {
                 "jsonrpc": "2.0",
-                "id": 19,
+                "id": 21,
                 "method": "arborist/replay_patch_evidence_against_trace",
                 "params": {
                     "patch": {"binding_decisions": {1, 2}},
@@ -362,7 +404,7 @@ class GatewayProtocolTests(unittest.TestCase):
         )
 
         self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 19)
+        self.assertEqual(response["id"], 21)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("patch", response["error"]["message"])
 
@@ -372,7 +414,7 @@ class GatewayProtocolTests(unittest.TestCase):
         response = gateway.handle_request(
             {
                 "jsonrpc": "2.0",
-                "id": 20,
+                "id": 22,
                 "method": "arborist/validate_patch_commit_with_trace",
                 "params": {
                     "patch": {},
@@ -382,7 +424,7 @@ class GatewayProtocolTests(unittest.TestCase):
         )
 
         self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 20)
+        self.assertEqual(response["id"], 22)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("trace", response["error"]["message"])
 
