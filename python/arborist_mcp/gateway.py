@@ -493,7 +493,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_stdio() -> int:
-    gateway = ArboristGateway()
+    gateway: ArboristGateway | None = None
 
     for raw_line in sys.stdin:
         line = raw_line.strip()
@@ -502,6 +502,8 @@ def run_stdio() -> int:
 
         request, response = parse_request_json(line)
         if response is None:
+            if gateway is None:
+                gateway = ArboristGateway()
             response = gateway.handle_request(request)
 
         if response is not None and not is_notification_request(request):
@@ -516,7 +518,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.once:
-        gateway = ArboristGateway()
         try:
             raw_request = args.once.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
@@ -527,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         request, response = parse_request_json(raw_request)
         if response is None:
+            gateway = ArboristGateway()
             response = gateway.handle_request(request)
         if response is not None and not is_notification_request(request):
             if not _print_response(json.dumps(response, ensure_ascii=False, indent=2)):
