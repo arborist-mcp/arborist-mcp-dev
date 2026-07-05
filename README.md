@@ -72,8 +72,10 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Semantic patching routed through the VFS session before commit
 - Session-managed symbol index registrations with commit-time auto-refresh
 - File-scoped persisted index refresh for tighter post-commit sync
-- Partial SQLite persistence updates for changed-file refreshes
-- C file refresh now follows the local `#include` reverse-dependency chain so header edits can rebuild affected dependents in one pass
+- Partial SQLite persistence updates for changed or deleted file refreshes
+- C file refresh now follows the local `#include` reverse-dependency chain so header edits or deletions can rebuild affected dependents in one pass
+- Missing system includes such as `#include <stdio.h>` are not treated as local workspace dependencies during refresh
+- Workspace path checks normalize `.` and `..` segments before enforcing containment
 - Mixed Rust/Python build via `maturin`
 
 ## Local setup
@@ -188,10 +190,12 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - `trace_symbol_graph` now returns an `evidence_keys` summary that groups root,
   caller, and callee evidence keys for replay checks
 - Registered symbol indexes are automatically rebuilt when a committed file belongs to that workspace
-- `refresh_symbol_index_for_file` reparses only the changed file, reuses stored symbols for the rest, and persists the refresh as a partial SQLite update instead of a whole-table rewrite
+- `refresh_symbol_index_for_file` reparses only the changed file, removes deleted file state when needed, reuses stored symbols for the rest, and persists the refresh as a partial SQLite update instead of a whole-table rewrite
 - Persisted symbol rows now retain raw reference names so file refreshes can reconnect callers when a previously missing symbol becomes resolvable
 - File refresh now re-resolves only the changed symbols plus their impacted graph neighborhood before writing the updated rows back to SQLite
-- C header refresh now expands through the local reverse `#include` DAG, so touching `wrapper.h` can rebuild dependent files such as `caller.c` during the same partial refresh
+- C header refresh now expands through the local reverse `#include` DAG, so touching or deleting `wrapper.h` can rebuild dependent files such as `caller.c` during the same partial refresh
+- Missing angle-bracket system includes are ignored for local reverse-dependency expansion, while missing quote-style local includes are still tracked so deleted headers can invalidate dependents
+- Workspace containment checks now normalize `.` and `..` path segments before comparing paths, so refresh requests cannot escape a workspace through lexical path tricks
 - C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions
 - Duplicate C globals now keep distinct graph edges via stable include-family/file-backed `symbol_id` values, and persisted traces can target those IDs directly
 - C patch targeting now understands those precise `symbol_id` selectors too, and same-file declaration/definition name collisions prefer the definition node during replacement
