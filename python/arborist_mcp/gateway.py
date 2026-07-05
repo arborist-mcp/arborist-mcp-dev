@@ -447,7 +447,7 @@ class ArboristGateway:
     @staticmethod
     def _encode_json_param(value: Any, key: str) -> str:
         try:
-            return json.dumps(value, ensure_ascii=False)
+            return json.dumps(value, ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key}") from exc
 

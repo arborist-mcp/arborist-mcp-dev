@@ -221,6 +221,26 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("edits", response["error"]["message"])
 
+    def test_rejects_non_finite_edits_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [{"start": {"row": float("nan"), "column": 0}}],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 12)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits", response["error"]["message"])
+
     def test_rejects_string_bool_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -405,6 +425,26 @@ class GatewayProtocolTests(unittest.TestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 21)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("patch", response["error"]["message"])
+
+    def test_rejects_non_finite_patch_object_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 26,
+                "method": "arborist/replay_patch_evidence_against_trace",
+                "params": {
+                    "patch": {"confidence": float("inf")},
+                    "trace": {},
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 26)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("patch", response["error"]["message"])
 
