@@ -197,7 +197,12 @@ class ArboristGateway:
     def _trace_symbol_graph(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         symbol_path = self._require_string(params, "symbol_path")
-        direction = self._optional_string(params, "direction", default="both")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._core.trace_symbol_graph_json(
             workspace_root,
@@ -250,7 +255,12 @@ class ArboristGateway:
         new_code = self._require_string(params, "new_code")
         source = self._optional_string(params, "source", allow_empty=True)
         bypass_reason = self._optional_string(params, "bypass_reason")
-        direction = self._optional_string(params, "direction", default="both")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
         payload = self._core.validate_patch_with_trace_context_json(
             workspace_root,
             file_path,
@@ -401,6 +411,20 @@ class ArboristGateway:
             return None
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise JsonRpcError(-32602, f"invalid string list param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_choice(
+        params: dict[str, Any],
+        key: str,
+        *,
+        default: str,
+        allowed: tuple[str, ...],
+    ) -> str:
+        value = ArboristGateway._optional_string(params, key, default=default)
+        if value not in allowed:
+            choices = "|".join(allowed)
+            raise JsonRpcError(-32602, f"invalid {key} param: expected {choices}")
         return value
 
     @staticmethod
