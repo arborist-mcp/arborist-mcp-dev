@@ -174,14 +174,14 @@ class ArboristGateway:
             depth_limit,
             expand_nodes,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _execute_tree_query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         file_path = self._require_string(params, "file_path")
         query = self._require_string(params, "query")
         source = self._optional_string(params, "source", allow_empty=True)
         payload = self._require_core().execute_tree_query_json(file_path, query, source)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -196,7 +196,7 @@ class ArboristGateway:
             source,
             bypass_reason,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _patch_virtual_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -209,7 +209,7 @@ class ArboristGateway:
             new_code,
             bypass_reason,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _trace_symbol_graph(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
@@ -227,7 +227,7 @@ class ArboristGateway:
             direction,
             index_db_path,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _replay_patch_evidence_against_trace(
         self, params: dict[str, Any]
@@ -244,7 +244,7 @@ class ArboristGateway:
             patch_json,
             trace_json,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _validate_patch_commit_with_trace(
         self, params: dict[str, Any]
@@ -261,7 +261,7 @@ class ArboristGateway:
             patch_json,
             trace_json,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _validate_patch_with_trace_context(
         self, params: dict[str, Any]
@@ -287,19 +287,19 @@ class ArboristGateway:
             bypass_reason,
             direction,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         payload = self._require_core().rebuild_symbol_index_json(workspace_root, db_path)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         payload = self._require_core().register_symbol_index_json(workspace_root, db_path)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _refresh_symbol_index_for_file(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
@@ -310,7 +310,7 @@ class ArboristGateway:
             db_path,
             file_path,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _unregister_symbol_index(self, params: dict[str, Any]) -> bool:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
@@ -318,13 +318,13 @@ class ArboristGateway:
 
     def _list_symbol_indexes(self) -> list[dict[str, Any]]:
         payload = self._require_core().list_symbol_indexes_json()
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
         payload = self._require_core().open_virtual_file_json(file_path, source)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _did_change(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -337,23 +337,23 @@ class ArboristGateway:
             file_path,
             edits_json,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _did_close(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         persist = self._optional_bool(params, "persist", default=False)
         payload = self._require_core().close_virtual_file_json(file_path, persist)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _list_virtual_files(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         dirty_only = self._optional_bool(params, "dirty_only", default=False)
         payload = self._require_core().list_virtual_files_json(dirty_only)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _read_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         payload = self._require_core().read_virtual_file_json(file_path)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _apply_buffer_edit(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -366,17 +366,27 @@ class ArboristGateway:
             old_end_byte,
             new_text,
         )
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _commit_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         payload = self._require_core().commit_virtual_file_json(file_path)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
 
     def _discard_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         payload = self._require_core().discard_virtual_file_json(file_path)
-        return json.loads(payload)
+        return self._decode_core_payload(payload)
+
+    @staticmethod
+    def _decode_core_payload(payload: str) -> Any:
+        try:
+            return json.loads(
+                payload,
+                parse_constant=_reject_nonstandard_json_constant,
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise JsonRpcError(-32000, f"invalid JSON from arborist core: {exc}") from exc
 
     @staticmethod
     def _require_string(

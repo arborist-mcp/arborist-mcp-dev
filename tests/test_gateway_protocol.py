@@ -629,6 +629,51 @@ class GatewayProtocolTests(unittest.TestCase):
             response["result"]["capabilities"]["tools"],
         )
 
+    def test_rejects_nonstandard_json_from_core(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                return '[{"workspace_root": NaN}]'
+
+        gateway = ArboristGateway()
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 34,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 34)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assertIn("non-standard JSON constant", response["error"]["message"])
+
+    def test_rejects_malformed_json_from_core(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                return '[{"workspace_root": "."}'
+
+        gateway = ArboristGateway()
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 35,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 35)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         gateway = ArboristGateway()
 
