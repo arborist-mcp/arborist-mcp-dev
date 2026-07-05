@@ -35,6 +35,9 @@ class ArboristGateway:
         request_id = request.get("id")
         params = request.get("params", {})
 
+        if "id" in request and not is_valid_request_id(request_id):
+            return self._error_response(None, -32600, "invalid request: invalid id")
+
         if not isinstance(method, str) or not method:
             return self._error_response(request_id, -32600, "invalid request: missing method")
 
@@ -400,6 +403,12 @@ def is_notification_request(request: Any) -> bool:
         and "id" not in request
         and isinstance(request.get("method"), str)
         and bool(request.get("method"))
+    )
+
+
+def is_valid_request_id(request_id: Any) -> bool:
+    return request_id is None or isinstance(request_id, str) or (
+        isinstance(request_id, (int, float)) and not isinstance(request_id, bool)
     )
 
 
