@@ -359,9 +359,11 @@ impl VirtualFileSystem {
         match self.entries.get_mut(&normalized) {
             Some(entry) => {
                 if let Some(source_override) = source_override {
+                    let disk_source = read_virtual_disk_source(&path)?;
                     let document = parse_document(&path, source_override)?;
                     entry.path = path;
                     entry.language_id = document.language_id;
+                    entry.disk_source = disk_source;
                     entry.source = source_override.to_string();
                     entry.tree = document.tree;
                     entry.version += 1;
@@ -664,6 +666,24 @@ mod tests {
         assert_eq!(dirty_files.len(), 1);
         assert_eq!(dirty_files[0].file, snapshot.file);
         assert!(dirty_files[0].dirty);
+    }
+
+    #[test]
+    fn open_with_source_refreshes_disk_baseline() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let initial = vfs.read_file(&file).unwrap();
+        assert!(!initial.dirty);
+
+        fs::write(&file, "def value() -> int:\n    return 2\n").unwrap();
+        let reopened = vfs
+            .open_file(&file, Some("def value() -> int:\n    return 2\n"))
+            .unwrap();
+
+        assert!(!reopened.dirty);
+        assert!(reopened.source.contains("return 2"));
+        assert_eq!(reopened.disk_source, reopened.source);
     }
 
     #[test]
