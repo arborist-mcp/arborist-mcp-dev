@@ -138,6 +138,7 @@ pub(crate) fn semantic_target_range(
         semantic_target,
     )?
     .ok_or_else(|| anyhow!("semantic path not found: {semantic_target}"))?;
+    let target_node = python_symbol_replacement_node(document.language_id, target_node);
 
     Ok((target_node.start_byte(), target_node.end_byte()))
 }
@@ -403,6 +404,21 @@ fn locate_patched_symbol<'tree>(
         .named_descendant_for_byte_range(patch_start, patch_end)
         .or_else(|| root.named_descendant_for_byte_range(patch_start, patch_start))?;
     ascend_to_symbol(document.language_id, descendant)
+}
+
+fn python_symbol_replacement_node<'tree>(
+    language_id: LanguageId,
+    node: Node<'tree>,
+) -> Node<'tree> {
+    if language_id == LanguageId::Python {
+        if let Some(parent) = node.parent() {
+            if parent.kind() == "decorated_definition" {
+                return parent;
+            }
+        }
+    }
+
+    node
 }
 
 fn resolve_symbol_path(

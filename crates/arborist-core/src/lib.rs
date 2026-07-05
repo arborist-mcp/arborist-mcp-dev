@@ -2585,6 +2585,56 @@ async def top_level(value: int) -> int:
     }
 
     #[test]
+    fn replaces_python_decorated_function_without_retaining_old_decorators() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def top_level() -> int:
+    return 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    return 2\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(!result.updated_source.contains("@decorator"));
+        assert_eq!(result.resolved_path, "top_level");
+    }
+
+    #[test]
+    fn replaces_python_decorated_class_without_retaining_old_decorators() {
+        let source = r#"
+def decorator(cls):
+    return cls
+
+@decorator
+class Container:
+    value = 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container",
+            "class Container:\n    value = 2\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(!result.updated_source.contains("@decorator"));
+        assert_eq!(result.resolved_path, "Container");
+    }
+
+    #[test]
     fn resolves_python_nested_default_parameter_closure_bindings() {
         let source = r#"
 def helper() -> int:
