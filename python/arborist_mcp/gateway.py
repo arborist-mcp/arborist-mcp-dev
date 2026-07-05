@@ -386,6 +386,15 @@ class ArboristGateway:
         return value
 
 
+def is_notification_request(request: Any) -> bool:
+    return (
+        isinstance(request, dict)
+        and "id" not in request
+        and isinstance(request.get("method"), str)
+        and bool(request.get("method"))
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Thin stdio JSON-RPC gateway for the Arborist Rust core."
@@ -417,8 +426,9 @@ def run_stdio() -> int:
         else:
             response = gateway.handle_request(request)
 
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        if response is not None and not is_notification_request(request):
+            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
 
     return 0
 
@@ -430,7 +440,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         gateway = ArboristGateway()
         request = json.loads(args.once.read_text(encoding="utf-8"))
-        print(json.dumps(gateway.handle_request(request), ensure_ascii=False, indent=2))
+        response = gateway.handle_request(request)
+        if response is not None and not is_notification_request(request):
+            print(json.dumps(response, ensure_ascii=False, indent=2))
         return 0
 
     return run_stdio()

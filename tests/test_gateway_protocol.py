@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import unittest
+from unittest import mock
 
+from arborist_mcp import gateway as gateway_module
 from arborist_mcp.gateway import ArboristGateway
 
 
@@ -172,6 +175,60 @@ class GatewayProtocolTests(unittest.TestCase):
             "arborist/validate_patch_with_trace_context",
             response["result"]["capabilities"]["tools"],
         )
+
+    def test_stdio_notification_does_not_emit_response(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": None, "result": {"ok": True}}
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO(
+            '{"jsonrpc":"2.0","method":"arborist/list_symbol_indexes","params":{}}\n'
+        )
+        stdout = io.StringIO()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            fake_gateway.request,
+            {
+                "jsonrpc": "2.0",
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            },
+        )
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_once_notification_does_not_print_response(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": None, "result": {"ok": True}}
+
+        fake_gateway = StubGateway()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value='{"jsonrpc":"2.0","method":"arborist/list_symbol_indexes","params":{}}',
+            ):
+                with mock.patch("builtins.print") as mock_print:
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            fake_gateway.request,
+            {
+                "jsonrpc": "2.0",
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            },
+        )
+        mock_print.assert_not_called()
 
 
 if __name__ == "__main__":
