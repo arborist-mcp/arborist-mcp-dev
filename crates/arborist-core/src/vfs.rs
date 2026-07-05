@@ -262,9 +262,11 @@ impl VirtualFileSystem {
             .get_mut(&normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
-        let document = parse_document(&entry.path, &entry.disk_source)?;
+        let disk_source = read_virtual_disk_source(&entry.path)?;
+        let document = parse_document(&entry.path, &disk_source)?;
         entry.language_id = document.language_id;
-        entry.source = entry.disk_source.clone();
+        entry.disk_source = disk_source.clone();
+        entry.source = disk_source;
         entry.tree = document.tree;
         entry.version += 1;
         entry.dirty = false;
@@ -550,6 +552,21 @@ mod tests {
 
         assert!(!discarded.dirty);
         assert!(discarded.source.contains("return 1"));
+    }
+
+    #[test]
+    fn discard_refreshes_from_current_disk_source() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        vfs.open_file(&file, Some("def value() -> int:\n    return 9\n"))
+            .unwrap();
+        fs::write(&file, "def value() -> int:\n    return 2\n").unwrap();
+        let discarded = vfs.discard_file(&file).unwrap();
+
+        assert!(!discarded.dirty);
+        assert!(discarded.source.contains("return 2"));
+        assert_eq!(discarded.disk_source, discarded.source);
     }
 
     #[test]
