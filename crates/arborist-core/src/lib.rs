@@ -702,7 +702,9 @@ int helper(int value) {
             trace.evidence_keys.callees,
             vec![trace.callees[0].evidence_key.clone()]
         );
-        assert!(trace.evidence_keys.symbol.contains("trace_root"));
+        assert_eq!(trace.symbol.origin_type, "trace_root");
+        assert_eq!(trace.symbol.evidence_key, trace.evidence_keys.symbol);
+        assert!(trace.symbol.evidence_key.contains("trace_root"));
 
         rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted_trace =
@@ -716,6 +718,11 @@ int helper(int value) {
         assert_eq!(
             persisted_trace.evidence_keys.callees,
             vec![persisted_trace.callees[0].evidence_key.clone()]
+        );
+        assert_eq!(persisted_trace.symbol.origin_type, "trace_root");
+        assert_eq!(
+            persisted_trace.symbol.evidence_key,
+            persisted_trace.evidence_keys.symbol
         );
         let zeta_source_text = fs::read_to_string(&zeta_source).unwrap();
         let zeta_start = zeta_source_text.find("int helper(int value) {").unwrap();
@@ -5277,6 +5284,11 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let orchestrate_end = orchestrate_start + orchestrate_text.len();
 
         let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.symbol.origin_type, "trace_root");
+        assert_eq!(
+            live_trace.symbol.evidence_key,
+            live_trace.evidence_keys.symbol
+        );
         assert_eq!(
             live_trace.symbol.signature.as_deref(),
             Some("@decorator\ndef orchestrate(value: int) -> int:")
@@ -5299,6 +5311,11 @@ def orchestrate(value: int) -> int:\n    return value\n",
         rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.symbol.origin_type, "trace_root");
+        assert_eq!(
+            persisted_trace.symbol.evidence_key,
+            persisted_trace.evidence_keys.symbol
+        );
         assert_eq!(
             persisted_trace.symbol.signature.as_deref(),
             Some("@decorator\ndef orchestrate(value: int) -> int:")

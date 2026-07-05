@@ -183,6 +183,8 @@ pub struct SymbolMeta {
     pub scope_path: Option<String>,
     pub file_path: String,
     pub node_kind: String,
+    pub origin_type: String,
+    pub evidence_key: String,
     pub byte_range: (usize, usize),
     pub signature: Option<String>,
     pub parameters: Vec<String>,
@@ -200,6 +202,8 @@ impl Default for SymbolMeta {
             scope_path: None,
             file_path: String::new(),
             node_kind: String::new(),
+            origin_type: String::new(),
+            evidence_key: String::new(),
             byte_range: (0, 0),
             signature: None,
             parameters: Vec::new(),
@@ -208,6 +212,68 @@ impl Default for SymbolMeta {
             dependencies: Vec::new(),
             references: Vec::new(),
         }
+    }
+}
+
+impl SymbolMeta {
+    pub fn new(
+        symbol_id: String,
+        semantic_path: String,
+        scope_path: Option<String>,
+        file_path: String,
+        node_kind: String,
+        origin_type: String,
+        byte_range: (usize, usize),
+        signature: Option<String>,
+        parameters: Vec<String>,
+        return_type: Option<String>,
+        docstring: Option<String>,
+        dependencies: Vec<String>,
+        references: Vec<String>,
+    ) -> Self {
+        let evidence_key = symbol_evidence_key(
+            &symbol_id,
+            &file_path,
+            &node_kind,
+            &origin_type,
+            byte_range,
+            signature.as_deref(),
+        );
+
+        Self {
+            symbol_id,
+            semantic_path,
+            scope_path,
+            file_path,
+            node_kind,
+            origin_type,
+            evidence_key,
+            byte_range,
+            signature,
+            parameters,
+            return_type,
+            docstring,
+            dependencies,
+            references,
+        }
+    }
+
+    pub fn with_origin_type(&self, origin_type: &str) -> Self {
+        Self::new(
+            self.symbol_id.clone(),
+            self.semantic_path.clone(),
+            self.scope_path.clone(),
+            self.file_path.clone(),
+            self.node_kind.clone(),
+            origin_type.to_string(),
+            self.byte_range,
+            self.signature.clone(),
+            self.parameters.clone(),
+            self.return_type.clone(),
+            self.docstring.clone(),
+            self.dependencies.clone(),
+            self.references.clone(),
+        )
     }
 }
 

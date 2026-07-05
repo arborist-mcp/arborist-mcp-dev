@@ -887,20 +887,21 @@ fn is_c_header_path(path: &Path) -> bool {
 }
 
 fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
-    SymbolMeta {
-        symbol_id: symbol.symbol_id.clone(),
-        semantic_path: symbol.semantic_path.clone(),
-        scope_path: symbol.scope_path.clone(),
-        file_path: symbol.file_path.clone(),
-        node_kind: symbol.node_kind.clone(),
-        byte_range: symbol.byte_range,
-        signature: symbol.signature.clone(),
-        parameters: symbol.parameters.clone(),
-        return_type: symbol.return_type.clone(),
-        docstring: symbol.docstring.clone(),
-        dependencies: Vec::new(),
-        references: Vec::new(),
-    }
+    SymbolMeta::new(
+        symbol.symbol_id.clone(),
+        symbol.semantic_path.clone(),
+        symbol.scope_path.clone(),
+        symbol.file_path.clone(),
+        symbol.node_kind.clone(),
+        "workspace_symbol".to_string(),
+        symbol.byte_range,
+        symbol.signature.clone(),
+        symbol.parameters.clone(),
+        symbol.return_type.clone(),
+        symbol.docstring.clone(),
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 fn raw_symbol_indexes_by_id(raw_symbols: &[IndexedSymbol]) -> BTreeMap<String, Vec<usize>> {
@@ -959,25 +960,28 @@ fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta>
 
     raw_symbols
         .iter()
-        .map(|symbol| SymbolMeta {
-            symbol_id: symbol.symbol_id.clone(),
-            semantic_path: symbol.semantic_path.clone(),
-            scope_path: symbol.scope_path.clone(),
-            file_path: symbol.file_path.clone(),
-            node_kind: symbol.node_kind.clone(),
-            byte_range: symbol.byte_range,
-            signature: symbol.signature.clone(),
-            parameters: symbol.parameters.clone(),
-            return_type: symbol.return_type.clone(),
-            docstring: symbol.docstring.clone(),
-            dependencies: dependency_map
-                .get(&symbol.symbol_id)
-                .map(|dependencies| dependencies.iter().cloned().collect())
-                .unwrap_or_default(),
-            references: reference_map
-                .get(&symbol.symbol_id)
-                .map(|references| references.iter().cloned().collect())
-                .unwrap_or_default(),
+        .map(|symbol| {
+            SymbolMeta::new(
+                symbol.symbol_id.clone(),
+                symbol.semantic_path.clone(),
+                symbol.scope_path.clone(),
+                symbol.file_path.clone(),
+                symbol.node_kind.clone(),
+                "workspace_symbol".to_string(),
+                symbol.byte_range,
+                symbol.signature.clone(),
+                symbol.parameters.clone(),
+                symbol.return_type.clone(),
+                symbol.docstring.clone(),
+                dependency_map
+                    .get(&symbol.symbol_id)
+                    .map(|dependencies| dependencies.iter().cloned().collect())
+                    .unwrap_or_default(),
+                reference_map
+                    .get(&symbol.symbol_id)
+                    .map(|references| references.iter().cloned().collect())
+                    .unwrap_or_default(),
+            )
         })
         .collect()
 }
@@ -1138,19 +1142,22 @@ fn materialize_resolved_symbol_rows(
         .filter_map(|raw_symbol| {
             resolved_map
                 .get(&raw_symbol.symbol_id)
-                .map(|resolved_symbol| SymbolMeta {
-                    symbol_id: raw_symbol.symbol_id.clone(),
-                    semantic_path: raw_symbol.semantic_path.clone(),
-                    scope_path: raw_symbol.scope_path.clone(),
-                    file_path: raw_symbol.file_path.clone(),
-                    node_kind: raw_symbol.node_kind.clone(),
-                    byte_range: raw_symbol.byte_range,
-                    signature: raw_symbol.signature.clone(),
-                    parameters: raw_symbol.parameters.clone(),
-                    return_type: raw_symbol.return_type.clone(),
-                    docstring: raw_symbol.docstring.clone(),
-                    dependencies: resolved_symbol.dependencies.clone(),
-                    references: resolved_symbol.references.clone(),
+                .map(|resolved_symbol| {
+                    SymbolMeta::new(
+                        raw_symbol.symbol_id.clone(),
+                        raw_symbol.semantic_path.clone(),
+                        raw_symbol.scope_path.clone(),
+                        raw_symbol.file_path.clone(),
+                        raw_symbol.node_kind.clone(),
+                        "workspace_symbol".to_string(),
+                        raw_symbol.byte_range,
+                        raw_symbol.signature.clone(),
+                        raw_symbol.parameters.clone(),
+                        raw_symbol.return_type.clone(),
+                        raw_symbol.docstring.clone(),
+                        resolved_symbol.dependencies.clone(),
+                        resolved_symbol.references.clone(),
+                    )
                 })
         })
         .collect()
@@ -1164,7 +1171,8 @@ fn trace_from_symbols(
 ) -> Result<TraceSymbolGraphResult> {
     let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
         .cloned()
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?
+        .with_origin_type("trace_root");
 
     let callers = if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
         summarize_symbols(resolved_symbols, &symbol.references, None)
@@ -1197,7 +1205,7 @@ fn trace_evidence_keys(
     callees: &[SymbolSummary],
 ) -> TraceEvidenceKeys {
     TraceEvidenceKeys {
-        symbol: trace_root_evidence_key(symbol),
+        symbol: symbol.evidence_key.clone(),
         callers: callers
             .iter()
             .map(|summary| summary.evidence_key.clone())
@@ -1207,23 +1215,6 @@ fn trace_evidence_keys(
             .map(|summary| summary.evidence_key.clone())
             .collect(),
     }
-}
-
-fn trace_root_evidence_key(symbol: &SymbolMeta) -> String {
-    SymbolSummary::new(
-        symbol.symbol_id.clone(),
-        symbol.semantic_path.clone(),
-        symbol.scope_path.clone(),
-        symbol.file_path.clone(),
-        symbol.node_kind.clone(),
-        "trace_root".to_string(),
-        symbol.byte_range,
-        symbol.signature.clone(),
-        symbol.parameters.clone(),
-        symbol.return_type.clone(),
-        symbol.docstring.clone(),
-    )
-    .evidence_key
 }
 
 fn persist_symbol_index(
@@ -1532,23 +1523,24 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
         let parameters_json: String = row.get(8)?;
         let dependencies_json: String = row.get(11)?;
         let references_json: String = row.get(12)?;
-        Ok(SymbolMeta {
-            symbol_id: row.get(0)?,
-            semantic_path: row.get(1)?,
-            scope_path: row.get(2)?,
-            file_path: row.get(3)?,
-            node_kind: row.get(4)?,
-            byte_range: (
+        Ok(SymbolMeta::new(
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            "workspace_symbol".to_string(),
+            (
                 row.get::<_, i64>(5)? as usize,
                 row.get::<_, i64>(6)? as usize,
             ),
-            signature: row.get(7)?,
-            parameters: serde_json::from_str(&parameters_json).unwrap_or_default(),
-            return_type: row.get(9)?,
-            docstring: row.get(10)?,
-            dependencies: serde_json::from_str(&dependencies_json).unwrap_or_default(),
-            references: serde_json::from_str(&references_json).unwrap_or_default(),
-        })
+            row.get(7)?,
+            serde_json::from_str(&parameters_json).unwrap_or_default(),
+            row.get(9)?,
+            row.get(10)?,
+            serde_json::from_str(&dependencies_json).unwrap_or_default(),
+            serde_json::from_str(&references_json).unwrap_or_default(),
+        ))
     })?;
 
     let mut symbols = Vec::new();
