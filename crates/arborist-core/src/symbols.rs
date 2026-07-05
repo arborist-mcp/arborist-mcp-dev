@@ -60,7 +60,8 @@ pub fn trace_symbol_graph(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(workspace_root)?;
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
@@ -76,11 +77,13 @@ pub fn trace_symbol_graph_with_overrides(
 }
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let db_path = normalize_absolute_path(db_path)?;
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
-        resolve_workspace_symbols_incremental(workspace_root, db_path)?;
+        resolve_workspace_symbols_incremental(&workspace_root, &db_path)?;
     persist_symbol_index(
-        db_path,
-        workspace_root,
+        &db_path,
+        &workspace_root,
         &raw_symbols,
         &resolved_symbols,
         &file_states,
@@ -88,7 +91,7 @@ pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<Sym
     )?;
 
     Ok(SymbolIndexStats {
-        db_path: normalize_path(db_path),
+        db_path: normalize_path(&db_path),
         indexed_files,
         indexed_symbols: resolved_symbols.len(),
         rebuilt_files,
@@ -110,12 +113,14 @@ pub fn refresh_symbol_index_for_file(
     db_path: &Path,
     file_path: &Path,
 ) -> Result<SymbolIndexStats> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+
     if !db_path.exists() {
-        return rebuild_symbol_index(workspace_root, db_path);
+        return rebuild_symbol_index(&workspace_root, &db_path);
     }
 
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
     if !file_path.starts_with(&workspace_root) {
         return Err(anyhow!(
             "file {} is outside workspace {}",
@@ -124,7 +129,7 @@ pub fn refresh_symbol_index_for_file(
         ));
     }
 
-    let connection = Connection::open(db_path)?;
+    let connection = Connection::open(&db_path)?;
     ensure_symbol_tables(&connection)?;
 
     let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
@@ -183,7 +188,7 @@ pub fn refresh_symbol_index_for_file(
     let reused_files = indexed_files.saturating_sub(rebuilt_files);
 
     persist_symbol_refresh(
-        db_path,
+        &db_path,
         &workspace_root,
         &raw_symbols,
         &resolved_symbols,
@@ -194,7 +199,7 @@ pub fn refresh_symbol_index_for_file(
     )?;
 
     Ok(SymbolIndexStats {
-        db_path: normalize_path(db_path),
+        db_path: normalize_path(&db_path),
         indexed_files,
         indexed_symbols: resolved_symbols.len(),
         rebuilt_files,

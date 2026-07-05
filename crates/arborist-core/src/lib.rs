@@ -5590,6 +5590,44 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn rebuild_symbol_index_normalizes_workspace_and_db_paths() {
+        let dir = temporary_dir();
+        let workspace = dir.join("workspace");
+        let nested = workspace.join("child");
+        let helper = workspace.join("helper.py");
+        let caller = workspace.join("caller.py");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let workspace_with_segments = nested.join("..");
+        let db_path_with_segments = nested.join("..").join("symbols.db");
+        let stats = rebuild_symbol_index(&workspace_with_segments, &db_path_with_segments).unwrap();
+
+        assert_eq!(stats.indexed_files, 2);
+        assert!(!stats.db_path.contains("/../"));
+
+        let trace = trace_symbol_graph_from_index(
+            &db_path_with_segments,
+            "orchestrate",
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(trace.callees.len(), 1);
+        assert_eq!(trace.callees[0].semantic_path, "helper");
+        assert!(!trace.symbol.file_path.contains("/../"));
+    }
+
+    #[test]
     fn traces_python_symbol_metadata_through_persisted_index() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");
