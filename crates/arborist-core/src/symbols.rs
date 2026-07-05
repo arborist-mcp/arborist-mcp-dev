@@ -136,7 +136,11 @@ pub fn refresh_symbol_index_for_file(
     let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
-    let refresh_paths = expanded_refresh_file_paths(&workspace_root, &file_path)?;
+    let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
+        vec![file_path.clone()]
+    } else {
+        expanded_refresh_file_paths(&workspace_root, &file_path)?
+    };
 
     let mut file_states = load_file_states(&connection)?;
     let mut old_changed_symbols = Vec::new();
@@ -151,7 +155,7 @@ pub fn refresh_symbol_index_for_file(
                 .unwrap_or_default(),
         );
 
-        if refresh_path.exists() {
+        if refresh_path.exists() && !should_skip_index_path(&workspace_root, refresh_path) {
             let source = read_source(refresh_path)?;
             let document = parse_document(refresh_path, &source)?;
             let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
@@ -321,23 +325,38 @@ fn walk_workspace(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 fn should_skip_dir(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            matches!(
-                name,
-                ".git"
-                    | ".mypy_cache"
-                    | ".pytest_cache"
-                    | ".ruff_cache"
-                    | ".tox"
-                    | ".venv"
-                    | "__pycache__"
-                    | "build"
-                    | "dist"
-                    | "node_modules"
-                    | "target"
-                    | "venv"
-            )
+        .is_some_and(should_skip_dir_name)
+}
+
+fn should_skip_index_path(workspace_root: &Path, path: &Path) -> bool {
+    path.strip_prefix(workspace_root)
+        .ok()
+        .is_some_and(|relative_path| {
+            relative_path.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .is_some_and(should_skip_dir_name)
+            })
         })
+}
+
+fn should_skip_dir_name(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | ".tox"
+            | ".venv"
+            | "__pycache__"
+            | "build"
+            | "dist"
+            | "node_modules"
+            | "target"
+            | "venv"
+    )
 }
 
 fn build_workspace_index(

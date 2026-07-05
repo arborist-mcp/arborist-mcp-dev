@@ -5664,6 +5664,28 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn refresh_symbol_index_ignores_files_in_skipped_dirs() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let venv_dir = dir.join("venv");
+        let installed = venv_dir.join("installed.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&venv_dir).unwrap();
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        fs::write(&installed, "def installed() -> int:\n    return 3\n").unwrap();
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let stats = refresh_symbol_index_for_file(&dir, &db_path, &installed).unwrap();
+
+        assert_eq!(stats.indexed_files, 1);
+        assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_ok());
+        assert!(
+            trace_symbol_graph_from_index(&db_path, "installed", TraceDirection::Both).is_err()
+        );
+    }
+
+    #[test]
     fn from_path_entrypoints_normalize_file_paths() {
         let dir = temporary_dir();
         let nested = dir.join("child");
