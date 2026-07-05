@@ -48,6 +48,9 @@ struct PythonAccessibleSymbol {
 #[derive(Debug, Clone)]
 enum PythonSymbolVisibility {
     Always,
+    ClassBodyLocal {
+        class_range: (usize, usize),
+    },
     NamedExpression {
         expression_range: (usize, usize),
         comprehension_range: Option<(usize, usize)>,
@@ -948,6 +951,13 @@ fn python_binding_candidates_for_reference(
                     seen_function_scope = true;
                     !skip_current_function_scope
                 }
+                "list_comprehension"
+                | "set_comprehension"
+                | "dictionary_comprehension"
+                | "generator_expression" => {
+                    seen_function_scope = true;
+                    false
+                }
                 "class_definition" => !seen_function_scope,
                 "module" => true,
                 _ => false,
@@ -1053,6 +1063,8 @@ fn collect_python_scope_symbols(
         return Ok(());
     }
 
+    let class_visibility = (scope_node.kind() == "class_definition")
+        .then_some((scope_node.start_byte(), scope_node.end_byte()));
     let body_node = if scope_node.kind() == "module" {
         scope_node
     } else if let Some(body) = scope_node.child_by_field_name("body") {
@@ -1074,6 +1086,13 @@ fn collect_python_scope_symbols(
             scope_rank,
             &mut statement_symbols,
         )?;
+        if let Some(class_range) = class_visibility {
+            for symbol in &mut statement_symbols {
+                if matches!(symbol.visibility, PythonSymbolVisibility::Always) {
+                    symbol.visibility = PythonSymbolVisibility::ClassBodyLocal { class_range };
+                }
+            }
+        }
         if scope_node.kind() != "module" && !external_bindings.is_empty() {
             statement_symbols.retain(|symbol| !external_bindings.contains(&symbol.name));
         }
@@ -2049,8 +2068,11 @@ fn collect_python_local_bindings(
         return Ok(Vec::new());
     };
 
+    let class_visibility =
+        (node.kind() == "class_definition").then_some((node.start_byte(), node.end_byte()));
     let mut cursor = body_node.walk();
     for statement in body_node.named_children(&mut cursor) {
+        let mut statement_symbols = Vec::new();
         collect_python_statement_symbols(
             statement,
             source,
@@ -2058,8 +2080,16 @@ fn collect_python_local_bindings(
             scope_path.as_deref(),
             origin_type,
             0,
-            &mut symbols,
+            &mut statement_symbols,
         )?;
+        if let Some(class_range) = class_visibility {
+            for symbol in &mut statement_symbols {
+                if matches!(symbol.visibility, PythonSymbolVisibility::Always) {
+                    symbol.visibility = PythonSymbolVisibility::ClassBodyLocal { class_range };
+                }
+            }
+        }
+        symbols.extend(statement_symbols);
     }
 
     let external_bindings = collect_python_external_binding_names(body_node, source)?;
@@ -2775,6 +2805,9 @@ fn python_accessible_symbol_resolves_at(
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ClassBodyLocal { class_range } => {
+            python_reference_uses_direct_class_scope(reference_node, class_range)
+        }
         PythonSymbolVisibility::NamedExpression {
             expression_range,
             comprehension_range,
@@ -2832,6 +2865,9 @@ fn python_accessible_symbol_suppresses_at(
 ) -> bool {
     match symbol.visibility {
         PythonSymbolVisibility::Always => true,
+        PythonSymbolVisibility::ClassBodyLocal { class_range } => {
+            python_reference_uses_direct_class_scope(reference_node, class_range)
+        }
         PythonSymbolVisibility::NamedExpression { .. } => true,
         PythonSymbolVisibility::ComprehensionTarget { .. } => {
             python_accessible_symbol_resolves_at(symbol, reference_node)
@@ -2872,6 +2908,13 @@ fn python_enclosing_local_binding_should_suppress_reference(
             "lambda" => {
                 seen_scope = true;
                 true
+            }
+            "list_comprehension"
+            | "set_comprehension"
+            | "dictionary_comprehension"
+            | "generator_expression" => {
+                seen_scope = true;
+                false
             }
             "function_definition" | "class_definition" | "module" => {
                 if seen_scope {
@@ -2922,6 +2965,37 @@ fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str)
     python_nearest_scope_node(node).is_some_and(|scope| {
         python_scope_declares_external_name(scope, source, name, "global_statement")
     })
+}
+
+fn python_reference_uses_direct_class_scope(
+    reference_node: Node<'_>,
+    class_range: (usize, usize),
+) -> bool {
+    let mut current = Some(reference_node);
+    while let Some(candidate) = current {
+        if candidate.kind() == "class_definition"
+            && (candidate.start_byte(), candidate.end_byte()) == class_range
+        {
+            return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition"
+                | "lambda"
+                | "list_comprehension"
+                | "set_comprehension"
+                | "dictionary_comprehension"
+                | "generator_expression"
+                | "class_definition"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
 }
 
 fn python_nearest_scope_node(node: Node<'_>) -> Option<Node<'_>> {

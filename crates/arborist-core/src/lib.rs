@@ -2473,6 +2473,156 @@ def top_level() -> int:
     }
 
     #[test]
+    fn resolves_python_lambda_default_parameter_references() {
+        let source = r#"
+def target() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    return (lambda x=target(): x)()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.node_kind, "function_definition");
+        let x_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "x")
+            .unwrap();
+        assert_eq!(x_binding.symbol.node_kind, "parameter");
+    }
+
+    #[test]
+    fn rejects_python_class_lambda_references_to_class_locals() {
+        let source = r#"
+class Container:
+    value = 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container",
+            "class Container:\n    helper = 2\n    value = (lambda: helper)()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(!result.applied);
+        assert_eq!(result.validation.unresolved_identifiers, vec!["helper"]);
+        assert!(
+            result
+                .validation
+                .binding_decisions
+                .iter()
+                .any(|decision| decision.name == "helper" && decision.status == "unresolved")
+        );
+    }
+
+    #[test]
+    fn resolves_python_class_body_references_to_class_locals() {
+        let source = r#"
+class Container:
+    value = 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container",
+            "class Container:\n    helper = 2\n    value = helper\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.node_kind, "assignment");
+        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("Container"));
+    }
+
+    #[test]
+    fn resolves_python_class_comprehension_references_to_globals_not_class_locals() {
+        let source = r#"
+def helper() -> int:
+    return 1
+
+class Container:
+    value = 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container",
+            "class Container:\n    helper = 2\n    value = [helper for item in range(1)]\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.node_kind, "function_definition");
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+    }
+
+    #[test]
+    fn resolves_python_nested_lambda_closure_bindings() {
+        let source = r#"
+def target() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    return (lambda target: (lambda: target)())(3)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let target_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "target")
+            .unwrap();
+        assert_eq!(target_binding.symbol.node_kind, "parameter");
+        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn resolves_python_import_alias_patch_bindings_to_local_module_symbols() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
@@ -3112,6 +3262,135 @@ def orchestrate():\n    return (lambda target: target)(3)\n",
     }
 
     #[test]
+    fn traces_python_lambda_default_parameter_references() {
+        let dir = temporary_dir();
+        let source = dir.join("lambda_default.py");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda x=target(): x)()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn ignores_python_nested_lambda_parameter_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_lambda_param_shadow.py");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda target: (lambda: target)())(3)\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_lambda_local_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_lambda_shadow.py");
+
+        fs::write(
+            &source,
+            "class Container:\n    helper = 2\n    value = (lambda: helper)()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_body_local_references_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_local_reference.py");
+
+        fs::write(
+            &source,
+            "class Container:\n    helper = 2\n    value = helper\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_class_comprehension_global_fallbacks() {
+        let dir = temporary_dir();
+        let source = dir.join("class_comprehension_global.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+class Container:\n    helper = 2\n    value = [helper for item in range(1)]\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn collects_python_class_comprehension_global_reference_names() {
+        let source = "def helper():\n    return 1\n\n\
+class Container:\n    helper = 2\n    value = [helper for item in range(1)]\n";
+        let document = crate::language::parse_document(Path::new("sample.py"), source).unwrap();
+        let mut class_range = None;
+        let mut callback = |node: tree_sitter::Node<'_>| {
+            if node.kind() == "class_definition"
+                && crate::semantic::semantic_path(node, source)
+                    .ok()
+                    .is_some_and(|path| path == "Container")
+            {
+                class_range = Some((node.start_byte(), node.end_byte()));
+            }
+        };
+        crate::language::visit_tree(document.tree.root_node(), &mut callback);
+        let (start, end) = class_range.unwrap();
+        let class_node = document
+            .tree
+            .root_node()
+            .descendant_for_byte_range(start, end)
+            .unwrap();
+        assert_eq!(class_node.kind(), "class_definition");
+
+        let mut references = std::collections::BTreeSet::new();
+        crate::patching::collect_python_references(
+            Path::new("sample.py"),
+            class_node,
+            source,
+            &mut references,
+        )
+        .unwrap();
+
+        assert!(references.contains("helper"), "references: {:?}", references);
+    }
+
+    #[test]
     fn traces_python_comprehension_call_references() {
         let dir = temporary_dir();
         let source = dir.join("comprehension.py");
@@ -3603,6 +3882,134 @@ def orchestrate():\n    return (lambda target: target)(3)\n",
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
         assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_lambda_default_parameter_references_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("lambda_default.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda x=target(): x)()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn ignores_python_nested_lambda_parameter_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_lambda_param_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def target():\n    return 1\n\n\
+def orchestrate():\n    return (lambda target: (lambda: target)())(3)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_lambda_local_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_lambda_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "class Container:\n    helper = 2\n    value = (lambda: helper)()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "Container", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_body_local_references_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_local_reference.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "class Container:\n    helper = 2\n    value = helper\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "Container", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_class_comprehension_global_fallbacks_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_comprehension_global.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+class Container:\n    helper = 2\n    value = [helper for item in range(1)]\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "Container", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
     }
 
     #[test]
