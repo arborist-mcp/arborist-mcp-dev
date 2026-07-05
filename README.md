@@ -206,7 +206,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Disk-backed file entrypoints normalize paths before reading or writing, so response payloads and evidence keys do not preserve caller-supplied `.` or `..` aliases
 - VFS operations normalize file identities before opening, editing, listing, closing, or committing buffers, so path aliases share one session entry instead of creating parallel dirty state
 - Persisted trace requests with a missing `index_db_path` now fail closed without creating an empty SQLite database
-- Workspace indexing skips generated/cache/dependency directories such as `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `__pycache__`, `venv`, `node_modules`, `target`, `dist`, and `build`
+- Workspace indexing and single-file refreshes skip generated/cache/dependency directories such as `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.venv`, `__pycache__`, `venv`, `node_modules`, `target`, `dist`, and `build`
 - C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions
 - Duplicate C globals now keep distinct graph edges via stable include-family/file-backed `symbol_id` values, and persisted traces can target those IDs directly
 - C patch targeting now understands those precise `symbol_id` selectors too, and same-file declaration/definition name collisions prefer the definition node during replacement
