@@ -5807,6 +5807,35 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn does_not_refresh_dependents_for_missing_system_include() {
+        let dir = temporary_dir();
+        let helper_header = dir.join("helper.h");
+        let helper_source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper_header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &helper_source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include <stdio.h>\n#include \"helper.h\"\n\nint orchestrate(int value) {\n    return helper(value);\n}\n",
+        )
+        .unwrap();
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let missing_system_header = dir.join("stdio.h");
+        let stats = refresh_symbol_index_for_file(&dir, &db_path, &missing_system_header).unwrap();
+        assert_eq!(stats.indexed_files, 3);
+        assert_eq!(stats.rebuilt_files, 1);
+        assert_eq!(stats.reused_files, 2);
+    }
+
+    #[test]
     fn traces_duplicate_c_globals_by_precise_symbol_id() {
         let dir = temporary_dir();
         let alpha_header = dir.join("alpha.h");

@@ -149,6 +149,24 @@ pub fn c_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
     Ok(targets)
 }
 
+pub fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
+    let mut targets = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "preproc_include" {
+            continue;
+        }
+        let Some(path_node) = child.child_by_field_name("path") else {
+            continue;
+        };
+        let raw = node_text(path_node, source)?.trim();
+        if let Some(target) = normalize_local_include_target(raw) {
+            targets.push(target);
+        }
+    }
+    Ok(targets)
+}
+
 pub fn resolve_local_c_include(
     current_path: &Path,
     include_target: &str,
@@ -165,6 +183,12 @@ fn normalize_include_target(raw: &str) -> Option<String> {
             raw.strip_prefix('<')
                 .and_then(|value| value.strip_suffix('>'))
         })
+        .map(str::to_string)
+}
+
+fn normalize_local_include_target(raw: &str) -> Option<String> {
+    raw.strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
         .map(str::to_string)
 }
 

@@ -8,8 +8,8 @@ use rusqlite::{Connection, params};
 use tree_sitter::Node;
 
 use crate::language::{
-    c_include_targets, contains_kind, detect_language, node_text, normalize_path, parse_document,
-    read_source, resolve_local_c_include, visit_tree,
+    c_include_targets, c_local_include_targets, contains_kind, detect_language, node_text,
+    normalize_path, parse_document, read_source, resolve_local_c_include, visit_tree,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -251,9 +251,17 @@ fn reverse_local_c_include_index(
 
         let source = read_source(&path)?;
         let document = parse_document(&path, &source)?;
+        let local_include_targets = c_local_include_targets(document.tree.root_node(), &source)?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
         for include_target in c_include_targets(document.tree.root_node(), &source)? {
-            let Some(include_path) = resolve_local_c_include(&path, &include_target)
-                .or_else(|| unresolved_local_c_include_path(&path, &include_target))
+            let Some(include_path) =
+                resolve_local_c_include(&path, &include_target).or_else(|| {
+                    local_include_targets
+                        .contains(&include_target)
+                        .then(|| unresolved_local_c_include_path(&path, &include_target))
+                        .flatten()
+                })
             else {
                 continue;
             };
