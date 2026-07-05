@@ -3480,6 +3480,52 @@ def top_level() -> int:
     }
 
     #[test]
+    fn resolves_decorated_python_local_bindings_for_patch_validation() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def helper(value: int) -> int:
+    return value + 1
+
+def top_level(value: int) -> int:
+    return value + 1
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return helper(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let helper_text = "@decorator\ndef helper(value: int) -> int:\n    return value + 1";
+        let helper_start = source.find(helper_text).unwrap();
+        let helper_end = helper_start + helper_text.len();
+
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+        assert_eq!(helper_binding.symbol.origin_type, "module_scope");
+        assert_eq!(
+            helper_binding.symbol.signature.as_deref(),
+            Some("@decorator\ndef helper(value: int) -> int:")
+        );
+        assert_eq!(helper_binding.symbol.byte_range, (helper_start, helper_end));
+    }
+
+    #[test]
     fn resolves_decorated_python_import_metadata_for_patch_validation() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
