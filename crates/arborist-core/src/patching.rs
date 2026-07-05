@@ -934,10 +934,12 @@ fn python_binding_candidates_for_reference(
         python_reference_is_global_declared(reference_target.node, source, &name);
     let mut candidates = Vec::new();
     let mut seen_function_scope = false;
+    let mut skipped_current_class_scope = false;
     let mut skipped_current_function_scope = false;
     let mut scope_rank = 3_000_000usize;
     let mut current = Some(reference_target.node);
     let skip_current_function_scope = is_python_default_parameter_value(reference_target.node);
+    let skip_current_class_scope = is_python_class_header_expression(reference_target.node);
 
     while let Some(node) = current {
         let include_scope = if force_module_scope {
@@ -969,7 +971,14 @@ fn python_binding_candidates_for_reference(
                     seen_function_scope = true;
                     false
                 }
-                "class_definition" => !seen_function_scope,
+                "class_definition" => {
+                    if skip_current_class_scope && !skipped_current_class_scope {
+                        skipped_current_class_scope = true;
+                        false
+                    } else {
+                        !seen_function_scope
+                    }
+                }
                 "module" => true,
                 _ => false,
             }
@@ -2994,6 +3003,28 @@ fn is_python_decorator_expression(node: Node<'_>) -> bool {
     false
 }
 
+fn is_python_class_header_expression(node: Node<'_>) -> bool {
+    let mut current = Some(node);
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "block" {
+            return false;
+        }
+
+        if candidate.kind() == "class_definition" {
+            return true;
+        }
+
+        if matches!(candidate.kind(), "function_definition" | "module") {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
+}
+
 fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str) -> bool {
     python_nearest_scope_node(node).is_some_and(|scope| {
         python_scope_declares_external_name(scope, source, name, "global_statement")
@@ -3004,10 +3035,21 @@ fn python_reference_uses_direct_class_scope(
     reference_node: Node<'_>,
     class_range: (usize, usize),
 ) -> bool {
+    let mut skipped_current_class_scope = false;
     let mut skipped_current_function_scope = false;
+    let skip_current_class_scope = is_python_class_header_expression(reference_node);
     let skip_current_function_scope = is_python_default_parameter_value(reference_node);
     let mut current = Some(reference_node);
     while let Some(candidate) = current {
+        if skip_current_class_scope
+            && !skipped_current_class_scope
+            && candidate.kind() == "class_definition"
+        {
+            skipped_current_class_scope = true;
+            current = candidate.parent();
+            continue;
+        }
+
         if candidate.kind() == "class_definition"
             && (candidate.start_byte(), candidate.end_byte()) == class_range
         {

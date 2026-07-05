@@ -2687,6 +2687,66 @@ class Container:
     }
 
     #[test]
+    fn resolves_python_nested_class_base_closure_bindings() {
+        let source = r#"
+class GlobalBase:
+    pass
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    Base = GlobalBase\n\n    class Inner(Base):\n        pass\n\n    return 0\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let base_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "Base")
+            .unwrap();
+        assert_eq!(base_binding.symbol.node_kind, "assignment");
+        assert_eq!(base_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
+    fn resolves_python_class_base_references_to_globals_not_class_locals() {
+        let source = r#"
+class Base:
+    pass
+
+class Container:
+    value = 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container",
+            "class Container(Base):\n    Base = 1\n    value = 0\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let base_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "Base")
+            .unwrap();
+        assert_eq!(base_binding.symbol.node_kind, "class_definition");
+        assert_eq!(base_binding.symbol.semantic_path, "Base");
+    }
+
+    #[test]
     fn resolves_python_class_comprehension_references_to_globals_not_class_locals() {
         let source = r#"
 def helper() -> int:
@@ -3509,6 +3569,45 @@ class Container:\n    helper = helper\n\n    @helper\n    def method(self):\n   
     }
 
     #[test]
+    fn ignores_python_nested_class_base_local_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_class_base_shadow.py");
+
+        fs::write(
+            &source,
+            "class GlobalBase:\n    pass\n\n\
+def top_level():\n    Base = GlobalBase\n\n    class Inner(Base):\n        pass\n\n    return 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "top_level.Inner", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_class_base_global_fallbacks() {
+        let dir = temporary_dir();
+        let source = dir.join("class_base_global.py");
+
+        fs::write(
+            &source,
+            "class Base:\n    pass\n\n\
+class Container(Base):\n    Base = 1\n    value = 0\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Base")
+        );
+    }
+
+    #[test]
     fn ignores_python_class_body_local_references_in_traces() {
         let dir = temporary_dir();
         let source = dir.join("class_local_reference.py");
@@ -4220,6 +4319,61 @@ class Container:\n    helper = helper\n\n    @helper\n    def method(self):\n   
             trace_symbol_graph_from_index(&db_path, "Container.method", TraceDirection::Both)
                 .unwrap();
         assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_nested_class_base_local_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_class_base_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "class GlobalBase:\n    pass\n\n\
+def top_level():\n    Base = GlobalBase\n\n    class Inner(Base):\n        pass\n\n    return 0\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "top_level.Inner", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "top_level.Inner", TraceDirection::Both)
+                .unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn traces_python_class_base_global_fallbacks_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_base_global.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "class Base:\n    pass\n\n\
+class Container(Base):\n    Base = 1\n    value = 0\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Base")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "Container", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "Base")
+        );
     }
 
     #[test]
