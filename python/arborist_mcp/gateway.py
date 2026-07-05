@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 import sys
 from pathlib import Path
 from typing import Any
-
-from ._arborist_core import ArboristCore
 
 
 class JsonRpcError(ValueError):
@@ -16,9 +15,15 @@ class JsonRpcError(ValueError):
         self.code = code
 
 
+def _load_core_class() -> type[Any]:
+    module = importlib.import_module("._arborist_core", __package__)
+    return module.ArboristCore
+
+
 class ArboristGateway:
     def __init__(self) -> None:
-        self._core = ArboristCore()
+        core_class = _load_core_class()
+        self._core = core_class()
 
     def handle_request(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):

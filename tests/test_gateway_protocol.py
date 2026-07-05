@@ -473,6 +473,16 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["result"][0]["owner_semantic_path"], "top_level")
         self.assertIsNone(response["result"][0]["owner_scope_path"])
 
+    def test_gateway_initialization_loads_core_lazily(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.loaded = True
+
+        with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore):
+            gateway = gateway_module.ArboristGateway()
+
+        self.assertIsInstance(gateway._core, StubCore)
+
     def test_stdio_notification_does_not_emit_response(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:
@@ -551,8 +561,13 @@ class GatewayProtocolTests(unittest.TestCase):
             "__init__",
             side_effect=AssertionError("gateway should not initialize"),
         ):
-            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
-                exit_code = gateway_module.run_stdio()
+            with mock.patch.object(
+                gateway_module,
+                "_load_core_class",
+                side_effect=AssertionError("core loader should not run"),
+            ):
+                with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                    exit_code = gateway_module.run_stdio()
 
         self.assertEqual(exit_code, 0)
         response = gateway_module.json.loads(stdout.getvalue())
@@ -578,9 +593,14 @@ class GatewayProtocolTests(unittest.TestCase):
             "__init__",
             side_effect=AssertionError("gateway should not initialize"),
         ):
-            with mock.patch("pathlib.Path.read_text", return_value="{bad json}"):
-                with mock.patch("builtins.print") as mock_print:
-                    exit_code = gateway_module.main(["--once", "dummy.json"])
+            with mock.patch.object(
+                gateway_module,
+                "_load_core_class",
+                side_effect=AssertionError("core loader should not run"),
+            ):
+                with mock.patch("pathlib.Path.read_text", return_value="{bad json}"):
+                    with mock.patch("builtins.print") as mock_print:
+                        exit_code = gateway_module.main(["--once", "dummy.json"])
 
         self.assertEqual(exit_code, 0)
         mock_print.assert_called_once()
@@ -595,12 +615,17 @@ class GatewayProtocolTests(unittest.TestCase):
             "__init__",
             side_effect=AssertionError("gateway should not initialize"),
         ):
-            with mock.patch(
-                "pathlib.Path.read_text",
-                side_effect=FileNotFoundError("missing request file"),
+            with mock.patch.object(
+                gateway_module,
+                "_load_core_class",
+                side_effect=AssertionError("core loader should not run"),
             ):
-                with mock.patch("sys.stderr", stderr):
-                    exit_code = gateway_module.main(["--once", "dummy.json"])
+                with mock.patch(
+                    "pathlib.Path.read_text",
+                    side_effect=FileNotFoundError("missing request file"),
+                ):
+                    with mock.patch("sys.stderr", stderr):
+                        exit_code = gateway_module.main(["--once", "dummy.json"])
 
         self.assertEqual(exit_code, 1)
         self.assertIn("failed to read request file", stderr.getvalue())
