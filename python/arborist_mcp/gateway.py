@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -407,9 +408,19 @@ def is_notification_request(request: Any) -> bool:
 
 
 def is_valid_request_id(request_id: Any) -> bool:
-    return request_id is None or isinstance(request_id, str) or (
-        isinstance(request_id, (int, float)) and not isinstance(request_id, bool)
-    )
+    if request_id is None or isinstance(request_id, str):
+        return True
+
+    if isinstance(request_id, bool):
+        return False
+
+    if isinstance(request_id, int):
+        return True
+
+    if isinstance(request_id, float):
+        return math.isfinite(request_id)
+
+    return False
 
 
 def _reject_nonstandard_json_constant(name: str) -> Any:
