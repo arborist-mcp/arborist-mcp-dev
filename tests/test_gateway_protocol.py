@@ -480,11 +480,22 @@ class GatewayProtocolTests(unittest.TestCase):
 
         with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore) as loader:
             gateway = gateway_module.ArboristGateway()
+            self.assertIsNone(gateway._core)
+            loader.assert_not_called()
+            self.assertIsInstance(gateway._require_core(), StubCore)
+            loader.assert_called_once()
 
-        self.assertIsNone(gateway._core)
-        loader.assert_not_called()
-        self.assertIsInstance(gateway._require_core(), StubCore)
-        loader.assert_called_once()
+    def test_require_core_handles_new_only_gateway_instance(self) -> None:
+        class StubCore:
+            pass
+
+        gateway = gateway_module.ArboristGateway.__new__(gateway_module.ArboristGateway)
+
+        with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore):
+            core = gateway._require_core()
+
+        self.assertIsInstance(core, StubCore)
+        self.assertIs(gateway._core, core)
 
     def test_initialize_reports_core_load_failure_as_jsonrpc_error(self) -> None:
         gateway = gateway_module.ArboristGateway()

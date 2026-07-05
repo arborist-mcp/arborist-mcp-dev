@@ -25,13 +25,15 @@ class ArboristGateway:
         self._core: Any | None = None
 
     def _require_core(self) -> Any:
-        if self._core is None:
+        core = getattr(self, "_core", None)
+        if core is None:
             try:
                 core_class = _load_core_class()
-                self._core = core_class()
+                core = core_class()
+                self._core = core
             except Exception as exc:  # noqa: BLE001
                 raise JsonRpcError(-32000, f"failed to load arborist core: {exc}") from exc
-        return self._core
+        return core
 
     def handle_request(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
