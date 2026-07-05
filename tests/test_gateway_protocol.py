@@ -425,6 +425,28 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("workspace_root", response["error"]["message"])
 
+    def test_rejects_null_string_param_with_default(self) -> None:
+        class StubCore:
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 38,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": None, "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 38)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
     def test_rejects_invalid_trace_direction_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

@@ -417,8 +417,13 @@ class ArboristGateway:
         default: str | None = None,
         allow_empty: bool = False,
     ) -> str | None:
-        value = params.get(key, default)
+        if key in params:
+            value = params[key]
+        else:
+            value = default
         if value is None:
+            if key in params and default is not None:
+                raise JsonRpcError(-32602, f"invalid string param: {key}")
             return None
         if not isinstance(value, str) or (not allow_empty and not value):
             raise JsonRpcError(-32602, f"invalid string param: {key}")
