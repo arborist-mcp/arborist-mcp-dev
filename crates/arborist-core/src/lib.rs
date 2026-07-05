@@ -1457,6 +1457,48 @@ int helper(int value) {
         assert_eq!(captures.len(), 1);
         assert_eq!(captures[0].capture_name, "name");
         assert_eq!(captures[0].text, "add");
+        assert_eq!(captures[0].owner_symbol_id.as_deref(), Some("add"));
+        assert_eq!(captures[0].owner_semantic_path.as_deref(), Some("add"));
+        assert_eq!(captures[0].owner_scope_path, None);
+    }
+
+    #[test]
+    fn execute_tree_query_reports_owner_for_decorator_captures() {
+        let source = "@logged\ndef top_level(value):\n    return value\n";
+        let query = "(decorator (identifier) @decorator)";
+
+        let captures = execute_tree_query(Path::new("sample.py"), source, query).unwrap();
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].capture_name, "decorator");
+        assert_eq!(captures[0].text, "logged");
+        assert_eq!(captures[0].owner_symbol_id.as_deref(), Some("top_level"));
+        assert_eq!(
+            captures[0].owner_semantic_path.as_deref(),
+            Some("top_level")
+        );
+        assert_eq!(captures[0].owner_scope_path, None);
+    }
+
+    #[test]
+    fn execute_tree_query_reports_owner_for_c_body_captures() {
+        let source = "int helper(int value) { return value + 1; }\nint orchestrate(int value) { return helper(value); }\n";
+        let query = "(call_expression function: (identifier) @callee)";
+
+        let captures = execute_tree_query(Path::new("sample.c"), source, query).unwrap();
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].capture_name, "callee");
+        assert_eq!(captures[0].text, "helper");
+        assert_eq!(
+            captures[0].owner_symbol_id.as_deref(),
+            Some("sample.c::orchestrate")
+        );
+        assert_eq!(
+            captures[0].owner_semantic_path.as_deref(),
+            Some("orchestrate")
+        );
+        assert_eq!(captures[0].owner_scope_path, None);
     }
 
     #[test]

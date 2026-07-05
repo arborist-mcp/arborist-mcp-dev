@@ -143,6 +143,7 @@ Python trace/index resolution also follows local import aliases and package re-e
 `replay_patch_evidence_against_trace` consumes a patch result plus a trace result and reports whether each patch evidence invariant is `matched`, `blocked`, `missing`, or `failed` against the trace graph keys.
 `validate_patch_commit_with_trace` builds on that replay check and returns a single `allowed/status/reason` decision, making it the first optional strong gate for trace-backed semantic writes.
 `validate_patch_with_trace_context` removes the manual orchestration step entirely: it runs patch validation, traces the patched symbol against the workspace with the updated file held in-memory, and returns the patch result plus the trace-backed validation decision in one call.
+`execute_tree_query` now also returns optional `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a capture belongs to a semantic symbol. That lets a raw Tree-sitter query jump directly into later trace or patch calls without rediscovering the owning selector from source text alone.
 
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.
 
