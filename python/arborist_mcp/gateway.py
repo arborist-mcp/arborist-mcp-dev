@@ -509,7 +509,7 @@ def is_valid_request_id(request_id: Any) -> bool:
         return True
 
     if isinstance(request_id, float):
-        return math.isfinite(request_id)
+        return math.isfinite(request_id) and request_id.is_integer()
 
     return False
 
