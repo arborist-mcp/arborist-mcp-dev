@@ -559,6 +559,44 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertIn("failed to read request file", stderr.getvalue())
         self.assertIn("dummy.json", stderr.getvalue())
 
+    def test_stdio_broken_pipe_exits_cleanly(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+
+        class BrokenStdout(io.StringIO):
+            def write(self, text: str) -> int:
+                raise BrokenPipeError("pipe closed")
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n')
+        stdout = BrokenStdout()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+
+    def test_once_broken_pipe_exits_cleanly(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+
+        fake_gateway = StubGateway()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+            ):
+                with mock.patch("builtins.print", side_effect=BrokenPipeError("pipe closed")):
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+
     def test_stdio_rejects_nan_as_parse_error(self) -> None:
         stdin = io.StringIO(
             '{"jsonrpc":"2.0","id":NaN,"method":"arborist/list_symbol_indexes","params":{}}\n'

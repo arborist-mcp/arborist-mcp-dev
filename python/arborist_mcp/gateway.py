@@ -505,8 +505,8 @@ def run_stdio() -> int:
             response = gateway.handle_request(request)
 
         if response is not None and not is_notification_request(request):
-            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
+            if not _write_response(json.dumps(response, ensure_ascii=False) + "\n"):
+                return 0
 
     return 0
 
@@ -529,10 +529,28 @@ def main(argv: list[str] | None = None) -> int:
         if response is None:
             response = gateway.handle_request(request)
         if response is not None and not is_notification_request(request):
-            print(json.dumps(response, ensure_ascii=False, indent=2))
+            if not _print_response(json.dumps(response, ensure_ascii=False, indent=2)):
+                return 0
         return 0
 
     return run_stdio()
+
+
+def _write_response(payload: str) -> bool:
+    try:
+        sys.stdout.write(payload)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        return False
+    return True
+
+
+def _print_response(payload: str) -> bool:
+    try:
+        print(payload)
+    except BrokenPipeError:
+        return False
+    return True
 
 
 if __name__ == "__main__":
