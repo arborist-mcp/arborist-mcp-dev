@@ -287,7 +287,7 @@ fn reverse_local_c_include_index(
 
 fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) -> Option<PathBuf> {
     let parent = current_path.parent()?;
-    Some(parent.join(include_target))
+    normalize_absolute_path(&parent.join(include_target)).ok()
 }
 
 fn collect_source_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {

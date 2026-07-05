@@ -194,7 +194,7 @@ pub fn resolve_local_c_include(
     include_target: &str,
 ) -> Option<std::path::PathBuf> {
     let parent = current_path.parent()?;
-    let candidate = parent.join(include_target);
+    let candidate = normalize_absolute_path(&parent.join(include_target)).ok()?;
     candidate.exists().then_some(candidate)
 }
 

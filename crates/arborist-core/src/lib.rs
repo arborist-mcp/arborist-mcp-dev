@@ -5791,6 +5791,64 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn refreshes_c_include_dependents_for_parent_relative_header() {
+        let dir = temporary_dir();
+        let include_dir = dir.join("include");
+        let source_dir = dir.join("src");
+        let alpha_header = include_dir.join("alpha.h");
+        let alpha_source = include_dir.join("alpha.c");
+        let zeta_header = include_dir.join("zeta.h");
+        let zeta_source = include_dir.join("zeta.c");
+        let wrapper_header = include_dir.join("wrapper.h");
+        let caller = source_dir.join("caller.c");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&include_dir).unwrap();
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(&alpha_header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &alpha_source,
+            "#include \"alpha.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(&zeta_header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &zeta_source,
+            "#include \"zeta.h\"\n\nint helper(int value) {\n    return value + 2;\n}\n",
+        )
+        .unwrap();
+        fs::write(&wrapper_header, "#include \"alpha.h\"\n").unwrap();
+        fs::write(
+            &caller,
+            "#include \"../include/wrapper.h\"\n\nint orchestrate(int value) {\n    return helper(value);\n}\n",
+        )
+        .unwrap();
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let initial_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(initial_trace.callees.len(), 1);
+        assert_eq!(
+            initial_trace.callees[0].file_path,
+            alpha_source.to_string_lossy().replace('\\', "/")
+        );
+
+        fs::write(&wrapper_header, "#include \"zeta.h\"\n").unwrap();
+
+        let stats = refresh_symbol_index_for_file(&dir, &db_path, &wrapper_header).unwrap();
+        assert_eq!(stats.indexed_files, 6);
+        assert_eq!(stats.rebuilt_files, 2);
+
+        let updated_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(updated_trace.callees.len(), 1);
+        assert_eq!(
+            updated_trace.callees[0].file_path,
+            zeta_source.to_string_lossy().replace('\\', "/")
+        );
+    }
+
+    #[test]
     fn refreshes_c_include_dependents_for_deleted_header() {
         let dir = temporary_dir();
         let alpha_header = dir.join("alpha.h");
