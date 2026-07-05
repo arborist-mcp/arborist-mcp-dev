@@ -585,6 +585,52 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["result"], {})
         self.assertEqual(core.args, ("sample.py", None, 2, None))
 
+    def test_allows_null_nullable_string_params(self) -> None:
+        class StubCore:
+            def patch_ast_node_json(
+                self,
+                file_path: str,
+                semantic_path: str,
+                new_code: str,
+                source: str | None,
+                bypass_reason: str | None,
+            ) -> str:
+                self.args = (file_path, semantic_path, new_code, source, bypass_reason)
+                return "{}"
+
+        core = StubCore()
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = core
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 39,
+                "method": "arborist/patch_ast_node",
+                "params": {
+                    "file_path": "sample.py",
+                    "semantic_path": "top_level",
+                    "new_code": "def top_level():\n    return 1\n",
+                    "source": None,
+                    "bypass_reason": None,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 39)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            core.args,
+            (
+                "sample.py",
+                "top_level",
+                "def top_level():\n    return 1\n",
+                None,
+                None,
+            ),
+        )
+
     def test_rejects_empty_expand_node_selectors(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(self, *args: object) -> str:
