@@ -8,8 +8,8 @@ use tree_sitter::Node;
 
 use crate::language::{
     ParsedDocument, c_include_targets, contains_kind, contains_node, first_identifier,
-    is_field_node, node_text, normalize_path, parse_document, position_from, read_source,
-    resolve_local_c_include, visit_tree,
+    is_field_node, node_text, normalize_absolute_path, normalize_path, parse_document,
+    position_from, read_source, resolve_local_c_include, visit_tree,
 };
 use crate::model::{
     DisambiguationContext, LanguageId, PatchAstNodeResult, PatchCommitGateReport,
@@ -94,11 +94,18 @@ pub fn patch_ast_node_from_path(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
-    let disk_source = read_source(path)?;
-    let result = patch_ast_node(path, &disk_source, semantic_target, new_code, bypass_reason)?;
+    let path = normalize_absolute_path(path)?;
+    let disk_source = read_source(&path)?;
+    let result = patch_ast_node(
+        &path,
+        &disk_source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+    )?;
 
     if result.applied {
-        fs::write(path, &result.updated_source)
+        fs::write(&path, &result.updated_source)
             .with_context(|| format!("failed to write patched source to {}", path.display()))?;
     }
 

@@ -4,16 +4,17 @@ use anyhow::{Context, Result};
 use tree_sitter::{Query, QueryCursor, StreamingIterator};
 
 use crate::language::{
-    contains_kind, contains_node, language_for_id, normalize_path, parse_document, position_from,
-    read_source,
+    contains_kind, contains_node, language_for_id, normalize_absolute_path, normalize_path,
+    parse_document, position_from, read_source,
 };
 use crate::model::LanguageId;
 use crate::model::QueryCaptureResult;
 use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_path, semantic_path};
 
 pub fn execute_tree_query_from_path(path: &Path, query: &str) -> Result<Vec<QueryCaptureResult>> {
-    let source = read_source(path)?;
-    execute_tree_query(path, &source, query)
+    let path = normalize_absolute_path(path)?;
+    let source = read_source(&path)?;
+    execute_tree_query(&path, &source, query)
 }
 
 pub fn execute_tree_query(

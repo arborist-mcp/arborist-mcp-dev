@@ -34,8 +34,9 @@ pub fn get_semantic_skeleton_from_path(
     depth_limit: usize,
     expand_nodes: &[String],
 ) -> Result<SemanticSkeleton> {
-    let source = read_source(path)?;
-    get_semantic_skeleton(path, &source, depth_limit, expand_nodes)
+    let path = language::normalize_absolute_path(path)?;
+    let source = read_source(&path)?;
+    get_semantic_skeleton(&path, &source, depth_limit, expand_nodes)
 }
 
 pub fn get_semantic_skeleton(
@@ -187,10 +188,12 @@ pub fn validate_patch_with_trace_context_from_path(
     bypass_reason: Option<&str>,
     direction: TraceDirection,
 ) -> Result<TraceBackedPatchResult> {
-    let source = read_source(path)?;
+    let workspace_root = language::normalize_absolute_path(workspace_root)?;
+    let path = language::normalize_absolute_path(path)?;
+    let source = read_source(&path)?;
     validate_patch_with_trace_context(
-        workspace_root,
-        path,
+        &workspace_root,
+        &path,
         &source,
         semantic_target,
         new_code,
@@ -262,10 +265,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        TraceDirection, execute_tree_query, get_semantic_skeleton, patch_ast_node,
-        patch_ast_node_from_path, rebuild_symbol_index, refresh_symbol_index_for_file,
-        replay_patch_evidence_against_trace, trace_symbol_graph, trace_symbol_graph_from_index,
-        validate_patch_commit_with_trace, validate_patch_with_trace_context_from_path,
+        TraceDirection, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
+        get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
+        rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
+        trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
+        validate_patch_with_trace_context_from_path,
     };
 
     #[test]
@@ -5625,6 +5629,51 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(trace.callees.len(), 1);
         assert_eq!(trace.callees[0].semantic_path, "helper");
         assert!(!trace.symbol.file_path.contains("/../"));
+    }
+
+    #[test]
+    fn from_path_entrypoints_normalize_file_paths() {
+        let dir = temporary_dir();
+        let nested = dir.join("child");
+        let python_file = dir.join("buffer.py");
+        let c_file = dir.join("sample.c");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(&python_file, "def value() -> int:\n    return 1\n").unwrap();
+        fs::write(
+            &c_file,
+            "int helper(int value) { return value + 1; }\nint orchestrate(int value) { return helper(value); }\n",
+        )
+        .unwrap();
+
+        let python_alias = nested.join("..").join("buffer.py");
+        let c_alias = nested.join("..").join("sample.c");
+
+        let skeleton = get_semantic_skeleton_from_path(&python_alias, 1, &[]).unwrap();
+        assert!(!skeleton.file.contains("/../"));
+
+        let patch = patch_ast_node_from_path(
+            &python_alias,
+            "value",
+            "def value() -> int:\n    return 2\n",
+            None,
+        )
+        .unwrap();
+        assert!(patch.applied);
+        assert!(!patch.file.contains("/../"));
+        assert!(
+            fs::read_to_string(&python_file)
+                .unwrap()
+                .contains("return 2")
+        );
+
+        let captures = execute_tree_query_from_path(
+            &c_alias,
+            "(call_expression function: (identifier) @callee)",
+        )
+        .unwrap();
+        let owner_symbol_id = captures[0].owner_symbol_id.as_deref().unwrap();
+        assert!(!owner_symbol_id.contains("/../"));
     }
 
     #[test]
