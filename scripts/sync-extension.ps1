@@ -1,4 +1,6 @@
-param()
+param(
+    [switch]$SkipBuild
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -23,8 +25,10 @@ $destination = Join-Path $repoRoot "python\arborist_mcp\_arborist_core.pyd"
 
 Push-Location $repoRoot
 try {
-    Write-Host "Building arborist-py debug extension..."
-    Invoke-NativeOrThrow "Building arborist-py debug extension" "cargo" @("build", "-p", "arborist-py")
+    if (-not $SkipBuild) {
+        Write-Host "Building arborist-py debug extension..."
+        Invoke-NativeOrThrow "Building arborist-py debug extension" "cargo" @("build", "-p", "arborist-py")
+    }
 } finally {
     Pop-Location
 }

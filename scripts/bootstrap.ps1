@@ -3,6 +3,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$venvDir = Join-Path $repoRoot ".venv"
+$activateScript = Join-Path $venvDir "Scripts\Activate.ps1"
 
 function Invoke-NativeOrThrow {
     param(
@@ -19,14 +22,19 @@ function Invoke-NativeOrThrow {
     }
 }
 
-if (-not (Test-Path ".venv")) {
-    Invoke-NativeOrThrow "Creating virtual environment" $Python @("-m", "venv", ".venv")
-}
+Push-Location $repoRoot
+try {
+    if (-not (Test-Path $venvDir)) {
+        Invoke-NativeOrThrow "Creating virtual environment" $Python @("-m", "venv", $venvDir)
+    }
 
-. .\.venv\Scripts\Activate.ps1
-Invoke-NativeOrThrow "Upgrading pip" "python" @("-m", "pip", "install", "--upgrade", "pip")
-Invoke-NativeOrThrow "Installing maturin" "python" @("-m", "pip", "install", "maturin")
-Invoke-NativeOrThrow "Building extension with maturin" "maturin" @("develop")
-& $PSScriptRoot\sync-extension.ps1
+    . $activateScript
+    Invoke-NativeOrThrow "Upgrading pip" "python" @("-m", "pip", "install", "--upgrade", "pip")
+    Invoke-NativeOrThrow "Installing maturin" "python" @("-m", "pip", "install", "maturin")
+    Invoke-NativeOrThrow "Building extension with maturin" "maturin" @("develop")
+    & $PSScriptRoot\sync-extension.ps1 -SkipBuild
+} finally {
+    Pop-Location
+}
 
 Write-Host "Bootstrap complete. Activate with . .\\.venv\\Scripts\\Activate.ps1"

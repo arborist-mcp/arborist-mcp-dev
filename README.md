@@ -93,6 +93,8 @@ Or use the bootstrap script:
 .\scripts\bootstrap.ps1
 ```
 
+`bootstrap.ps1` and `sync-extension.ps1` now resolve the repository root themselves, so they can be invoked from outside the repo root without creating or activating the wrong `.venv`. `bootstrap.ps1` reuses the `maturin develop` build when it calls `sync-extension.ps1`, so the native extension only gets rebuilt once per bootstrap run.
+
 `sync-extension.ps1` keeps the checked-in local gateway extension in sync with the latest Rust build so `python -m arborist_mcp.gateway` works directly from the repository root.
 It now rebuilds the debug `arborist-py` extension before copying it into `python/arborist_mcp/`, so re-running the script after Rust changes is enough to refresh the repo-root gateway entrypoint.
 
