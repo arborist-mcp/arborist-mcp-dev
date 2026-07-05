@@ -144,12 +144,17 @@ pub fn refresh_symbol_index_for_file(
                 .unwrap_or_default(),
         );
 
-        let source = read_source(refresh_path)?;
-        let document = parse_document(refresh_path, &source)?;
-        let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
+        if refresh_path.exists() {
+            let source = read_source(refresh_path)?;
+            let document = parse_document(refresh_path, &source)?;
+            let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
 
-        file_states.insert(normalized_refresh_path.clone(), source_fingerprint(&source));
-        grouped_symbols.insert(normalized_refresh_path.clone(), fresh_symbols);
+            file_states.insert(normalized_refresh_path.clone(), source_fingerprint(&source));
+            grouped_symbols.insert(normalized_refresh_path.clone(), fresh_symbols);
+        } else {
+            file_states.remove(&normalized_refresh_path);
+            grouped_symbols.remove(&normalized_refresh_path);
+        }
         changed_file_paths.insert(normalized_refresh_path);
     }
 
@@ -1381,10 +1386,13 @@ fn persist_symbol_refresh(
     }
 
     for changed_file_path in changed_file_paths {
+        tx.execute(
+            "DELETE FROM file_state WHERE file_path = ?1",
+            [changed_file_path],
+        )?;
         if let Some(fingerprint) = file_states.get(changed_file_path) {
             tx.execute(
-                "INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)
-                 ON CONFLICT(file_path) DO UPDATE SET fingerprint = excluded.fingerprint",
+                "INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)",
                 params![changed_file_path, *fingerprint as i64],
             )?;
         }
