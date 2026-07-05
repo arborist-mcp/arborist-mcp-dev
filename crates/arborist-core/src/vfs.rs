@@ -226,6 +226,7 @@ impl VirtualFileSystem {
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
         let (path, normalized) = normalized_virtual_path(path)?;
         self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
 
         let committed_path = {
             let entry = self
@@ -567,6 +568,24 @@ mod tests {
         assert_eq!(refreshed.source, "");
         assert_eq!(refreshed.disk_source, "");
         assert_eq!(refreshed.version, 1);
+    }
+
+    #[test]
+    fn commit_refreshes_clean_file_changed_on_disk() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(!snapshot.dirty);
+        assert_eq!(snapshot.version, 0);
+
+        fs::write(&file, "def value() -> int:\n    return 2\n").unwrap();
+        let committed = vfs.commit_file(&file).unwrap();
+
+        assert!(!committed.dirty);
+        assert!(committed.source.contains("return 2"));
+        assert_eq!(committed.disk_source, committed.source);
+        assert_eq!(committed.version, 1);
     }
 
     #[test]
