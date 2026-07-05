@@ -38,14 +38,20 @@ struct VirtualFileEntry {
     dirty: bool,
 }
 
+fn normalized_virtual_path(path: &Path) -> Result<(PathBuf, String)> {
+    let absolute_path = normalize_absolute_path(path)?;
+    let normalized = normalize_path(&absolute_path);
+    Ok((absolute_path, normalized))
+}
+
 impl VirtualFileSystem {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn open_file(&mut self, path: &Path, source: Option<&str>) -> Result<VirtualFileSnapshot> {
-        let normalized = normalize_path(path);
-        self.ensure_loaded(path, source)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, source)?;
         self.refresh_if_clean(&normalized)?;
 
         let entry = self
@@ -66,8 +72,8 @@ impl VirtualFileSystem {
         old_end_byte: usize,
         new_text: &str,
     ) -> Result<VirtualEditResult> {
-        let normalized = normalize_path(path);
-        self.ensure_loaded(path, None)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
         let entry = self
@@ -150,8 +156,8 @@ impl VirtualFileSystem {
         new_code: &str,
         bypass_reason: Option<&str>,
     ) -> Result<PatchAstNodeResult> {
-        let normalized = normalize_path(path);
-        self.ensure_loaded(path, None)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
         let (start_byte, end_byte) = {
@@ -175,7 +181,7 @@ impl VirtualFileSystem {
             )
         };
 
-        self.apply_edit(path, start_byte, end_byte, new_code)?;
+        self.apply_edit(&path, start_byte, end_byte, new_code)?;
 
         let result = {
             let entry = self
@@ -207,8 +213,8 @@ impl VirtualFileSystem {
     }
 
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
-        let normalized = normalize_path(path);
-        self.ensure_loaded(path, None)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
 
         let committed_path = {
             let entry = self
@@ -236,8 +242,8 @@ impl VirtualFileSystem {
     }
 
     pub fn discard_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
-        let normalized = normalize_path(path);
-        self.ensure_loaded(path, None)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
 
         let entry = self
             .entries
@@ -335,12 +341,12 @@ impl VirtualFileSystem {
     }
 
     fn ensure_loaded(&mut self, path: &Path, source_override: Option<&str>) -> Result<()> {
-        let normalized = normalize_path(path);
+        let (path, normalized) = normalized_virtual_path(path)?;
         match self.entries.get_mut(&normalized) {
             Some(entry) => {
                 if let Some(source_override) = source_override {
-                    let document = parse_document(path, source_override)?;
-                    entry.path = path.to_path_buf();
+                    let document = parse_document(&path, source_override)?;
+                    entry.path = path;
                     entry.language_id = document.language_id;
                     entry.source = source_override.to_string();
                     entry.tree = document.tree;
@@ -349,7 +355,7 @@ impl VirtualFileSystem {
                 }
             }
             None => {
-                let disk_source = match fs::read_to_string(path) {
+                let disk_source = match fs::read_to_string(&path) {
                     Ok(source) => source,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
                     Err(error) => {
@@ -359,12 +365,12 @@ impl VirtualFileSystem {
                     }
                 };
                 let initial_source = source_override.unwrap_or(&disk_source).to_string();
-                let document = parse_document(path, &initial_source)?;
+                let document = parse_document(&path, &initial_source)?;
                 let dirty = initial_source != disk_source;
                 self.entries.insert(
                     normalized,
                     VirtualFileEntry {
-                        path: path.to_path_buf(),
+                        path,
                         language_id: document.language_id,
                         disk_source,
                         source: initial_source,
@@ -496,6 +502,33 @@ mod tests {
         assert!(result.source.contains("return 2"));
 
         let committed = vfs.commit_file(&file).unwrap();
+        assert!(!committed.dirty);
+        assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
+    }
+
+    #[test]
+    fn path_aliases_share_one_virtual_entry() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let alias_dir = file.parent().unwrap().join("child");
+        fs::create_dir_all(&alias_dir).unwrap();
+        let alias = alias_dir.join("..").join("buffer.py");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&alias).unwrap();
+        assert!(!snapshot.file.contains("/../"));
+        let digit_offset = snapshot.source.rfind('1').unwrap();
+
+        vfs.apply_edit(&file, digit_offset, digit_offset + 1, "2")
+            .unwrap();
+
+        let statuses = vfs.virtual_file_statuses(false);
+        assert_eq!(statuses.len(), 1);
+        assert!(statuses[0].dirty);
+
+        let aliased_snapshot = vfs.read_file(&alias).unwrap();
+        assert!(aliased_snapshot.source.contains("return 2"));
+
+        let committed = vfs.commit_file(&alias).unwrap();
         assert!(!committed.dirty);
         assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
     }
