@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -7,7 +8,7 @@ use tree_sitter::{InputEdit, Tree};
 
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
-    parser_for_language, point_for_offset, read_source,
+    parser_for_language, point_for_offset,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -42,6 +43,16 @@ fn normalized_virtual_path(path: &Path) -> Result<(PathBuf, String)> {
     let absolute_path = normalize_absolute_path(path)?;
     let normalized = normalize_path(&absolute_path);
     Ok((absolute_path, normalized))
+}
+
+fn read_virtual_disk_source(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Ok(source) => Ok(source),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to read source file {}", path.display()))
+        }
+    }
 }
 
 impl VirtualFileSystem {
@@ -355,15 +366,7 @@ impl VirtualFileSystem {
                 }
             }
             None => {
-                let disk_source = match fs::read_to_string(&path) {
-                    Ok(source) => source,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!("failed to read source file {}", path.display())
-                        });
-                    }
-                };
+                let disk_source = read_virtual_disk_source(&path)?;
                 let initial_source = source_override.unwrap_or(&disk_source).to_string();
                 let document = parse_document(&path, &initial_source)?;
                 let dirty = initial_source != disk_source;
@@ -392,7 +395,7 @@ impl VirtualFileSystem {
             return Ok(());
         }
 
-        let disk_source = read_source(&entry.path)?;
+        let disk_source = read_virtual_disk_source(&entry.path)?;
         if disk_source == entry.disk_source {
             return Ok(());
         }
@@ -546,6 +549,24 @@ mod tests {
 
         assert!(!discarded.dirty);
         assert!(discarded.source.contains("return 1"));
+    }
+
+    #[test]
+    fn refreshes_clean_file_deleted_on_disk_as_empty() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(!snapshot.dirty);
+        assert_eq!(snapshot.version, 0);
+
+        fs::remove_file(&file).unwrap();
+        let refreshed = vfs.read_file(&file).unwrap();
+
+        assert!(!refreshed.dirty);
+        assert_eq!(refreshed.source, "");
+        assert_eq!(refreshed.disk_source, "");
+        assert_eq!(refreshed.version, 1);
     }
 
     #[test]
