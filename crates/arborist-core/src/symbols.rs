@@ -252,7 +252,9 @@ fn reverse_local_c_include_index(
         let source = read_source(&path)?;
         let document = parse_document(&path, &source)?;
         for include_target in c_include_targets(document.tree.root_node(), &source)? {
-            let Some(include_path) = resolve_local_c_include(&path, &include_target) else {
+            let Some(include_path) = resolve_local_c_include(&path, &include_target)
+                .or_else(|| unresolved_local_c_include_path(&path, &include_target))
+            else {
                 continue;
             };
             if !include_path.starts_with(workspace_root) {
@@ -267,6 +269,11 @@ fn reverse_local_c_include_index(
     }
 
     Ok(reverse_index)
+}
+
+fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) -> Option<PathBuf> {
+    let parent = current_path.parent()?;
+    Some(parent.join(include_target))
 }
 
 fn collect_source_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
