@@ -934,6 +934,7 @@ fn python_binding_candidates_for_reference(
         python_reference_is_global_declared(reference_target.node, source, &name);
     let mut candidates = Vec::new();
     let mut seen_function_scope = false;
+    let mut skipped_current_function_scope = false;
     let mut scope_rank = 3_000_000usize;
     let mut current = Some(reference_target.node);
     let skip_current_function_scope = is_python_default_parameter_value(reference_target.node);
@@ -944,12 +945,22 @@ fn python_binding_candidates_for_reference(
         } else {
             match node.kind() {
                 "function_definition" => {
-                    seen_function_scope = true;
-                    !skip_current_function_scope
+                    if skip_current_function_scope && !skipped_current_function_scope {
+                        skipped_current_function_scope = true;
+                        false
+                    } else {
+                        seen_function_scope = true;
+                        true
+                    }
                 }
                 "lambda" => {
-                    seen_function_scope = true;
-                    !skip_current_function_scope
+                    if skip_current_function_scope && !skipped_current_function_scope {
+                        skipped_current_function_scope = true;
+                        false
+                    } else {
+                        seen_function_scope = true;
+                        true
+                    }
                 }
                 "list_comprehension"
                 | "set_comprehension"
@@ -2971,12 +2982,23 @@ fn python_reference_uses_direct_class_scope(
     reference_node: Node<'_>,
     class_range: (usize, usize),
 ) -> bool {
+    let mut skipped_current_function_scope = false;
+    let skip_current_function_scope = is_python_default_parameter_value(reference_node);
     let mut current = Some(reference_node);
     while let Some(candidate) = current {
         if candidate.kind() == "class_definition"
             && (candidate.start_byte(), candidate.end_byte()) == class_range
         {
             return true;
+        }
+
+        if skip_current_function_scope
+            && !skipped_current_function_scope
+            && matches!(candidate.kind(), "function_definition" | "lambda")
+        {
+            skipped_current_function_scope = true;
+            current = candidate.parent();
+            continue;
         }
 
         if matches!(

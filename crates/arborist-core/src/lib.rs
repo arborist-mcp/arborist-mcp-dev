@@ -2509,6 +2509,36 @@ def top_level() -> int:
     }
 
     #[test]
+    fn resolves_python_nested_default_parameter_closure_bindings() {
+        let source = r#"
+def helper() -> int:
+    return 1
+
+def top_level() -> int:
+    return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level() -> int:\n    helper = 3\n\n    def inner(value=helper) -> int:\n        return value\n\n    return inner()\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.node_kind, "assignment");
+        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("top_level"));
+    }
+
+    #[test]
     fn rejects_python_class_lambda_references_to_class_locals() {
         let source = r#"
 class Container:
@@ -2547,6 +2577,39 @@ class Container:
             source,
             "Container",
             "class Container:\n    helper = 2\n    value = helper\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.node_kind, "assignment");
+        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("Container"));
+    }
+
+    #[test]
+    fn resolves_python_class_method_default_parameter_references_to_class_locals() {
+        let source = r#"
+def helper() -> int:
+    return 1
+
+class Container:
+    helper = 2
+
+    def method(value=None) -> object:
+        return 0
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "Container.method",
+            "def method(value=helper) -> object:\n    return 0\n",
             None,
         )
         .unwrap();
@@ -3284,6 +3347,23 @@ def orchestrate():\n    return (lambda x=target(): x)()\n",
     }
 
     #[test]
+    fn ignores_python_nested_default_parameter_closure_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_default_param_shadow.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 3\n\n    def inner(value=helper):\n        return value\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
     fn ignores_python_nested_lambda_parameter_shadowing_in_traces() {
         let dir = temporary_dir();
         let source = dir.join("nested_lambda_param_shadow.py");
@@ -3312,6 +3392,23 @@ def orchestrate():\n    return (lambda target: (lambda: target)())(3)\n",
         .unwrap();
 
         let trace = trace_symbol_graph(&dir, "Container", TraceDirection::Both).unwrap();
+
+        assert!(trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_method_default_parameter_local_shadowing_in_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_method_default_shadow.py");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+class Container:\n    helper = 2\n\n    def method(value=helper):\n        return value\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
 
         assert!(trace.callees.is_empty());
     }
@@ -3917,6 +4014,29 @@ def orchestrate():\n    return (lambda x=target(): x)()\n",
     }
 
     #[test]
+    fn ignores_python_nested_default_parameter_closure_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("nested_default_param_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+def top_level():\n    helper = 3\n\n    def inner(value=helper):\n        return value\n\n    return inner()\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "top_level.inner", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "top_level.inner", TraceDirection::Both)
+                .unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
     fn ignores_python_nested_lambda_parameter_shadowing_in_persisted_traces() {
         let dir = temporary_dir();
         let source = dir.join("nested_lambda_param_shadow.py");
@@ -3935,6 +4055,29 @@ def orchestrate():\n    return (lambda target: (lambda: target)())(3)\n",
         rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(persisted_trace.callees.is_empty());
+    }
+
+    #[test]
+    fn ignores_python_class_method_default_parameter_local_shadowing_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("class_method_default_shadow.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper():\n    return 1\n\n\
+class Container:\n    helper = 2\n\n    def method(value=helper):\n        return value\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
+        assert!(live_trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "Container.method", TraceDirection::Both)
+                .unwrap();
         assert!(persisted_trace.callees.is_empty());
     }
 
