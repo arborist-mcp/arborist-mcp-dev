@@ -358,6 +358,11 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         start_byte = self._require_nonnegative_int(params, "start_byte")
         old_end_byte = self._require_nonnegative_int(params, "old_end_byte")
+        if start_byte > old_end_byte:
+            raise JsonRpcError(
+                -32602,
+                "invalid buffer edit range: start_byte is after old_end_byte",
+            )
         new_text = self._require_string(params, "new_text", allow_empty=True)
         payload = self._require_core().apply_buffer_edit_json(
             file_path,

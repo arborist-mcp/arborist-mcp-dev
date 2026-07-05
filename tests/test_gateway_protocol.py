@@ -511,8 +511,13 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("query", response["error"]["message"].lower())
 
-    def test_core_invalid_buffer_edit_maps_to_invalid_params(self) -> None:
-        gateway = ArboristGateway()
+    def test_rejects_reversed_buffer_edit_range(self) -> None:
+        class StubCore:
+            def apply_buffer_edit_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
 
         response = gateway.handle_request(
             {
