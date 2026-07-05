@@ -344,6 +344,51 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn builds_python_skeleton_with_async_members() {
+        let source = r#"
+async def top_level(value: int) -> int:
+    """Top level async orchestration."""
+
+    async def nested(inner: int) -> int:
+        """Inner async helper."""
+        return inner + 1
+
+    return await nested(value)
+"#;
+
+        let skeleton = get_semantic_skeleton(Path::new("sample.py"), source, 2, &[]).unwrap();
+
+        assert!(
+            skeleton
+                .skeleton
+                .contains("async def top_level(value: int) -> int: ...")
+        );
+        assert!(
+            skeleton
+                .skeleton
+                .contains("async def nested(inner: int) -> int: ...")
+        );
+        assert_eq!(skeleton.available_paths, vec!["top_level", "top_level.nested"]);
+        assert_eq!(skeleton.available_symbols.len(), 2);
+        assert_eq!(
+            skeleton.available_symbols[0].node_kind,
+            "function_definition"
+        );
+        assert_eq!(
+            skeleton.available_symbols[0].signature.as_deref(),
+            Some("async def top_level(value: int) -> int:")
+        );
+        assert_eq!(
+            skeleton.available_symbols[1].scope_path.as_deref(),
+            Some("top_level")
+        );
+        assert_eq!(
+            skeleton.available_symbols[1].signature.as_deref(),
+            Some("async def nested(inner: int) -> int:")
+        );
+    }
+
+    #[test]
     fn expands_selected_python_nodes_without_duplicating_children() {
         let source = r#"
 class Greeter:
@@ -2509,6 +2554,37 @@ def top_level() -> int:
     }
 
     #[test]
+    fn resolves_python_async_function_patch_bindings() {
+        let source = r#"
+def helper(value: int) -> int:
+    return value + 1
+
+async def top_level(value: int) -> int:
+    return value
+"#;
+
+        let result = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "async def top_level(value: int) -> int:\n    return helper(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert_eq!(result.resolved_path, "top_level");
+        let helper_binding = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "helper")
+            .unwrap();
+        assert_eq!(helper_binding.symbol.node_kind, "function_definition");
+        assert_eq!(helper_binding.symbol.semantic_path, "helper");
+    }
+
+    #[test]
     fn resolves_python_nested_default_parameter_closure_bindings() {
         let source = r#"
 def helper() -> int:
@@ -3468,6 +3544,28 @@ def orchestrate():\n    return (lambda x=target(): x)()\n",
     }
 
     #[test]
+    fn traces_python_async_function_references() {
+        let dir = temporary_dir();
+        let source = dir.join("async_orchestrate.py");
+
+        fs::write(
+            &source,
+            "def helper(value: int) -> int:\n    return value + 1\n\n\
+async def orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn ignores_python_nested_default_parameter_closure_shadowing_in_traces() {
         let dir = temporary_dir();
         let source = dir.join("nested_default_param_shadow.py");
@@ -4204,6 +4302,38 @@ def orchestrate():\n    return (lambda x=target(): x)()\n",
                 .callees
                 .iter()
                 .any(|symbol| symbol.semantic_path == "target")
+        );
+    }
+
+    #[test]
+    fn traces_python_async_function_references_in_persisted_traces() {
+        let dir = temporary_dir();
+        let source = dir.join("async_orchestrate.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &source,
+            "def helper(value: int) -> int:\n    return value + 1\n\n\
+async def orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            live_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            persisted_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
         );
     }
 
