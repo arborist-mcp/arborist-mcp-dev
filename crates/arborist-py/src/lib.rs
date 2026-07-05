@@ -282,7 +282,11 @@ impl ArboristCore {
     }
 
     fn list_virtual_files_json(&self, dirty_only: bool) -> PyResult<String> {
-        let result = self.vfs.borrow().virtual_file_statuses(dirty_only);
+        let result = self
+            .vfs
+            .borrow_mut()
+            .virtual_file_statuses(dirty_only)
+            .map_err(to_py_error)?;
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 

@@ -318,7 +318,12 @@ impl VirtualFileSystem {
         indexes
     }
 
-    pub fn virtual_file_statuses(&self, dirty_only: bool) -> Vec<VirtualFileStatus> {
+    pub fn virtual_file_statuses(&mut self, dirty_only: bool) -> Result<Vec<VirtualFileStatus>> {
+        let loaded_files: Vec<_> = self.entries.keys().cloned().collect();
+        for normalized in &loaded_files {
+            self.refresh_if_clean(normalized)?;
+        }
+
         let mut statuses: Vec<_> = self
             .entries
             .iter()
@@ -340,7 +345,7 @@ impl VirtualFileSystem {
             })
             .collect();
         statuses.sort_by(|left, right| left.file.cmp(&right.file));
-        statuses
+        Ok(statuses)
     }
 
     pub fn trace_symbol_graph(
@@ -529,7 +534,7 @@ mod tests {
         vfs.apply_edit(&file, digit_offset, digit_offset + 1, "2")
             .unwrap();
 
-        let statuses = vfs.virtual_file_statuses(false);
+        let statuses = vfs.virtual_file_statuses(false).unwrap();
         assert_eq!(statuses.len(), 1);
         assert!(statuses[0].dirty);
 
@@ -662,7 +667,7 @@ mod tests {
         assert!(snapshot.source.contains("return 7"));
         assert!(snapshot.disk_source.contains("return 1"));
 
-        let dirty_files = vfs.virtual_file_statuses(true);
+        let dirty_files = vfs.virtual_file_statuses(true).unwrap();
         assert_eq!(dirty_files.len(), 1);
         assert_eq!(dirty_files[0].file, snapshot.file);
         assert!(dirty_files[0].dirty);
@@ -684,6 +689,21 @@ mod tests {
         assert!(!reopened.dirty);
         assert!(reopened.source.contains("return 2"));
         assert_eq!(reopened.disk_source, reopened.source);
+    }
+
+    #[test]
+    fn list_virtual_files_refreshes_clean_disk_changes() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        vfs.read_file(&file).unwrap();
+        fs::write(&file, "def value(\n").unwrap();
+        let statuses = vfs.virtual_file_statuses(false).unwrap();
+
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].version, 1);
+        assert!(statuses[0].syntax_error_count > 0);
+        assert!(!statuses[0].dirty);
     }
 
     #[test]
@@ -725,7 +745,7 @@ mod tests {
 
         assert!(!snapshot.dirty);
         assert!(snapshot.source.contains("return 1"));
-        assert!(vfs.virtual_file_statuses(false).is_empty());
+        assert!(vfs.virtual_file_statuses(false).unwrap().is_empty());
         assert!(fs::read_to_string(&file).unwrap().contains("return 1"));
     }
 
