@@ -445,7 +445,9 @@ class ArboristGateway:
         value = params.get(key)
         if value is None:
             return None
-        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) and item for item in value
+        ):
             raise JsonRpcError(-32602, f"invalid string list param: {key}")
         return value
 
