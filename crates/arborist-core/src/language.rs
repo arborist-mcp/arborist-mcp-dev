@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{Language, Node, Parser, Point, Tree};
@@ -18,6 +18,28 @@ pub fn supported_languages() -> Vec<&'static str> {
 pub fn read_source(path: &Path) -> Result<String> {
     fs::read_to_string(path)
         .with_context(|| format!("failed to read source file {}", path.display()))
+}
+
+pub fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute_path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Ok(normalized)
 }
 
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {

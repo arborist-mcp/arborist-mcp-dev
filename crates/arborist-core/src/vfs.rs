@@ -6,8 +6,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{InputEdit, Tree};
 
 use crate::language::{
-    normalize_path, offset_for_position, parse_document, parser_for_language, point_for_offset,
-    read_source,
+    normalize_absolute_path, normalize_path, offset_for_position, parse_document,
+    parser_for_language, point_for_offset, read_source,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -269,8 +269,8 @@ impl VirtualFileSystem {
         workspace_root: &Path,
         db_path: &Path,
     ) -> Result<SymbolIndexStats> {
-        let workspace_root = absolutize_path(workspace_root)?;
-        let db_path = absolutize_path(db_path)?;
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let db_path = normalize_absolute_path(db_path)?;
         let stats = rebuild_symbol_index(&workspace_root, &db_path)?;
         self.symbol_indexes
             .insert(normalize_path(&workspace_root), db_path);
@@ -278,7 +278,7 @@ impl VirtualFileSystem {
     }
 
     pub fn unregister_symbol_index(&mut self, workspace_root: &Path) -> Result<bool> {
-        let workspace_root = absolutize_path(workspace_root)?;
+        let workspace_root = normalize_absolute_path(workspace_root)?;
         Ok(self
             .symbol_indexes
             .remove(&normalize_path(&workspace_root))
@@ -329,7 +329,7 @@ impl VirtualFileSystem {
         symbol_path: &str,
         direction: TraceDirection,
     ) -> Result<TraceSymbolGraphResult> {
-        let workspace_root = absolutize_path(workspace_root)?;
+        let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
         trace_symbol_graph_with_overrides(&workspace_root, &overrides, symbol_path, direction)
     }
@@ -401,7 +401,7 @@ impl VirtualFileSystem {
     }
 
     fn sync_registered_indexes(&self, file_path: &Path) -> Result<()> {
-        let file_path = absolutize_path(file_path)?;
+        let file_path = normalize_absolute_path(file_path)?;
         for (workspace_root, db_path) in &self.symbol_indexes {
             let workspace_root_path = Path::new(workspace_root);
             if file_path.starts_with(workspace_root_path) {
@@ -426,7 +426,7 @@ impl VirtualFileSystem {
                 continue;
             }
 
-            let absolute_path = absolutize_path(&entry.path)?;
+            let absolute_path = normalize_absolute_path(&entry.path)?;
             if absolute_path.starts_with(workspace_root) {
                 overrides.insert(normalize_path(&absolute_path), entry.source.clone());
             }
@@ -466,14 +466,6 @@ fn validate_edit_range(source: &str, start_byte: usize, old_end_byte: usize) -> 
         bail!("edit range must align to UTF-8 character boundaries");
     }
     Ok(())
-}
-
-fn absolutize_path(path: &Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-
-    Ok(std::env::current_dir()?.join(path))
 }
 
 #[cfg(test)]

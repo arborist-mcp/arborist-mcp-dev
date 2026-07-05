@@ -6034,6 +6034,35 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_err());
     }
 
+    #[test]
+    fn rejects_refresh_path_that_escapes_workspace_after_normalization() {
+        let dir = temporary_dir();
+        let workspace = dir.join("workspace");
+        let nested = workspace.join("child");
+        let helper = workspace.join("helper.py");
+        let db_path = workspace.join("symbols.db");
+        let outside = dir.join("outside.py");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &outside,
+            "def outside(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+
+        rebuild_symbol_index(&workspace, &db_path).unwrap();
+
+        let escaping_path = nested.join("..").join("..").join("outside.py");
+        let error = refresh_symbol_index_for_file(&workspace, &db_path, &escaping_path)
+            .expect_err("refresh should reject paths outside the workspace");
+        assert!(error.to_string().contains("outside workspace"));
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)

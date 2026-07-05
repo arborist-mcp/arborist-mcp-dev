@@ -9,7 +9,8 @@ use tree_sitter::Node;
 
 use crate::language::{
     c_include_targets, c_local_include_targets, contains_kind, detect_language, node_text,
-    normalize_path, parse_document, read_source, resolve_local_c_include, visit_tree,
+    normalize_absolute_path, normalize_path, parse_document, read_source, resolve_local_c_include,
+    visit_tree,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -113,8 +114,8 @@ pub fn refresh_symbol_index_for_file(
         return rebuild_symbol_index(workspace_root, db_path);
     }
 
-    let workspace_root = absolutize_path(workspace_root)?;
-    let file_path = absolutize_path(file_path)?;
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
     if !file_path.starts_with(&workspace_root) {
         return Err(anyhow!(
             "file {} is outside workspace {}",
@@ -714,7 +715,7 @@ fn resolve_workspace_symbols_with_overrides(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
-    let workspace_root = absolutize_path(workspace_root)?;
+    let workspace_root = normalize_absolute_path(workspace_root)?;
     let mut indexed_paths = collect_source_files(&workspace_root)?;
     let mut known_paths: BTreeSet<String> = indexed_paths
         .iter()
@@ -722,7 +723,7 @@ fn resolve_workspace_symbols_with_overrides(
         .collect();
 
     for override_path in file_overrides.keys() {
-        let override_path = absolutize_path(Path::new(override_path))?;
+        let override_path = normalize_absolute_path(Path::new(override_path))?;
         if !override_path.starts_with(&workspace_root) || detect_language(&override_path).is_err() {
             continue;
         }
@@ -1883,12 +1884,4 @@ fn source_fingerprint(source: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     hasher.finish()
-}
-
-fn absolutize_path(path: &Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-
-    Ok(std::env::current_dir()?.join(path))
 }
