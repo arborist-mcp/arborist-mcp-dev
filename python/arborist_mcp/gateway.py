@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -517,9 +516,6 @@ def is_valid_request_id(request_id: Any) -> bool:
 
     if isinstance(request_id, int):
         return True
-
-    if isinstance(request_id, float):
-        return math.isfinite(request_id) and request_id.is_integer()
 
     return False
 

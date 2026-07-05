@@ -201,6 +201,23 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32600)
         self.assertIn("invalid id", response["error"]["message"])
 
+    def test_rejects_float_request_id_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1.0,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
     def test_reports_missing_required_param_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
