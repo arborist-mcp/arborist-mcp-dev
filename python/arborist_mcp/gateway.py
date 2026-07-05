@@ -603,9 +603,10 @@ def _serialize_response(response: dict[str, Any], indent: int | None = None) -> 
     try:
         return json.dumps(response, ensure_ascii=False, allow_nan=False, indent=indent)
     except (TypeError, ValueError) as exc:
+        response_id = response.get("id")
         fallback = {
             "jsonrpc": "2.0",
-            "id": response.get("id"),
+            "id": response_id if is_valid_request_id(response_id) else None,
             "error": {
                 "code": -32000,
                 "message": f"failed to serialize response: {exc}",

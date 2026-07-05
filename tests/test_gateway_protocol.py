@@ -943,6 +943,27 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32000)
         self.assertIn("failed to serialize response", response["error"]["message"])
 
+    def test_stdio_unserializable_response_id_falls_back_to_null(self) -> None:
+        class StubGateway:
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.request = request
+                return {"jsonrpc": "2.0", "id": object(), "result": {"value": object()}}
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO('{"jsonrpc":"2.0","id":33,"method":"initialize","params":{}}\n')
+        stdout = io.StringIO()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("failed to serialize response", response["error"]["message"])
+
     def test_once_broken_pipe_exits_cleanly(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:
