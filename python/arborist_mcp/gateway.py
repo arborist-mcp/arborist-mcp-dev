@@ -491,6 +491,7 @@ class ArboristGateway:
 def is_notification_request(request: Any) -> bool:
     return (
         isinstance(request, dict)
+        and request.get("jsonrpc") == "2.0"
         and "id" not in request
         and isinstance(request.get("method"), str)
         and bool(request.get("method"))
