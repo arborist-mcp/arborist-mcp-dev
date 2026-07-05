@@ -87,6 +87,35 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32600)
         self.assertIn("jsonrpc", response["error"]["message"])
 
+    def test_invalid_jsonrpc_version_with_array_id_returns_null_id(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "1.0",
+                "id": [],
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_missing_jsonrpc_with_bool_id_returns_null_id(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"id": True, "method": "arborist/list_symbol_indexes", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
     def test_rejects_array_request_id_as_invalid_request(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

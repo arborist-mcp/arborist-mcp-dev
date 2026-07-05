@@ -24,26 +24,27 @@ class ArboristGateway:
         if not isinstance(request, dict):
             return self._error_response(None, -32600, "invalid request: expected object")
 
+        request_id = request.get("id")
+        response_id = request_id if is_valid_request_id(request_id) else None
         jsonrpc_version = request.get("jsonrpc")
         if jsonrpc_version != "2.0":
             return self._error_response(
-                request.get("id"),
+                response_id,
                 -32600,
                 "invalid request: expected jsonrpc='2.0'",
             )
 
         method = request.get("method")
-        request_id = request.get("id")
         params = request.get("params", {})
 
         if "id" in request and not is_valid_request_id(request_id):
             return self._error_response(None, -32600, "invalid request: invalid id")
 
         if not isinstance(method, str) or not method:
-            return self._error_response(request_id, -32600, "invalid request: missing method")
+            return self._error_response(response_id, -32600, "invalid request: missing method")
 
         if not isinstance(params, dict):
-            return self._error_response(request_id, -32602, "invalid params: expected object")
+            return self._error_response(response_id, -32602, "invalid params: expected object")
 
         try:
             if method == "initialize":
@@ -122,13 +123,13 @@ class ArboristGateway:
             elif method == "arborist/execute_tree_query":
                 result = self._execute_tree_query(params)
             else:
-                return self._error_response(request_id, -32601, f"method not found: {method}")
+                return self._error_response(response_id, -32601, f"method not found: {method}")
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except JsonRpcError as exc:
-            return self._error_response(request_id, exc.code, str(exc))
+            return self._error_response(response_id, exc.code, str(exc))
         except Exception as exc:  # noqa: BLE001
-            return self._error_response(request_id, -32000, str(exc))
+            return self._error_response(response_id, -32000, str(exc))
 
     @staticmethod
     def _error_response(
