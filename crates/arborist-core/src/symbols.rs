@@ -145,9 +145,13 @@ pub fn refresh_symbol_index_for_file(
     let mut file_states = load_file_states(&connection)?;
     let mut old_changed_symbols = Vec::new();
     let mut changed_file_paths = BTreeSet::new();
+    let mut rebuilt_files = 0;
 
     for refresh_path in &refresh_paths {
         let normalized_refresh_path = normalize_path(refresh_path);
+        let skip_refresh_path = should_skip_index_path(&workspace_root, refresh_path);
+        let had_indexed_state = file_states.contains_key(&normalized_refresh_path)
+            || grouped_symbols.contains_key(&normalized_refresh_path);
         old_changed_symbols.extend(
             grouped_symbols
                 .get(&normalized_refresh_path)
@@ -155,21 +159,23 @@ pub fn refresh_symbol_index_for_file(
                 .unwrap_or_default(),
         );
 
-        if refresh_path.exists() && !should_skip_index_path(&workspace_root, refresh_path) {
+        if refresh_path.exists() && !skip_refresh_path {
             let source = read_source(refresh_path)?;
             let document = parse_document(refresh_path, &source)?;
             let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
 
             file_states.insert(normalized_refresh_path.clone(), source_fingerprint(&source));
             grouped_symbols.insert(normalized_refresh_path.clone(), fresh_symbols);
+            rebuilt_files += 1;
         } else {
             file_states.remove(&normalized_refresh_path);
             grouped_symbols.remove(&normalized_refresh_path);
+            if !skip_refresh_path || had_indexed_state {
+                rebuilt_files += 1;
+            }
         }
         changed_file_paths.insert(normalized_refresh_path);
     }
-
-    let rebuilt_files = refresh_paths.len();
 
     let mut raw_symbols = grouped_symbols
         .into_values()

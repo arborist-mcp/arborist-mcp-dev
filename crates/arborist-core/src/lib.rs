@@ -5679,6 +5679,8 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let stats = refresh_symbol_index_for_file(&dir, &db_path, &installed).unwrap();
 
         assert_eq!(stats.indexed_files, 1);
+        assert_eq!(stats.rebuilt_files, 0);
+        assert_eq!(stats.reused_files, 1);
         assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_ok());
         assert!(
             trace_symbol_graph_from_index(&db_path, "installed", TraceDirection::Both).is_err()
