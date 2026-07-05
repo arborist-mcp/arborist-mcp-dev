@@ -324,7 +324,18 @@ fn should_skip_dir(path: &Path) -> bool {
         .is_some_and(|name| {
             matches!(
                 name,
-                ".git" | ".venv" | "target" | "node_modules" | "dist" | "build"
+                ".git"
+                    | ".mypy_cache"
+                    | ".pytest_cache"
+                    | ".ruff_cache"
+                    | ".tox"
+                    | ".venv"
+                    | "__pycache__"
+                    | "build"
+                    | "dist"
+                    | "node_modules"
+                    | "target"
+                    | "venv"
             )
         })
 }
