@@ -216,9 +216,11 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "missing required object param: patch")
         if not isinstance(trace, dict):
             raise JsonRpcError(-32602, "missing required object param: trace")
+        patch_json = self._encode_json_param(patch, "patch")
+        trace_json = self._encode_json_param(trace, "trace")
         payload = self._core.replay_patch_evidence_against_trace_json(
-            json.dumps(patch, ensure_ascii=False),
-            json.dumps(trace, ensure_ascii=False),
+            patch_json,
+            trace_json,
         )
         return json.loads(payload)
 
@@ -231,9 +233,11 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "missing required object param: patch")
         if not isinstance(trace, dict):
             raise JsonRpcError(-32602, "missing required object param: trace")
+        patch_json = self._encode_json_param(patch, "patch")
+        trace_json = self._encode_json_param(trace, "trace")
         payload = self._core.validate_patch_commit_with_trace_json(
-            json.dumps(patch, ensure_ascii=False),
-            json.dumps(trace, ensure_ascii=False),
+            patch_json,
+            trace_json,
         )
         return json.loads(payload)
 
@@ -300,9 +304,10 @@ class ArboristGateway:
         edits = params.get("edits")
         if not isinstance(edits, list):
             raise JsonRpcError(-32602, "missing required list param: edits")
+        edits_json = self._encode_json_param(edits, "edits")
         payload = self._core.apply_position_edits_json(
             file_path,
-            json.dumps(edits, ensure_ascii=False),
+            edits_json,
         )
         return json.loads(payload)
 
@@ -397,6 +402,13 @@ class ArboristGateway:
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             raise JsonRpcError(-32602, f"invalid string list param: {key}")
         return value
+
+    @staticmethod
+    def _encode_json_param(value: Any, key: str) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key}") from exc
 
 
 def is_notification_request(request: Any) -> bool:

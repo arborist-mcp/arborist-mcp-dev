@@ -201,6 +201,26 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("file_path", response["error"]["message"])
 
+    def test_rejects_non_json_serializable_edits_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [{"new_text": {1, 2, 3}}],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 10)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits", response["error"]["message"])
+
     def test_rejects_string_bool_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -281,6 +301,46 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["id"], 17)
         self.assertEqual(response["result"], {})
         self.assertEqual(core.args, ("sample.py", None, 2, None))
+
+    def test_rejects_non_json_serializable_patch_object_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 18,
+                "method": "arborist/replay_patch_evidence_against_trace",
+                "params": {
+                    "patch": {"binding_decisions": {1, 2}},
+                    "trace": {},
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 18)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("patch", response["error"]["message"])
+
+    def test_rejects_non_json_serializable_trace_object_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 19,
+                "method": "arborist/validate_patch_commit_with_trace",
+                "params": {
+                    "patch": {},
+                    "trace": {"callee_keys": {1, 2}},
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 19)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("trace", response["error"]["message"])
 
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
