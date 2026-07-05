@@ -531,6 +531,34 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("invalid JSON", response["error"]["message"])
 
+    def test_once_missing_request_file_reports_cli_error(self) -> None:
+        stderr = io.StringIO()
+
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=FileNotFoundError("missing request file"),
+        ):
+            with mock.patch("sys.stderr", stderr):
+                exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("failed to read request file", stderr.getvalue())
+        self.assertIn("dummy.json", stderr.getvalue())
+
+    def test_once_invalid_request_encoding_reports_cli_error(self) -> None:
+        stderr = io.StringIO()
+
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        ):
+            with mock.patch("sys.stderr", stderr):
+                exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("failed to read request file", stderr.getvalue())
+        self.assertIn("dummy.json", stderr.getvalue())
+
     def test_stdio_rejects_nan_as_parse_error(self) -> None:
         stdin = io.StringIO(
             '{"jsonrpc":"2.0","id":NaN,"method":"arborist/list_symbol_indexes","params":{}}\n'

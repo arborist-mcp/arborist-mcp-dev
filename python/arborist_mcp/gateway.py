@@ -517,7 +517,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.once:
         gateway = ArboristGateway()
-        request, response = parse_request_json(args.once.read_text(encoding="utf-8"))
+        try:
+            raw_request = args.once.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            print(
+                f"error: failed to read request file {args.once}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        request, response = parse_request_json(raw_request)
         if response is None:
             response = gateway.handle_request(request)
         if response is not None and not is_notification_request(request):
