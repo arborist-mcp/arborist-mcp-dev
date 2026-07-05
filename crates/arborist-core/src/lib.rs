@@ -5628,6 +5628,19 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_from_missing_symbol_index_does_not_create_database() {
+        let dir = temporary_dir();
+        let missing_db_path = dir.join("missing-symbols.db");
+
+        let error =
+            trace_symbol_graph_from_index(&missing_db_path, "orchestrate", TraceDirection::Both)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("does not exist"));
+        assert!(!missing_db_path.exists());
+    }
+
+    #[test]
     fn traces_python_symbol_metadata_through_persisted_index() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");

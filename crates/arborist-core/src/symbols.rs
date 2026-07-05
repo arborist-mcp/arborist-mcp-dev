@@ -104,7 +104,8 @@ pub fn trace_symbol_graph_from_index(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    let (resolved_symbols, indexed_files) = load_symbol_index(db_path)?;
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
@@ -1424,6 +1425,10 @@ fn persist_symbol_refresh(
 }
 
 fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
+    if !db_path.exists() {
+        return Err(anyhow!("symbol index {} does not exist", db_path.display()));
+    }
+
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
