@@ -701,6 +701,29 @@ mod tests {
     }
 
     #[test]
+    fn trace_symbol_graph_ignores_virtual_files_in_skipped_dirs() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let venv_path = workspace.join("venv").join("installed.py");
+
+        fs::create_dir_all(venv_path.parent().unwrap()).unwrap();
+        fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(&venv_path, Some("def installed() -> int:\n    return 2\n"))
+            .unwrap();
+
+        assert!(
+            vfs.trace_symbol_graph(&workspace, "helper", TraceDirection::Both)
+                .is_ok()
+        );
+        assert!(
+            vfs.trace_symbol_graph(&workspace, "installed", TraceDirection::Both)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn commits_refresh_registered_symbol_index() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");

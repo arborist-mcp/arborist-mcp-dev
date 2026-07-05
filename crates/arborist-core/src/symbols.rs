@@ -766,7 +766,10 @@ fn resolve_workspace_symbols_with_overrides(
 
     for override_path in file_overrides.keys() {
         let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !override_path.starts_with(&workspace_root) || detect_language(&override_path).is_err() {
+        if !override_path.starts_with(&workspace_root)
+            || should_skip_index_path(&workspace_root, &override_path)
+            || detect_language(&override_path).is_err()
+        {
             continue;
         }
 
