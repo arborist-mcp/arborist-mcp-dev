@@ -80,6 +80,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Disk-backed read, patch, query, trace, index, and refresh entrypoints normalize path segments before returning file or database paths
 - VFS buffers are keyed by normalized absolute paths, so aliases such as `child/../sample.py` share the same dirty buffer and commit state
 - Persisted trace reads reject missing `index_db_path` databases without creating empty SQLite files
+- Workspace indexing skips common cache, build, dependency, and virtual-environment directories
 - The stdio gateway rejects non-standard JSON constants such as `NaN` and `Infinity`, including inside nested JSON parameters forwarded to the Rust core
 - Mixed Rust/Python build via `maturin`
 
@@ -205,6 +206,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Disk-backed file entrypoints normalize paths before reading or writing, so response payloads and evidence keys do not preserve caller-supplied `.` or `..` aliases
 - VFS operations normalize file identities before opening, editing, listing, closing, or committing buffers, so path aliases share one session entry instead of creating parallel dirty state
 - Persisted trace requests with a missing `index_db_path` now fail closed without creating an empty SQLite database
+- Workspace indexing skips generated/cache/dependency directories such as `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `__pycache__`, `venv`, `node_modules`, `target`, `dist`, and `build`
 - C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions
 - Duplicate C globals now keep distinct graph edges via stable include-family/file-backed `symbol_id` values, and persisted traces can target those IDs directly
 - C patch targeting now understands those precise `symbol_id` selectors too, and same-file declaration/definition name collisions prefer the definition node during replacement
