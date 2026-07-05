@@ -21,8 +21,9 @@ use crate::patching::{
     resolve_local_python_module_path,
 };
 use crate::semantic::{
-    c_function_header, c_parameters, c_return_type, c_semantic_path, python_docstring,
-    python_header, python_parameters, python_return_type, semantic_parent_path, semantic_path,
+    c_function_header, c_parameters, c_return_type, c_semantic_path, python_display_byte_range,
+    python_display_header, python_docstring, python_parameters, python_return_type,
+    semantic_parent_path, semantic_path,
 };
 
 #[derive(Debug, Clone)]
@@ -344,7 +345,7 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
         let mut references = BTreeSet::new();
         let reference_node = python_reference_node(node);
         let _ = collect_python_references(path, reference_node, source, &mut references);
-        let signature = python_header(node, source).ok();
+        let signature = python_display_header(node, source).ok();
         let path = match semantic_path(node, source) {
             Ok(path) => path,
             Err(_) => return,
@@ -361,7 +362,7 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
             scope_path,
             file_path: normalized_path.clone(),
             node_kind: node.kind().to_string(),
-            byte_range: (node.start_byte(), node.end_byte()),
+            byte_range: python_display_byte_range(node),
             signature,
             parameters,
             return_type,

@@ -368,7 +368,10 @@ async def top_level(value: int) -> int:
                 .skeleton
                 .contains("async def nested(inner: int) -> int: ...")
         );
-        assert_eq!(skeleton.available_paths, vec!["top_level", "top_level.nested"]);
+        assert_eq!(
+            skeleton.available_paths,
+            vec!["top_level", "top_level.nested"]
+        );
         assert_eq!(skeleton.available_symbols.len(), 2);
         assert_eq!(
             skeleton.available_symbols[0].node_kind,
@@ -402,7 +405,11 @@ def top_level(value: int) -> int:
         let skeleton = get_semantic_skeleton(Path::new("sample.py"), source, 1, &[]).unwrap();
 
         assert!(skeleton.skeleton.contains("@decorator"));
-        assert!(skeleton.skeleton.contains("def top_level(value: int) -> int: ..."));
+        assert!(
+            skeleton
+                .skeleton
+                .contains("def top_level(value: int) -> int: ...")
+        );
         let top_level = skeleton
             .available_symbols
             .iter()
@@ -412,6 +419,30 @@ def top_level(value: int) -> int:
             top_level.signature.as_deref(),
             Some("@decorator\ndef top_level(value: int) -> int:")
         );
+    }
+
+    #[test]
+    fn uses_decorated_python_member_ranges_in_skeleton_metadata() {
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def top_level(value: int) -> int:
+    return value
+"#;
+
+        let skeleton = get_semantic_skeleton(Path::new("sample.py"), source, 1, &[]).unwrap();
+        let top_level = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "top_level")
+            .unwrap();
+        let decorated_symbol = "@decorator\ndef top_level(value: int) -> int:\n    return value";
+        let start = source.find(decorated_symbol).unwrap();
+        let end = start + decorated_symbol.len();
+
+        assert_eq!(top_level.byte_range, (start, end));
     }
 
     #[test]
@@ -457,9 +488,13 @@ def top_level(value: int) -> int:
     return value + 1
 "#;
 
-        let skeleton =
-            get_semantic_skeleton(Path::new("sample.py"), source, 1, &["top_level".to_string()])
-                .unwrap();
+        let skeleton = get_semantic_skeleton(
+            Path::new("sample.py"),
+            source,
+            1,
+            &["top_level".to_string()],
+        )
+        .unwrap();
 
         assert!(skeleton.skeleton.contains("@decorator\ndef top_level"));
         assert!(skeleton.skeleton.contains("return value + 1"));
@@ -2559,7 +2594,10 @@ def top_level() -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "parameter");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -2721,8 +2759,16 @@ async def top_level() -> int:
         .unwrap();
 
         assert!(result.applied);
-        assert!(!result.updated_source.contains("async def top_level() -> int:\n    return 2"));
-        assert!(result.updated_source.contains("def top_level() -> int:\n    return 2"));
+        assert!(
+            !result
+                .updated_source
+                .contains("async def top_level() -> int:\n    return 2")
+        );
+        assert!(
+            result
+                .updated_source
+                .contains("def top_level() -> int:\n    return 2")
+        );
         assert_eq!(result.resolved_path, "top_level");
     }
 
@@ -2753,7 +2799,10 @@ def top_level() -> int:
             .find(|binding| binding.name == "helper")
             .unwrap();
         assert_eq!(helper_binding.symbol.node_kind, "assignment");
-        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            helper_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -2807,7 +2856,10 @@ class Container:
             .find(|binding| binding.name == "helper")
             .unwrap();
         assert_eq!(helper_binding.symbol.node_kind, "assignment");
-        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("Container"));
+        assert_eq!(
+            helper_binding.symbol.scope_path.as_deref(),
+            Some("Container")
+        );
     }
 
     #[test]
@@ -2840,7 +2892,10 @@ class Container:
             .find(|binding| binding.name == "helper")
             .unwrap();
         assert_eq!(helper_binding.symbol.node_kind, "assignment");
-        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("Container"));
+        assert_eq!(
+            helper_binding.symbol.scope_path.as_deref(),
+            Some("Container")
+        );
     }
 
     #[test]
@@ -2870,7 +2925,10 @@ def top_level() -> int:
             .find(|binding| binding.name == "helper")
             .unwrap();
         assert_eq!(helper_binding.symbol.node_kind, "assignment");
-        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            helper_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -2901,7 +2959,10 @@ class Container:
             .find(|binding| binding.name == "helper")
             .unwrap();
         assert_eq!(helper_binding.symbol.node_kind, "assignment");
-        assert_eq!(helper_binding.symbol.scope_path.as_deref(), Some("Container"));
+        assert_eq!(
+            helper_binding.symbol.scope_path.as_deref(),
+            Some("Container")
+        );
     }
 
     #[test]
@@ -3081,7 +3142,10 @@ def top_level() -> int:
             .find(|binding| binding.name == "target")
             .unwrap();
         assert_eq!(target_binding.symbol.node_kind, "parameter");
-        assert_eq!(target_binding.symbol.scope_path.as_deref(), Some("top_level"));
+        assert_eq!(
+            target_binding.symbol.scope_path.as_deref(),
+            Some("top_level")
+        );
     }
 
     #[test]
@@ -3412,6 +3476,66 @@ def top_level() -> int:
         assert_eq!(
             imported_worker.symbol.docstring.as_deref(),
             Some("\"\"\"Re-exported package worker.\"\"\"")
+        );
+    }
+
+    #[test]
+    fn resolves_decorated_python_import_metadata_for_patch_validation() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &helper,
+            "def decorator(func):\n    return func\n\n@decorator\ndef helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "import graph_b as gb\nfrom graph_b import helper as h\n\ndef top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let source = fs::read_to_string(&caller).unwrap();
+        let result = patch_ast_node(
+            &caller,
+            &source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return gb.helper(value) + h(value)\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.commit_gate.allowed);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+
+        let helper_source = fs::read_to_string(&helper).unwrap();
+        let helper_text = "@decorator\ndef helper(value: int) -> int:\n    return value + 1";
+        let helper_start = helper_source.find(helper_text).unwrap();
+        let helper_end = helper_start + helper_text.len();
+
+        let imported_helper = result
+            .validation
+            .resolved_identifiers
+            .iter()
+            .find(|binding| binding.name == "h")
+            .unwrap();
+        assert_eq!(imported_helper.symbol.semantic_path, "helper");
+        assert_eq!(imported_helper.symbol.origin_type, "imported_module");
+        assert_eq!(
+            imported_helper.symbol.signature.as_deref(),
+            Some("@decorator\ndef helper(value: int) -> int:")
+        );
+        assert_eq!(
+            imported_helper.symbol.byte_range,
+            (helper_start, helper_end)
+        );
+        assert!(
+            imported_helper
+                .symbol
+                .evidence_key
+                .contains("@decorator\ndef helper(value: int) -> int:")
         );
     }
 
@@ -4017,7 +4141,11 @@ class Container:\n    helper = 2\n    value = [helper for item in range(1)]\n";
         )
         .unwrap();
 
-        assert!(references.contains("helper"), "references: {:?}", references);
+        assert!(
+            references.contains("helper"),
+            "references: {:?}",
+            references
+        );
     }
 
     #[test]
@@ -4636,7 +4764,8 @@ class Container:\n    helper = 2\n\n    def method(value=helper):\n        retur
         )
         .unwrap();
 
-        let live_trace = trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
+        let live_trace =
+            trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
         assert!(live_trace.callees.is_empty());
 
         rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -4682,7 +4811,8 @@ class Container:\n    helper = helper\n\n    @helper\n    def method(self):\n   
         )
         .unwrap();
 
-        let live_trace = trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
+        let live_trace =
+            trace_symbol_graph(&dir, "Container.method", TraceDirection::Both).unwrap();
         assert!(live_trace.callees.is_empty());
 
         rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -5069,6 +5199,78 @@ def orchestrate(value: int) -> int:\n    return value\n",
                 .iter()
                 .any(|symbol| symbol.semantic_path == "decorator")
         );
+    }
+
+    #[test]
+    fn traces_decorated_python_symbol_metadata_through_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def decorator(func):\n    return func\n\n@decorator\ndef helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from helper import helper\n\ndef decorator(func):\n    return func\n\n@decorator\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let helper_source = fs::read_to_string(&helper).unwrap();
+        let helper_text = "@decorator\ndef helper(value: int) -> int:\n    return value + 1";
+        let helper_start = helper_source.find(helper_text).unwrap();
+        let helper_end = helper_start + helper_text.len();
+
+        let caller_source = fs::read_to_string(&caller).unwrap();
+        let orchestrate_text =
+            "@decorator\ndef orchestrate(value: int) -> int:\n    return helper(value)";
+        let orchestrate_start = caller_source.find(orchestrate_text).unwrap();
+        let orchestrate_end = orchestrate_start + orchestrate_text.len();
+
+        let live_trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(
+            live_trace.symbol.signature.as_deref(),
+            Some("@decorator\ndef orchestrate(value: int) -> int:")
+        );
+        assert_eq!(
+            live_trace.symbol.byte_range,
+            (orchestrate_start, orchestrate_end)
+        );
+        let live_helper = live_trace
+            .callees
+            .iter()
+            .find(|symbol| symbol.semantic_path == "helper")
+            .unwrap();
+        assert_eq!(
+            live_helper.signature.as_deref(),
+            Some("@decorator\ndef helper(value: int) -> int:")
+        );
+        assert_eq!(live_helper.byte_range, (helper_start, helper_end));
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace.symbol.signature.as_deref(),
+            Some("@decorator\ndef orchestrate(value: int) -> int:")
+        );
+        assert_eq!(
+            persisted_trace.symbol.byte_range,
+            (orchestrate_start, orchestrate_end)
+        );
+        let persisted_helper = persisted_trace
+            .callees
+            .iter()
+            .find(|symbol| symbol.semantic_path == "helper")
+            .unwrap();
+        assert_eq!(
+            persisted_helper.signature.as_deref(),
+            Some("@decorator\ndef helper(value: int) -> int:")
+        );
+        assert_eq!(persisted_helper.byte_range, (helper_start, helper_end));
     }
 
     #[test]

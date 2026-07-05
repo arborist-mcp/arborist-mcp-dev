@@ -18,8 +18,8 @@ use crate::model::{
 };
 use crate::semantic::{
     ascend_to_symbol, c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node,
-    find_semantic_node, python_docstring, python_header, python_parameters, python_return_type,
-    semantic_parent_path, semantic_path,
+    find_semantic_node, python_display_byte_range, python_display_header, python_docstring,
+    python_parameters, python_return_type, semantic_parent_path, semantic_path,
 };
 
 #[derive(Default)]
@@ -539,7 +539,10 @@ fn collect_python_reference_validation(
                 validation
                     .binding_decisions
                     .push(resolved_binding_decision(&name, &single.summary));
-                let is_blocked = validation.unresolved_identifiers.iter().any(|item| item == &name)
+                let is_blocked = validation
+                    .unresolved_identifiers
+                    .iter()
+                    .any(|item| item == &name)
                     || validation
                         .ambiguous_identifiers
                         .iter()
@@ -569,7 +572,11 @@ fn collect_python_reference_validation(
                         &reason,
                         &candidate_summaries,
                     ));
-                if !validation.unresolved_identifiers.iter().any(|item| item == &name) {
+                if !validation
+                    .unresolved_identifiers
+                    .iter()
+                    .any(|item| item == &name)
+                {
                     validation
                         .resolved_identifiers
                         .retain(|binding| binding.name != name);
@@ -832,12 +839,7 @@ fn collect_python_reference_targets<'tree>(
     bindings: &BTreeMap<String, PythonImportBinding>,
 ) -> Result<Vec<PythonReferenceTarget<'tree>>> {
     let mut references = Vec::new();
-    collect_python_reference_targets_inner(
-        symbol_node,
-        source,
-        bindings,
-        &mut references,
-    )?;
+    collect_python_reference_targets_inner(symbol_node, source, bindings, &mut references)?;
     Ok(references)
 }
 
@@ -869,12 +871,7 @@ fn collect_python_reference_targets_inner<'tree>(
                 }
             }
 
-            collect_python_reference_targets_inner(
-                object_node,
-                source,
-                bindings,
-                references,
-            )?;
+            collect_python_reference_targets_inner(object_node, source, bindings, references)?;
             return Ok(());
         }
     }
@@ -900,9 +897,7 @@ fn collect_python_reference_targets_inner<'tree>(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_reference_targets_inner(
-                child, source, bindings, references,
-            )?;
+            collect_python_reference_targets_inner(child, source, bindings, references)?;
         }
     }
 
@@ -1042,7 +1037,9 @@ fn python_binding_candidates_for_reference(
             .then_with(|| left.summary.symbol_id.cmp(&right.summary.symbol_id))
     });
 
-    let best_suppressing_rank = suppressing_candidates.first().map(|candidate| candidate.rank);
+    let best_suppressing_rank = suppressing_candidates
+        .first()
+        .map(|candidate| candidate.rank);
     let Some(best_rank) = resolving_candidates.first().map(|candidate| candidate.rank) else {
         return Ok(Vec::new());
     };
@@ -1167,7 +1164,7 @@ fn collect_python_statement_symbols(
     )?;
 
     match statement_node.kind() {
-        "function_definition" | "class_definition" => {
+        "function_definition" | "class_definition" | "decorated_definition" => {
             if let Some(summary) =
                 python_symbol_summary(statement_node, source, normalized_path, origin_type)?
             {
@@ -1465,13 +1462,13 @@ fn python_symbol_summary(
     normalized_path: &str,
     origin_type: &str,
 ) -> Result<Option<SymbolSummary>> {
-    if !matches!(node.kind(), "function_definition" | "class_definition") {
+    let Some(node) = python_symbol_node(node) else {
         return Ok(None);
-    }
+    };
 
     let semantic_path = semantic_path(node, source)?;
     let scope_path = semantic_parent_path(&semantic_path);
-    let signature = Some(python_header(node, source)?);
+    let signature = Some(python_display_header(node, source)?);
     let parameters = python_parameters(node, source)?;
     let return_type = python_return_type(node, source)?;
     let docstring = python_docstring(node, source)?;
@@ -1483,12 +1480,24 @@ fn python_symbol_summary(
         normalized_path.to_string(),
         node.kind().to_string(),
         origin_type.to_string(),
-        (node.start_byte(), node.end_byte()),
+        python_display_byte_range(node),
         signature,
         parameters,
         return_type,
         docstring,
     )))
+}
+
+fn python_symbol_node(node: Node<'_>) -> Option<Node<'_>> {
+    match node.kind() {
+        "function_definition" | "class_definition" => Some(node),
+        "decorated_definition" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find(|child| matches!(child.kind(), "function_definition" | "class_definition"))
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn resolve_local_python_imported_symbol(
@@ -1527,10 +1536,6 @@ fn resolve_local_python_imported_symbol_inner(
     let children = root.named_children(&mut cursor).collect::<Vec<_>>();
 
     for child in &children {
-        if !matches!(child.kind(), "function_definition" | "class_definition") {
-            continue;
-        }
-
         let Some(summary) = python_symbol_summary(
             *child,
             &module_source,
@@ -2432,8 +2437,10 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
-    if matches!(parent.kind(), "list_splat_pattern" | "dictionary_splat_pattern" | "tuple_pattern")
-    {
+    if matches!(
+        parent.kind(),
+        "list_splat_pattern" | "dictionary_splat_pattern" | "tuple_pattern"
+    ) {
         return false;
     }
 
@@ -2502,8 +2509,7 @@ fn is_python_parameter_declaration_node(node: Node<'_>) -> bool {
     let mut current = node.parent();
 
     while let Some(candidate) = current {
-        if candidate.kind() == "default_parameter"
-            || candidate.kind() == "typed_default_parameter"
+        if candidate.kind() == "default_parameter" || candidate.kind() == "typed_default_parameter"
         {
             if let Some(value) = candidate.child_by_field_name("value") {
                 return !contains_node(value, node);
@@ -2555,8 +2561,7 @@ fn is_python_default_parameter_value(node: Node<'_>) -> bool {
     let mut current = node.parent();
 
     while let Some(candidate) = current {
-        if candidate.kind() == "default_parameter"
-            || candidate.kind() == "typed_default_parameter"
+        if candidate.kind() == "default_parameter" || candidate.kind() == "typed_default_parameter"
         {
             return candidate
                 .child_by_field_name("value")
@@ -2908,7 +2913,9 @@ fn python_accessible_symbol_suppresses_at(
         PythonSymbolVisibility::ComprehensionTarget { .. } => {
             python_accessible_symbol_resolves_at(symbol, reference_node)
         }
-        PythonSymbolVisibility::ExceptTarget { except_clause_range: _ } => true,
+        PythonSymbolVisibility::ExceptTarget {
+            except_clause_range: _,
+        } => true,
         PythonSymbolVisibility::MatchCapture { .. } => true,
     }
 }
@@ -3119,7 +3126,10 @@ fn python_binding_scope_path(scope_node: Node<'_>, source: &str) -> Result<Optio
         return Ok(None);
     }
 
-    if matches!(scope_node.kind(), "function_definition" | "class_definition") {
+    if matches!(
+        scope_node.kind(),
+        "function_definition" | "class_definition"
+    ) {
         return Ok(Some(semantic_path(scope_node, source)?));
     }
 

@@ -56,22 +56,18 @@ pub fn semantic_depth(node: Node<'_>) -> usize {
     depth
 }
 
-pub fn python_header(node: Node<'_>, source: &str) -> Result<String> {
-    let body = node
-        .child_by_field_name("body")
-        .ok_or_else(|| anyhow!("python symbol missing body"))?;
-    Ok(source[node.start_byte()..body.start_byte()]
-        .trim_end()
-        .to_string())
-}
-
 fn python_display_node(node: Node<'_>) -> Node<'_> {
     node.parent()
         .filter(|parent| parent.kind() == "decorated_definition")
         .unwrap_or(node)
 }
 
-fn python_display_header(node: Node<'_>, source: &str) -> Result<String> {
+pub(crate) fn python_display_byte_range(node: Node<'_>) -> (usize, usize) {
+    let display_node = python_display_node(node);
+    (display_node.start_byte(), display_node.end_byte())
+}
+
+pub(crate) fn python_display_header(node: Node<'_>, source: &str) -> Result<String> {
     let body = node
         .child_by_field_name("body")
         .ok_or_else(|| anyhow!("python symbol missing body"))?;
@@ -93,7 +89,8 @@ fn skeleton_symbol(
     symbol_id: String,
     semantic_path: String,
     scope_path: Option<String>,
-    node: Node<'_>,
+    node_kind: &str,
+    byte_range: (usize, usize),
     signature: Option<String>,
     parameters: Vec<String>,
     return_type: Option<String>,
@@ -103,8 +100,8 @@ fn skeleton_symbol(
         symbol_id,
         semantic_path,
         scope_path,
-        node_kind: node.kind().to_string(),
-        byte_range: (node.start_byte(), node.end_byte()),
+        node_kind: node_kind.to_string(),
+        byte_range,
         signature,
         parameters,
         return_type,
@@ -356,12 +353,14 @@ fn build_python_skeleton(
         let parameters = python_parameters(item, source)?;
         let return_type = python_return_type(item, source)?;
         let docstring = python_docstring(item, source)?;
+        let byte_range = python_display_byte_range(item);
         available_paths.push(path.clone());
         available_symbols.push(skeleton_symbol(
             symbol_id.clone(),
             path.clone(),
             scope_path,
-            item,
+            item.kind(),
+            byte_range,
             signature.clone(),
             parameters,
             return_type,
@@ -427,7 +426,8 @@ fn build_c_skeleton(
                         symbol_id,
                         symbol,
                         scope_path,
-                        child,
+                        child.kind(),
+                        (child.start_byte(), child.end_byte()),
                         Some(text),
                         parameters,
                         return_type,
@@ -449,7 +449,8 @@ fn build_c_skeleton(
                         symbol_id,
                         symbol,
                         scope_path,
-                        child,
+                        child.kind(),
+                        (child.start_byte(), child.end_byte()),
                         Some(text),
                         parameters,
                         return_type,
@@ -477,7 +478,8 @@ fn build_c_skeleton(
                         symbol_id,
                         symbol,
                         scope_path,
-                        child,
+                        child.kind(),
+                        (child.start_byte(), child.end_byte()),
                         Some(signature),
                         parameters,
                         return_type,
