@@ -2911,6 +2911,7 @@ fn python_enclosing_local_binding_should_suppress_reference(
     let normalized_path = normalize_path(current_path);
     let mut candidates = Vec::new();
     let mut seen_scope = false;
+    let include_immediate_scope = is_python_decorator_expression(reference_node);
     let mut scope_rank = 2_000_000usize;
     let mut current = reference_node.parent();
 
@@ -2932,7 +2933,7 @@ fn python_enclosing_local_binding_should_suppress_reference(
                     true
                 } else {
                     seen_scope = true;
-                    false
+                    include_immediate_scope
                 }
             }
             _ => false,
@@ -2970,6 +2971,27 @@ fn python_enclosing_local_binding_should_suppress_reference(
         best.summary.node_kind.as_str(),
         "function_definition" | "class_definition"
     ))
+}
+
+fn is_python_decorator_expression(node: Node<'_>) -> bool {
+    let mut current = Some(node);
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "decorator" {
+            return true;
+        }
+
+        if matches!(
+            candidate.kind(),
+            "function_definition" | "class_definition" | "module"
+        ) {
+            return false;
+        }
+
+        current = candidate.parent();
+    }
+
+    false
 }
 
 fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str) -> bool {
