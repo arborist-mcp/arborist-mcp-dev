@@ -177,19 +177,15 @@ pub(crate) fn build_patch_result(
         replacement_len,
     );
 
-    if validation.syntax_errors.is_empty() {
-        if let Some(symbol_node) = patched_symbol {
-            let reference_validation = collect_reference_validation(
-                path,
-                &virtual_document,
-                &updated_source,
-                symbol_node,
-            )?;
-            validation.unresolved_identifiers = reference_validation.unresolved_identifiers;
-            validation.resolved_identifiers = reference_validation.resolved_identifiers;
-            validation.ambiguous_identifiers = reference_validation.ambiguous_identifiers;
-            validation.binding_decisions = reference_validation.binding_decisions;
-        }
+    if validation.syntax_errors.is_empty()
+        && let Some(symbol_node) = patched_symbol
+    {
+        let reference_validation =
+            collect_reference_validation(path, &virtual_document, &updated_source, symbol_node)?;
+        validation.unresolved_identifiers = reference_validation.unresolved_identifiers;
+        validation.resolved_identifiers = reference_validation.resolved_identifiers;
+        validation.ambiguous_identifiers = reference_validation.ambiguous_identifiers;
+        validation.binding_decisions = reference_validation.binding_decisions;
     }
 
     validation.commit_gate = evaluate_patch_commit_gate(&validation, bypass_reason);
@@ -417,12 +413,11 @@ fn python_symbol_replacement_node<'tree>(
     language_id: LanguageId,
     node: Node<'tree>,
 ) -> Node<'tree> {
-    if language_id == LanguageId::Python {
-        if let Some(parent) = node.parent() {
-            if parent.kind() == "decorated_definition" {
-                return parent;
-            }
-        }
+    if language_id == LanguageId::Python
+        && let Some(parent) = node.parent()
+        && parent.kind() == "decorated_definition"
+    {
+        return parent;
     }
 
     node
@@ -718,7 +713,7 @@ fn ambiguous_binding_decision(
 fn ambiguity_reason(candidates: &[SymbolSummary]) -> String {
     let distinct_families = candidates
         .iter()
-        .filter_map(|candidate| symbol_include_family(candidate))
+        .filter_map(symbol_include_family)
         .collect::<BTreeSet<_>>();
 
     if distinct_families.len() > 1 {
@@ -775,10 +770,7 @@ fn symbol_include_family(candidate: &SymbolSummary) -> Option<String> {
 
 fn ordered_candidate_include_families(candidates: &[SymbolSummary]) -> Vec<String> {
     let mut families = Vec::new();
-    for family in candidates
-        .iter()
-        .filter_map(|candidate| symbol_include_family(candidate))
-    {
+    for family in candidates.iter().filter_map(symbol_include_family) {
         push_unique(&mut families, family);
     }
     families
@@ -856,31 +848,29 @@ fn collect_python_reference_targets_inner<'tree>(
     bindings: &BTreeMap<String, PythonImportBinding>,
     references: &mut Vec<PythonReferenceTarget<'tree>>,
 ) -> Result<()> {
-    if node.kind() == "attribute" {
-        if let (Some(object_node), Some(attribute_node)) = (
+    if node.kind() == "attribute"
+        && let (Some(object_node), Some(attribute_node)) = (
             node.child_by_field_name("object"),
             node.child_by_field_name("attribute"),
-        ) {
-            if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
-                let object_name = node_text(object_node, source)?.trim().to_string();
-                let attribute_name = node_text(attribute_node, source)?.trim().to_string();
-                if let Some(PythonImportBinding::Module { module_name }) =
-                    bindings.get(&object_name)
-                {
-                    let display_name = format!("{object_name}.{attribute_name}");
-                    references.push(PythonReferenceTarget {
-                        name: display_name,
-                        node: node,
-                        imported_symbol: Some((module_name.clone(), attribute_name)),
-                        import_fallback_name: Some(object_name),
-                    });
-                    return Ok(());
-                }
+        )
+    {
+        if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
+            let object_name = node_text(object_node, source)?.trim().to_string();
+            let attribute_name = node_text(attribute_node, source)?.trim().to_string();
+            if let Some(PythonImportBinding::Module { module_name }) = bindings.get(&object_name) {
+                let display_name = format!("{object_name}.{attribute_name}");
+                references.push(PythonReferenceTarget {
+                    name: display_name,
+                    node,
+                    imported_symbol: Some((module_name.clone(), attribute_name)),
+                    import_fallback_name: Some(object_name),
+                });
+                return Ok(());
             }
-
-            collect_python_reference_targets_inner(object_node, source, bindings, references)?;
-            return Ok(());
         }
+
+        collect_python_reference_targets_inner(object_node, source, bindings, references)?;
+        return Ok(());
     }
 
     if node.kind() == "identifier" && should_count_python_reference(node, source) {
@@ -917,16 +907,15 @@ fn python_binding_candidates_for_reference(
     normalized_path: &str,
     reference_target: &PythonReferenceTarget<'_>,
 ) -> Result<Vec<PythonAccessibleSymbol>> {
-    if let Some((module_name, symbol_name)) = &reference_target.imported_symbol {
-        if let Some(summary) = resolve_local_python_imported_symbol(path, module_name, symbol_name)?
-        {
-            return Ok(vec![PythonAccessibleSymbol {
-                name: reference_target.name.clone(),
-                summary,
-                rank: 4_000_000,
-                visibility: PythonSymbolVisibility::Always,
-            }]);
-        }
+    if let Some((module_name, symbol_name)) = &reference_target.imported_symbol
+        && let Some(summary) = resolve_local_python_imported_symbol(path, module_name, symbol_name)?
+    {
+        return Ok(vec![PythonAccessibleSymbol {
+            name: reference_target.name.clone(),
+            summary,
+            rank: 4_000_000,
+            visibility: PythonSymbolVisibility::Always,
+        }]);
     }
 
     if let Some(fallback_name) = &reference_target.import_fallback_name {
