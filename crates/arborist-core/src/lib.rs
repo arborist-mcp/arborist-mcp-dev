@@ -1551,6 +1551,24 @@ int helper(int value) {
     }
 
     #[test]
+    fn execute_tree_query_reports_owner_for_nested_decorator_captures() {
+        let source = "def outer(value):\n    @logged\n    def inner():\n        return value\n    return inner()\n";
+        let query = "(decorator (identifier) @decorator)";
+
+        let captures = execute_tree_query(Path::new("sample.py"), source, query).unwrap();
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].capture_name, "decorator");
+        assert_eq!(captures[0].text, "logged");
+        assert_eq!(captures[0].owner_symbol_id.as_deref(), Some("outer.inner"));
+        assert_eq!(
+            captures[0].owner_semantic_path.as_deref(),
+            Some("outer.inner")
+        );
+        assert_eq!(captures[0].owner_scope_path.as_deref(), Some("outer"));
+    }
+
+    #[test]
     fn execute_tree_query_reports_owner_for_c_body_captures() {
         let source = "int helper(int value) { return value + 1; }\nint orchestrate(int value) { return helper(value); }\n";
         let query = "(call_expression function: (identifier) @callee)";
