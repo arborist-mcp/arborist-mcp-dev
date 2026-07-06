@@ -69,6 +69,29 @@ enum PythonSymbolVisibility {
     },
 }
 
+struct PythonTargetCollection<'a> {
+    source: &'a str,
+    normalized_path: &'a str,
+    scope_path: Option<&'a str>,
+    origin_type: &'a str,
+    node_kind: &'a str,
+    rank: usize,
+    visibility: PythonSymbolVisibility,
+}
+
+struct CAccessibleCollection<'a> {
+    base_rank: usize,
+    origin_type: &'a str,
+    allow_companion_sources: bool,
+    context_file: &'a str,
+}
+
+struct CAccessibleState<'a> {
+    symbols: &'a mut Vec<CAccessibleSymbol>,
+    visited_files: &'a mut BTreeSet<String>,
+    visited_companion_sources: &'a mut BTreeSet<String>,
+}
+
 #[derive(Debug, Clone)]
 enum PythonImportBinding {
     Module {
@@ -1181,12 +1204,15 @@ fn collect_python_statement_symbols(
             if let Some(left) = statement_node.child_by_field_name("left") {
                 collect_python_target_symbols(
                     left,
-                    source,
-                    normalized_path,
-                    scope_path,
-                    origin_type,
-                    "assignment",
-                    scope_rank + 300_000 + statement_node.start_byte(),
+                    PythonTargetCollection {
+                        source,
+                        normalized_path,
+                        scope_path,
+                        origin_type,
+                        node_kind: "assignment",
+                        rank: scope_rank + 300_000 + statement_node.start_byte(),
+                        visibility: PythonSymbolVisibility::Always,
+                    },
                     symbols,
                 )?;
             }
@@ -1195,12 +1221,15 @@ fn collect_python_statement_symbols(
             if let Some(left) = statement_node.child_by_field_name("left") {
                 collect_python_target_symbols(
                     left,
-                    source,
-                    normalized_path,
-                    scope_path,
-                    origin_type,
-                    "for_target",
-                    scope_rank + 300_000 + statement_node.start_byte(),
+                    PythonTargetCollection {
+                        source,
+                        normalized_path,
+                        scope_path,
+                        origin_type,
+                        node_kind: "for_target",
+                        rank: scope_rank + 300_000 + statement_node.start_byte(),
+                        visibility: PythonSymbolVisibility::Always,
+                    },
                     symbols,
                 )?;
             }
@@ -1347,17 +1376,19 @@ fn collect_python_comprehension_target_symbols(
                 clause_index += 1;
                 continue;
             };
-            collect_python_target_symbols_with_visibility(
+            collect_python_target_symbols(
                 left,
-                source,
-                normalized_path,
-                scope_path,
-                origin_type,
-                "comprehension_target",
-                rank + child.start_byte(),
-                PythonSymbolVisibility::ComprehensionTarget {
-                    comprehension_range,
-                    clause_index,
+                PythonTargetCollection {
+                    source,
+                    normalized_path,
+                    scope_path,
+                    origin_type,
+                    node_kind: "comprehension_target",
+                    rank: rank + child.start_byte(),
+                    visibility: PythonSymbolVisibility::ComprehensionTarget {
+                        comprehension_range,
+                        clause_index,
+                    },
                 },
                 symbols,
             )
@@ -1731,36 +1762,7 @@ fn collect_python_parameter_symbols(
 
 fn collect_python_target_symbols(
     node: Node<'_>,
-    source: &str,
-    normalized_path: &str,
-    scope_path: Option<&str>,
-    origin_type: &str,
-    node_kind: &str,
-    rank: usize,
-    symbols: &mut Vec<PythonAccessibleSymbol>,
-) -> Result<()> {
-    collect_python_target_symbols_with_visibility(
-        node,
-        source,
-        normalized_path,
-        scope_path,
-        origin_type,
-        node_kind,
-        rank,
-        PythonSymbolVisibility::Always,
-        symbols,
-    )
-}
-
-fn collect_python_target_symbols_with_visibility(
-    node: Node<'_>,
-    source: &str,
-    normalized_path: &str,
-    scope_path: Option<&str>,
-    origin_type: &str,
-    node_kind: &str,
-    rank: usize,
-    visibility: PythonSymbolVisibility,
+    context: PythonTargetCollection<'_>,
     symbols: &mut Vec<PythonAccessibleSymbol>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
@@ -1768,19 +1770,19 @@ fn collect_python_target_symbols_with_visibility(
             return;
         }
 
-        if let Ok(name) = node_text(candidate, source) {
+        if let Ok(name) = node_text(candidate, context.source) {
             symbols.push(PythonAccessibleSymbol {
                 name: name.trim().to_string(),
                 summary: python_synthetic_symbol_summary(
-                    normalized_path,
-                    scope_path,
+                    context.normalized_path,
+                    context.scope_path,
                     name.trim(),
-                    node_kind,
-                    origin_type,
+                    context.node_kind,
+                    context.origin_type,
                     (candidate.start_byte(), candidate.end_byte()),
                 ),
-                rank: rank + candidate.start_byte(),
-                visibility: visibility.clone(),
+                rank: context.rank + candidate.start_byte(),
+                visibility: context.visibility.clone(),
             });
         }
     };
@@ -3344,17 +3346,22 @@ fn collect_c_accessible_symbols(
     let mut visited_files = BTreeSet::new();
     let mut visited_companion_sources = BTreeSet::new();
     let context_file = normalize_path(path);
+    let mut state = CAccessibleState {
+        symbols: &mut symbols,
+        visited_files: &mut visited_files,
+        visited_companion_sources: &mut visited_companion_sources,
+    };
     collect_c_accessible_symbols_from_document(
         path,
         document,
         source,
-        1000,
-        "local_file",
-        true,
-        &context_file,
-        &mut symbols,
-        &mut visited_files,
-        &mut visited_companion_sources,
+        CAccessibleCollection {
+            base_rank: 1000,
+            origin_type: "local_file",
+            allow_companion_sources: true,
+            context_file: &context_file,
+        },
+        &mut state,
     )?;
 
     let mut deduped = std::collections::BTreeMap::new();
@@ -3376,16 +3383,11 @@ fn collect_c_accessible_symbols_from_document(
     path: &Path,
     document: &ParsedDocument,
     source: &str,
-    base_rank: usize,
-    origin_type: &str,
-    allow_companion_sources: bool,
-    context_file: &str,
-    symbols: &mut Vec<CAccessibleSymbol>,
-    visited_files: &mut BTreeSet<String>,
-    visited_companion_sources: &mut BTreeSet<String>,
+    collection: CAccessibleCollection<'_>,
+    state: &mut CAccessibleState<'_>,
 ) -> Result<()> {
     let normalized = normalize_path(path);
-    if !visited_files.insert(normalized.clone()) {
+    if !state.visited_files.insert(normalized.clone()) {
         return Ok(());
     }
 
@@ -3393,10 +3395,10 @@ fn collect_c_accessible_symbols_from_document(
         path,
         document.tree.root_node(),
         source,
-        base_rank,
-        origin_type,
-        context_file,
-        symbols,
+        collection.base_rank,
+        collection.origin_type,
+        collection.context_file,
+        state.symbols,
     )?;
 
     for include_target in c_include_targets(document.tree.root_node(), source)? {
@@ -3410,20 +3412,20 @@ fn collect_c_accessible_symbols_from_document(
             &include_path,
             &include_document,
             &include_source,
-            500,
-            "include_header",
-            true,
-            context_file,
-            symbols,
-            visited_files,
-            visited_companion_sources,
+            CAccessibleCollection {
+                base_rank: 500,
+                origin_type: "include_header",
+                allow_companion_sources: true,
+                context_file: collection.context_file,
+            },
+            state,
         )?;
 
-        if allow_companion_sources
+        if collection.allow_companion_sources
             && let Some(companion_source_path) = companion_c_source_path(&include_path)
         {
             let normalized_companion = normalize_path(&companion_source_path);
-            if visited_companion_sources.insert(normalized_companion) {
+            if state.visited_companion_sources.insert(normalized_companion) {
                 let companion_source = read_source(&companion_source_path)?;
                 let companion_document = parse_document(&companion_source_path, &companion_source)?;
                 collect_c_symbol_candidates_from_root(
@@ -3432,8 +3434,8 @@ fn collect_c_accessible_symbols_from_document(
                     &companion_source,
                     600,
                     "companion_source",
-                    context_file,
-                    symbols,
+                    collection.context_file,
+                    state.symbols,
                 )?;
             }
         }
