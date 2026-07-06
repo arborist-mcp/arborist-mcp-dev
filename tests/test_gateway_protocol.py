@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from arborist_mcp import gateway as gateway_module
@@ -597,6 +599,45 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["id"], 17)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("direction", response["error"]["message"])
+
+    def test_trace_context_returns_trace_error_when_patch_gate_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            caller = workspace.joinpath("caller.py")
+            caller.write_text(
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                encoding="utf-8",
+            )
+
+            gateway = ArboristGateway()
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 41,
+                    "method": "arborist/validate_patch_with_trace_context",
+                    "params": {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return missing_helper(value)\n"
+                        ),
+                        "direction": "both",
+                    },
+                }
+            )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 41)
+        self.assertNotIn("error", response)
+        self.assertFalse(response["result"]["patch"]["applied"])
+        self.assertIsNone(response["result"]["trace"])
+        self.assertIsNone(response["result"]["trace_validation"])
+        self.assertEqual(
+            response["result"]["trace_error"],
+            "trace skipped because patch validation rejected the patch",
+        )
 
     def test_core_invalid_query_maps_to_invalid_params(self) -> None:
         gateway = ArboristGateway()
