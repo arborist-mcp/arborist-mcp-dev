@@ -29,7 +29,7 @@ pub struct SemanticSkeleton {
     pub available_symbols: Vec<SemanticSkeletonSymbol>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct SemanticSkeletonSymbol {
     pub symbol_id: String,
@@ -41,22 +41,6 @@ pub struct SemanticSkeletonSymbol {
     pub parameters: Vec<String>,
     pub return_type: Option<String>,
     pub docstring: Option<String>,
-}
-
-impl Default for SemanticSkeletonSymbol {
-    fn default() -> Self {
-        Self {
-            symbol_id: String::new(),
-            semantic_path: String::new(),
-            scope_path: None,
-            node_kind: String::new(),
-            byte_range: (0, 0),
-            signature: None,
-            parameters: Vec::new(),
-            return_type: None,
-            docstring: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,7 +164,7 @@ pub enum TraceDirection {
     Both,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct SymbolMeta {
     pub symbol_id: String,
@@ -197,27 +181,6 @@ pub struct SymbolMeta {
     pub docstring: Option<String>,
     pub dependencies: Vec<String>,
     pub references: Vec<String>,
-}
-
-impl Default for SymbolMeta {
-    fn default() -> Self {
-        Self {
-            symbol_id: String::new(),
-            semantic_path: String::new(),
-            scope_path: None,
-            file_path: String::new(),
-            node_kind: String::new(),
-            origin_type: String::new(),
-            evidence_key: String::new(),
-            byte_range: (0, 0),
-            signature: None,
-            parameters: Vec::new(),
-            return_type: None,
-            docstring: None,
-            dependencies: Vec::new(),
-            references: Vec::new(),
-        }
-    }
 }
 
 impl SymbolMeta {
@@ -282,7 +245,7 @@ impl SymbolMeta {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct SymbolSummary {
     pub symbol_id: String,
@@ -335,25 +298,6 @@ impl SymbolSummary {
             parameters,
             return_type,
             docstring,
-        }
-    }
-}
-
-impl Default for SymbolSummary {
-    fn default() -> Self {
-        Self {
-            symbol_id: String::new(),
-            semantic_path: String::new(),
-            scope_path: None,
-            file_path: String::new(),
-            node_kind: String::new(),
-            origin_type: String::new(),
-            evidence_key: String::new(),
-            byte_range: (0, 0),
-            signature: None,
-            parameters: Vec::new(),
-            return_type: None,
-            docstring: None,
         }
     }
 }
