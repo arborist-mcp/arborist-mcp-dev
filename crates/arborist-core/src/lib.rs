@@ -5830,6 +5830,29 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_from_existing_non_index_database_does_not_create_schema() {
+        let dir = temporary_dir();
+        let db_path = dir.join("not-symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        drop(connection);
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("empty databases should not be initialized by read paths");
+
+        assert!(error.to_string().contains("missing symbol index table"));
+
+        let connection = Connection::open(&db_path).unwrap();
+        let table_count: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 0);
+    }
+
+    #[test]
     fn trace_from_index_rejects_negative_persisted_byte_ranges() {
         let dir = temporary_dir();
         let db_path = dir.join("symbols.db");

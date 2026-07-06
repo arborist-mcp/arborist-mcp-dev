@@ -1490,8 +1490,26 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     }
 
     let connection = Connection::open(db_path)?;
+    if !table_exists(&connection, "symbols")? {
+        return Err(anyhow!(
+            "missing symbol index table in {}",
+            db_path.display()
+        ));
+    }
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
+}
+
+fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table_name],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|hit| hit.is_some())
+        .map_err(Into::into)
 }
 
 fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
