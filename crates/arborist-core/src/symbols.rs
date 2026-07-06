@@ -76,6 +76,21 @@ struct CIncludeContext {
     companion_source_paths: BTreeSet<String>,
 }
 
+const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+];
+
 pub fn trace_symbol_graph(
     workspace_root: &Path,
     symbol_path: &str,
@@ -372,21 +387,7 @@ fn should_skip_index_path(workspace_root: &Path, path: &Path) -> bool {
 }
 
 fn should_skip_dir_name(name: &str) -> bool {
-    matches!(
-        name,
-        ".git"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | ".tox"
-            | ".venv"
-            | "__pycache__"
-            | "build"
-            | "dist"
-            | "node_modules"
-            | "target"
-            | "venv"
-    )
+    SKIPPED_WORKSPACE_DIR_NAMES.contains(&name)
 }
 
 fn build_workspace_index(
@@ -2245,11 +2246,29 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        IndexedSymbol, PersistedFileState, SymbolMeta, SymbolRefreshPersistence,
-        ensure_symbol_tables, persist_symbol_index, persist_symbol_refresh, persisted_byte_range,
+        IndexedSymbol, PersistedFileState, SKIPPED_WORKSPACE_DIR_NAMES, SymbolMeta,
+        SymbolRefreshPersistence, ensure_symbol_tables, persist_symbol_index,
+        persist_symbol_refresh, persisted_byte_range, should_skip_dir_name,
     };
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn recognizes_skipped_workspace_directory_names() {
+        for name in SKIPPED_WORKSPACE_DIR_NAMES {
+            assert!(
+                should_skip_dir_name(name),
+                "{name} should be skipped during workspace indexing"
+            );
+        }
+
+        for name in ["src", "venv-tools", "node_modules_backup", "targeted"] {
+            assert!(
+                !should_skip_dir_name(name),
+                "{name} should not be skipped by partial name matching"
+            );
+        }
+    }
 
     #[test]
     fn persisted_byte_range_rejects_inverted_ranges() {
