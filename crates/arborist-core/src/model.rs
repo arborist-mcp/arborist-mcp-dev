@@ -7,12 +7,14 @@ pub enum LanguageId {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Position {
     pub row: usize,
     pub column: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PositionEdit {
     pub start: Position,
     pub end: Position,
@@ -466,4 +468,27 @@ pub struct VirtualFileStatus {
     pub dirty: bool,
     pub version: u64,
     pub syntax_error_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Position, PositionEdit};
+
+    #[test]
+    fn position_rejects_unknown_fields() {
+        let error = serde_json::from_str::<Position>(r#"{"row":0,"column":0,"character":0}"#)
+            .expect_err("positions should reject unknown fields");
+
+        assert!(error.to_string().contains("unknown field `character`"));
+    }
+
+    #[test]
+    fn position_edit_rejects_unknown_fields() {
+        let error = serde_json::from_str::<PositionEdit>(
+            r#"{"start":{"row":0,"column":0},"end":{"row":0,"column":0},"new_text":"x","newText":"x"}"#,
+        )
+        .expect_err("position edits should reject unknown fields");
+
+        assert!(error.to_string().contains("unknown field `newText`"));
+    }
 }
