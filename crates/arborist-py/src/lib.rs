@@ -178,6 +178,8 @@ impl ArboristCore {
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both"))]
+    // Keep the Python binding signature aligned with the JSON-RPC parameter surface.
+    #[allow(clippy::too_many_arguments)]
     fn validate_patch_with_trace_context_json(
         &self,
         workspace_root: &str,
