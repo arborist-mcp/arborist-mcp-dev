@@ -11,6 +11,7 @@ use arborist_core::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use serde::de::DeserializeOwned;
 
 #[pyclass(unsendable)]
 struct ArboristCore {
@@ -159,10 +160,8 @@ impl ArboristCore {
         patch_json: &str,
         trace_json: &str,
     ) -> PyResult<String> {
-        let patch: PatchAstNodeResult = serde_json::from_str(patch_json)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let trace: TraceSymbolGraphResult = serde_json::from_str(trace_json)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
+        let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
         let result = replay_patch_evidence_against_trace(&patch, &trace);
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
@@ -172,10 +171,8 @@ impl ArboristCore {
         patch_json: &str,
         trace_json: &str,
     ) -> PyResult<String> {
-        let patch: PatchAstNodeResult = serde_json::from_str(patch_json)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
-        let trace: TraceSymbolGraphResult = serde_json::from_str(trace_json)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
+        let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
         let result = validate_patch_commit_with_trace(&patch, &trace);
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
@@ -307,8 +304,7 @@ impl ArboristCore {
     }
 
     fn apply_position_edits_json(&self, file_path: &str, edits_json: &str) -> PyResult<String> {
-        let edits: Vec<PositionEdit> = serde_json::from_str(edits_json)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let edits: Vec<PositionEdit> = parse_json_arg(edits_json)?;
         let result = self
             .vfs
             .borrow_mut()
@@ -356,6 +352,10 @@ fn to_py_error(error: anyhow::Error) -> PyErr {
 
 fn to_runtime_error(error: serde_json::Error) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
+    serde_json::from_str(json).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
 fn parse_direction(direction: &str) -> PyResult<TraceDirection> {
