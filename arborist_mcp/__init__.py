@@ -1,9 +1,7 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
-
-__version__ = "0.1.0"
-__all__ = ["__version__"]
 
 _SOURCE_PACKAGE_DIR = (
     Path(__file__).resolve().parent.parent / "python" / "arborist_mcp"
@@ -15,3 +13,7 @@ else:
     raise ModuleNotFoundError(
         f"Arborist source package not found at {_SOURCE_PACKAGE_DIR}"
     )
+
+__version__ = import_module(f"{__name__}._version").__version__
+
+__all__ = ["__version__"]

@@ -6,11 +6,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import arborist_mcp
 from arborist_mcp import gateway as gateway_module
+from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
 
 class GatewayProtocolTests(unittest.TestCase):
+    def test_gateway_reuses_package_version(self) -> None:
+        self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
+        self.assertEqual(gateway_module.__version__, version_module.__version__)
+
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
