@@ -7,9 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use tree_sitter::Node;
 
 use crate::language::{
-    ParsedDocument, c_include_targets, contains_kind, contains_node, first_identifier,
-    is_field_node, node_text, normalize_absolute_path, normalize_path, parse_document,
-    position_from, read_source, resolve_local_c_include, visit_tree,
+    ParsedDocument, c_companion_source_path, c_include_targets, contains_kind, contains_node,
+    first_identifier, is_field_node, node_text, normalize_absolute_path, normalize_path,
+    parse_document, position_from, read_source, resolve_local_c_include, visit_tree,
 };
 use crate::model::{
     DisambiguationContext, LanguageId, PatchAstNodeResult, PatchCommitGateReport,
@@ -3422,7 +3422,7 @@ fn collect_c_accessible_symbols_from_document(
         )?;
 
         if collection.allow_companion_sources
-            && let Some(companion_source_path) = companion_c_source_path(&include_path)
+            && let Some(companion_source_path) = c_companion_source_path(&include_path)
         {
             let normalized_companion = normalize_path(&companion_source_path);
             if state.visited_companion_sources.insert(normalized_companion) {
@@ -3546,16 +3546,6 @@ fn c_binding_candidates_for_name(
         .into_iter()
         .filter(|candidate| candidate.rank == best_rank)
         .collect()
-}
-
-fn companion_c_source_path(include_path: &Path) -> Option<std::path::PathBuf> {
-    let extension = include_path.extension()?.to_str()?;
-    if !matches!(extension, "h" | "hpp" | "hh") {
-        return None;
-    }
-
-    let candidate = include_path.with_extension("c");
-    candidate.exists().then_some(candidate)
 }
 
 fn collect_c_local_definitions(

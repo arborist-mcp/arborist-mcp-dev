@@ -5,8 +5,8 @@ use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::language::{
-    c_include_targets, contains_kind, contains_node, first_identifier, language_for_id,
-    last_type_identifier, node_text, normalize_path, parse_document, read_source,
+    c_include_targets, contains_kind, contains_node, first_identifier, is_c_header_path,
+    language_for_id, last_type_identifier, node_text, normalize_path, parse_document, read_source,
     resolve_local_c_include,
 };
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
@@ -651,12 +651,6 @@ fn same_stem(left: &Path, right: &Path) -> bool {
         .and_then(|stem| stem.to_str())
         .zip(right.file_stem().and_then(|stem| stem.to_str()))
         .is_some_and(|(left_stem, right_stem)| left_stem == right_stem)
-}
-
-fn is_c_header_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "h" | "hpp" | "hh"))
 }
 
 fn search_python_symbol<'tree>(

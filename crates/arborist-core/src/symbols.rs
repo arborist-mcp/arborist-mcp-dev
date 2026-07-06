@@ -9,9 +9,9 @@ use serde::de::DeserializeOwned;
 use tree_sitter::Node;
 
 use crate::language::{
-    c_include_targets, c_local_include_targets, contains_kind, detect_language, node_text,
-    normalize_absolute_path, normalize_path, parse_document, read_source, resolve_local_c_include,
-    visit_tree,
+    c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
+    detect_language, is_c_header_path, node_text, normalize_absolute_path, normalize_path,
+    parse_document, read_source, resolve_local_c_include, visit_tree,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -960,12 +960,6 @@ fn symbol_base_name(semantic_path: &str) -> String {
         .next()
         .unwrap_or(semantic_path)
         .to_string()
-}
-
-fn is_c_header_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension, "h" | "hpp" | "hh"))
 }
 
 fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
@@ -2185,7 +2179,10 @@ fn c_include_context_for_file(file_path: &str) -> Result<CIncludeContext> {
 
     let companion_source_paths = include_paths
         .iter()
-        .filter_map(|include_path| companion_c_source_path(include_path))
+        .filter_map(|include_path| {
+            c_companion_source_path(Path::new(include_path))
+                .map(|candidate| normalize_path(&candidate))
+        })
         .collect();
 
     Ok(CIncludeContext {
@@ -2217,17 +2214,6 @@ fn collect_c_include_closure(
     }
 
     Ok(())
-}
-
-fn companion_c_source_path(include_path: &str) -> Option<String> {
-    let path = Path::new(include_path);
-    let extension = path.extension()?.to_str()?;
-    if !matches!(extension, "h" | "hpp" | "hh") {
-        return None;
-    }
-
-    let candidate = path.with_extension("c");
-    candidate.exists().then(|| normalize_path(&candidate))
 }
 
 fn source_fingerprint(source: &str) -> u64 {

@@ -78,6 +78,37 @@ pub fn detect_language(path: &Path) -> Result<LanguageId> {
     }
 }
 
+pub fn is_c_header_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["h", "hpp", "hh"]
+                .iter()
+                .any(|header_extension| extension.eq_ignore_ascii_case(header_extension))
+        })
+}
+
+pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
+    let extension = include_path.extension()?.to_str()?;
+    if !is_c_header_path(include_path) {
+        return None;
+    }
+
+    let source_extensions = if extension
+        .chars()
+        .all(|character| character.is_ascii_uppercase())
+    {
+        ["C", "c"]
+    } else {
+        ["c", "C"]
+    };
+
+    source_extensions
+        .into_iter()
+        .map(|source_extension| include_path.with_extension(source_extension))
+        .find(|candidate| candidate.exists())
+}
+
 pub fn language_for_id(language_id: LanguageId) -> Language {
     match language_id {
         LanguageId::Python => tree_sitter_python::LANGUAGE.into(),
@@ -302,7 +333,10 @@ mod tests {
 
     use tree_sitter::Point;
 
-    use super::{detect_language, offset_for_position, point_for_offset};
+    use super::{
+        c_companion_source_path, detect_language, is_c_header_path, offset_for_position,
+        point_for_offset,
+    };
     use crate::model::{LanguageId, Position};
 
     #[test]
@@ -331,6 +365,41 @@ mod tests {
             .expect_err("unsupported extensions should be reported");
 
         assert!(error.to_string().contains(r#"Some("TXT")"#));
+    }
+
+    #[test]
+    fn c_header_detection_accepts_uppercase_extensions() {
+        assert!(is_c_header_path(Path::new("sample.h")));
+        assert!(is_c_header_path(Path::new("sample.H")));
+        assert!(is_c_header_path(Path::new("sample.HPP")));
+        assert!(is_c_header_path(Path::new("sample.HH")));
+        assert!(!is_c_header_path(Path::new("sample.c")));
+    }
+
+    #[test]
+    fn companion_c_source_prefers_header_case_style() {
+        let dir = std::env::temp_dir().join(format!(
+            "arborist-language-companion-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let uppercase_header = dir.join("helper.H");
+        let uppercase_source = dir.join("helper.C");
+        std::fs::write(&uppercase_header, "int helper(int value);\n").unwrap();
+        std::fs::write(
+            &uppercase_source,
+            "int helper(int value) { return value + 1; }\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            c_companion_source_path(&uppercase_header).unwrap(),
+            uppercase_source
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

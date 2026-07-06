@@ -719,6 +719,57 @@ int helper(int value) {
     }
 
     #[test]
+    fn traces_c_symbol_graph_across_uppercase_header_and_source_definition() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.H");
+        let helper = dir.join("helper.C");
+        let caller = dir.join("caller.C");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &helper,
+            "#include \"helper.H\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.H\"\n\nint orchestrate(int value) {\n    return helper(value);\n}\n",
+        )
+        .unwrap();
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(trace.callees.len(), 1);
+        assert_eq!(trace.callees[0].semantic_path, "helper");
+        assert_eq!(trace.callees[0].origin_type, "companion_source");
+        assert_eq!(
+            trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(
+            trace.callees[0].symbol_id,
+            format!("{}::helper", header.to_string_lossy().replace('\\', "/"))
+        );
+
+        let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 3);
+
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert_eq!(persisted_trace.callees.len(), 1);
+        assert_eq!(persisted_trace.callees[0].semantic_path, "helper");
+        assert_eq!(persisted_trace.callees[0].origin_type, "companion_source");
+        assert_eq!(
+            persisted_trace.callees[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(
+            persisted_trace.callees[0].symbol_id,
+            format!("{}::helper", header.to_string_lossy().replace('\\', "/"))
+        );
+    }
+
+    #[test]
     fn isolates_static_c_symbols_per_file() {
         let dir = temporary_dir();
         let a = dir.join("a.c");
@@ -948,6 +999,60 @@ int helper(int value) {
                 .as_deref(),
             Some("int helper(int value);")
         );
+        let updated = fs::read_to_string(&caller).unwrap();
+        assert!(updated.contains("return helper(value);"));
+    }
+
+    #[test]
+    fn allows_c_patch_with_uppercase_header_companion_source() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.H");
+        let source = dir.join("helper.C");
+        let caller = dir.join("caller.C");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.H\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.H\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let result = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+
+        assert!(result.applied);
+        assert!(result.validation.unresolved_identifiers.is_empty());
+        assert_eq!(result.validation.resolved_identifiers.len(), 1);
+        assert_eq!(result.validation.binding_decisions.len(), 1);
+        assert_eq!(result.validation.resolved_identifiers[0].name, "helper");
+        assert_eq!(
+            result.validation.resolved_identifiers[0].symbol.symbol_id,
+            format!("{}::helper", header.to_string_lossy().replace('\\', "/"))
+        );
+        assert_eq!(
+            result.validation.resolved_identifiers[0].symbol.file_path,
+            source.to_string_lossy().replace('\\', "/")
+        );
+        assert_eq!(
+            result.validation.resolved_identifiers[0].symbol.node_kind,
+            "function_definition"
+        );
+        assert_eq!(
+            result.validation.resolved_identifiers[0].symbol.origin_type,
+            "companion_source"
+        );
+        assert!(result.validation.commit_gate.allowed);
+
         let updated = fs::read_to_string(&caller).unwrap();
         assert!(updated.contains("return helper(value);"));
     }
