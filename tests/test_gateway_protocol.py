@@ -1142,6 +1142,42 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("patch", response["error"]["message"])
 
+    def test_rejects_malformed_patch_trace_payloads_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            (
+                "arborist/replay_patch_evidence_against_trace",
+                {
+                    "patch": {"file": "sample.py"},
+                    "trace": {"symbol": {}},
+                },
+            ),
+            (
+                "arborist/validate_patch_commit_with_trace",
+                {
+                    "patch": {"file": "sample.py"},
+                    "trace": {"symbol": {}},
+                },
+            ),
+        ]
+
+        for method, params in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 49,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 49)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("missing field", response["error"]["message"])
+
     def test_rejects_non_json_serializable_trace_object_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
