@@ -9,5 +9,4 @@ build/
 *.pyd
 *.pdb
 *.db
-Cargo.lock
 AGENTS.md

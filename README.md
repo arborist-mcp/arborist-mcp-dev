@@ -118,8 +118,8 @@ Or run the core checks directly:
 
 ```powershell
 cargo fmt --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
 python -m unittest
 python -m arborist_mcp.gateway --help
 ```

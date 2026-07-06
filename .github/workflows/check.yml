@@ -34,7 +34,7 @@ jobs:
       - name: Build gateway extension
         shell: pwsh
         run: |
-          cargo build -p arborist-py
+          cargo build --locked -p arborist-py
           .\scripts\sync-extension.ps1 -SkipBuild
 
       - name: Run local check gate
