@@ -55,6 +55,7 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 Push-Location $repoRoot
 try {
+    Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
     Invoke-NativeOrThrow "Running Rust tests..." "cargo" @("test")
     Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--all-targets", "--", "-D", "warnings")
     Invoke-NativeOrThrow "Running Python tests..." $Python @("-m", "unittest")

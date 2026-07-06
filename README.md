@@ -117,6 +117,7 @@ Run the full local gate:
 Or run the commands directly:
 
 ```powershell
+cargo fmt --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 python -m unittest
