@@ -31,7 +31,7 @@ try {
     . $activateScript
     Invoke-NativeOrThrow "Upgrading pip" "python" @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-NativeOrThrow "Installing maturin" "python" @("-m", "pip", "install", "maturin")
-    Invoke-NativeOrThrow "Building extension with maturin" "maturin" @("develop")
+    Invoke-NativeOrThrow "Building extension with maturin" "maturin" @("develop", "--locked")
     & $PSScriptRoot\sync-extension.ps1 -SkipBuild
 } finally {
     Pop-Location

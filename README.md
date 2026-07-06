@@ -91,7 +91,7 @@ python -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install maturin
-maturin develop
+maturin develop --locked
 .\scripts\sync-extension.ps1
 ```
 
