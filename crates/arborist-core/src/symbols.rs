@@ -1296,18 +1296,17 @@ fn persist_symbol_index(
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
 
-    connection.execute(
+    let tx = connection.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [normalize_path(workspace_root)],
     )?;
-    connection.execute(
+    tx.execute(
         "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [indexed_files.to_string()],
     )?;
-
-    let tx = connection.unchecked_transaction()?;
     tx.execute("DELETE FROM symbols", [])?;
     tx.execute("DELETE FROM file_state", [])?;
     let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
@@ -1387,17 +1386,6 @@ fn persist_symbol_refresh(
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
 
-    connection.execute(
-        "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [normalize_path(workspace_root)],
-    )?;
-    connection.execute(
-        "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [indexed_files.to_string()],
-    )?;
-
     let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
     let resolved_symbol_map = resolved_symbol_map(symbols);
     let changed_symbols: Vec<_> = symbols
@@ -1407,6 +1395,16 @@ fn persist_symbol_refresh(
         .collect();
 
     let tx = connection.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [normalize_path(workspace_root)],
+    )?;
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [indexed_files.to_string()],
+    )?;
     {
         let mut delete_statement = tx.prepare("DELETE FROM symbols WHERE file_path = ?1")?;
         for changed_file_path in changed_file_paths {
@@ -2029,7 +2027,16 @@ fn source_fingerprint(source: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{SymbolMeta, persisted_byte_range};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use rusqlite::Connection;
+
+    use super::{
+        IndexedSymbol, PersistedFileState, SymbolMeta, ensure_symbol_tables, persist_symbol_index,
+        persist_symbol_refresh, persisted_byte_range,
+    };
 
     #[test]
     fn persisted_byte_range_rejects_inverted_ranges() {
@@ -2043,5 +2050,126 @@ mod tests {
             .expect_err("persisted byte ranges should reject inverted ranges");
 
         assert!(error.to_string().contains("start 8 is after end 4"));
+    }
+
+    #[test]
+    fn persist_symbol_index_rolls_back_metadata_on_row_failure() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let workspace = dir.join("workspace");
+        let file_path = workspace.join("helper.py");
+        let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+        seed_indexed_files_metadata(&db_path, "7");
+
+        let raw_symbols = vec![invalid_indexed_symbol(&normalized_file)];
+        let symbols = vec![invalid_symbol_meta(&normalized_file)];
+        let file_states = vec![PersistedFileState {
+            file_path: file_path.to_string_lossy().replace('\\', "/"),
+            fingerprint: 1,
+        }];
+
+        let error = persist_symbol_index(
+            &db_path,
+            &workspace,
+            &raw_symbols,
+            &symbols,
+            &file_states,
+            1,
+        )
+        .expect_err("invalid rows should abort the full persistence transaction");
+
+        assert!(error.to_string().contains("start 8 is after end 4"));
+        assert_eq!(indexed_files_metadata(&db_path), "7");
+    }
+
+    #[test]
+    fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let workspace = dir.join("workspace");
+        let file_path = workspace.join("helper.py");
+        let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+        seed_indexed_files_metadata(&db_path, "7");
+
+        let raw_symbols = vec![invalid_indexed_symbol(&normalized_file)];
+        let symbols = vec![invalid_symbol_meta(&normalized_file)];
+        let file_states = BTreeMap::from([(normalized_file.clone(), 1)]);
+        let changed_file_paths = BTreeSet::from([normalized_file]);
+        let impacted_paths = BTreeSet::new();
+
+        let error = persist_symbol_refresh(
+            &db_path,
+            &workspace,
+            &raw_symbols,
+            &symbols,
+            &file_states,
+            &changed_file_paths,
+            &impacted_paths,
+            1,
+        )
+        .expect_err("invalid rows should abort the full refresh transaction");
+
+        assert!(error.to_string().contains("start 8 is after end 4"));
+        assert_eq!(indexed_files_metadata(&db_path), "7");
+    }
+
+    fn seed_indexed_files_metadata(db_path: &Path, value: &str) {
+        let connection = Connection::open(db_path).unwrap();
+        ensure_symbol_tables(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)",
+                [value],
+            )
+            .unwrap();
+    }
+
+    fn indexed_files_metadata(db_path: &Path) -> String {
+        let connection = Connection::open(db_path).unwrap();
+        connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'indexed_files'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn invalid_indexed_symbol(file_path: &str) -> IndexedSymbol {
+        IndexedSymbol {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            base_name: "helper".to_string(),
+            scope_path: None,
+            file_path: file_path.to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (8, 4),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            references_by_name: BTreeSet::new(),
+        }
+    }
+
+    fn invalid_symbol_meta(file_path: &str) -> SymbolMeta {
+        SymbolMeta {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            file_path: file_path.to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (8, 4),
+            ..Default::default()
+        }
+    }
+
+    fn temporary_dir() -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("arborist-symbols-{suffix}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }
