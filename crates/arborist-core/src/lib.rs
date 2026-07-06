@@ -169,6 +169,17 @@ pub fn validate_patch_commit_with_trace(
         };
     }
 
+    if replay_status == "blocked" && patch_gate_status != "allowed_with_bypass" {
+        return PatchTraceValidationResult {
+            allowed: false,
+            status: "rejected_by_trace_replay".to_string(),
+            reason: "trace replay found blocked evidence without an explicit bypass".to_string(),
+            patch_gate_status,
+            replay_status,
+            replay,
+        };
+    }
+
     let (status, reason) = if patch.validation.commit_gate.status == "allowed_with_bypass" {
         (
             "allowed_with_bypass".to_string(),
@@ -1393,6 +1404,58 @@ int helper(int value) {
         assert!(!replay.items[0].matched_in_trace);
         assert_eq!(replay.items[0].trace_match_scope, "none");
         assert_eq!(replay.items[0].candidate_evidence_keys.len(), 2);
+    }
+
+    #[test]
+    fn trace_validation_requires_bypass_for_blocked_replay_items() {
+        let dir = temporary_dir();
+        let alpha_header = dir.join("alpha.h");
+        let alpha_source = dir.join("alpha.c");
+        let zeta_header = dir.join("zeta.h");
+        let zeta_source = dir.join("zeta.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&alpha_header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &alpha_source,
+            "#include \"alpha.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(&zeta_header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &zeta_source,
+            "#include \"zeta.h\"\n\nint helper(int value) {\n    return value + 2;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"alpha.h\"\n#include \"zeta.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            Some("human selected the include family"),
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+
+        let bypass_decision = validate_patch_commit_with_trace(&patch, &trace);
+        assert!(bypass_decision.allowed);
+        assert_eq!(bypass_decision.status, "allowed_with_bypass");
+        assert_eq!(bypass_decision.replay_status, "blocked");
+
+        let mut inconsistent_patch = patch.clone();
+        inconsistent_patch.validation.commit_gate.status = "allowed".to_string();
+        inconsistent_patch.validation.commit_gate.bypass_reason = None;
+
+        let rejected = validate_patch_commit_with_trace(&inconsistent_patch, &trace);
+        assert!(!rejected.allowed);
+        assert_eq!(rejected.status, "rejected_by_trace_replay");
+        assert_eq!(rejected.patch_gate_status, "allowed");
+        assert_eq!(rejected.replay_status, "blocked");
     }
 
     #[test]
