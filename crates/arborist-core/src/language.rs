@@ -291,3 +291,39 @@ pub fn is_field_node(parent: Node<'_>, field_name: &str, node: Node<'_>) -> bool
 pub fn contains_node(container: Node<'_>, node: Node<'_>) -> bool {
     container.start_byte() <= node.start_byte() && container.end_byte() >= node.end_byte()
 }
+
+#[cfg(test)]
+mod tests {
+    use tree_sitter::Point;
+
+    use super::{offset_for_position, point_for_offset};
+    use crate::model::Position;
+
+    #[test]
+    fn point_for_offset_uses_tree_sitter_byte_columns() {
+        let source = "é\nx";
+
+        assert_eq!(
+            point_for_offset(source, "é".len()).unwrap(),
+            Point { row: 0, column: 2 }
+        );
+        assert_eq!(
+            point_for_offset(source, "é\n".len()).unwrap(),
+            Point { row: 1, column: 0 }
+        );
+    }
+
+    #[test]
+    fn offset_for_position_uses_tree_sitter_byte_columns() {
+        let source = "é\nx";
+
+        assert_eq!(
+            offset_for_position(source, &Position { row: 0, column: 2 }).unwrap(),
+            "é".len()
+        );
+        assert_eq!(
+            offset_for_position(source, &Position { row: 1, column: 1 }).unwrap(),
+            source.len()
+        );
+    }
+}
