@@ -5844,6 +5844,24 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn refresh_existing_database_with_incomplete_symbol_columns_does_not_migrate() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("not-symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_incomplete_symbol_index_tables(&connection);
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject tables that only resemble symbol indexes");
+
+        assert!(error.to_string().contains("missing required column"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert_eq!(symbol_table_columns(&connection), vec!["name"]);
+    }
+
+    #[test]
     fn from_path_entrypoints_normalize_file_paths() {
         let dir = temporary_dir();
         let nested = dir.join("child");
@@ -5948,6 +5966,22 @@ def orchestrate(value: int) -> int:\n    return value\n",
             )
             .unwrap();
         assert_eq!(created_table_count, 0);
+    }
+
+    #[test]
+    fn trace_existing_database_with_incomplete_symbol_columns_does_not_migrate() {
+        let dir = temporary_dir();
+        let db_path = dir.join("not-symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_incomplete_symbol_index_tables(&connection);
+        drop(connection);
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("trace should reject tables that only resemble symbol indexes");
+
+        assert!(error.to_string().contains("missing required column"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert_eq!(symbol_table_columns(&connection), vec!["name"]);
     }
 
     #[test]
@@ -6653,5 +6687,33 @@ def orchestrate(value: int) -> int:\n    return value\n",
                 ",
             )
             .unwrap();
+    }
+
+    fn create_incomplete_symbol_index_tables(connection: &Connection) {
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE symbols (
+                    name TEXT NOT NULL
+                );
+                CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY,
+                    fingerprint INTEGER NOT NULL
+                );
+                ",
+            )
+            .unwrap();
+    }
+
+    fn symbol_table_columns(connection: &Connection) -> Vec<String> {
+        let mut statement = connection.prepare("PRAGMA table_info(symbols)").unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap();
+        columns.map(|column| column.unwrap()).collect()
     }
 }

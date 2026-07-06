@@ -1506,6 +1506,28 @@ fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Resul
             ));
         }
     }
+    require_table_columns(connection, db_path, "metadata", &["key", "value"])?;
+    require_table_columns(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            "semantic_path",
+            "file_path",
+            "node_kind",
+            "start_byte",
+            "end_byte",
+            "signature",
+            "dependencies_json",
+            "references_json",
+        ],
+    )?;
+    require_table_columns(
+        connection,
+        db_path,
+        "file_state",
+        &["file_path", "fingerprint"],
+    )?;
     Ok(())
 }
 
@@ -1519,6 +1541,36 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
         .optional()
         .map(|hit| hit.is_some())
         .map_err(Into::into)
+}
+
+fn require_table_columns(
+    connection: &Connection,
+    db_path: &Path,
+    table_name: &str,
+    required_columns: &[&str],
+) -> Result<()> {
+    let columns = table_columns(connection, table_name)?;
+    for required_column in required_columns {
+        if !columns.contains(*required_column) {
+            return Err(anyhow!(
+                "symbol index table `{}` in {} is missing required column `{}`",
+                table_name,
+                db_path.display(),
+                required_column
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<String>> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let mut names = BTreeSet::new();
+    for column in columns {
+        names.insert(column?);
+    }
+    Ok(names)
 }
 
 fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
