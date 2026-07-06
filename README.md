@@ -29,7 +29,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `validate_patch_commit_with_trace`
 - `validate_patch_with_trace_context`
 - `execute_tree_query`
-- Python and C language routing based on case-insensitive file extension
+- Python and C language routing based on case-insensitive file extension, including C `.h`, `.hpp`, and `.hh` headers
 - Selective semantic skeleton expansion via `expand_nodes`
 - Semantic skeleton responses now include `available_symbols` metadata with stable selectors, scope paths, node kinds, byte ranges, signatures, structured parameters/return types, and docstrings when available
 - Trace results now expose stable `symbol_id` values so duplicate globals can be targeted precisely
@@ -56,7 +56,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - C ambiguity feedback now explains why a binding is ambiguous and includes a
   structured `disambiguation_context` with visible include families, candidate
   include families, and precise candidate `symbol_id` hints for repair loops
-- C symbol graphs now tolerate header declarations plus source definitions sharing the same semantic path, including `.H`/`.C` header-source families
+- C symbol graphs now tolerate header declarations plus source definitions sharing the same semantic path, including `.H`/`.C` and `.HPP` header-source families
 - C patch validation now follows local `#include` chains when checking accessible symbols
 - C trace summaries now prefer symbols from the active local `#include` header/source family when duplicate global names exist
 - File-local C `static` symbols now get file-qualified semantic paths so cross-file traces do not collapse them together
@@ -227,7 +227,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Persisted trace reads and single-file refreshes also reject existing non-index, incomplete-schema, metadata-incomplete, or type-incompatible SQLite databases without initializing or partially migrating Arborist tables as a side effect
 - Single-file index refreshes now reject existing symbol databases that were built for a different workspace, avoiding mixed-workspace persisted graph state
 - Workspace indexing, single-file refreshes, and live VFS trace overlays skip generated/cache/dependency directories such as `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.venv`, `__pycache__`, `venv`, `node_modules`, `target`, `dist`, and `build`
-- C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions, including uppercase `.H`/`.C` sibling and companion files
+- C trace/index rebuild flows now handle `header declaration + source definition` pairs without symbol-key collisions, including uppercase `.H`/`.C` and `.HPP` sibling and companion files
 - Duplicate C globals now keep distinct graph edges via stable include-family/file-backed `symbol_id` values, and persisted traces can target those IDs directly
 - C patch targeting now understands those precise `symbol_id` selectors too, and same-file declaration/definition name collisions prefer the definition node during replacement
 - C unresolved-symbol interception now recognizes declarations brought in by local headers referenced via `#include "..."` 

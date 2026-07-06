@@ -67,7 +67,12 @@ pub fn detect_language(path: &Path) -> Result<LanguageId> {
         Some(ext) if ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi") => {
             Ok(LanguageId::Python)
         }
-        Some(ext) if ext.eq_ignore_ascii_case("c") || ext.eq_ignore_ascii_case("h") => {
+        Some(ext)
+            if ext.eq_ignore_ascii_case("c")
+                || ["h", "hpp", "hh"]
+                    .iter()
+                    .any(|header_extension| ext.eq_ignore_ascii_case(header_extension)) =>
+        {
             Ok(LanguageId::C)
         }
         other => bail!(
@@ -103,10 +108,45 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
         ["c", "C"]
     };
 
-    source_extensions
+    let candidates = source_extensions
         .into_iter()
         .map(|source_extension| include_path.with_extension(source_extension))
-        .find(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
+
+    candidates
+        .iter()
+        .find_map(|candidate| existing_path_with_exact_file_name(candidate))
+        .or_else(|| {
+            candidates
+                .iter()
+                .find_map(|candidate| existing_path_with_case_insensitive_file_name(candidate))
+        })
+        .or_else(|| candidates.into_iter().find(|candidate| candidate.exists()))
+}
+
+fn existing_path_with_exact_file_name(candidate: &Path) -> Option<PathBuf> {
+    existing_path_with_file_name(candidate, |left, right| left == right)
+}
+
+fn existing_path_with_case_insensitive_file_name(candidate: &Path) -> Option<PathBuf> {
+    existing_path_with_file_name(candidate, |left, right| left.eq_ignore_ascii_case(right))
+}
+
+fn existing_path_with_file_name(
+    candidate: &Path,
+    matches_name: impl Fn(&str, &str) -> bool,
+) -> Option<PathBuf> {
+    let parent = candidate.parent()?;
+    let candidate_name = candidate.file_name()?.to_str()?;
+    for entry in fs::read_dir(parent).ok()? {
+        let entry = entry.ok()?;
+        let entry_name = entry.file_name();
+        let entry_name = entry_name.to_str()?;
+        if matches_name(entry_name, candidate_name) {
+            return Some(entry.path());
+        }
+    }
+    None
 }
 
 pub fn language_for_id(language_id: LanguageId) -> Language {
@@ -357,6 +397,14 @@ mod tests {
             detect_language(Path::new("sample.H")).unwrap(),
             LanguageId::C
         );
+        assert_eq!(
+            detect_language(Path::new("sample.HPP")).unwrap(),
+            LanguageId::C
+        );
+        assert_eq!(
+            detect_language(Path::new("sample.HH")).unwrap(),
+            LanguageId::C
+        );
     }
 
     #[test]
@@ -397,6 +445,20 @@ mod tests {
         assert_eq!(
             c_companion_source_path(&uppercase_header).unwrap(),
             uppercase_source
+        );
+
+        let mixed_header = dir.join("mixed.HPP");
+        let lowercase_source = dir.join("mixed.c");
+        std::fs::write(&mixed_header, "int mixed(int value);\n").unwrap();
+        std::fs::write(
+            &lowercase_source,
+            "int mixed(int value) { return value + 1; }\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            c_companion_source_path(&mixed_header).unwrap(),
+            lowercase_source
         );
 
         let _ = std::fs::remove_dir_all(&dir);
