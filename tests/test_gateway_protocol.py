@@ -357,6 +357,69 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("edits[0].start", response["error"]["message"])
 
+    def test_rejects_unknown_position_edit_fields(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 40,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                            "newText": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 40)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].newText", response["error"]["message"])
+
+    def test_rejects_unknown_position_fields(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 41,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0, "character": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 41)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].start.character", response["error"]["message"])
+
     def test_rejects_string_bool_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

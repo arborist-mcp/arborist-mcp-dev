@@ -480,6 +480,13 @@ class ArboristGateway:
         for index, edit in enumerate(edits):
             if not isinstance(edit, dict):
                 raise JsonRpcError(-32602, f"invalid position edit at index {index}")
+            extra_keys = set(edit) - {"start", "end", "new_text"}
+            if extra_keys:
+                key = sorted(extra_keys)[0]
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid position edit field: edits[{index}].{key}",
+                )
             ArboristGateway._validate_position(edit.get("start"), f"edits[{index}].start")
             ArboristGateway._validate_position(edit.get("end"), f"edits[{index}].end")
             if ArboristGateway._position_tuple(edit["start"]) > ArboristGateway._position_tuple(
@@ -500,6 +507,10 @@ class ArboristGateway:
     def _validate_position(value: Any, key: str) -> None:
         if not isinstance(value, dict):
             raise JsonRpcError(-32602, f"invalid position param: {key}")
+        extra_keys = set(value) - {"row", "column"}
+        if extra_keys:
+            field = sorted(extra_keys)[0]
+            raise JsonRpcError(-32602, f"invalid position field: {key}.{field}")
         for coordinate in ("row", "column"):
             coordinate_value = value.get(coordinate)
             if (
