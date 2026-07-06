@@ -709,12 +709,16 @@ class GatewayProtocolTests(unittest.TestCase):
     def test_trace_context_accepts_unsaved_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
+            nested = workspace.joinpath("child")
             helper = workspace.joinpath("helper.py")
             caller = workspace.joinpath("caller.py")
+            nested.mkdir()
             helper.write_text(
                 "def helper(value: int) -> int:\n    return value + 1\n",
                 encoding="utf-8",
             )
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
 
             gateway = ArboristGateway()
             response = gateway.handle_request(
@@ -724,7 +728,7 @@ class GatewayProtocolTests(unittest.TestCase):
                     "method": "arborist/validate_patch_with_trace_context",
                     "params": {
                         "workspace_root": str(workspace),
-                        "file_path": str(caller),
+                        "file_path": str(caller_alias),
                         "source": (
                             "from helper import helper\n\n\n"
                             "def orchestrate(value: int) -> int:\n"
@@ -745,12 +749,14 @@ class GatewayProtocolTests(unittest.TestCase):
             self.assertNotIn("error", response)
             self.assertFalse(caller.exists())
             self.assertTrue(response["result"]["patch"]["applied"])
+            self.assertEqual(response["result"]["patch"]["file"], expected_file)
             self.assertIsNone(response["result"]["trace_error"])
             self.assertTrue(response["result"]["trace_validation"]["allowed"])
             self.assertEqual(
                 response["result"]["trace"]["symbol"]["semantic_path"],
                 "orchestrate",
             )
+            self.assertEqual(response["result"]["trace"]["symbol"]["file_path"], expected_file)
             self.assertTrue(
                 any(
                     symbol["semantic_path"] == "helper"
@@ -929,6 +935,41 @@ class GatewayProtocolTests(unittest.TestCase):
             self.assertEqual(patch_response["id"], 47)
             self.assertNotIn("error", patch_response)
             self.assertEqual(patch_response["result"]["file"], expected_file)
+            self.assertFalse(file_path.exists())
+
+    def test_execute_tree_query_source_returns_normalized_c_owner_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            nested = Path(temp_dir).joinpath("child")
+            nested.mkdir()
+            file_path = Path(temp_dir).joinpath("sample.c")
+            alias_path = nested.joinpath("..", "sample.c")
+            expected_file = str(file_path).replace("\\", "/")
+            gateway = ArboristGateway()
+
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 48,
+                    "method": "arborist/execute_tree_query",
+                    "params": {
+                        "file_path": str(alias_path),
+                        "source": "static int orchestrate(int value) { return value + 1; }\n",
+                        "query": (
+                            "(function_definition declarator: "
+                            "(function_declarator declarator: (identifier) @name))"
+                        ),
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 48)
+            self.assertNotIn("error", response)
+            self.assertEqual(len(response["result"]), 1)
+            self.assertEqual(
+                response["result"][0]["owner_symbol_id"],
+                f"{expected_file}::orchestrate",
+            )
             self.assertFalse(file_path.exists())
 
     def test_allows_null_nullable_string_params(self) -> None:
