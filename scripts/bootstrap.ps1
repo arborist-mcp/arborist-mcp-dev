@@ -30,7 +30,7 @@ try {
 
     . $activateScript
     Invoke-NativeOrThrow "Upgrading pip" "python" @("-m", "pip", "install", "--upgrade", "pip")
-    Invoke-NativeOrThrow "Installing maturin" "python" @("-m", "pip", "install", "maturin")
+    Invoke-NativeOrThrow "Installing maturin" "python" @("-m", "pip", "install", "maturin>=1.7,<2.0")
     Invoke-NativeOrThrow "Building extension with maturin" "maturin" @("develop", "--locked")
     & $PSScriptRoot\sync-extension.ps1 -SkipBuild
 } finally {

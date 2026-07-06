@@ -90,9 +90,9 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 python -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install maturin
+python -m pip install "maturin>=1.7,<2.0"
 maturin develop --locked
-.\scripts\sync-extension.ps1
+.\scripts\sync-extension.ps1 -SkipBuild
 ```
 
 Or use the bootstrap script:
