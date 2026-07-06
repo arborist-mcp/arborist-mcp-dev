@@ -59,6 +59,17 @@ type IncrementalWorkspaceSymbols = (
     usize,
 );
 
+struct SymbolRefreshPersistence<'a> {
+    db_path: &'a Path,
+    workspace_root: &'a Path,
+    raw_symbols: &'a [IndexedSymbol],
+    symbols: &'a [SymbolMeta],
+    file_states: &'a BTreeMap<String, u64>,
+    changed_file_paths: &'a BTreeSet<String>,
+    impacted_paths: &'a BTreeSet<String>,
+    indexed_files: usize,
+}
+
 #[derive(Debug, Default)]
 struct CIncludeContext {
     include_paths: BTreeSet<String>,
@@ -211,16 +222,16 @@ pub fn refresh_symbol_index_for_file(
     let indexed_files = file_states.len();
     let reused_files = indexed_files.saturating_sub(rebuilt_files);
 
-    persist_symbol_refresh(
-        &db_path,
-        &workspace_root,
-        &raw_symbols,
-        &resolved_symbols,
-        &file_states,
-        &changed_file_paths,
-        &impacted_paths,
+    persist_symbol_refresh(SymbolRefreshPersistence {
+        db_path: &db_path,
+        workspace_root: &workspace_root,
+        raw_symbols: &raw_symbols,
+        symbols: &resolved_symbols,
+        file_states: &file_states,
+        changed_file_paths: &changed_file_paths,
+        impacted_paths: &impacted_paths,
         indexed_files,
-    )?;
+    })?;
 
     Ok(SymbolIndexStats {
         db_path: normalize_path(&db_path),
@@ -1376,24 +1387,16 @@ fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
     ))
 }
 
-fn persist_symbol_refresh(
-    db_path: &Path,
-    workspace_root: &Path,
-    raw_symbols: &[IndexedSymbol],
-    symbols: &[SymbolMeta],
-    file_states: &BTreeMap<String, u64>,
-    changed_file_paths: &BTreeSet<String>,
-    impacted_paths: &BTreeSet<String>,
-    indexed_files: usize,
-) -> Result<()> {
-    let connection = Connection::open(db_path)?;
+fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
+    let connection = Connection::open(context.db_path)?;
     ensure_symbol_tables(&connection)?;
 
-    let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
-    let resolved_symbol_map = resolved_symbol_map(symbols);
-    let changed_symbols: Vec<_> = symbols
+    let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols);
+    let resolved_symbol_map = resolved_symbol_map(context.symbols);
+    let changed_symbols: Vec<_> = context
+        .symbols
         .iter()
-        .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
+        .filter(|symbol| context.changed_file_paths.contains(&symbol.file_path))
         .cloned()
         .collect();
 
@@ -1401,16 +1404,16 @@ fn persist_symbol_refresh(
     tx.execute(
         "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [normalize_path(workspace_root)],
+        [normalize_path(context.workspace_root)],
     )?;
     tx.execute(
         "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [indexed_files.to_string()],
+        [context.indexed_files.to_string()],
     )?;
     {
         let mut delete_statement = tx.prepare("DELETE FROM symbols WHERE file_path = ?1")?;
-        for changed_file_path in changed_file_paths {
+        for changed_file_path in context.changed_file_paths {
             delete_statement.execute([changed_file_path])?;
         }
     }
@@ -1455,11 +1458,11 @@ fn persist_symbol_refresh(
              WHERE symbol_id = ?3",
         )?;
 
-        for impacted_path in impacted_paths {
+        for impacted_path in context.impacted_paths {
             let Some(symbol) = resolved_symbol_map.get(impacted_path) else {
                 continue;
             };
-            if changed_file_paths.contains(&symbol.file_path) {
+            if context.changed_file_paths.contains(&symbol.file_path) {
                 continue;
             }
             update_statement.execute(params![
@@ -1470,12 +1473,12 @@ fn persist_symbol_refresh(
         }
     }
 
-    for changed_file_path in changed_file_paths {
+    for changed_file_path in context.changed_file_paths {
         tx.execute(
             "DELETE FROM file_state WHERE file_path = ?1",
             [changed_file_path],
         )?;
-        if let Some(fingerprint) = file_states.get(changed_file_path) {
+        if let Some(fingerprint) = context.file_states.get(changed_file_path) {
             tx.execute(
                 "INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)",
                 params![changed_file_path, *fingerprint as i64],
@@ -2238,8 +2241,8 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        IndexedSymbol, PersistedFileState, SymbolMeta, ensure_symbol_tables, persist_symbol_index,
-        persist_symbol_refresh, persisted_byte_range,
+        IndexedSymbol, PersistedFileState, SymbolMeta, SymbolRefreshPersistence,
+        ensure_symbol_tables, persist_symbol_index, persist_symbol_refresh, persisted_byte_range,
     };
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2303,16 +2306,16 @@ mod tests {
         let changed_file_paths = BTreeSet::from([normalized_file]);
         let impacted_paths = BTreeSet::new();
 
-        let error = persist_symbol_refresh(
-            &db_path,
-            &workspace,
-            &raw_symbols,
-            &symbols,
-            &file_states,
-            &changed_file_paths,
-            &impacted_paths,
-            1,
-        )
+        let error = persist_symbol_refresh(SymbolRefreshPersistence {
+            db_path: &db_path,
+            workspace_root: &workspace,
+            raw_symbols: &raw_symbols,
+            symbols: &symbols,
+            file_states: &file_states,
+            changed_file_paths: &changed_file_paths,
+            impacted_paths: &impacted_paths,
+            indexed_files: 1,
+        })
         .expect_err("invalid rows should abort the full refresh transaction");
 
         assert!(error.to_string().contains("start 8 is after end 4"));
