@@ -1327,6 +1327,52 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertIn("invalid JSON from arborist core", response["error"]["message"])
         self.assertIn("duplicate JSON object key", response["error"]["message"])
 
+    def test_rejects_object_core_payload_with_wrong_shape(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                return "[]"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 52,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 52)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assertIn("expected object", response["error"]["message"])
+
+    def test_rejects_list_core_payload_with_wrong_shape(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 53,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 53)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assertIn("expected array", response["error"]["message"])
+
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         gateway = ArboristGateway()
 
