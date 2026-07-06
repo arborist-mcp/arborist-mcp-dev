@@ -1142,6 +1142,26 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("patch", response["error"]["message"])
 
+    def test_rejects_non_string_patch_object_keys_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 50,
+                "method": "arborist/replay_patch_evidence_against_trace",
+                "params": {
+                    "patch": {"file": "sample.py", 1: "coerces-to-string"},
+                    "trace": {},
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 50)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("patch", response["error"]["message"])
+
     def test_rejects_malformed_patch_trace_payloads_as_invalid_params(self) -> None:
         gateway = ArboristGateway()
 
@@ -1195,6 +1215,26 @@ class GatewayProtocolTests(unittest.TestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 22)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("trace", response["error"]["message"])
+
+    def test_rejects_python_only_trace_values_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 51,
+                "method": "arborist/validate_patch_commit_with_trace",
+                "params": {
+                    "patch": {},
+                    "trace": {"callee_keys": ("tuple", "is-not-json")},
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 51)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("trace", response["error"]["message"])
 
