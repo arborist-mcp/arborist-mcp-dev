@@ -706,6 +706,58 @@ class GatewayProtocolTests(unittest.TestCase):
             "trace skipped because patch validation rejected the patch",
         )
 
+    def test_trace_context_accepts_unsaved_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            helper = workspace.joinpath("helper.py")
+            caller = workspace.joinpath("caller.py")
+            helper.write_text(
+                "def helper(value: int) -> int:\n    return value + 1\n",
+                encoding="utf-8",
+            )
+
+            gateway = ArboristGateway()
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 43,
+                    "method": "arborist/validate_patch_with_trace_context",
+                    "params": {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return value + 1\n"
+                        ),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "direction": "both",
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 43)
+            self.assertNotIn("error", response)
+            self.assertFalse(caller.exists())
+            self.assertTrue(response["result"]["patch"]["applied"])
+            self.assertIsNone(response["result"]["trace_error"])
+            self.assertTrue(response["result"]["trace_validation"]["allowed"])
+            self.assertEqual(
+                response["result"]["trace"]["symbol"]["semantic_path"],
+                "orchestrate",
+            )
+            self.assertTrue(
+                any(
+                    symbol["semantic_path"] == "helper"
+                    for symbol in response["result"]["trace"]["callees"]
+                )
+            )
+
     def test_core_invalid_query_maps_to_invalid_params(self) -> None:
         gateway = ArboristGateway()
 
