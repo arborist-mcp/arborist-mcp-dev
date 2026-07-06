@@ -6068,6 +6068,32 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn from_path_entrypoints_accept_case_insensitive_extensions() {
+        let dir = temporary_dir();
+        let python_file = dir.join("Buffer.PY");
+        let c_file = dir.join("Sample.C");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&python_file, "def py_value() -> int:\n    return 1\n").unwrap();
+        fs::write(&c_file, "int c_value(void) { return 2; }\n").unwrap();
+
+        let skeleton = get_semantic_skeleton_from_path(&python_file, 1, &[]).unwrap();
+        assert_eq!(skeleton.available_paths, vec!["py_value"]);
+
+        let captures = execute_tree_query_from_path(
+            &c_file,
+            "(function_definition declarator: (function_declarator declarator: (identifier) @name))",
+        )
+        .unwrap();
+        assert_eq!(captures[0].text, "c_value");
+
+        let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 2);
+        assert!(trace_symbol_graph_from_index(&db_path, "py_value", TraceDirection::Both).is_ok());
+        assert!(trace_symbol_graph_from_index(&db_path, "c_value", TraceDirection::Both).is_ok());
+    }
+
+    #[test]
     fn trace_from_missing_symbol_index_does_not_create_database() {
         let dir = temporary_dir();
         let missing_db_path = dir.join("missing-symbols.db");
