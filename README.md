@@ -108,6 +108,14 @@ It now rebuilds the debug `arborist-py` extension before copying it into `python
 
 ## Quick check
 
+Run the full local gate:
+
+```powershell
+.\scripts\check.ps1
+```
+
+Or run the commands directly:
+
 ```powershell
 cargo test
 cargo clippy --all-targets -- -D warnings
