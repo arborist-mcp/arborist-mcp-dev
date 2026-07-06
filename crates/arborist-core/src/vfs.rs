@@ -18,7 +18,7 @@ use crate::model::{
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
-    validate_patch_replacement,
+    validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
     rebuild_symbol_index, refresh_symbol_index_for_file, trace_symbol_graph_with_overrides,
@@ -196,6 +196,7 @@ impl VirtualFileSystem {
         bypass_reason: Option<&str>,
     ) -> Result<PatchAstNodeResult> {
         validate_patch_replacement(new_code)?;
+        validate_bypass_reason(bypass_reason)?;
 
         let (path, normalized) = normalized_virtual_path(path)?;
         self.ensure_loaded(&path, None)?;
@@ -688,6 +689,29 @@ mod tests {
             .expect_err("blank virtual patch replacements should be rejected");
 
         assert!(error.to_string().contains("new_code"));
+        assert!(error.to_string().contains("blank"));
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert_eq!(snapshot.source, initial.source);
+        assert_eq!(snapshot.version, initial.version);
+        assert_eq!(snapshot.dirty, initial.dirty);
+    }
+
+    #[test]
+    fn rejects_blank_virtual_patch_bypass_without_dirtying_buffer() {
+        let file = temp_file("def value() -> int:\n    return 1\n");
+        let mut vfs = VirtualFileSystem::new();
+        let initial = vfs.read_file(&file).unwrap();
+
+        let error = vfs
+            .patch_node(
+                &file,
+                "value",
+                "def value() -> int:\n    return 2\n",
+                Some(" \t"),
+            )
+            .expect_err("blank virtual patch bypass reasons should be rejected");
+
+        assert!(error.to_string().contains("bypass_reason"));
         assert!(error.to_string().contains("blank"));
         let snapshot = vfs.read_file(&file).unwrap();
         assert_eq!(snapshot.source, initial.source);

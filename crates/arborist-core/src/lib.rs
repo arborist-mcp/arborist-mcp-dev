@@ -4258,6 +4258,26 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn rejects_blank_patch_bypass_reasons() {
+        let source = r#"
+def top_level(value: int) -> int:
+    return value + 1
+"#;
+
+        let error = patch_ast_node(
+            Path::new("sample.py"),
+            source,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 2\n",
+            Some(" \t"),
+        )
+        .expect_err("blank bypass reasons should be rejected");
+
+        assert!(error.to_string().contains("bypass_reason"));
+        assert!(error.to_string().contains("blank"));
+    }
+
+    #[test]
     fn writes_applied_patch_to_disk() {
         let dir = temporary_dir();
         let file = dir.join("patch_target.py");
