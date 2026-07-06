@@ -1717,7 +1717,10 @@ fn load_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
     let mut statement =
         connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
     let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
+        Ok((
+            nonempty_string_from_row(row, 0, "file_state.file_path")?,
+            row.get::<_, i64>(1)? as u64,
+        ))
     })?;
 
     let mut states = BTreeMap::new();

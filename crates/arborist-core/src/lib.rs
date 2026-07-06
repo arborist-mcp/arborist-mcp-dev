@@ -7053,6 +7053,40 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(reference_names_json, "[\"\"]");
     }
 
+    #[test]
+    fn refresh_rejects_empty_persisted_file_state_path_without_rewrite() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                [normalize_path(&dir)],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_state(file_path, fingerprint) VALUES('', 1)",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject empty persisted file_state paths");
+
+        assert!(error.to_string().contains("empty file_state.file_path"));
+        let connection = Connection::open(&db_path).unwrap();
+        let persisted_file_path: String = connection
+            .query_row("SELECT file_path FROM file_state", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(persisted_file_path, "");
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)

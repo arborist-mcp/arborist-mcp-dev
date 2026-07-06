@@ -207,7 +207,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Disk-backed file entrypoints normalize paths before reading or writing, so response payloads and evidence keys do not preserve caller-supplied `.` or `..` aliases
 - VFS operations normalize file identities before opening, editing, listing, closing, or committing buffers, so path aliases share one session entry instead of creating parallel dirty state
 - Persisted trace requests with a missing `index_db_path` now fail closed without creating an empty SQLite database
-- Persisted trace reads now fail closed on missing or corrupt symbol index metadata, symbol identity fields, byte ranges, or JSON graph/list columns instead of silently defaulting damaged values
+- Persisted trace reads now fail closed on missing or corrupt symbol index metadata, symbol identity fields, file-state paths, byte ranges, or JSON graph/list columns instead of silently defaulting damaged values
 - Persisted trace reads and single-file refreshes also reject existing non-index, incomplete-schema, metadata-incomplete, or type-incompatible SQLite databases without initializing or partially migrating Arborist tables as a side effect
 - Single-file index refreshes now reject existing symbol databases that were built for a different workspace, avoiding mixed-workspace persisted graph state
 - Workspace indexing, single-file refreshes, and live VFS trace overlays skip generated/cache/dependency directories such as `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.venv`, `__pycache__`, `venv`, `node_modules`, `target`, `dist`, and `build`
