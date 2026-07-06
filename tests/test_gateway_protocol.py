@@ -21,7 +21,7 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(gateway_module.TOOL_NAMES, tuple(gateway_module.TOOL_HANDLERS))
         for handler_name in gateway_module.TOOL_HANDLERS.values():
             with self.subTest(handler_name=handler_name):
-                self.assertTrue(hasattr(ArboristGateway, handler_name))
+                self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
 
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
