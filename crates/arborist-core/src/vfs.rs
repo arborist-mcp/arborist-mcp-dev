@@ -206,22 +206,15 @@ impl VirtualFileSystem {
             semantic_target_range(&entry.path, &entry.source, semantic_target)?
         };
 
-        let previous = {
-            let entry = self
-                .entries
-                .get(&normalized)
-                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-            (
-                entry.source.clone(),
-                entry.tree.clone(),
-                entry.version,
-                entry.dirty,
-            )
-        };
+        let previous = self
+            .entries
+            .get(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+            .clone();
 
         self.apply_edit(&path, start_byte, end_byte, new_code)?;
 
-        let result = {
+        let result = match {
             let entry = self
                 .entries
                 .get(&normalized)
@@ -233,18 +226,17 @@ impl VirtualFileSystem {
                 bypass_reason,
                 start_byte,
                 new_code.len(),
-            )?
+            )
+        } {
+            Ok(result) => result,
+            Err(error) => {
+                self.entries.insert(normalized, previous);
+                return Err(error).context("failed to validate virtual patch");
+            }
         };
 
         if !result.applied {
-            let entry = self
-                .entries
-                .get_mut(&normalized)
-                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-            entry.source = previous.0;
-            entry.tree = previous.1;
-            entry.version = previous.2;
-            entry.dirty = previous.3;
+            self.entries.insert(normalized, previous);
         }
 
         Ok(result)
@@ -702,6 +694,40 @@ mod tests {
         let snapshot = vfs.read_file(&file).unwrap();
         assert!(!snapshot.dirty);
         assert!(snapshot.source.contains("return helper(1)"));
+    }
+
+    #[test]
+    fn rolls_back_virtual_patch_when_validation_errors() {
+        let workspace = temp_workspace();
+        let file = workspace.join("sample.c");
+        let bad_include = workspace.join("bad.txt");
+        fs::write(&bad_include, "int helper(void);\n").unwrap();
+        fs::write(
+            &file,
+            "#include \"bad.txt\"\n\nint value(void) {\n    return 1;\n}\n",
+        )
+        .unwrap();
+        let mut vfs = VirtualFileSystem::new();
+        let initial = vfs.read_file(&file).unwrap();
+
+        let error = vfs
+            .patch_node(
+                &file,
+                "value",
+                "int value(void) {\n    return helper();\n}\n",
+                None,
+            )
+            .expect_err("validation errors should reject the virtual patch");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to validate virtual patch")
+        );
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert_eq!(snapshot.source, initial.source);
+        assert_eq!(snapshot.version, initial.version);
+        assert_eq!(snapshot.dirty, initial.dirty);
     }
 
     #[test]
