@@ -1699,9 +1699,14 @@ fn validate_symbol_index_workspace(
         )
         .optional()?;
 
-    if let Some(stored_workspace) = stored_workspace
-        && stored_workspace != expected_workspace
-    {
+    let Some(stored_workspace) = stored_workspace else {
+        return Err(anyhow!(
+            "missing workspace_root metadata in symbol index {}",
+            db_path.display()
+        ));
+    };
+
+    if stored_workspace != expected_workspace {
         return Err(anyhow!(
             "symbol index {} belongs to workspace {}, not {}",
             db_path.display(),

@@ -6313,6 +6313,12 @@ def orchestrate(value: int) -> int:\n    return value\n",
 
         create_minimal_symbol_index_schema(&connection);
         connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                [normalize_path(&dir)],
+            )
+            .unwrap();
+        connection
             .execute("DELETE FROM metadata WHERE key = 'indexed_files'", [])
             .unwrap();
         drop(connection);
@@ -6332,6 +6338,12 @@ def orchestrate(value: int) -> int:\n    return value\n",
 
         create_minimal_symbol_index_schema(&connection);
         connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                [normalize_path(&dir)],
+            )
+            .unwrap();
+        connection
             .execute("DELETE FROM metadata WHERE key = 'indexed_files'", [])
             .unwrap();
         drop(connection);
@@ -6345,6 +6357,36 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let metadata_count: usize = connection
             .query_row(
                 "SELECT COUNT(*) FROM metadata WHERE key = 'indexed_files'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(metadata_count, 0);
+    }
+
+    #[test]
+    fn refresh_existing_database_with_missing_workspace_metadata_does_not_migrate() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject databases with missing workspace_root metadata");
+
+        assert!(
+            error
+                .to_string()
+                .contains("missing workspace_root metadata")
+        );
+        let connection = Connection::open(&db_path).unwrap();
+        let metadata_count: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM metadata WHERE key = 'workspace_root'",
                 [],
                 |row| row.get(0),
             )
