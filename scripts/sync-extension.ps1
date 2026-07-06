@@ -34,6 +34,10 @@ try {
 }
 
 if (-not (Test-Path $source)) {
+    if ($SkipBuild) {
+        throw "Compiled extension not found at $source. Re-run without -SkipBuild or build it first with cargo build --locked -p arborist-py."
+    }
+
     throw "Compiled extension not found at $source after cargo build."
 }
 
