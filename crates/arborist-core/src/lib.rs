@@ -242,6 +242,18 @@ pub fn validate_patch_with_trace_context(
         });
     }
 
+    if !patch.applied {
+        return Ok(TraceBackedPatchResult {
+            patch,
+            trace_target,
+            trace: None,
+            trace_validation: None,
+            trace_error: Some(
+                "trace skipped because patch validation rejected the patch".to_string(),
+            ),
+        });
+    }
+
     let mut overrides = BTreeMap::new();
     overrides.insert(patch.file.clone(), patch.updated_source.clone());
     let trace = symbols::trace_symbol_graph_with_overrides(
@@ -1518,6 +1530,37 @@ int helper(int value) {
         assert_eq!(
             result.trace_error.as_deref(),
             Some("trace skipped because patch validation reported syntax errors")
+        );
+    }
+
+    #[test]
+    fn skips_trace_when_context_patch_is_rejected_by_patch_gate() {
+        let dir = temporary_dir();
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &caller,
+            "def orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let result = validate_patch_with_trace_context_from_path(
+            &dir,
+            &caller,
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return missing_helper(value)\n",
+            None,
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+        assert!(!result.patch.applied);
+        assert_eq!(result.patch.validation.commit_gate.status, "rejected");
+        assert!(result.trace.is_none());
+        assert!(result.trace_validation.is_none());
+        assert_eq!(
+            result.trace_error.as_deref(),
+            Some("trace skipped because patch validation rejected the patch")
         );
     }
 
