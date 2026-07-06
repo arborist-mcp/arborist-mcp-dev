@@ -6388,8 +6388,8 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let missing_system_header = dir.join("stdio.h");
         let stats = refresh_symbol_index_for_file(&dir, &db_path, &missing_system_header).unwrap();
         assert_eq!(stats.indexed_files, 3);
-        assert_eq!(stats.rebuilt_files, 1);
-        assert_eq!(stats.reused_files, 2);
+        assert_eq!(stats.rebuilt_files, 0);
+        assert_eq!(stats.reused_files, 3);
     }
 
     #[test]

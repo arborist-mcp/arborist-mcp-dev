@@ -173,7 +173,7 @@ pub fn refresh_symbol_index_for_file(
         } else {
             file_states.remove(&normalized_refresh_path);
             grouped_symbols.remove(&normalized_refresh_path);
-            if !skip_refresh_path || had_indexed_state {
+            if had_indexed_state {
                 rebuilt_files += 1;
             }
         }
