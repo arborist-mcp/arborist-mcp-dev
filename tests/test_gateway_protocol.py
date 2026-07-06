@@ -916,6 +916,7 @@ class GatewayProtocolTests(unittest.TestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 1)
+        self.assertEqual(response["result"]["serverInfo"]["version"], gateway_module.__version__)
         self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
         self.assertEqual(
             response["result"]["capabilities"]["tools"],
@@ -1064,6 +1065,7 @@ class GatewayProtocolTests(unittest.TestCase):
         response = gateway_module.json.loads(mock_print.call_args.args[0])
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 26)
+        self.assertEqual(response["result"]["serverInfo"]["version"], gateway_module.__version__)
         self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
         self.assertEqual(
             response["result"]["capabilities"]["tools"],

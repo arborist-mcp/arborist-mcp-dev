@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 
 TOOL_NAMES = (
     "arborist/get_semantic_skeleton",
@@ -90,7 +92,7 @@ class ArboristGateway:
                 result = {
                     "serverInfo": {
                         "name": "arborist-mcp",
-                        "version": "0.1.0",
+                        "version": __version__,
                     },
                     "capabilities": {"tools": list(TOOL_NAMES)},
                     "supportedLanguages": self._require_core().supported_languages(),
