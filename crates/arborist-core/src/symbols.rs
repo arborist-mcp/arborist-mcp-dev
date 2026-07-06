@@ -133,8 +133,9 @@ pub fn refresh_symbol_index_for_file(
 
     let connection = Connection::open(&db_path)?;
     require_symbol_index_tables(&connection, &db_path)?;
-    ensure_symbol_tables(&connection)?;
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
+    load_indexed_files_metadata(&connection)?;
+    ensure_symbol_tables(&connection)?;
 
     let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);
@@ -1492,6 +1493,7 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
 
     let connection = Connection::open(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
+    load_indexed_files_metadata(&connection)?;
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
 }

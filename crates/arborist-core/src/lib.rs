@@ -324,6 +324,7 @@ mod tests {
         trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
         validate_patch_with_trace_context_from_path,
     };
+    use crate::language::normalize_path;
 
     #[test]
     fn builds_python_skeleton_with_nested_members() {
@@ -6161,6 +6162,22 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_rejects_missing_metadata_before_legacy_migration() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_legacy_symbol_index_schema_without_reference_names(&connection, None, None);
+        drop(connection);
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("missing metadata should reject before legacy migration");
+
+        assert!(error.to_string().contains("missing indexed_files metadata"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+    }
+
+    #[test]
     fn trace_from_index_rejects_negative_persisted_byte_ranges() {
         let dir = temporary_dir();
         let db_path = dir.join("symbols.db");
@@ -6867,6 +6884,33 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(error.to_string().contains("belongs to workspace"));
     }
 
+    #[test]
+    fn refresh_rejects_different_workspace_before_legacy_migration() {
+        let dir = temporary_dir();
+        let workspace_a = dir.join("workspace-a");
+        let workspace_b = dir.join("workspace-b");
+        let db_path = dir.join("symbols.db");
+        let helper = workspace_b.join("helper.py");
+
+        fs::create_dir_all(&workspace_a).unwrap();
+        fs::create_dir_all(&workspace_b).unwrap();
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        let connection = Connection::open(&db_path).unwrap();
+        create_legacy_symbol_index_schema_without_reference_names(
+            &connection,
+            Some(&normalize_path(&workspace_a)),
+            Some("0"),
+        );
+        drop(connection);
+
+        let error = refresh_symbol_index_for_file(&workspace_b, &db_path, &helper)
+            .expect_err("wrong-workspace refresh should reject before legacy migration");
+
+        assert!(error.to_string().contains("belongs to workspace"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6965,6 +7009,60 @@ def orchestrate(value: int) -> int:\n    return value\n",
                 ",
             )
             .unwrap();
+    }
+
+    fn create_legacy_symbol_index_schema_without_reference_names(
+        connection: &Connection,
+        workspace_root: Option<&str>,
+        indexed_files: Option<&str>,
+    ) {
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte INTEGER NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    PRIMARY KEY (semantic_path, file_path)
+                );
+                CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY,
+                    fingerprint INTEGER NOT NULL
+                );
+                ",
+            )
+            .unwrap();
+
+        if let Some(workspace_root) = workspace_root {
+            connection
+                .execute(
+                    "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                    [workspace_root],
+                )
+                .unwrap();
+        }
+        if let Some(indexed_files) = indexed_files {
+            connection
+                .execute(
+                    "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)",
+                    [indexed_files],
+                )
+                .unwrap();
+        }
     }
 
     fn symbol_table_columns(connection: &Connection) -> Vec<String> {
