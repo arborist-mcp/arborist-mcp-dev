@@ -850,6 +850,43 @@ mod tests {
     }
 
     #[test]
+    fn rolls_back_position_edits_when_later_edit_splits_utf8_character() {
+        let file = temp_file("def value() -> str:\n    return 'é'\n");
+        let mut vfs = VirtualFileSystem::new();
+        let initial = vfs.read_file(&file).unwrap();
+
+        let error = vfs
+            .apply_position_edits(
+                &file,
+                &[
+                    PositionEdit {
+                        start: Position { row: 0, column: 0 },
+                        end: Position { row: 0, column: 0 },
+                        new_text: "# staged\n".to_string(),
+                    },
+                    PositionEdit {
+                        start: Position { row: 2, column: 13 },
+                        end: Position { row: 2, column: 13 },
+                        new_text: "x".to_string(),
+                    },
+                ],
+            )
+            .expect_err("position edits must not split UTF-8 characters");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to apply position edit at index 1")
+        );
+        let error_chain = format!("{error:#}");
+        assert!(error_chain.contains("does not align to a UTF-8 character boundary"));
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert_eq!(snapshot.source, initial.source);
+        assert_eq!(snapshot.version, initial.version);
+        assert_eq!(snapshot.dirty, initial.dirty);
+    }
+
+    #[test]
     fn closes_virtual_file_without_persisting_changes() {
         let file = temp_file("def value() -> int:\n    return 1\n");
         let mut vfs = VirtualFileSystem::new();

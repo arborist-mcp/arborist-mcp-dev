@@ -224,6 +224,14 @@ pub fn offset_for_position(source: &str, position: &Position) -> Result<usize> {
 
     for (index, byte) in source.as_bytes().iter().enumerate() {
         if row == position.row && column == position.column {
+            if !source.is_char_boundary(index) {
+                bail!(
+                    "position {}:{} maps to byte offset {} which does not align to a UTF-8 character boundary",
+                    position.row,
+                    position.column,
+                    index
+                );
+            }
             return Ok(index);
         }
 
@@ -507,6 +515,20 @@ mod tests {
         assert_eq!(
             offset_for_position(source, &Position { row: 1, column: 1 }).unwrap(),
             source.len()
+        );
+    }
+
+    #[test]
+    fn offset_for_position_rejects_non_boundary_byte_columns() {
+        let source = "é\nx";
+
+        let error = offset_for_position(source, &Position { row: 0, column: 1 })
+            .expect_err("positions inside a UTF-8 character should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not align to a UTF-8 character boundary")
         );
     }
 }
