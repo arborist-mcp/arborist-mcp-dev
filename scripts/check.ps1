@@ -97,6 +97,25 @@ function Get-RequiredRegexValue {
     return $match.Groups[1].Value
 }
 
+function Get-CargoLockPackageVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$PackageName
+    )
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    $escapedPackageName = [regex]::Escape($PackageName)
+    $pattern = '(?ms)^\[\[package\]\]\s*(?:(?!^\[\[package\]\]).)*?^name\s*=\s*"' + $escapedPackageName + '"\s*(?:(?!^\[\[package\]\]).)*?^version\s*=\s*"([^"]+)"'
+    $match = [regex]::Match($content, $pattern)
+    if (-not $match.Success) {
+        throw "Could not read Cargo.lock version for package $PackageName from $Path."
+    }
+
+    return $match.Groups[1].Value
+}
+
 function Invoke-VersionConsistencyCheck {
     param(
         [Parameter(Mandatory = $true)]
@@ -119,6 +138,15 @@ function Invoke-VersionConsistencyCheck {
 
     if ($pyprojectVersion -ne $cargoVersion -or $pyprojectVersion -ne $packageVersion) {
         throw "Version mismatch: pyproject=$pyprojectVersion Cargo=$cargoVersion package=$packageVersion."
+    }
+
+    foreach ($packageName in @("arborist-core", "arborist-py")) {
+        $lockVersion = Get-CargoLockPackageVersion `
+            (Join-Path $RepoRoot "Cargo.lock") `
+            $packageName
+        if ($lockVersion -ne $cargoVersion) {
+            throw "Version mismatch: Cargo workspace=$cargoVersion Cargo.lock $packageName=$lockVersion."
+        }
     }
 }
 
