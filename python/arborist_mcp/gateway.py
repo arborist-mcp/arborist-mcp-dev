@@ -146,7 +146,7 @@ class ArboristGateway:
         query = self._require_string(params, "query")
         source = self._optional_string(params, "source", allow_empty=True)
         payload = self._require_core().execute_tree_query_json(file_path, query, source)
-        return self._decode_core_array(payload)
+        return self._decode_core_object_array(payload)
 
     def _patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -284,7 +284,7 @@ class ArboristGateway:
     def _list_symbol_indexes(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         del params
         payload = self._require_core().list_symbol_indexes_json()
-        return self._decode_core_array(payload)
+        return self._decode_core_object_array(payload)
 
     def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -314,7 +314,7 @@ class ArboristGateway:
     def _list_virtual_files(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         dirty_only = self._optional_bool(params, "dirty_only", default=False)
         payload = self._require_core().list_virtual_files_json(dirty_only)
-        return self._decode_core_array(payload)
+        return self._decode_core_object_array(payload)
 
     def _read_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
@@ -371,13 +371,19 @@ class ArboristGateway:
         return value
 
     @staticmethod
-    def _decode_core_array(payload: str) -> list[Any]:
+    def _decode_core_object_array(payload: str) -> list[dict[str, Any]]:
         value = ArboristGateway._decode_core_payload(payload)
         if not isinstance(value, list):
             raise JsonRpcError(
                 -32000,
                 "invalid JSON from arborist core: expected array payload",
             )
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise JsonRpcError(
+                    -32000,
+                    f"invalid JSON from arborist core: expected object item at index {index}",
+                )
         return value
 
     @staticmethod

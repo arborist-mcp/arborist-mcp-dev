@@ -1373,6 +1373,29 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertIn("invalid JSON from arborist core", response["error"]["message"])
         self.assertIn("expected array", response["error"]["message"])
 
+    def test_rejects_list_core_payload_with_non_object_items(self) -> None:
+        class StubCore:
+            def execute_tree_query_json(self, *args: object) -> str:
+                return "[null]"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 54,
+                "method": "arborist/execute_tree_query",
+                "params": {"file_path": "sample.py", "query": "(module) @module"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 54)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assertIn("expected object item", response["error"]["message"])
+
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         gateway = ArboristGateway()
 
