@@ -30,10 +30,10 @@ pub fn semantic_path(node: Node<'_>, source: &str) -> Result<String> {
     let mut current = Some(node);
 
     while let Some(candidate) = current {
-        if matches!(candidate.kind(), "class_definition" | "function_definition") {
-            if let Some(name_node) = candidate.child_by_field_name("name") {
-                segments.push(node_text(name_node, source)?.trim().to_string());
-            }
+        if matches!(candidate.kind(), "class_definition" | "function_definition")
+            && let Some(name_node) = candidate.child_by_field_name("name")
+        {
+            segments.push(node_text(name_node, source)?.trim().to_string());
         }
         current = candidate.parent();
     }
@@ -540,11 +540,11 @@ fn find_c_semantic_node<'tree>(
             rank = Some(1000 + c_symbol_node_rank(child.kind()));
         }
 
-        if let Some(rank) = rank {
-            if rank > best_rank {
-                best_rank = rank;
-                best_match = Some(child);
-            }
+        if let Some(rank) = rank
+            && rank > best_rank
+        {
+            best_rank = rank;
+            best_match = Some(child);
         }
     }
 
@@ -696,10 +696,10 @@ fn search_python_symbol<'tree>(
 
     let child_count = node.child_count();
     for index in 0..child_count {
-        if let Some(child) = node.child(index) {
-            if let Some(found) = search_python_symbol(child, source, target_path)? {
-                return Ok(Some(found));
-            }
+        if let Some(child) = node.child(index)
+            && let Some(found) = search_python_symbol(child, source, target_path)?
+        {
+            return Ok(Some(found));
         }
     }
 

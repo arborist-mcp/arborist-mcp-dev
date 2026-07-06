@@ -827,12 +827,11 @@ fn resolve_workspace_symbols_incremental(
         if persisted_states
             .get(&normalized_path)
             .is_some_and(|stored| *stored == fingerprint)
+            && let Some(stored_symbols) = persisted_symbols.get(&normalized_path)
         {
-            if let Some(stored_symbols) = persisted_symbols.get(&normalized_path) {
-                raw_symbols.extend(stored_symbols.iter().cloned());
-                reused_files += 1;
-                continue;
-            }
+            raw_symbols.extend(stored_symbols.iter().cloned());
+            reused_files += 1;
+            continue;
         }
 
         let document = parse_document(&path, &source)?;
@@ -897,15 +896,14 @@ fn c_symbol_family_anchor(symbol: &IndexedSymbol, raw_symbols: &[IndexedSymbol])
 
     let best_header = raw_symbols
         .iter()
-        .filter_map(|candidate| {
-            (candidate.semantic_path == symbol.semantic_path
+        .filter(|candidate| {
+            candidate.semantic_path == symbol.semantic_path
                 && !candidate.semantic_path.contains("::")
-                && is_c_header_path(Path::new(&candidate.file_path)))
-            .then(|| {
-                let rank =
-                    c_family_header_rank(source_path, &candidate.file_path, &include_context);
-                (candidate, rank)
-            })
+                && is_c_header_path(Path::new(&candidate.file_path))
+        })
+        .map(|candidate| {
+            let rank = c_family_header_rank(source_path, &candidate.file_path, &include_context);
+            (candidate, rank)
         })
         .filter(|(_, rank)| *rank > 0)
         .max_by_key(|(_, rank)| *rank)
@@ -994,10 +992,9 @@ fn resolve_dependencies_for_symbol(
     for reference_name in &symbol.references_by_name {
         if let Some(target_symbol_id) =
             resolve_reference_path(reference_name, symbol, raw_symbols, name_index)
+            && target_symbol_id != symbol.symbol_id
         {
-            if target_symbol_id != symbol.symbol_id {
-                dependencies.insert(target_symbol_id);
-            }
+            dependencies.insert(target_symbol_id);
         }
     }
     dependencies.into_iter().collect()
@@ -1011,10 +1008,11 @@ fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta>
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
         for index in indexes {
-            dependencies.extend(
-                resolve_dependencies_for_symbol(&raw_symbols[*index], raw_symbols, &name_index)
-                    .into_iter(),
-            );
+            dependencies.extend(resolve_dependencies_for_symbol(
+                &raw_symbols[*index],
+                raw_symbols,
+                &name_index,
+            ));
         }
     }
 
@@ -1090,7 +1088,7 @@ fn impacted_symbol_ids(
         if changed_file_paths.contains(&symbol.file_path) {
             continue;
         }
-        if symbol.base_name.as_str().is_empty() {
+        if symbol.base_name.is_empty() {
             continue;
         }
         if symbol
@@ -1150,10 +1148,11 @@ fn refresh_resolved_symbol_subgraph(
         let mut symbol = symbol_meta_from_indexed(raw_symbol);
         let mut dependencies = BTreeSet::new();
         for index in indexes {
-            dependencies.extend(
-                resolve_dependencies_for_symbol(&raw_symbols[*index], raw_symbols, &name_index)
-                    .into_iter(),
-            );
+            dependencies.extend(resolve_dependencies_for_symbol(
+                &raw_symbols[*index],
+                raw_symbols,
+                &name_index,
+            ));
         }
         symbol.dependencies = dependencies.into_iter().collect();
         resolved_map.insert(impacted_id.clone(), symbol);

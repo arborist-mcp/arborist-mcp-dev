@@ -115,8 +115,8 @@ fn c_capture_owner(
         if !contains_node(child, node) {
             continue;
         }
-        if !matches!(child.kind(), "function_definition" | "type_definition")
-            && !(child.kind() == "declaration" && contains_kind(child, "function_declarator"))
+        if !(matches!(child.kind(), "function_definition" | "type_definition")
+            || child.kind() == "declaration" && contains_kind(child, "function_declarator"))
         {
             continue;
         }
