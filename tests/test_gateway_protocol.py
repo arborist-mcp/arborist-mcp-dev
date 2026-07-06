@@ -903,6 +903,32 @@ class GatewayProtocolTests(unittest.TestCase):
             ),
         )
 
+    def test_patch_ast_node_accepts_unsaved_source_without_writing_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir).joinpath("sample.py")
+            gateway = ArboristGateway()
+
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 44,
+                    "method": "arborist/patch_ast_node",
+                    "params": {
+                        "file_path": str(file_path),
+                        "source": "def top_level() -> int:\n    return 1\n",
+                        "semantic_path": "top_level",
+                        "new_code": "def top_level() -> int:\n    return 2\n",
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 44)
+            self.assertNotIn("error", response)
+            self.assertFalse(file_path.exists())
+            self.assertTrue(response["result"]["applied"])
+            self.assertIn("return 2", response["result"]["updated_source"])
+
     def test_rejects_blank_expand_node_selectors(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(self, *args: object) -> str:
