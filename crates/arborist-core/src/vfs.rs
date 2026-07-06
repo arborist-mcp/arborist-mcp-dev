@@ -895,6 +895,44 @@ mod tests {
     }
 
     #[test]
+    fn commits_new_file_refresh_registered_symbol_index() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let caller_path = workspace.join("caller.py");
+        let db_path = workspace.join("symbols.db");
+
+        fs::write(
+            &caller_path,
+            "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let stats = vfs.register_symbol_index(&workspace, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 1);
+
+        let initial_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(initial_trace.callees.is_empty());
+
+        vfs.open_file(
+            &helper_path,
+            Some("def helper(value: int) -> int:\n    return value + 1\n"),
+        )
+        .unwrap();
+        vfs.commit_file(&helper_path).unwrap();
+
+        let updated_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(
+            updated_trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn commits_skip_registered_index_refresh_for_ignored_dirs() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");
