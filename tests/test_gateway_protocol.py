@@ -17,6 +17,12 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
         self.assertEqual(gateway_module.__version__, version_module.__version__)
 
+    def test_advertised_tools_have_gateway_handlers(self) -> None:
+        self.assertEqual(gateway_module.TOOL_NAMES, tuple(gateway_module.TOOL_HANDLERS))
+        for handler_name in gateway_module.TOOL_HANDLERS.values():
+            with self.subTest(handler_name=handler_name):
+                self.assertTrue(hasattr(ArboristGateway, handler_name))
+
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

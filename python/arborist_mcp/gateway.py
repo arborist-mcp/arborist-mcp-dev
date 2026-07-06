@@ -10,29 +10,30 @@ from typing import Any
 from . import __version__
 
 
-TOOL_NAMES = (
-    "arborist/get_semantic_skeleton",
-    "arborist/patch_ast_node",
-    "arborist/patch_virtual_ast_node",
-    "arborist/register_symbol_index",
-    "arborist/refresh_symbol_index_for_file",
-    "arborist/unregister_symbol_index",
-    "arborist/list_symbol_indexes",
-    "arborist/did_open",
-    "arborist/did_change",
-    "arborist/did_close",
-    "arborist/list_virtual_files",
-    "arborist/read_virtual_file",
-    "arborist/apply_buffer_edit",
-    "arborist/commit_virtual_file",
-    "arborist/discard_virtual_file",
-    "arborist/rebuild_symbol_index",
-    "arborist/trace_symbol_graph",
-    "arborist/replay_patch_evidence_against_trace",
-    "arborist/validate_patch_commit_with_trace",
-    "arborist/validate_patch_with_trace_context",
-    "arborist/execute_tree_query",
-)
+TOOL_HANDLERS = {
+    "arborist/get_semantic_skeleton": "_get_semantic_skeleton",
+    "arborist/patch_ast_node": "_patch_ast_node",
+    "arborist/patch_virtual_ast_node": "_patch_virtual_ast_node",
+    "arborist/register_symbol_index": "_register_symbol_index",
+    "arborist/refresh_symbol_index_for_file": "_refresh_symbol_index_for_file",
+    "arborist/unregister_symbol_index": "_unregister_symbol_index",
+    "arborist/list_symbol_indexes": "_list_symbol_indexes",
+    "arborist/did_open": "_did_open",
+    "arborist/did_change": "_did_change",
+    "arborist/did_close": "_did_close",
+    "arborist/list_virtual_files": "_list_virtual_files",
+    "arborist/read_virtual_file": "_read_virtual_file",
+    "arborist/apply_buffer_edit": "_apply_buffer_edit",
+    "arborist/commit_virtual_file": "_commit_virtual_file",
+    "arborist/discard_virtual_file": "_discard_virtual_file",
+    "arborist/rebuild_symbol_index": "_rebuild_symbol_index",
+    "arborist/trace_symbol_graph": "_trace_symbol_graph",
+    "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
+    "arborist/validate_patch_commit_with_trace": "_validate_patch_commit_with_trace",
+    "arborist/validate_patch_with_trace_context": "_validate_patch_with_trace_context",
+    "arborist/execute_tree_query": "_execute_tree_query",
+}
+TOOL_NAMES = tuple(TOOL_HANDLERS)
 
 
 class JsonRpcError(ValueError):
@@ -97,48 +98,9 @@ class ArboristGateway:
                     "capabilities": {"tools": list(TOOL_NAMES)},
                     "supportedLanguages": self._require_core().supported_languages(),
                 }
-            elif method == "arborist/get_semantic_skeleton":
-                result = self._get_semantic_skeleton(params)
-            elif method == "arborist/patch_ast_node":
-                result = self._patch_ast_node(params)
-            elif method == "arborist/patch_virtual_ast_node":
-                result = self._patch_virtual_ast_node(params)
-            elif method == "arborist/register_symbol_index":
-                result = self._register_symbol_index(params)
-            elif method == "arborist/refresh_symbol_index_for_file":
-                result = self._refresh_symbol_index_for_file(params)
-            elif method == "arborist/unregister_symbol_index":
-                result = self._unregister_symbol_index(params)
-            elif method == "arborist/list_symbol_indexes":
-                result = self._list_symbol_indexes()
-            elif method == "arborist/did_open":
-                result = self._did_open(params)
-            elif method == "arborist/did_change":
-                result = self._did_change(params)
-            elif method == "arborist/did_close":
-                result = self._did_close(params)
-            elif method == "arborist/list_virtual_files":
-                result = self._list_virtual_files(params)
-            elif method == "arborist/read_virtual_file":
-                result = self._read_virtual_file(params)
-            elif method == "arborist/apply_buffer_edit":
-                result = self._apply_buffer_edit(params)
-            elif method == "arborist/commit_virtual_file":
-                result = self._commit_virtual_file(params)
-            elif method == "arborist/discard_virtual_file":
-                result = self._discard_virtual_file(params)
-            elif method == "arborist/rebuild_symbol_index":
-                result = self._rebuild_symbol_index(params)
-            elif method == "arborist/trace_symbol_graph":
-                result = self._trace_symbol_graph(params)
-            elif method == "arborist/replay_patch_evidence_against_trace":
-                result = self._replay_patch_evidence_against_trace(params)
-            elif method == "arborist/validate_patch_commit_with_trace":
-                result = self._validate_patch_commit_with_trace(params)
-            elif method == "arborist/validate_patch_with_trace_context":
-                result = self._validate_patch_with_trace_context(params)
-            elif method == "arborist/execute_tree_query":
-                result = self._execute_tree_query(params)
+            elif method in TOOL_HANDLERS:
+                handler = getattr(self, TOOL_HANDLERS[method])
+                result = handler(params)
             else:
                 return self._error_response(response_id, -32601, f"method not found: {method}")
 
@@ -318,7 +280,8 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         return self._require_core().unregister_symbol_index_json(workspace_root)
 
-    def _list_symbol_indexes(self) -> list[dict[str, Any]]:
+    def _list_symbol_indexes(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        del params
         payload = self._require_core().list_symbol_indexes_json()
         return self._decode_core_payload(payload)
 
