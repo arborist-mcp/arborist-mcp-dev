@@ -114,6 +114,9 @@ Run the full local gate:
 .\scripts\check.ps1
 ```
 
+The full gate also checks version consistency, builds and syncs the local
+gateway extension, and runs a real `initialize` smoke request.
+
 Or run the core checks directly:
 
 ```powershell
