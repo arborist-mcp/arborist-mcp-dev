@@ -6,6 +6,9 @@ use tree_sitter::{Language, Node, Parser, Point, Tree};
 
 use crate::model::{LanguageId, Position};
 
+pub const C_HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hh"];
+pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
+
 pub struct ParsedDocument {
     pub language_id: LanguageId,
     pub tree: Tree,
@@ -68,10 +71,12 @@ pub fn detect_language(path: &Path) -> Result<LanguageId> {
             Ok(LanguageId::Python)
         }
         Some(ext)
-            if ext.eq_ignore_ascii_case("c")
-                || ["h", "hpp", "hh"]
+            if C_SOURCE_EXTENSIONS
+                .iter()
+                .any(|extension| ext.eq_ignore_ascii_case(extension))
+                || C_HEADER_EXTENSIONS
                     .iter()
-                    .any(|header_extension| ext.eq_ignore_ascii_case(header_extension)) =>
+                    .any(|extension| ext.eq_ignore_ascii_case(extension)) =>
         {
             Ok(LanguageId::C)
         }
@@ -87,7 +92,7 @@ pub fn is_c_header_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            ["h", "hpp", "hh"]
+            C_HEADER_EXTENSIONS
                 .iter()
                 .any(|header_extension| extension.eq_ignore_ascii_case(header_extension))
         })
