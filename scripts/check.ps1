@@ -51,10 +51,55 @@ function Invoke-GatewayInitializeSmoke {
     }
 }
 
+function Get-RequiredRegexValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Pattern,
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    $content = Get-Content -LiteralPath $Path -Raw
+    $match = [regex]::Match($content, $Pattern)
+    if (-not $match.Success) {
+        throw "Could not read $Description from $Path."
+    }
+
+    return $match.Groups[1].Value
+}
+
+function Invoke-VersionConsistencyCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    Write-Host "Checking version consistency..."
+    $pyprojectVersion = Get-RequiredRegexValue `
+        (Join-Path $RepoRoot "pyproject.toml") `
+        '(?ms)^\[project\]\s*(?:(?!^\[).)*?^version\s*=\s*"([^"]+)"' `
+        "pyproject version"
+    $cargoVersion = Get-RequiredRegexValue `
+        (Join-Path $RepoRoot "Cargo.toml") `
+        '(?ms)^\[workspace\.package\]\s*(?:(?!^\[).)*?^version\s*=\s*"([^"]+)"' `
+        "Cargo workspace version"
+    $packageVersion = Get-RequiredRegexValue `
+        (Join-Path $RepoRoot "python\arborist_mcp\_version.py") `
+        '(?m)^__version__\s*=\s*"([^"]+)"' `
+        "Python package version"
+
+    if ($pyprojectVersion -ne $cargoVersion -or $pyprojectVersion -ne $packageVersion) {
+        throw "Version mismatch: pyproject=$pyprojectVersion Cargo=$cargoVersion package=$packageVersion."
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 Push-Location $repoRoot
 try {
+    Invoke-VersionConsistencyCheck $repoRoot
     Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
     Invoke-NativeOrThrow "Running Rust tests..." "cargo" @("test")
     Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--all-targets", "--", "-D", "warnings")
