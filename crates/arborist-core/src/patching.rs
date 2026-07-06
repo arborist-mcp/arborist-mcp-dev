@@ -1996,32 +1996,30 @@ fn collect_python_reference_entries(
     local_bindings: &[PythonAccessibleSymbol],
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
-    if node.kind() == "attribute" {
-        if let (Some(object_node), Some(attribute_node)) = (
+    if node.kind() == "attribute"
+        && let (Some(object_node), Some(attribute_node)) = (
             node.child_by_field_name("object"),
             node.child_by_field_name("attribute"),
-        ) {
-            if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
-                let object_name = node_text(object_node, source)?.trim().to_string();
-                let attribute_name = node_text(attribute_node, source)?.trim().to_string();
-                if let Some(PythonImportBinding::Module { module_name }) =
-                    bindings.get(&object_name)
-                {
-                    references.insert(format!("{module_name}.{attribute_name}"));
-                    return Ok(());
-                }
+        )
+    {
+        if object_node.kind() == "identifier" && attribute_node.kind() == "identifier" {
+            let object_name = node_text(object_node, source)?.trim().to_string();
+            let attribute_name = node_text(attribute_node, source)?.trim().to_string();
+            if let Some(PythonImportBinding::Module { module_name }) = bindings.get(&object_name) {
+                references.insert(format!("{module_name}.{attribute_name}"));
+                return Ok(());
             }
-
-            collect_python_reference_entries(
-                current_path,
-                object_node,
-                source,
-                bindings,
-                local_bindings,
-                references,
-            )?;
-            return Ok(());
         }
+
+        collect_python_reference_entries(
+            current_path,
+            object_node,
+            source,
+            bindings,
+            local_bindings,
+            references,
+        )?;
+        return Ok(());
     }
 
     if node.kind() == "identifier" && should_count_python_reference(node, source) {
@@ -2042,16 +2040,15 @@ fn collect_python_reference_entries(
                     }
                 }
             }
-        } else if !is_python_default_parameter_value(node)
-            && python_local_binding_visible(local_bindings, &name, node)
+        } else if (!is_python_default_parameter_value(node)
+            && python_local_binding_visible(local_bindings, &name, node))
+            || python_enclosing_local_binding_should_suppress_reference(
+                current_path,
+                node,
+                source,
+                &name,
+            )?
         {
-            return Ok(());
-        } else if python_enclosing_local_binding_should_suppress_reference(
-            current_path,
-            node,
-            source,
-            &name,
-        )? {
             return Ok(());
         } else {
             references.insert(name);
@@ -2443,14 +2440,14 @@ fn should_count_python_reference(node: Node<'_>, source: &str) -> bool {
         return false;
     }
 
-    if let Some(left) = parent.child_by_field_name("left") {
-        if matches!(
+    if let Some(left) = parent.child_by_field_name("left")
+        && matches!(
             parent.kind(),
             "assignment" | "augmented_assignment" | "for_statement" | "for_in_clause"
-        ) && contains_node(left, node)
-        {
-            return false;
-        }
+        )
+        && contains_node(left, node)
+    {
+        return false;
     }
 
     true
@@ -2689,10 +2686,10 @@ fn python_collect_direct_match_capture_names(
             }
         }
         "dotted_name" => {
-            if let Some(identifier) = only_named_child(node) {
-                if let Ok(name) = node_text(identifier, source) {
-                    push_python_match_capture_name(names, name.trim());
-                }
+            if let Some(identifier) = only_named_child(node)
+                && let Ok(name) = node_text(identifier, source)
+            {
+                push_python_match_capture_name(names, name.trim());
             }
         }
         "class_pattern" => {
@@ -2855,8 +2852,7 @@ fn python_accessible_symbol_resolves_at(
         } => {
             if let (Some(expected_range), Some(named_part_index)) =
                 (comprehension_range, comprehension_part_index)
-            {
-                if python_enclosing_comprehension(reference_node).is_some_and(|comprehension| {
+                && python_enclosing_comprehension(reference_node).is_some_and(|comprehension| {
                     (comprehension.start_byte(), comprehension.end_byte()) == expected_range
                         && python_comprehension_part_index(comprehension, reference_node)
                             .is_some_and(|reference_part_index| {
@@ -2864,9 +2860,9 @@ fn python_accessible_symbol_resolves_at(
                                     || (reference_part_index == named_part_index
                                         && reference_node.start_byte() > expression_range.1)
                             })
-                }) {
-                    return true;
-                }
+                })
+            {
+                return true;
             }
 
             reference_node.start_byte() > expression_range.1
@@ -3195,10 +3191,10 @@ fn python_scope_declares_external_name_in_scope(
     }
 
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if python_scope_declares_external_name_in_scope(child, source, name, statement_kind) {
-                return true;
-            }
+        if let Some(child) = node.child(index)
+            && python_scope_declares_external_name_in_scope(child, source, name, statement_kind)
+        {
+            return true;
         }
     }
 
@@ -3423,23 +3419,22 @@ fn collect_c_accessible_symbols_from_document(
             visited_companion_sources,
         )?;
 
-        if allow_companion_sources {
-            if let Some(companion_source_path) = companion_c_source_path(&include_path) {
-                let normalized_companion = normalize_path(&companion_source_path);
-                if visited_companion_sources.insert(normalized_companion) {
-                    let companion_source = read_source(&companion_source_path)?;
-                    let companion_document =
-                        parse_document(&companion_source_path, &companion_source)?;
-                    collect_c_symbol_candidates_from_root(
-                        &companion_source_path,
-                        companion_document.tree.root_node(),
-                        &companion_source,
-                        600,
-                        "companion_source",
-                        context_file,
-                        symbols,
-                    )?;
-                }
+        if allow_companion_sources
+            && let Some(companion_source_path) = companion_c_source_path(&include_path)
+        {
+            let normalized_companion = normalize_path(&companion_source_path);
+            if visited_companion_sources.insert(normalized_companion) {
+                let companion_source = read_source(&companion_source_path)?;
+                let companion_document = parse_document(&companion_source_path, &companion_source)?;
+                collect_c_symbol_candidates_from_root(
+                    &companion_source_path,
+                    companion_document.tree.root_node(),
+                    &companion_source,
+                    600,
+                    "companion_source",
+                    context_file,
+                    symbols,
+                )?;
             }
         }
     }
@@ -3567,21 +3562,19 @@ fn collect_c_local_definitions(
     names: &mut BTreeSet<String>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
-        if let Some(parent) = candidate.parent() {
-            if candidate.kind() == "identifier"
-                && matches!(
-                    parent.kind(),
-                    "declaration"
-                        | "init_declarator"
-                        | "parameter_declaration"
-                        | "function_declarator"
-                        | "pointer_declarator"
-                        | "array_declarator"
-                )
-            {
-                let _ =
-                    node_text(candidate, source).map(|text| names.insert(text.trim().to_string()));
-            }
+        if let Some(parent) = candidate.parent()
+            && candidate.kind() == "identifier"
+            && matches!(
+                parent.kind(),
+                "declaration"
+                    | "init_declarator"
+                    | "parameter_declaration"
+                    | "function_declarator"
+                    | "pointer_declarator"
+                    | "array_declarator"
+            )
+        {
+            let _ = node_text(candidate, source).map(|text| names.insert(text.trim().to_string()));
         }
     };
     visit_tree(node, &mut callback);
