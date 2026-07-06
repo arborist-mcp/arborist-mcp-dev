@@ -143,6 +143,7 @@ pub fn patch_ast_node(
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
     let path = normalize_absolute_path(path)?;
+    validate_patch_replacement(new_code)?;
     let (start_byte, end_byte) = semantic_target_range(&path, source, semantic_target)?;
     let updated_source = splice_source(source, start_byte..end_byte, new_code);
     build_patch_result(
@@ -178,6 +179,13 @@ pub(crate) fn semantic_target_range(
 fn validate_semantic_target(semantic_target: &str) -> Result<()> {
     if semantic_target.trim().is_empty() {
         bail!("invalid semantic target: selector must not be blank");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_patch_replacement(new_code: &str) -> Result<()> {
+    if new_code.trim().is_empty() {
+        bail!("invalid new_code: replacement must not be blank");
     }
     Ok(())
 }

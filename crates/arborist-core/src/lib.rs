@@ -665,6 +665,17 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn rejects_blank_patch_replacements() {
+        let source = "def top_level():\n    return 1\n";
+
+        let error = patch_ast_node(Path::new("sample.py"), source, "top_level", " \t", None)
+            .expect_err("blank patch replacements should be rejected");
+
+        assert!(error.to_string().contains("new_code"));
+        assert!(error.to_string().contains("blank"));
+    }
+
+    #[test]
     fn expands_selected_c_function_definitions() {
         let source = r#"
 typedef struct item {
