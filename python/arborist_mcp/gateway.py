@@ -397,7 +397,7 @@ class ArboristGateway:
         params: dict[str, Any], key: str, allow_empty: bool = False
     ) -> str:
         value = params.get(key)
-        if not isinstance(value, str) or (not allow_empty and not value):
+        if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"missing required string param: {key}")
         return value
 
@@ -430,7 +430,7 @@ class ArboristGateway:
             if key in params and default is not None:
                 raise JsonRpcError(-32602, f"invalid string param: {key}")
             return None
-        if not isinstance(value, str) or (not allow_empty and not value):
+        if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"invalid string param: {key}")
         return value
 

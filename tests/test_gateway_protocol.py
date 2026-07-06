@@ -488,6 +488,50 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("workspace_root", response["error"]["message"])
 
+    def test_rejects_blank_required_string_params(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 39,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 39)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path", response["error"]["message"])
+
+    def test_rejects_blank_optional_string_params(self) -> None:
+        class StubCore:
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 40,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": "   ", "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 40)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
     def test_rejects_null_string_param_with_default(self) -> None:
         class StubCore:
             def trace_symbol_graph_json(self, *args: object) -> str:
