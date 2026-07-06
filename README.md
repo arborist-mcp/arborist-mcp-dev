@@ -110,6 +110,7 @@ It now rebuilds the debug `arborist-py` extension before copying it into `python
 
 ```powershell
 cargo test
+python -m unittest tests.test_gateway_protocol
 python -m arborist_mcp.gateway --help
 ```
 
