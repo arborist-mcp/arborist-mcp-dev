@@ -5772,6 +5772,32 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn refresh_existing_non_index_database_does_not_create_schema() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("not-symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        let connection = Connection::open(&db_path).unwrap();
+        drop(connection);
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject existing non-index databases");
+
+        assert!(error.to_string().contains("missing symbol index table"));
+
+        let connection = Connection::open(&db_path).unwrap();
+        let table_count: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 0);
+    }
+
+    #[test]
     fn from_path_entrypoints_normalize_file_paths() {
         let dir = temporary_dir();
         let nested = dir.join("child");

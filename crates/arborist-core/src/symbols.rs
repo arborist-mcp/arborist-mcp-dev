@@ -132,6 +132,12 @@ pub fn refresh_symbol_index_for_file(
     }
 
     let connection = Connection::open(&db_path)?;
+    if !table_exists(&connection, "symbols")? {
+        return Err(anyhow!(
+            "missing symbol index table in {}",
+            db_path.display()
+        ));
+    }
     ensure_symbol_tables(&connection)?;
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
 
