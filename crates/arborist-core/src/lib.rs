@@ -6396,6 +6396,35 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(!missing_db_path.exists());
     }
 
+    #[test]
+    fn rejects_refresh_with_symbol_index_from_different_workspace() {
+        let dir = temporary_dir();
+        let workspace_a = dir.join("workspace-a");
+        let workspace_b = dir.join("workspace-b");
+        let db_path = dir.join("symbols.db");
+
+        fs::create_dir_all(&workspace_a).unwrap();
+        fs::create_dir_all(&workspace_b).unwrap();
+        fs::write(
+            workspace_a.join("helper.py"),
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            workspace_b.join("helper.py"),
+            "def helper(value: int) -> int:\n    return value + 2\n",
+        )
+        .unwrap();
+
+        rebuild_symbol_index(&workspace_a, &db_path).unwrap();
+
+        let error =
+            refresh_symbol_index_for_file(&workspace_b, &db_path, &workspace_b.join("helper.py"))
+                .expect_err("refresh should reject a database built for another workspace");
+
+        assert!(error.to_string().contains("belongs to workspace"));
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)

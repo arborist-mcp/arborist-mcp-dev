@@ -133,6 +133,7 @@ pub fn refresh_symbol_index_for_file(
 
     let connection = Connection::open(&db_path)?;
     ensure_symbol_tables(&connection)?;
+    validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
 
     let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);
@@ -1533,6 +1534,34 @@ fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     ensure_return_type_column(connection)?;
     ensure_docstring_column(connection)?;
     ensure_symbols_primary_key_layout(connection)?;
+    Ok(())
+}
+
+fn validate_symbol_index_workspace(
+    connection: &Connection,
+    workspace_root: &Path,
+    db_path: &Path,
+) -> Result<()> {
+    let expected_workspace = normalize_path(workspace_root);
+    let stored_workspace = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'workspace_root'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+
+    if let Some(stored_workspace) = stored_workspace
+        && stored_workspace != expected_workspace
+    {
+        return Err(anyhow!(
+            "symbol index {} belongs to workspace {}, not {}",
+            db_path.display(),
+            stored_workspace,
+            expected_workspace
+        ));
+    }
+
     Ok(())
 }
 
