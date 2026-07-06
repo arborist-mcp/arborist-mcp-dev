@@ -478,6 +478,51 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("depth_limit", response["error"]["message"])
 
+    def test_rejects_bool_int_params(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def apply_buffer_edit_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/get_semantic_skeleton",
+                {"file_path": "sample.py", "depth_limit": True},
+                "depth_limit",
+            ),
+            (
+                "arborist/apply_buffer_edit",
+                {
+                    "file_path": "sample.py",
+                    "start_byte": True,
+                    "old_end_byte": 1,
+                    "new_text": "x",
+                },
+                "start_byte",
+            ),
+        ]
+
+        for method, params, expected_message in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 42,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 42)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_message, response["error"]["message"])
+
     def test_rejects_negative_optional_int_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
