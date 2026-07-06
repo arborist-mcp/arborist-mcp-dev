@@ -50,6 +50,15 @@ struct PersistedFileState {
     fingerprint: u64,
 }
 
+type IncrementalWorkspaceSymbols = (
+    Vec<IndexedSymbol>,
+    Vec<SymbolMeta>,
+    Vec<PersistedFileState>,
+    usize,
+    usize,
+    usize,
+);
+
 #[derive(Debug, Default)]
 struct CIncludeContext {
     include_paths: BTreeSet<String>,
@@ -793,14 +802,7 @@ fn resolve_workspace_symbols_with_overrides(
 fn resolve_workspace_symbols_incremental(
     workspace_root: &Path,
     db_path: &Path,
-) -> Result<(
-    Vec<IndexedSymbol>,
-    Vec<SymbolMeta>,
-    Vec<PersistedFileState>,
-    usize,
-    usize,
-    usize,
-)> {
+) -> Result<IncrementalWorkspaceSymbols> {
     let indexed_paths = collect_source_files(workspace_root)?;
     let indexed_files = indexed_paths.len();
     let connection = Connection::open(db_path)?;
