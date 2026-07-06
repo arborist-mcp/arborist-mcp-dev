@@ -84,6 +84,9 @@ pub fn replay_patch_evidence_against_trace(
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
     let trace_symbol = trace.evidence_keys.symbol.clone();
+    let normalized_trace_callers = normalized_evidence_key_set(trace.evidence_keys.callers.iter());
+    let normalized_trace_callees = normalized_evidence_key_set(trace.evidence_keys.callees.iter());
+    let normalized_trace_symbol = evidence_key_without_origin_type(&trace_symbol);
 
     let items = patch
         .validation
@@ -91,20 +94,36 @@ pub fn replay_patch_evidence_against_trace(
         .evidence_invariants
         .iter()
         .map(|invariant| {
-            let (matched_in_trace, trace_match_scope) =
-                if let Some(selected) = &invariant.selected_evidence_key {
-                    if trace_callees.contains(selected) {
+            let (matched_in_trace, trace_match_scope) = if let Some(selected) =
+                &invariant.selected_evidence_key
+            {
+                if trace_callees.contains(selected) {
+                    (true, "callees".to_string())
+                } else if trace_callers.contains(selected) {
+                    (true, "callers".to_string())
+                } else if trace_symbol == *selected {
+                    (true, "symbol".to_string())
+                } else if let Some(normalized_selected) = evidence_key_without_origin_type(selected)
+                {
+                    if normalized_trace_callees.contains(&normalized_selected) {
                         (true, "callees".to_string())
-                    } else if trace_callers.contains(selected) {
+                    } else if normalized_trace_callers.contains(&normalized_selected) {
                         (true, "callers".to_string())
-                    } else if trace_symbol == *selected {
+                    } else if normalized_trace_symbol.as_ref() == Some(&normalized_selected) {
                         (true, "symbol".to_string())
+                    } else if is_patch_scope_evidence_key(selected) {
+                        (true, "patch_scope".to_string())
                     } else {
                         (false, "none".to_string())
                     }
+                } else if is_patch_scope_evidence_key(selected) {
+                    (true, "patch_scope".to_string())
                 } else {
                     (false, "none".to_string())
-                };
+                }
+            } else {
+                (false, "none".to_string())
+            };
 
             let status = match invariant.status.as_str() {
                 "passed" if matched_in_trace => "matched",
@@ -137,6 +156,32 @@ pub fn replay_patch_evidence_against_trace(
         blocked_items,
         items,
     }
+}
+
+fn normalized_evidence_key_set<'a>(
+    keys: impl Iterator<Item = &'a String>,
+) -> std::collections::BTreeSet<String> {
+    keys.filter_map(|key| evidence_key_without_origin_type(key))
+        .collect()
+}
+
+fn evidence_key_without_origin_type(evidence_key: &str) -> Option<String> {
+    let parts = evidence_key.splitn(6, '|').collect::<Vec<_>>();
+    if parts.len() != 6 {
+        return None;
+    }
+
+    Some(format!(
+        "{}|{}|{}|{}|{}",
+        parts[0], parts[1], parts[2], parts[4], parts[5]
+    ))
+}
+
+fn is_patch_scope_evidence_key(evidence_key: &str) -> bool {
+    matches!(
+        evidence_key.split('|').nth(3),
+        Some("local_scope" | "module_scope")
+    )
 }
 
 pub fn validate_patch_commit_with_trace(
@@ -323,7 +368,7 @@ mod tests {
         get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
         rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
         trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
-        validate_patch_with_trace_context_from_path,
+        validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
     };
     use crate::language::normalize_path;
 
@@ -1788,6 +1833,48 @@ int helper(int value) {
                 .as_ref()
                 .is_some_and(|decision| decision.allowed)
         );
+    }
+
+    #[test]
+    fn validates_trace_context_with_unsaved_source_file() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let result = validate_patch_with_trace_context(
+            &dir,
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return value + 1\n",
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+            None,
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+        assert!(result.patch.applied);
+        assert!(result.trace_error.is_none());
+        let trace = result.trace.as_ref().expect("trace should be available");
+        assert_eq!(trace.symbol.semantic_path, "orchestrate");
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+        assert!(
+            result
+                .trace_validation
+                .as_ref()
+                .is_some_and(|decision| decision.allowed)
+        );
+        assert!(!caller.exists());
     }
 
     #[test]
