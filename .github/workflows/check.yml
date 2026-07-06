@@ -31,12 +31,6 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
-      - name: Build gateway extension
-        shell: pwsh
-        run: |
-          cargo build --locked -p arborist-py
-          .\scripts\sync-extension.ps1 -SkipBuild
-
       - name: Run local check gate
         shell: pwsh
         run: .\scripts\check.ps1
