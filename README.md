@@ -123,7 +123,7 @@ Or run the core checks directly:
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
-python -m unittest
+python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
 ```
 
