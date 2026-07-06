@@ -510,10 +510,13 @@ fn validate_edit_range(source: &str, start_byte: usize, old_end_byte: usize) -> 
 mod tests {
     use std::fs;
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::VirtualFileSystem;
     use crate::{Position, PositionEdit, TraceDirection, trace_symbol_graph_from_index};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn applies_incremental_edit_and_commits() {
@@ -1104,10 +1107,15 @@ mod tests {
     }
 
     fn temp_file(contents: &str) -> std::path::PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let dir = std::env::temp_dir().join(format!("arborist-vfs-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join(Path::new("buffer.py"));
@@ -1116,10 +1124,15 @@ mod tests {
     }
 
     fn temp_workspace() -> std::path::PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let dir = std::env::temp_dir().join(format!("arborist-vfs-workspace-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir

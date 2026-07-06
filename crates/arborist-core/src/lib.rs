@@ -313,6 +313,7 @@ fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::Connection;
@@ -325,6 +326,8 @@ mod tests {
         validate_patch_with_trace_context_from_path,
     };
     use crate::language::normalize_path;
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn builds_python_skeleton_with_nested_members() {
@@ -7130,10 +7133,15 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     fn temporary_dir() -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let dir = std::env::temp_dir().join(format!("arborist-mcp-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir

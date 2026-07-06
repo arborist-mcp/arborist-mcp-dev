@@ -2231,6 +2231,7 @@ fn source_fingerprint(source: &str) -> u64 {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::Connection;
@@ -2239,6 +2240,8 @@ mod tests {
         IndexedSymbol, PersistedFileState, SymbolMeta, ensure_symbol_tables, persist_symbol_index,
         persist_symbol_refresh, persisted_byte_range,
     };
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn persisted_byte_range_rejects_inverted_ranges() {
@@ -2366,10 +2369,15 @@ mod tests {
     }
 
     fn temporary_dir() -> std::path::PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let suffix = format!(
+            "{}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        );
         let dir = std::env::temp_dir().join(format!("arborist-symbols-{suffix}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
