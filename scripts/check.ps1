@@ -20,6 +20,21 @@ function Invoke-NativeOrThrow {
     }
 }
 
+function Invoke-ScriptOrThrow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Description,
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Script
+    )
+
+    Write-Host $Description
+    & $Script
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE."
+    }
+}
+
 function Invoke-GatewayInitializeSmoke {
     param(
         [Parameter(Mandatory = $true)]
@@ -104,8 +119,7 @@ try {
     Invoke-NativeOrThrow "Running Rust tests..." "cargo" @("test", "--locked")
     Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
     Invoke-NativeOrThrow "Building gateway extension..." "cargo" @("build", "--locked", "-p", "arborist-py")
-    Write-Host "Syncing gateway extension..."
-    & $PSScriptRoot\sync-extension.ps1 -SkipBuild
+    Invoke-ScriptOrThrow "Syncing gateway extension..." { & (Join-Path $PSScriptRoot "sync-extension.ps1") -SkipBuild }
     Invoke-NativeOrThrow "Running Python tests..." $Python @("-m", "unittest")
     Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
     Invoke-GatewayInitializeSmoke $Python
