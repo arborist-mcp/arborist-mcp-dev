@@ -857,6 +857,36 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["result"], {})
         self.assertEqual(core.args, ("sample.py", None, 2, None))
 
+    def test_get_semantic_skeleton_accepts_unsaved_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir).joinpath("sample.py")
+            gateway = ArboristGateway()
+
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 45,
+                    "method": "arborist/get_semantic_skeleton",
+                    "params": {
+                        "file_path": str(file_path),
+                        "source": "def top_level() -> int:\n    return 1\n",
+                        "depth_limit": 2,
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 45)
+            self.assertNotIn("error", response)
+            self.assertFalse(file_path.exists())
+            self.assertIn("top_level", response["result"]["available_paths"])
+            self.assertTrue(
+                any(
+                    symbol["semantic_path"] == "top_level"
+                    for symbol in response["result"]["available_symbols"]
+                )
+            )
+
     def test_allows_null_nullable_string_params(self) -> None:
         class StubCore:
             def patch_ast_node_json(
