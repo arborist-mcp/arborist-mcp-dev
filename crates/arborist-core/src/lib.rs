@@ -9,7 +9,7 @@ mod vfs;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
@@ -45,6 +45,7 @@ pub fn get_semantic_skeleton(
     depth_limit: usize,
     expand_nodes: &[String],
 ) -> Result<SemanticSkeleton> {
+    validate_expand_nodes(expand_nodes)?;
     let document = language::parse_document(path, source)?;
     semantic::get_semantic_skeleton(
         path,
@@ -54,6 +55,16 @@ pub fn get_semantic_skeleton(
         depth_limit,
         expand_nodes,
     )
+}
+
+fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
+    if let Some(index) = expand_nodes
+        .iter()
+        .position(|selector| selector.trim().is_empty())
+    {
+        bail!("invalid expand_nodes selector at index {index}: selector must not be blank");
+    }
+    Ok(())
 }
 
 pub fn replay_patch_evidence_against_trace(
@@ -504,6 +515,16 @@ def top_level(value: int) -> int:
 
         assert!(skeleton.skeleton.contains("@decorator\ndef top_level"));
         assert!(skeleton.skeleton.contains("return value + 1"));
+    }
+
+    #[test]
+    fn rejects_blank_expand_selectors() {
+        let source = "def top_level(value: int) -> int:\n    return value\n";
+
+        let error = get_semantic_skeleton(Path::new("sample.py"), source, 1, &["   ".to_string()])
+            .expect_err("blank expand selectors should be rejected");
+
+        assert!(error.to_string().contains("expand_nodes"));
     }
 
     #[test]
