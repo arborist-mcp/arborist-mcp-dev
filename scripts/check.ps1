@@ -66,6 +66,18 @@ function Invoke-GatewayInitializeSmoke {
     }
 }
 
+function Invoke-PowerShellSyntaxCheck {
+    Write-Host "Checking PowerShell script syntax..."
+    Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*.ps1" | ForEach-Object {
+        $script = $_.FullName
+        try {
+            [scriptblock]::Create((Get-Content -LiteralPath $script -Raw)) | Out-Null
+        } catch {
+            throw "PowerShell syntax check failed for $script`: $($_.Exception.Message)"
+        }
+    }
+}
+
 function Get-RequiredRegexValue {
     param(
         [Parameter(Mandatory = $true)]
@@ -114,6 +126,7 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 Push-Location $repoRoot
 try {
+    Invoke-PowerShellSyntaxCheck
     Invoke-VersionConsistencyCheck $repoRoot
     Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
     Invoke-NativeOrThrow "Running Rust tests..." "cargo" @("test", "--locked")
