@@ -174,6 +174,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - VFS buffer lifecycle with read/edit/discard/commit semantics
 - Incremental reparsing via `Tree::edit()` + parse reuse for buffer edits
 - `get_semantic_skeleton` can keep the file mostly skeletal while fully expanding selected semantic paths
+- Python `expand_nodes` selectors can expand nested symbols even when those symbols are deeper than the default `depth_limit`
 - Skeleton discovery now returns structured symbol metadata, including scope, docstring, and input/output signature context, so read-path exploration can hand precise selectors straight into trace and patch flows
 - `did_open` accepts editor buffer contents without forcing a disk write first
 - `did_change` applies ordered line/column edits onto the current virtual buffer

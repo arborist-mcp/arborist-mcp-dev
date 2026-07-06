@@ -512,6 +512,36 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn expands_selected_python_nodes_beyond_depth_limit() {
+        let source = r#"
+def top_level(value: int) -> int:
+    def nested(inner: int) -> int:
+        return inner + 1
+
+    return nested(value)
+"#;
+
+        let skeleton = get_semantic_skeleton(
+            Path::new("sample.py"),
+            source,
+            1,
+            &["top_level.nested".to_string()],
+        )
+        .unwrap();
+
+        assert!(
+            skeleton
+                .skeleton
+                .contains("def nested(inner: int) -> int:\n        return inner + 1")
+        );
+        assert!(
+            skeleton
+                .available_paths
+                .contains(&"top_level.nested".to_string())
+        );
+    }
+
+    #[test]
     fn expands_decorated_python_nodes_with_decorators() {
         let source = r#"
 def decorator(func):

@@ -342,12 +342,14 @@ fn build_python_skeleton(
             continue;
         };
 
-        if semantic_depth(item) > depth_limit {
-            continue;
-        }
-
         let path = semantic_path(item, source)?;
         let symbol_id = path.clone();
+        if semantic_depth(item) > depth_limit
+            && !expand_set.contains(path.as_str())
+            && !expand_set.contains(symbol_id.as_str())
+        {
+            continue;
+        }
         let scope_path = semantic_parent_path(&path);
         let signature = Some(python_display_header(item, source)?);
         let parameters = python_parameters(item, source)?;
