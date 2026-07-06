@@ -122,6 +122,7 @@ try {
     Invoke-ScriptOrThrow "Syncing gateway extension..." { & (Join-Path $PSScriptRoot "sync-extension.ps1") -SkipBuild }
     Invoke-NativeOrThrow "Running Python tests..." $Python @("-m", "unittest", "discover", "-s", "tests")
     Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
+    Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
     Invoke-GatewayInitializeSmoke $Python
 } finally {
     Pop-Location

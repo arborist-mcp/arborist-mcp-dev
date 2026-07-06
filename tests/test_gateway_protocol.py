@@ -17,6 +17,16 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
         self.assertEqual(gateway_module.__version__, version_module.__version__)
 
+    def test_cli_version_reports_package_version(self) -> None:
+        stdout = io.StringIO()
+
+        with mock.patch("sys.stdout", stdout):
+            with self.assertRaises(SystemExit) as context:
+                gateway_module.main(["--version"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn(gateway_module.__version__, stdout.getvalue())
+
     def test_advertised_tools_have_gateway_handlers(self) -> None:
         self.assertEqual(gateway_module.TOOL_NAMES, tuple(gateway_module.TOOL_HANDLERS))
         for handler_name in gateway_module.TOOL_HANDLERS.values():

@@ -553,6 +553,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Thin stdio JSON-RPC gateway for the Arborist Rust core."
     )
     parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
         "--once",
         type=Path,
         help="Read one request from a JSON file and print the response.",

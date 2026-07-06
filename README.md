@@ -125,6 +125,7 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
+python -m arborist_mcp.gateway --version
 ```
 
 ## Example JSON-RPC message
