@@ -1248,6 +1248,8 @@ fn trace_from_symbols(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
     let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
         .cloned()
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?
@@ -2121,6 +2123,14 @@ fn resolved_symbol_map(symbols: &[SymbolMeta]) -> BTreeMap<String, SymbolMeta> {
             .or_insert_with(|| symbol.clone());
     }
     map
+}
+
+fn validate_trace_symbol_path(symbol_path: &str) -> Result<()> {
+    if symbol_path.trim().is_empty() {
+        return Err(anyhow!("invalid symbol_path: selector must not be blank"));
+    }
+
+    Ok(())
 }
 
 fn choose_trace_symbol<'a>(symbols: &'a [SymbolMeta], symbol_path: &str) -> Option<&'a SymbolMeta> {

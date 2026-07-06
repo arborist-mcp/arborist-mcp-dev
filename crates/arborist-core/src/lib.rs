@@ -6505,6 +6505,24 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn rejects_blank_trace_symbol_paths() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        fs::write(
+            dir.join("helper.py"),
+            "def helper() -> int:\n    return 1\n",
+        )
+        .unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let error = trace_symbol_graph_from_index(&db_path, " \t", TraceDirection::Both)
+            .expect_err("blank trace symbol paths should be rejected");
+
+        assert!(error.to_string().contains("symbol_path"));
+        assert!(error.to_string().contains("blank"));
+    }
+
+    #[test]
     fn trace_from_existing_non_index_database_does_not_create_schema() {
         let dir = temporary_dir();
         let db_path = dir.join("not-symbols.db");
