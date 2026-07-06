@@ -629,7 +629,20 @@ fn c_file_declares_symbol(path: &Path, symbol_name: &str) -> Result<bool> {
 }
 
 fn sibling_header_candidates(path: &Path) -> Vec<std::path::PathBuf> {
-    ["h", "hpp", "hh"]
+    let header_extensions = if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension
+                .chars()
+                .all(|character| character.is_ascii_uppercase())
+        }) {
+        ["H", "h", "HPP", "hpp", "HH", "hh"]
+    } else {
+        ["h", "H", "hpp", "HPP", "hh", "HH"]
+    };
+
+    header_extensions
         .into_iter()
         .map(|extension| path.with_extension(extension))
         .collect()

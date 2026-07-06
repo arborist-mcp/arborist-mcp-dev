@@ -678,6 +678,33 @@ int helper(int value) {
     }
 
     #[test]
+    fn anchors_c_source_symbol_ids_to_uppercase_sibling_header() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.H");
+        let source = dir.join("helper.C");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "int helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let source_text = fs::read_to_string(&source).unwrap();
+        let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+        let symbol = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "helper")
+            .unwrap();
+
+        assert_eq!(
+            symbol.symbol_id,
+            format!("{}::helper", header.to_string_lossy().replace('\\', "/"))
+        );
+    }
+
+    #[test]
     fn traces_c_symbol_graph_across_header_declaration_and_source_definition() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");
