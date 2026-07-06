@@ -1046,6 +1046,30 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32000)
         self.assertIn("failed to load arborist core", response["error"]["message"])
 
+    def test_once_valid_request_prints_success_response(self) -> None:
+        class StubCore:
+            def supported_languages(self) -> list[str]:
+                return ["python", "c"]
+
+        with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore):
+            with mock.patch(
+                "pathlib.Path.read_text",
+                return_value='{"jsonrpc":"2.0","id":26,"method":"initialize","params":{}}',
+            ):
+                with mock.patch("builtins.print") as mock_print:
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once()
+        response = gateway_module.json.loads(mock_print.call_args.args[0])
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 26)
+        self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
+        self.assertIn(
+            "arborist/get_semantic_skeleton",
+            response["result"]["capabilities"]["tools"],
+        )
+
     def test_stdio_notification_does_not_emit_response(self) -> None:
         class StubGateway:
             def handle_request(self, request: object) -> dict[str, object]:
