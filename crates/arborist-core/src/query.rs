@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tree_sitter::{Query, QueryCursor, StreamingIterator};
 
 use crate::language::{
@@ -23,6 +23,7 @@ pub fn execute_tree_query(
     query: &str,
 ) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
+    validate_tree_query(query)?;
     let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
@@ -53,6 +54,14 @@ pub fn execute_tree_query(
     }
 
     Ok(captures)
+}
+
+fn validate_tree_query(query: &str) -> Result<()> {
+    if query.trim().is_empty() {
+        bail!("invalid Tree-sitter query: query must not be blank");
+    }
+
+    Ok(())
 }
 
 fn capture_owner(

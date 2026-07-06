@@ -1998,6 +1998,17 @@ int helper(int value) {
     }
 
     #[test]
+    fn rejects_blank_tree_queries() {
+        let source = "def add(left, right):\n    return left + right\n";
+
+        let error = execute_tree_query(Path::new("sample.py"), source, " \t")
+            .expect_err("blank Tree-sitter queries should be rejected");
+
+        assert!(error.to_string().contains("query"));
+        assert!(error.to_string().contains("blank"));
+    }
+
+    #[test]
     fn execute_tree_query_reports_owner_for_decorator_captures() {
         let source = "@logged\ndef top_level(value):\n    return value\n";
         let query = "(decorator (identifier) @decorator)";
