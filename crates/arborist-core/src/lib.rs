@@ -5998,6 +5998,27 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn refresh_existing_database_with_incompatible_column_types_does_not_migrate() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("not-symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_symbol_index_schema_with_text_byte_columns(&connection);
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject incompatible symbol index column types");
+
+        assert!(error.to_string().contains("incompatible type"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert_eq!(
+            symbol_table_column_type(&connection, "symbols", "start_byte"),
+            "TEXT"
+        );
+    }
+
+    #[test]
     fn from_path_entrypoints_normalize_file_paths() {
         let dir = temporary_dir();
         let nested = dir.join("child");
@@ -6118,6 +6139,25 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(error.to_string().contains("missing required column"));
         let connection = Connection::open(&db_path).unwrap();
         assert_eq!(symbol_table_columns(&connection), vec!["name"]);
+    }
+
+    #[test]
+    fn trace_existing_database_with_incompatible_column_types_does_not_migrate() {
+        let dir = temporary_dir();
+        let db_path = dir.join("not-symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_symbol_index_schema_with_text_byte_columns(&connection);
+        drop(connection);
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("trace should reject incompatible symbol index column types");
+
+        assert!(error.to_string().contains("incompatible type"));
+        let connection = Connection::open(&db_path).unwrap();
+        assert_eq!(
+            symbol_table_column_type(&connection, "symbols", "start_byte"),
+            "TEXT"
+        );
     }
 
     #[test]
@@ -6892,11 +6932,65 @@ def orchestrate(value: int) -> int:\n    return value\n",
             .unwrap();
     }
 
+    fn create_symbol_index_schema_with_text_byte_columns(connection: &Connection) {
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte TEXT NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    reference_names_json TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (semantic_path, file_path)
+                );
+                CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY,
+                    fingerprint INTEGER NOT NULL
+                );
+                INSERT INTO metadata(key, value) VALUES('indexed_files', '0');
+                ",
+            )
+            .unwrap();
+    }
+
     fn symbol_table_columns(connection: &Connection) -> Vec<String> {
         let mut statement = connection.prepare("PRAGMA table_info(symbols)").unwrap();
         let columns = statement
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap();
         columns.map(|column| column.unwrap()).collect()
+    }
+
+    fn symbol_table_column_type(
+        connection: &Connection,
+        table_name: &str,
+        column_name: &str,
+    ) -> String {
+        let mut statement = connection
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .unwrap();
+        let columns = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            })
+            .unwrap();
+        columns
+            .map(|column| column.unwrap())
+            .find_map(|(name, column_type)| (name == column_name).then_some(column_type))
+            .unwrap()
     }
 }

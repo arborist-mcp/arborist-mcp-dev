@@ -1507,6 +1507,12 @@ fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Resul
         }
     }
     require_table_columns(connection, db_path, "metadata", &["key", "value"])?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "metadata",
+        &[("key", "TEXT"), ("value", "TEXT")],
+    )?;
     require_table_columns(
         connection,
         db_path,
@@ -1522,11 +1528,32 @@ fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Resul
             "references_json",
         ],
     )?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            ("semantic_path", "TEXT"),
+            ("file_path", "TEXT"),
+            ("node_kind", "TEXT"),
+            ("start_byte", "INTEGER"),
+            ("end_byte", "INTEGER"),
+            ("signature", "TEXT"),
+            ("dependencies_json", "TEXT"),
+            ("references_json", "TEXT"),
+        ],
+    )?;
     require_table_columns(
         connection,
         db_path,
         "file_state",
         &["file_path", "fingerprint"],
+    )?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "file_state",
+        &[("file_path", "TEXT"), ("fingerprint", "INTEGER")],
     )?;
     Ok(())
 }
@@ -1563,6 +1590,32 @@ fn require_table_columns(
     Ok(())
 }
 
+fn require_table_column_types(
+    connection: &Connection,
+    db_path: &Path,
+    table_name: &str,
+    required_columns: &[(&str, &str)],
+) -> Result<()> {
+    let column_types = table_column_types(connection, table_name)?;
+    for (column_name, expected_type) in required_columns {
+        let actual_type = column_types
+            .get(*column_name)
+            .map(|value| value.to_ascii_uppercase())
+            .unwrap_or_default();
+        if actual_type != *expected_type {
+            return Err(anyhow!(
+                "symbol index table `{}` in {} has incompatible type `{}` for column `{}`; expected `{}`",
+                table_name,
+                db_path.display(),
+                actual_type,
+                column_name,
+                expected_type
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<String>> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
@@ -1571,6 +1624,22 @@ fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<S
         names.insert(column?);
     }
     Ok(names)
+}
+
+fn table_column_types(
+    connection: &Connection,
+    table_name: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    let mut types = BTreeMap::new();
+    for column in columns {
+        let (name, column_type) = column?;
+        types.insert(name, column_type);
+    }
+    Ok(types)
 }
 
 fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
