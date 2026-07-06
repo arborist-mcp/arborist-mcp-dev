@@ -201,6 +201,7 @@ pub fn validate_patch_with_trace_context_from_path(
 ) -> Result<TraceBackedPatchResult> {
     let workspace_root = language::normalize_absolute_path(workspace_root)?;
     let path = language::normalize_absolute_path(path)?;
+    ensure_path_inside_workspace(&workspace_root, &path)?;
     let source = read_source(&path)?;
     validate_patch_with_trace_context(
         &workspace_root,
@@ -222,7 +223,11 @@ pub fn validate_patch_with_trace_context(
     bypass_reason: Option<&str>,
     direction: TraceDirection,
 ) -> Result<TraceBackedPatchResult> {
-    let patch = patch_ast_node(path, source, semantic_target, new_code, bypass_reason)?;
+    let workspace_root = language::normalize_absolute_path(workspace_root)?;
+    let path = language::normalize_absolute_path(path)?;
+    ensure_path_inside_workspace(&workspace_root, &path)?;
+
+    let patch = patch_ast_node(&path, source, semantic_target, new_code, bypass_reason)?;
     let trace_target = patch.resolved_symbol_id.clone();
 
     if !patch.validation.syntax_errors.is_empty() {
@@ -240,7 +245,7 @@ pub fn validate_patch_with_trace_context(
     let mut overrides = BTreeMap::new();
     overrides.insert(patch.file.clone(), patch.updated_source.clone());
     let trace = symbols::trace_symbol_graph_with_overrides(
-        workspace_root,
+        &workspace_root,
         &overrides,
         &trace_target,
         direction,
@@ -254,6 +259,18 @@ pub fn validate_patch_with_trace_context(
         trace_validation: Some(trace_validation),
         trace_error: None,
     })
+}
+
+fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
+    if path.starts_with(workspace_root) {
+        return Ok(());
+    }
+
+    bail!(
+        "file {} is outside workspace {}",
+        path.display(),
+        workspace_root.display()
+    );
 }
 
 fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
@@ -1472,6 +1489,32 @@ int helper(int value) {
             result.trace_error.as_deref(),
             Some("trace skipped because patch validation reported syntax errors")
         );
+    }
+
+    #[test]
+    fn rejects_trace_context_file_outside_workspace() {
+        let dir = temporary_dir();
+        let workspace = dir.join("workspace");
+        let outside = dir.join("outside.py");
+
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(
+            &outside,
+            "def top_level(value: int) -> int:\n    return value\n",
+        )
+        .unwrap();
+
+        let error = validate_patch_with_trace_context_from_path(
+            &workspace,
+            &outside,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 1\n",
+            None,
+            TraceDirection::Both,
+        )
+        .expect_err("trace context should reject files outside the workspace");
+
+        assert!(error.to_string().contains("outside workspace"));
     }
 
     #[test]

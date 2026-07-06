@@ -202,7 +202,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - C header refresh now expands through the local reverse `#include` DAG, so touching or deleting `wrapper.h` can rebuild dependent files such as `caller.c` during the same partial refresh
 - Parent-relative local include paths are normalized before reverse-dependency matching, so `#include "../include/wrapper.h"` links back to the same refreshed header path as `include/wrapper.h`
 - Missing angle-bracket system includes are ignored for local reverse-dependency expansion, while missing quote-style local includes are still tracked so deleted headers can invalidate dependents
-- Workspace containment checks now normalize `.` and `..` path segments before comparing paths, so refresh requests cannot escape a workspace through lexical path tricks
+- Workspace containment checks now normalize `.` and `..` path segments before comparing paths, so refresh and trace-backed validation requests cannot escape a workspace through lexical path tricks
 - Disk-backed file entrypoints normalize paths before reading or writing, so response payloads and evidence keys do not preserve caller-supplied `.` or `..` aliases
 - VFS operations normalize file identities before opening, editing, listing, closing, or committing buffers, so path aliases share one session entry instead of creating parallel dirty state
 - Persisted trace requests with a missing `index_db_path` now fail closed without creating an empty SQLite database
