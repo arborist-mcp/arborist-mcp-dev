@@ -1742,14 +1742,15 @@ fn load_indexed_symbols_grouped_by_file(
         let reference_names_json: String = row.get(11)?;
         let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
         let reference_names: Vec<String> = json_from_column(&reference_names_json, 11)?;
-        let semantic_path: String = row.get(1)?;
+        let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
+        let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
         Ok(IndexedSymbol {
-            symbol_id: row.get(0)?,
+            symbol_id,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,
             scope_path: row.get(2)?,
-            file_path: row.get(3)?,
-            node_kind: row.get(4)?,
+            file_path: nonempty_string_from_row(row, 3, "file_path")?,
+            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             byte_range: byte_range_from_row(row, 5, 6)?,
             signature: row.get(7)?,
             parameters,
@@ -1784,11 +1785,11 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
         let dependencies_json: String = row.get(11)?;
         let references_json: String = row.get(12)?;
         Ok(SymbolMeta::new(
-            row.get(0)?,
-            row.get(1)?,
+            nonempty_string_from_row(row, 0, "symbol_id")?,
+            nonempty_string_from_row(row, 1, "semantic_path")?,
             row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
+            nonempty_string_from_row(row, 3, "file_path")?,
+            nonempty_string_from_row(row, 4, "node_kind")?,
             "workspace_symbol".to_string(),
             byte_range_from_row(row, 5, 6)?,
             row.get(7)?,
@@ -1806,6 +1807,25 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
     }
 
     Ok((symbols, indexed_files))
+}
+
+fn nonempty_string_from_row(
+    row: &Row<'_>,
+    column: usize,
+    column_name: &str,
+) -> rusqlite::Result<String> {
+    let value: String = row.get(column)?;
+    if value.trim().is_empty() {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty {column_name}"),
+            )),
+        ));
+    }
+    Ok(value)
 }
 
 fn load_indexed_files_metadata(connection: &Connection) -> Result<usize> {

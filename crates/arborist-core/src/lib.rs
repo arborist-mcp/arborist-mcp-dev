@@ -6232,6 +6232,33 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_from_index_rejects_empty_persisted_symbol_identity() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute_batch(
+                "
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
+                    parameters_json, dependencies_json, references_json, reference_names_json
+                ) VALUES (
+                    '', 'helper', 'helper.py', 'function_definition', 0, 5,
+                    '[]', '[]', '[]', '[]'
+                );
+                ",
+            )
+            .unwrap();
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("empty persisted symbol identity should be rejected");
+
+        assert!(error.to_string().contains("empty symbol_id"));
+    }
+
+    #[test]
     fn trace_from_index_rejects_invalid_indexed_files_metadata() {
         let dir = temporary_dir();
         let db_path = dir.join("symbols.db");
@@ -6909,6 +6936,47 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(error.to_string().contains("belongs to workspace"));
         let connection = Connection::open(&db_path).unwrap();
         assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+    }
+
+    #[test]
+    fn refresh_rejects_empty_persisted_symbol_identity_without_rewrite() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                [normalize_path(&dir)],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, file_path, node_kind, start_byte, end_byte,
+                    parameters_json, dependencies_json, references_json, reference_names_json
+                ) VALUES (
+                    '', 'helper', 'helper.py', 'function_definition', 0, 5,
+                    '[]', '[]', '[]', '[]'
+                );
+                ",
+            )
+            .unwrap();
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject persisted rows with empty identity fields");
+
+        assert!(error.to_string().contains("empty symbol_id"));
+        let connection = Connection::open(&db_path).unwrap();
+        let persisted_symbol_id: String = connection
+            .query_row("SELECT symbol_id FROM symbols", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(persisted_symbol_id, "");
     }
 
     fn temporary_dir() -> PathBuf {
