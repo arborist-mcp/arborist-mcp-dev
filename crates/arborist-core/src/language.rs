@@ -64,8 +64,12 @@ pub fn parser_for_language(language_id: LanguageId) -> Result<Parser> {
 
 pub fn detect_language(path: &Path) -> Result<LanguageId> {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("py") | Some("pyi") => Ok(LanguageId::Python),
-        Some("c") | Some("h") => Ok(LanguageId::C),
+        Some(ext) if ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi") => {
+            Ok(LanguageId::Python)
+        }
+        Some(ext) if ext.eq_ignore_ascii_case("c") || ext.eq_ignore_ascii_case("h") => {
+            Ok(LanguageId::C)
+        }
         other => bail!(
             "unsupported file extension {:?} for {}",
             other,
@@ -294,10 +298,40 @@ pub fn contains_node(container: Node<'_>, node: Node<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use tree_sitter::Point;
 
-    use super::{offset_for_position, point_for_offset};
-    use crate::model::Position;
+    use super::{detect_language, offset_for_position, point_for_offset};
+    use crate::model::{LanguageId, Position};
+
+    #[test]
+    fn detect_language_accepts_uppercase_extensions() {
+        assert_eq!(
+            detect_language(Path::new("sample.PY")).unwrap(),
+            LanguageId::Python
+        );
+        assert_eq!(
+            detect_language(Path::new("sample.PYI")).unwrap(),
+            LanguageId::Python
+        );
+        assert_eq!(
+            detect_language(Path::new("sample.C")).unwrap(),
+            LanguageId::C
+        );
+        assert_eq!(
+            detect_language(Path::new("sample.H")).unwrap(),
+            LanguageId::C
+        );
+    }
+
+    #[test]
+    fn detect_language_reports_original_unsupported_extension() {
+        let error = detect_language(Path::new("sample.TXT"))
+            .expect_err("unsupported extensions should be reported");
+
+        assert!(error.to_string().contains(r#"Some("TXT")"#));
+    }
 
     #[test]
     fn point_for_offset_uses_tree_sitter_byte_columns() {
