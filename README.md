@@ -84,6 +84,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Persisted trace reads reject missing `index_db_path` databases without creating empty SQLite files
 - Workspace indexing skips common cache, build, dependency, and virtual-environment directories
 - The stdio gateway rejects non-standard JSON constants such as `NaN` and `Infinity`, duplicate JSON object keys, malformed `did_change` edit payloads, empty semantic selectors, reversed byte/position edit ranges, float request IDs, invalid core JSON payloads, nulls for defaulted string parameters, negative numeric parameters, and non-standard response JSON at the protocol boundary
+- Direct PyO3 JSON-string arguments for replay, trace-gated validation, and position edits also reject duplicate JSON object keys before model deserialization
 - Mixed Rust/Python build via `maturin`
 
 ## Local setup
