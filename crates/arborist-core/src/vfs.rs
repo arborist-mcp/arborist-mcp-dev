@@ -1055,6 +1055,40 @@ mod tests {
     }
 
     #[test]
+    fn commits_clean_deleted_file_refresh_registered_symbol_index() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let caller_path = workspace.join("caller.py");
+        let db_path = workspace.join("symbols.db");
+
+        fs::write(
+            &helper_path,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller_path,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let stats = vfs.register_symbol_index(&workspace, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 2);
+        vfs.read_file(&helper_path).unwrap();
+
+        fs::remove_file(&helper_path).unwrap();
+        let committed = vfs.commit_file(&helper_path).unwrap();
+
+        assert_eq!(committed.source, "");
+        assert!(!committed.dirty);
+        assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_err());
+        let updated_trace =
+            trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+        assert!(updated_trace.callees.is_empty());
+    }
+
+    #[test]
     fn commits_skip_registered_index_refresh_for_ignored_dirs() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");
