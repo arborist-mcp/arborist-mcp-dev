@@ -29,7 +29,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `validate_patch_commit_with_trace`
 - `validate_patch_with_trace_context`
 - `execute_tree_query`
-- Python and C language routing based on file extension
+- Python and C language routing based on case-insensitive file extension
 - Selective semantic skeleton expansion via `expand_nodes`
 - Semantic skeleton responses now include `available_symbols` metadata with stable selectors, scope paths, node kinds, byte ranges, signatures, structured parameters/return types, and docstrings when available
 - Trace results now expose stable `symbol_id` values so duplicate globals can be targeted precisely
@@ -114,8 +114,9 @@ Run the full local gate:
 .\scripts\check.ps1
 ```
 
-The full gate also checks version consistency, builds and syncs the local
-gateway extension, and runs a real `initialize` smoke request.
+The full gate also checks PowerShell script syntax, version consistency, builds
+and syncs the local gateway extension, and runs a real `initialize` smoke
+request.
 
 Or run the core checks directly:
 
