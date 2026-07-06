@@ -13,8 +13,8 @@ use crate::language::{
 };
 use crate::model::{
     DisambiguationContext, LanguageId, PatchAstNodeResult, PatchCommitGateReport,
-    PatchEvidenceInvariantReport, PatchValidationReport, SymbolSummary, ValidationAmbiguity,
-    ValidationBinding, ValidationBindingDecision, ValidationIssue,
+    PatchEvidenceInvariantReport, PatchValidationReport, SymbolSummary, SymbolSummaryInit,
+    ValidationAmbiguity, ValidationBinding, ValidationBindingDecision, ValidationIssue,
 };
 use crate::semantic::{
     ascend_to_symbol, c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node,
@@ -1469,19 +1469,19 @@ fn python_symbol_summary(
     let return_type = python_return_type(node, source)?;
     let docstring = python_docstring(node, source)?;
 
-    Ok(Some(SymbolSummary::new(
-        semantic_path.clone(),
+    Ok(Some(SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: semantic_path.clone(),
         semantic_path,
         scope_path,
-        normalized_path.to_string(),
-        node.kind().to_string(),
-        origin_type.to_string(),
-        python_display_byte_range(node),
+        file_path: normalized_path.to_string(),
+        node_kind: node.kind().to_string(),
+        origin_type: origin_type.to_string(),
+        byte_range: python_display_byte_range(node),
         signature,
         parameters,
         return_type,
         docstring,
-    )))
+    })))
 }
 
 fn python_symbol_node(node: Node<'_>) -> Option<Node<'_>> {
@@ -1955,19 +1955,19 @@ fn python_synthetic_symbol_summary(
     byte_range: (usize, usize),
 ) -> SymbolSummary {
     let scope_fragment = scope_path.unwrap_or("<module>");
-    SymbolSummary::new(
-        format!("{normalized_path}::python::{scope_fragment}::{node_kind}::{name}"),
-        name.to_string(),
-        scope_path.map(str::to_string),
-        normalized_path.to_string(),
-        node_kind.to_string(),
-        origin_type.to_string(),
+    SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: format!("{normalized_path}::python::{scope_fragment}::{node_kind}::{name}"),
+        semantic_path: name.to_string(),
+        scope_path: scope_path.map(str::to_string),
+        file_path: normalized_path.to_string(),
+        node_kind: node_kind.to_string(),
+        origin_type: origin_type.to_string(),
         byte_range,
-        None,
-        Vec::new(),
-        None,
-        None,
-    )
+        signature: None,
+        parameters: Vec::new(),
+        return_type: None,
+        docstring: None,
+    })
 }
 
 pub(crate) fn collect_python_references(
@@ -3470,19 +3470,19 @@ fn collect_c_symbol_candidates_from_root(
 
         symbols.push(CAccessibleSymbol {
             name,
-            summary: SymbolSummary::new(
+            summary: SymbolSummary::new(SymbolSummaryInit {
                 symbol_id,
                 semantic_path,
                 scope_path,
-                normalized_path.clone(),
-                child.kind().to_string(),
-                origin_type.to_string(),
-                (child.start_byte(), child.end_byte()),
-                c_candidate_signature(child, source)?,
-                c_parameters(child, source)?,
-                c_return_type(child, source)?,
-                None,
-            ),
+                file_path: normalized_path.clone(),
+                node_kind: child.kind().to_string(),
+                origin_type: origin_type.to_string(),
+                byte_range: (child.start_byte(), child.end_byte()),
+                signature: c_candidate_signature(child, source)?,
+                parameters: c_parameters(child, source)?,
+                return_type: c_return_type(child, source)?,
+                docstring: None,
+            }),
             rank: base_rank + c_candidate_node_rank(child.kind()),
         });
     }

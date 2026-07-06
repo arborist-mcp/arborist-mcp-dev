@@ -183,65 +183,67 @@ pub struct SymbolMeta {
     pub references: Vec<String>,
 }
 
+pub struct SymbolMetaInit {
+    pub symbol_id: String,
+    pub semantic_path: String,
+    pub scope_path: Option<String>,
+    pub file_path: String,
+    pub node_kind: String,
+    pub origin_type: String,
+    pub byte_range: (usize, usize),
+    pub signature: Option<String>,
+    pub parameters: Vec<String>,
+    pub return_type: Option<String>,
+    pub docstring: Option<String>,
+    pub dependencies: Vec<String>,
+    pub references: Vec<String>,
+}
+
 impl SymbolMeta {
-    pub fn new(
-        symbol_id: String,
-        semantic_path: String,
-        scope_path: Option<String>,
-        file_path: String,
-        node_kind: String,
-        origin_type: String,
-        byte_range: (usize, usize),
-        signature: Option<String>,
-        parameters: Vec<String>,
-        return_type: Option<String>,
-        docstring: Option<String>,
-        dependencies: Vec<String>,
-        references: Vec<String>,
-    ) -> Self {
+    pub fn new(init: SymbolMetaInit) -> Self {
         let evidence_key = symbol_evidence_key(
-            &symbol_id,
-            &file_path,
-            &node_kind,
-            &origin_type,
-            byte_range,
-            signature.as_deref(),
+            &init.symbol_id,
+            &init.file_path,
+            &init.node_kind,
+            &init.origin_type,
+            init.byte_range,
+            init.signature.as_deref(),
         );
 
         Self {
-            symbol_id,
-            semantic_path,
-            scope_path,
-            file_path,
-            node_kind,
-            origin_type,
+            symbol_id: init.symbol_id,
+            semantic_path: init.semantic_path,
+            scope_path: init.scope_path,
+            file_path: init.file_path,
+            node_kind: init.node_kind,
+            origin_type: init.origin_type,
             evidence_key,
-            byte_range,
-            signature,
-            parameters,
-            return_type,
-            docstring,
-            dependencies,
-            references,
+            byte_range: init.byte_range,
+            signature: init.signature,
+            parameters: init.parameters,
+            return_type: init.return_type,
+            docstring: init.docstring,
+            dependencies: init.dependencies,
+            references: init.references,
         }
     }
 
     pub fn with_origin_type(&self, origin_type: &str) -> Self {
-        Self::new(
-            self.symbol_id.clone(),
-            self.semantic_path.clone(),
-            self.scope_path.clone(),
-            self.file_path.clone(),
-            self.node_kind.clone(),
-            origin_type.to_string(),
-            self.byte_range,
-            self.signature.clone(),
-            self.parameters.clone(),
-            self.return_type.clone(),
-            self.docstring.clone(),
-            self.dependencies.clone(),
-            self.references.clone(),
-        )
+        Self::new(SymbolMetaInit {
+            symbol_id: self.symbol_id.clone(),
+            semantic_path: self.semantic_path.clone(),
+            scope_path: self.scope_path.clone(),
+            file_path: self.file_path.clone(),
+            node_kind: self.node_kind.clone(),
+            origin_type: origin_type.to_string(),
+            byte_range: self.byte_range,
+            signature: self.signature.clone(),
+            parameters: self.parameters.clone(),
+            return_type: self.return_type.clone(),
+            docstring: self.docstring.clone(),
+            dependencies: self.dependencies.clone(),
+            references: self.references.clone(),
+        })
     }
 }
 
@@ -262,42 +264,44 @@ pub struct SymbolSummary {
     pub docstring: Option<String>,
 }
 
+pub struct SymbolSummaryInit {
+    pub symbol_id: String,
+    pub semantic_path: String,
+    pub scope_path: Option<String>,
+    pub file_path: String,
+    pub node_kind: String,
+    pub origin_type: String,
+    pub byte_range: (usize, usize),
+    pub signature: Option<String>,
+    pub parameters: Vec<String>,
+    pub return_type: Option<String>,
+    pub docstring: Option<String>,
+}
+
 impl SymbolSummary {
-    pub fn new(
-        symbol_id: String,
-        semantic_path: String,
-        scope_path: Option<String>,
-        file_path: String,
-        node_kind: String,
-        origin_type: String,
-        byte_range: (usize, usize),
-        signature: Option<String>,
-        parameters: Vec<String>,
-        return_type: Option<String>,
-        docstring: Option<String>,
-    ) -> Self {
+    pub fn new(init: SymbolSummaryInit) -> Self {
         let evidence_key = symbol_evidence_key(
-            &symbol_id,
-            &file_path,
-            &node_kind,
-            &origin_type,
-            byte_range,
-            signature.as_deref(),
+            &init.symbol_id,
+            &init.file_path,
+            &init.node_kind,
+            &init.origin_type,
+            init.byte_range,
+            init.signature.as_deref(),
         );
 
         Self {
-            symbol_id,
-            semantic_path,
-            scope_path,
-            file_path,
-            node_kind,
-            origin_type,
+            symbol_id: init.symbol_id,
+            semantic_path: init.semantic_path,
+            scope_path: init.scope_path,
+            file_path: init.file_path,
+            node_kind: init.node_kind,
+            origin_type: init.origin_type,
             evidence_key,
-            byte_range,
-            signature,
-            parameters,
-            return_type,
-            docstring,
+            byte_range: init.byte_range,
+            signature: init.signature,
+            parameters: init.parameters,
+            return_type: init.return_type,
+            docstring: init.docstring,
         }
     }
 }

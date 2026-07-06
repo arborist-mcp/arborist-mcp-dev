@@ -15,8 +15,8 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolMeta, SymbolSummary, TraceDirection, TraceEvidenceKeys,
-    TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSummary, SymbolSummaryInit, TraceDirection,
+    TraceEvidenceKeys, TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -667,19 +667,19 @@ fn choose_symbol_summary(
         .filter(|symbol| symbol.symbol_id == symbol_id)
         .max_by_key(|symbol| symbol_candidate_rank(symbol, context_file, include_context))
         .map(|symbol| {
-            SymbolSummary::new(
-                symbol.symbol_id.clone(),
-                symbol.semantic_path.clone(),
-                symbol.scope_path.clone(),
-                symbol.file_path.clone(),
-                symbol.node_kind.clone(),
-                symbol_origin_type(symbol, context_file, include_context).to_string(),
-                symbol.byte_range,
-                symbol.signature.clone(),
-                symbol.parameters.clone(),
-                symbol.return_type.clone(),
-                symbol.docstring.clone(),
-            )
+            SymbolSummary::new(SymbolSummaryInit {
+                symbol_id: symbol.symbol_id.clone(),
+                semantic_path: symbol.semantic_path.clone(),
+                scope_path: symbol.scope_path.clone(),
+                file_path: symbol.file_path.clone(),
+                node_kind: symbol.node_kind.clone(),
+                origin_type: symbol_origin_type(symbol, context_file, include_context).to_string(),
+                byte_range: symbol.byte_range,
+                signature: symbol.signature.clone(),
+                parameters: symbol.parameters.clone(),
+                return_type: symbol.return_type.clone(),
+                docstring: symbol.docstring.clone(),
+            })
         })
 }
 
@@ -968,21 +968,21 @@ fn is_c_header_path(path: &Path) -> bool {
 }
 
 fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
-    SymbolMeta::new(
-        symbol.symbol_id.clone(),
-        symbol.semantic_path.clone(),
-        symbol.scope_path.clone(),
-        symbol.file_path.clone(),
-        symbol.node_kind.clone(),
-        "workspace_symbol".to_string(),
-        symbol.byte_range,
-        symbol.signature.clone(),
-        symbol.parameters.clone(),
-        symbol.return_type.clone(),
-        symbol.docstring.clone(),
-        Vec::new(),
-        Vec::new(),
-    )
+    SymbolMeta::new(SymbolMetaInit {
+        symbol_id: symbol.symbol_id.clone(),
+        semantic_path: symbol.semantic_path.clone(),
+        scope_path: symbol.scope_path.clone(),
+        file_path: symbol.file_path.clone(),
+        node_kind: symbol.node_kind.clone(),
+        origin_type: "workspace_symbol".to_string(),
+        byte_range: symbol.byte_range,
+        signature: symbol.signature.clone(),
+        parameters: symbol.parameters.clone(),
+        return_type: symbol.return_type.clone(),
+        docstring: symbol.docstring.clone(),
+        dependencies: Vec::new(),
+        references: Vec::new(),
+    })
 }
 
 fn raw_symbol_indexes_by_id(raw_symbols: &[IndexedSymbol]) -> BTreeMap<String, Vec<usize>> {
@@ -1042,27 +1042,27 @@ fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta>
     raw_symbols
         .iter()
         .map(|symbol| {
-            SymbolMeta::new(
-                symbol.symbol_id.clone(),
-                symbol.semantic_path.clone(),
-                symbol.scope_path.clone(),
-                symbol.file_path.clone(),
-                symbol.node_kind.clone(),
-                "workspace_symbol".to_string(),
-                symbol.byte_range,
-                symbol.signature.clone(),
-                symbol.parameters.clone(),
-                symbol.return_type.clone(),
-                symbol.docstring.clone(),
-                dependency_map
+            SymbolMeta::new(SymbolMetaInit {
+                symbol_id: symbol.symbol_id.clone(),
+                semantic_path: symbol.semantic_path.clone(),
+                scope_path: symbol.scope_path.clone(),
+                file_path: symbol.file_path.clone(),
+                node_kind: symbol.node_kind.clone(),
+                origin_type: "workspace_symbol".to_string(),
+                byte_range: symbol.byte_range,
+                signature: symbol.signature.clone(),
+                parameters: symbol.parameters.clone(),
+                return_type: symbol.return_type.clone(),
+                docstring: symbol.docstring.clone(),
+                dependencies: dependency_map
                     .get(&symbol.symbol_id)
                     .map(|dependencies| dependencies.iter().cloned().collect())
                     .unwrap_or_default(),
-                reference_map
+                references: reference_map
                     .get(&symbol.symbol_id)
                     .map(|references| references.iter().cloned().collect())
                     .unwrap_or_default(),
-            )
+            })
         })
         .collect()
 }
@@ -1225,21 +1225,21 @@ fn materialize_resolved_symbol_rows(
             resolved_map
                 .get(&raw_symbol.symbol_id)
                 .map(|resolved_symbol| {
-                    SymbolMeta::new(
-                        raw_symbol.symbol_id.clone(),
-                        raw_symbol.semantic_path.clone(),
-                        raw_symbol.scope_path.clone(),
-                        raw_symbol.file_path.clone(),
-                        raw_symbol.node_kind.clone(),
-                        "workspace_symbol".to_string(),
-                        raw_symbol.byte_range,
-                        raw_symbol.signature.clone(),
-                        raw_symbol.parameters.clone(),
-                        raw_symbol.return_type.clone(),
-                        raw_symbol.docstring.clone(),
-                        resolved_symbol.dependencies.clone(),
-                        resolved_symbol.references.clone(),
-                    )
+                    SymbolMeta::new(SymbolMetaInit {
+                        symbol_id: raw_symbol.symbol_id.clone(),
+                        semantic_path: raw_symbol.semantic_path.clone(),
+                        scope_path: raw_symbol.scope_path.clone(),
+                        file_path: raw_symbol.file_path.clone(),
+                        node_kind: raw_symbol.node_kind.clone(),
+                        origin_type: "workspace_symbol".to_string(),
+                        byte_range: raw_symbol.byte_range,
+                        signature: raw_symbol.signature.clone(),
+                        parameters: raw_symbol.parameters.clone(),
+                        return_type: raw_symbol.return_type.clone(),
+                        docstring: raw_symbol.docstring.clone(),
+                        dependencies: resolved_symbol.dependencies.clone(),
+                        references: resolved_symbol.references.clone(),
+                    })
                 })
         })
         .collect()
@@ -1797,21 +1797,25 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
         let parameters_json: String = row.get(8)?;
         let dependencies_json: String = row.get(11)?;
         let references_json: String = row.get(12)?;
-        Ok(SymbolMeta::new(
-            nonempty_string_from_row(row, 0, "symbol_id")?,
-            nonempty_string_from_row(row, 1, "semantic_path")?,
-            row.get(2)?,
-            nonempty_string_from_row(row, 3, "file_path")?,
-            nonempty_string_from_row(row, 4, "node_kind")?,
-            "workspace_symbol".to_string(),
-            byte_range_from_row(row, 5, 6)?,
-            row.get(7)?,
-            json_from_column(&parameters_json, 8)?,
-            row.get(9)?,
-            row.get(10)?,
-            string_list_from_json_column(&dependencies_json, 11, "dependencies_json")?,
-            string_list_from_json_column(&references_json, 12, "references_json")?,
-        ))
+        Ok(SymbolMeta::new(SymbolMetaInit {
+            symbol_id: nonempty_string_from_row(row, 0, "symbol_id")?,
+            semantic_path: nonempty_string_from_row(row, 1, "semantic_path")?,
+            scope_path: row.get(2)?,
+            file_path: nonempty_string_from_row(row, 3, "file_path")?,
+            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: byte_range_from_row(row, 5, 6)?,
+            signature: row.get(7)?,
+            parameters: json_from_column(&parameters_json, 8)?,
+            return_type: row.get(9)?,
+            docstring: row.get(10)?,
+            dependencies: string_list_from_json_column(
+                &dependencies_json,
+                11,
+                "dependencies_json",
+            )?,
+            references: string_list_from_json_column(&references_json, 12, "references_json")?,
+        }))
     })?;
 
     let mut symbols = Vec::new();
