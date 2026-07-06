@@ -114,7 +114,7 @@ Run the full local gate:
 .\scripts\check.ps1
 ```
 
-Or run the commands directly:
+Or run the core checks directly:
 
 ```powershell
 cargo fmt --check
