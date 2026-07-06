@@ -967,6 +967,42 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("invalid JSON", response["error"]["message"])
 
+    def test_stdio_duplicate_json_key_emits_parse_error_response(self) -> None:
+        stdin = io.StringIO(
+            '{"jsonrpc":"2.0","id":1,"id":2,"method":"initialize","params":{}}\n'
+        )
+        stdout = io.StringIO()
+
+        with mock.patch.object(
+            gateway_module.ArboristGateway,
+            "__init__",
+            side_effect=AssertionError("gateway should not initialize"),
+        ):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        response = gateway_module.json.loads(stdout.getvalue())
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("duplicate JSON object key", response["error"]["message"])
+        self.assertIn("id", response["error"]["message"])
+
+    def test_parse_request_rejects_nested_duplicate_json_key(self) -> None:
+        request, response = gateway_module.parse_request_json(
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"x":1,"x":2}}'
+        )
+
+        self.assertIsNone(request)
+        self.assertIsNotNone(response)
+        assert response is not None
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("duplicate JSON object key", response["error"]["message"])
+        self.assertIn("x", response["error"]["message"])
+
     def test_stdio_invalid_no_id_request_emits_error_response(self) -> None:
         stdin = io.StringIO('{"method":"arborist/list_symbol_indexes","params":{}}\n')
         stdout = io.StringIO()

@@ -547,11 +547,21 @@ def _reject_nonstandard_json_constant(name: str) -> Any:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        obj[key] = value
+    return obj
+
+
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
     try:
         return json.loads(
             raw_request,
             parse_constant=_reject_nonstandard_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
         ), None
     except (json.JSONDecodeError, ValueError) as exc:
         return None, ArboristGateway._error_response(
