@@ -354,6 +354,7 @@ class ArboristGateway:
             return json.loads(
                 payload,
                 parse_constant=_reject_nonstandard_json_constant,
+                object_pairs_hook=_reject_duplicate_object_keys,
             )
         except (json.JSONDecodeError, ValueError) as exc:
             raise JsonRpcError(-32000, f"invalid JSON from arborist core: {exc}") from exc

@@ -1264,6 +1264,29 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32000)
         self.assertIn("invalid JSON from arborist core", response["error"]["message"])
 
+    def test_rejects_duplicate_json_keys_from_core(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                return '[{"workspace_root": "a", "workspace_root": "b"}]'
+
+        gateway = ArboristGateway()
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 50,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 50)
+        self.assertEqual(response["error"]["code"], -32000)
+        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assertIn("duplicate JSON object key", response["error"]["message"])
+
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         gateway = ArboristGateway()
 
