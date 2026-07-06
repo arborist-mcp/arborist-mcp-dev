@@ -1741,7 +1741,8 @@ fn load_indexed_symbols_grouped_by_file(
         let parameters_json: String = row.get(8)?;
         let reference_names_json: String = row.get(11)?;
         let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
-        let reference_names: Vec<String> = json_from_column(&reference_names_json, 11)?;
+        let reference_names =
+            string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
         let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
         let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
         Ok(IndexedSymbol {
@@ -1796,8 +1797,8 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
             json_from_column(&parameters_json, 8)?,
             row.get(9)?,
             row.get(10)?,
-            json_from_column(&dependencies_json, 11)?,
-            json_from_column(&references_json, 12)?,
+            string_list_from_json_column(&dependencies_json, 11, "dependencies_json")?,
+            string_list_from_json_column(&references_json, 12, "references_json")?,
         ))
     })?;
 
@@ -1849,6 +1850,25 @@ fn json_from_column<T: DeserializeOwned>(json: &str, column: usize) -> rusqlite:
     serde_json::from_str(json).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
     })
+}
+
+fn string_list_from_json_column(
+    json: &str,
+    column: usize,
+    column_name: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let values: Vec<String> = json_from_column(json, column)?;
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty {column_name} entry"),
+            )),
+        ));
+    }
+    Ok(values)
 }
 
 fn byte_range_from_row(
