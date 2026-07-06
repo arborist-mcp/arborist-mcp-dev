@@ -1,6 +1,7 @@
 * text=auto
 
 .gitattributes text eol=lf
+.editorconfig text eol=lf
 .gitignore text eol=lf
 Cargo.lock text eol=lf
 
