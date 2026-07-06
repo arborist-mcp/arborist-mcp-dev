@@ -2236,7 +2236,7 @@ mod tests {
     use super::{
         IndexedSymbol, PersistedFileState, SKIPPED_WORKSPACE_DIR_NAMES, SymbolMeta,
         SymbolRefreshPersistence, ensure_symbol_tables, persist_symbol_index,
-        persist_symbol_refresh, persisted_byte_range, should_skip_dir_name,
+        persist_symbol_refresh, persisted_byte_range, should_skip_dir_name, should_skip_index_path,
     };
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2260,6 +2260,25 @@ mod tests {
                 "{name} should not be skipped by partial name matching"
             );
         }
+    }
+
+    #[test]
+    fn recognizes_skipped_workspace_path_segments() {
+        let workspace = temporary_dir();
+        let source_path = workspace.join("src").join("helper.py");
+        let venv_path = workspace.join(".venv").join("installed.py");
+        let similarly_named_path = workspace.join("venv-tools").join("helper.py");
+        let sibling_workspace_path = workspace
+            .parent()
+            .unwrap()
+            .join("other-workspace")
+            .join(".venv")
+            .join("installed.py");
+
+        assert!(!should_skip_index_path(&workspace, &source_path));
+        assert!(should_skip_index_path(&workspace, &venv_path));
+        assert!(!should_skip_index_path(&workspace, &similarly_named_path));
+        assert!(!should_skip_index_path(&workspace, &sibling_workspace_path));
     }
 
     #[test]
