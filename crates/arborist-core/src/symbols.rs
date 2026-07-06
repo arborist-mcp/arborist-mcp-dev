@@ -1700,20 +1700,7 @@ fn load_indexed_symbols_grouped_by_file(
 }
 
 fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMeta>, usize)> {
-    let indexed_files = connection
-        .query_row(
-            "SELECT value FROM metadata WHERE key = 'indexed_files'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?
-        .map(|value| {
-            value
-                .parse::<usize>()
-                .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
-        })
-        .transpose()?
-        .unwrap_or(0);
+    let indexed_files = load_indexed_files_metadata(connection)?;
 
     let mut statement = connection.prepare(
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
@@ -1748,6 +1735,23 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
     }
 
     Ok((symbols, indexed_files))
+}
+
+fn load_indexed_files_metadata(connection: &Connection) -> Result<usize> {
+    let Some(value) = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'indexed_files'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Err(anyhow!("missing indexed_files metadata"));
+    };
+
+    value
+        .parse::<usize>()
+        .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
 }
 
 fn json_from_column<T: DeserializeOwned>(json: &str, column: usize) -> rusqlite::Result<T> {

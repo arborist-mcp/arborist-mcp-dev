@@ -6195,6 +6195,53 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_from_index_rejects_missing_indexed_files_metadata() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute("DELETE FROM metadata WHERE key = 'indexed_files'", [])
+            .unwrap();
+        drop(connection);
+
+        let error = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("missing indexed_files metadata should be rejected");
+
+        assert!(error.to_string().contains("missing indexed_files metadata"));
+    }
+
+    #[test]
+    fn refresh_existing_database_with_missing_indexed_files_metadata_does_not_migrate() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute("DELETE FROM metadata WHERE key = 'indexed_files'", [])
+            .unwrap();
+        drop(connection);
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh should reject databases with missing indexed_files metadata");
+
+        assert!(error.to_string().contains("missing indexed_files metadata"));
+        let connection = Connection::open(&db_path).unwrap();
+        let metadata_count: usize = connection
+            .query_row(
+                "SELECT COUNT(*) FROM metadata WHERE key = 'indexed_files'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(metadata_count, 0);
+    }
+
+    #[test]
     fn traces_python_symbol_metadata_through_persisted_index() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");
