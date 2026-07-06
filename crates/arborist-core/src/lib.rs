@@ -45,10 +45,11 @@ pub fn get_semantic_skeleton(
     depth_limit: usize,
     expand_nodes: &[String],
 ) -> Result<SemanticSkeleton> {
+    let path = language::normalize_absolute_path(path)?;
     validate_expand_nodes(expand_nodes)?;
-    let document = language::parse_document(path, source)?;
+    let document = language::parse_document(&path, source)?;
     semantic::get_semantic_skeleton(
-        path,
+        &path,
         document.language_id,
         source,
         &document.tree,
@@ -2025,9 +2026,11 @@ int helper(int value) {
         assert_eq!(captures.len(), 1);
         assert_eq!(captures[0].capture_name, "callee");
         assert_eq!(captures[0].text, "helper");
-        assert_eq!(
-            captures[0].owner_symbol_id.as_deref(),
-            Some("sample.c::orchestrate")
+        assert!(
+            captures[0]
+                .owner_symbol_id
+                .as_deref()
+                .is_some_and(|owner| owner.ends_with("/sample.c::orchestrate"))
         );
         assert_eq!(
             captures[0].owner_semantic_path.as_deref(),
@@ -2046,9 +2049,11 @@ int helper(int value) {
         assert_eq!(captures.len(), 1);
         assert_eq!(captures[0].capture_name, "name");
         assert_eq!(captures[0].text, "helper");
-        assert_eq!(
-            captures[0].owner_symbol_id.as_deref(),
-            Some("sample.h::helper")
+        assert!(
+            captures[0]
+                .owner_symbol_id
+                .as_deref()
+                .is_some_and(|owner| owner.ends_with("/sample.h::helper"))
         );
         assert_eq!(captures[0].owner_semantic_path.as_deref(), Some("helper"));
         assert_eq!(captures[0].owner_scope_path, None);
@@ -6383,6 +6388,51 @@ def orchestrate(value: int) -> int:\n    return value\n",
         .unwrap();
         let owner_symbol_id = captures[0].owner_symbol_id.as_deref().unwrap();
         assert!(!owner_symbol_id.contains("/../"));
+    }
+
+    #[test]
+    fn source_entrypoints_normalize_file_paths() {
+        let dir = temporary_dir();
+        let nested = dir.join("child");
+        let python_file = dir.join("buffer.py");
+        let c_file = dir.join("sample.c");
+
+        fs::create_dir_all(&nested).unwrap();
+        let python_alias = nested.join("..").join("buffer.py");
+        let c_alias = nested.join("..").join("sample.c");
+
+        let skeleton =
+            get_semantic_skeleton(&python_alias, "def value() -> int:\n    return 1\n", 1, &[])
+                .unwrap();
+        assert_eq!(
+            skeleton.file,
+            python_file.to_string_lossy().replace('\\', "/")
+        );
+
+        let patch = patch_ast_node(
+            &python_alias,
+            "def value() -> int:\n    return 1\n",
+            "value",
+            "def value() -> int:\n    return 2\n",
+            None,
+        )
+        .unwrap();
+        assert_eq!(patch.file, python_file.to_string_lossy().replace('\\', "/"));
+
+        let captures = execute_tree_query(
+            &c_alias,
+            "int orchestrate(int value) { return value + 1; }\n",
+            "(function_definition declarator: (function_declarator declarator: (identifier) @name))",
+        )
+        .unwrap();
+        let owner_symbol_id = captures[0].owner_symbol_id.as_deref().unwrap();
+        assert_eq!(
+            owner_symbol_id,
+            format!(
+                "{}::orchestrate",
+                c_file.to_string_lossy().replace('\\', "/")
+            )
+        );
     }
 
     #[test]

@@ -22,11 +22,12 @@ pub fn execute_tree_query(
     source: &str,
     query: &str,
 ) -> Result<Vec<QueryCaptureResult>> {
-    let document = parse_document(path, source)?;
+    let path = normalize_absolute_path(path)?;
+    let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
     let compiled = Query::new(&language, query)
-        .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(path)))?;
+        .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(&path)))?;
 
     let mut cursor = QueryCursor::new();
     let mut captures = Vec::new();
@@ -36,7 +37,7 @@ pub fn execute_tree_query(
         let capture = query_match.captures[*capture_index];
         let node = capture.node;
         let (owner_symbol_id, owner_semantic_path, owner_scope_path) =
-            capture_owner(path, source, root, document.language_id, node)?;
+            capture_owner(&path, source, root, document.language_id, node)?;
         captures.push(QueryCaptureResult {
             capture_name: compiled.capture_names()[capture.index as usize].to_string(),
             node_kind: node.kind().to_string(),

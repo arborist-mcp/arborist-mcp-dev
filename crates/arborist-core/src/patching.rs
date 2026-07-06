@@ -142,10 +142,11 @@ pub fn patch_ast_node(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
-    let (start_byte, end_byte) = semantic_target_range(path, source, semantic_target)?;
+    let path = normalize_absolute_path(path)?;
+    let (start_byte, end_byte) = semantic_target_range(&path, source, semantic_target)?;
     let updated_source = splice_source(source, start_byte..end_byte, new_code);
     build_patch_result(
-        path,
+        &path,
         semantic_target,
         updated_source,
         bypass_reason,
