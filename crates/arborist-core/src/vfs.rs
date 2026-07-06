@@ -214,7 +214,7 @@ impl VirtualFileSystem {
 
         self.apply_edit(&path, start_byte, end_byte, new_code)?;
 
-        let result = match {
+        let validation_result = {
             let entry = self
                 .entries
                 .get(&normalized)
@@ -227,7 +227,9 @@ impl VirtualFileSystem {
                 start_byte,
                 new_code.len(),
             )
-        } {
+        };
+
+        let result = match validation_result {
             Ok(result) => result,
             Err(error) => {
                 self.entries.insert(normalized, previous);
