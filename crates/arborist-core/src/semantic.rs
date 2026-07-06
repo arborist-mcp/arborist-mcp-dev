@@ -5,9 +5,10 @@ use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::language::{
-    C_HEADER_EXTENSIONS, c_include_targets, contains_kind, contains_node, first_identifier,
-    is_c_header_path, language_for_id, last_type_identifier, node_text, normalize_path,
-    parse_document, read_source, resolve_local_c_include,
+    C_HEADER_EXTENSIONS, c_include_targets, contains_kind, contains_node,
+    extension_case_candidates, first_identifier, is_c_header_path, language_for_id,
+    last_type_identifier, node_text, normalize_path, parse_document, read_source,
+    resolve_local_c_include,
 };
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
@@ -629,25 +630,8 @@ fn c_file_declares_symbol(path: &Path, symbol_name: &str) -> Result<bool> {
 }
 
 fn sibling_header_candidates(path: &Path) -> Vec<std::path::PathBuf> {
-    let uppercase_first = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension
-                .chars()
-                .all(|character| character.is_ascii_uppercase())
-        });
-
-    C_HEADER_EXTENSIONS
-        .iter()
-        .flat_map(|extension| {
-            let uppercase = extension.to_ascii_uppercase();
-            if uppercase_first {
-                [uppercase, (*extension).to_string()]
-            } else {
-                [(*extension).to_string(), uppercase]
-            }
-        })
+    extension_case_candidates(path, C_HEADER_EXTENSIONS)
+        .into_iter()
         .map(|extension| path.with_extension(extension))
         .collect()
 }

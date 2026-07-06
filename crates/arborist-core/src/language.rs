@@ -98,22 +98,35 @@ pub fn is_c_header_path(path: &Path) -> bool {
         })
 }
 
+pub(crate) fn extension_case_candidates(path: &Path, extensions: &[&str]) -> Vec<String> {
+    let uppercase_first = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension
+                .chars()
+                .all(|character| character.is_ascii_uppercase())
+        });
+
+    extensions
+        .iter()
+        .flat_map(|extension| {
+            let uppercase = extension.to_ascii_uppercase();
+            if uppercase_first {
+                [uppercase, (*extension).to_string()]
+            } else {
+                [(*extension).to_string(), uppercase]
+            }
+        })
+        .collect()
+}
+
 pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
-    let extension = include_path.extension()?.to_str()?;
     if !is_c_header_path(include_path) {
         return None;
     }
 
-    let source_extensions = if extension
-        .chars()
-        .all(|character| character.is_ascii_uppercase())
-    {
-        ["C", "c"]
-    } else {
-        ["c", "C"]
-    };
-
-    let candidates = source_extensions
+    let candidates = extension_case_candidates(include_path, C_SOURCE_EXTENSIONS)
         .into_iter()
         .map(|source_extension| include_path.with_extension(source_extension))
         .collect::<Vec<_>>();
