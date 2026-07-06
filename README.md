@@ -70,6 +70,8 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - LSP-style buffer session primitives for open/change/close event ingestion
 - Session-aware `trace_symbol_graph` for unsaved virtual buffers
 - Semantic patching routed through the VFS session before commit
+- One-shot skeleton, query, patch, and trace-context requests can analyze an
+  optional `source` buffer without first writing it to disk
 - Session-managed symbol index registrations with commit-time auto-refresh
 - File-scoped persisted index refresh for tighter post-commit sync
 - Partial SQLite persistence updates for changed or deleted file refreshes
@@ -151,6 +153,14 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":17,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
+For one-shot analysis and validation, `get_semantic_skeleton`,
+`execute_tree_query`, `patch_ast_node`, and `validate_patch_with_trace_context`
+accept an optional `source` string. When supplied, Arborist parses and validates
+that buffer for the requested `file_path` without creating or overwriting the
+file on disk. Use the VFS methods (`did_open`, `did_change`,
+`patch_virtual_ast_node`, `commit_virtual_file`, and `discard_virtual_file`) when
+the caller wants a longer-lived editor session that can be committed later.
+
 For C, `patch_ast_node` and `patch_virtual_ast_node` accept either a plain selector such as `helper` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both a forward declaration and a definition for the same symbol, patch targeting now prefers the definition by default.
 
 `get_semantic_skeleton` now returns both `available_paths` and `available_symbols`. Each `available_symbols` item includes the symbol's stable `symbol_id`, `semantic_path`, optional `scope_path`, `node_kind`, `byte_range`, structured `parameters`, optional `return_type`, and optional `signature` / `docstring`, which lets an agent round-trip directly from lightweight exploration into later trace or patch requests without reconstructing selectors from raw text. For Python decorated definitions, `signature` and `byte_range` cover the full decorated source span rather than only the inner `def` / `class` header.
@@ -198,6 +208,8 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - `trace_symbol_graph` now prefers dirty VirtualState buffers over disk when no persisted index is requested
 - `patch_ast_node` uses the same VFS session machinery and commits on success
 - `patch_virtual_ast_node` keeps the validated patch in `VirtualState` until an explicit commit
+- One-shot skeleton, query, patch, and trace-context requests accept optional
+  `source` buffers for unsaved-file analysis without mutating disk
 - Patch responses now report `resolved_symbol_id`, so callers can round-trip a precise C trace target into a later patch request
 - C patch validation now reports structured binding feedback, including resolved `symbol_id` matches and ambiguous same-name candidates
 - Python patch validation now reports structured resolved binding feedback for visible module symbols, parameters, local assignments, local or relative aliases, and package `__init__.py` re-exports
