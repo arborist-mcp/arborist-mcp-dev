@@ -562,6 +562,28 @@ mod tests {
     }
 
     #[test]
+    fn rejects_byte_edit_inside_utf8_character() {
+        let file = temp_file("def value() -> str:\n    return 'é'\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let snapshot = vfs.read_file(&file).unwrap();
+        let character_start = snapshot.source.find('é').unwrap();
+        let interior_byte = character_start + 1;
+        let error = vfs
+            .apply_edit(&file, interior_byte, interior_byte, "x")
+            .expect_err("byte edits must not split UTF-8 characters");
+
+        assert!(
+            error
+                .to_string()
+                .contains("edit range must align to UTF-8 character boundaries")
+        );
+        let unchanged = vfs.read_file(&file).unwrap();
+        assert!(!unchanged.dirty);
+        assert_eq!(unchanged.source, snapshot.source);
+    }
+
+    #[test]
     fn discard_refreshes_from_current_disk_source() {
         let file = temp_file("def value() -> int:\n    return 1\n");
         let mut vfs = VirtualFileSystem::new();
