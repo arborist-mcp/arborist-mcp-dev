@@ -3,7 +3,7 @@ use std::fs;
 use std::ops::Range;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::Node;
 
 use crate::language::{
@@ -160,6 +160,7 @@ pub(crate) fn semantic_target_range(
     source: &str,
     semantic_target: &str,
 ) -> Result<(usize, usize)> {
+    validate_semantic_target(semantic_target)?;
     let document = parse_document(path, source)?;
     let target_node = find_semantic_node(
         document.language_id,
@@ -172,6 +173,13 @@ pub(crate) fn semantic_target_range(
     let target_node = python_symbol_replacement_node(document.language_id, target_node);
 
     Ok((target_node.start_byte(), target_node.end_byte()))
+}
+
+fn validate_semantic_target(semantic_target: &str) -> Result<()> {
+    if semantic_target.trim().is_empty() {
+        bail!("invalid semantic target: selector must not be blank");
+    }
+    Ok(())
 }
 
 pub(crate) fn build_patch_result(
