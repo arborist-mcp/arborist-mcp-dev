@@ -24,6 +24,10 @@ pub fn read_source(path: &Path) -> Result<String> {
 }
 
 pub fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
+    if path.as_os_str().is_empty() {
+        bail!("invalid path: path must not be empty");
+    }
+
     let absolute_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -400,8 +404,8 @@ mod tests {
     use tree_sitter::Point;
 
     use super::{
-        c_companion_source_path, detect_language, is_c_header_path, offset_for_position,
-        point_for_offset,
+        c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
+        offset_for_position, point_for_offset,
     };
     use crate::model::{LanguageId, Position};
 
@@ -488,6 +492,15 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn normalize_absolute_path_rejects_empty_paths() {
+        let error = normalize_absolute_path(Path::new(""))
+            .expect_err("empty paths should be rejected before normalization");
+
+        assert!(error.to_string().contains("path"));
+        assert!(error.to_string().contains("empty"));
     }
 
     #[test]

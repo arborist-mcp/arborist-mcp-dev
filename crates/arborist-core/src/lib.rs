@@ -648,6 +648,17 @@ def top_level(value: int) -> int:
     }
 
     #[test]
+    fn rejects_empty_file_paths() {
+        let source = "def top_level(value: int) -> int:\n    return value\n";
+
+        let error = get_semantic_skeleton(Path::new(""), source, 1, &[])
+            .expect_err("empty file paths should be rejected");
+
+        assert!(error.to_string().contains("path"));
+        assert!(error.to_string().contains("empty"));
+    }
+
+    #[test]
     fn rejects_blank_patch_targets() {
         let source = "def top_level():\n    return 1\n";
 
