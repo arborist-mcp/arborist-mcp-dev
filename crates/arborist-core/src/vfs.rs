@@ -843,6 +843,35 @@ mod tests {
     }
 
     #[test]
+    fn trace_symbol_graph_ignores_virtual_files_in_sibling_workspace_prefix() {
+        let dir = temp_workspace();
+        let workspace = dir.join("project");
+        let sibling = dir.join("project-extra");
+        let helper_path = workspace.join("helper.py");
+        let sibling_path = sibling.join("installed.py");
+
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(
+            &sibling_path,
+            Some("def installed() -> int:\n    return 2\n"),
+        )
+        .unwrap();
+
+        assert!(
+            vfs.trace_symbol_graph(&workspace, "helper", TraceDirection::Both)
+                .is_ok()
+        );
+        assert!(
+            vfs.trace_symbol_graph(&workspace, "installed", TraceDirection::Both)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn commits_refresh_registered_symbol_index() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");
@@ -949,6 +978,36 @@ mod tests {
         vfs.open_file(&venv_path, Some("def installed() -> int:\n    return 2\n"))
             .unwrap();
         vfs.commit_file(&venv_path).unwrap();
+
+        assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_ok());
+        assert!(
+            trace_symbol_graph_from_index(&db_path, "installed", TraceDirection::Both).is_err()
+        );
+    }
+
+    #[test]
+    fn commit_skips_registered_index_refresh_for_sibling_workspace_prefix() {
+        let dir = temp_workspace();
+        let workspace = dir.join("project");
+        let sibling = dir.join("project-extra");
+        let helper_path = workspace.join("helper.py");
+        let sibling_path = sibling.join("installed.py");
+        let db_path = workspace.join("symbols.db");
+
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&sibling).unwrap();
+        fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let stats = vfs.register_symbol_index(&workspace, &db_path).unwrap();
+        assert_eq!(stats.indexed_files, 1);
+
+        vfs.open_file(
+            &sibling_path,
+            Some("def installed() -> int:\n    return 2\n"),
+        )
+        .unwrap();
+        vfs.commit_file(&sibling_path).unwrap();
 
         assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_ok());
         assert!(
