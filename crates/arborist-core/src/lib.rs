@@ -1508,6 +1508,24 @@ int helper(int value) {
     }
 
     #[test]
+    fn execute_tree_query_reports_owner_for_c_declaration_captures() {
+        let source = "int helper(int value);\n";
+        let query = "(function_declarator declarator: (identifier) @name)";
+
+        let captures = execute_tree_query(Path::new("sample.h"), source, query).unwrap();
+
+        assert_eq!(captures.len(), 1);
+        assert_eq!(captures[0].capture_name, "name");
+        assert_eq!(captures[0].text, "helper");
+        assert_eq!(
+            captures[0].owner_symbol_id.as_deref(),
+            Some("sample.h::helper")
+        );
+        assert_eq!(captures[0].owner_semantic_path.as_deref(), Some("helper"));
+        assert_eq!(captures[0].owner_scope_path, None);
+    }
+
+    #[test]
     fn rejects_patch_with_unresolved_identifier_without_bypass() {
         let source = r#"
 def helper(value: int) -> int:
