@@ -6303,13 +6303,18 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let dir = temporary_dir();
         let python_file = dir.join("Buffer.PY");
         let c_file = dir.join("Sample.C");
+        let header_file = dir.join("Header.HH");
         let db_path = dir.join("symbols.db");
 
         fs::write(&python_file, "def py_value() -> int:\n    return 1\n").unwrap();
         fs::write(&c_file, "int c_value(void) { return 2; }\n").unwrap();
+        fs::write(&header_file, "int hh_value(void);\n").unwrap();
 
         let skeleton = get_semantic_skeleton_from_path(&python_file, 1, &[]).unwrap();
         assert_eq!(skeleton.available_paths, vec!["py_value"]);
+
+        let header_skeleton = get_semantic_skeleton_from_path(&header_file, 1, &[]).unwrap();
+        assert_eq!(header_skeleton.available_paths, vec!["hh_value"]);
 
         let captures = execute_tree_query_from_path(
             &c_file,
@@ -6318,10 +6323,18 @@ def orchestrate(value: int) -> int:\n    return value\n",
         .unwrap();
         assert_eq!(captures[0].text, "c_value");
 
+        let header_captures = execute_tree_query_from_path(
+            &header_file,
+            "(declaration declarator: (function_declarator declarator: (identifier) @name))",
+        )
+        .unwrap();
+        assert_eq!(header_captures[0].text, "hh_value");
+
         let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
-        assert_eq!(stats.indexed_files, 2);
+        assert_eq!(stats.indexed_files, 3);
         assert!(trace_symbol_graph_from_index(&db_path, "py_value", TraceDirection::Both).is_ok());
         assert!(trace_symbol_graph_from_index(&db_path, "c_value", TraceDirection::Both).is_ok());
+        assert!(trace_symbol_graph_from_index(&db_path, "hh_value", TraceDirection::Both).is_ok());
     }
 
     #[test]
