@@ -132,12 +132,7 @@ pub fn refresh_symbol_index_for_file(
     }
 
     let connection = Connection::open(&db_path)?;
-    if !table_exists(&connection, "symbols")? {
-        return Err(anyhow!(
-            "missing symbol index table in {}",
-            db_path.display()
-        ));
-    }
+    require_symbol_index_tables(&connection, &db_path)?;
     ensure_symbol_tables(&connection)?;
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
 
@@ -1496,14 +1491,22 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     }
 
     let connection = Connection::open(db_path)?;
-    if !table_exists(&connection, "symbols")? {
-        return Err(anyhow!(
-            "missing symbol index table in {}",
-            db_path.display()
-        ));
-    }
+    require_symbol_index_tables(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
+}
+
+fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Result<()> {
+    for table_name in ["metadata", "symbols", "file_state"] {
+        if !table_exists(connection, table_name)? {
+            return Err(anyhow!(
+                "missing symbol index table `{}` in {}",
+                table_name,
+                db_path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
