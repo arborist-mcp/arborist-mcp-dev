@@ -85,30 +85,6 @@ pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
     Ok(format!("{prefix};"))
 }
 
-fn skeleton_symbol(
-    symbol_id: String,
-    semantic_path: String,
-    scope_path: Option<String>,
-    node_kind: &str,
-    byte_range: (usize, usize),
-    signature: Option<String>,
-    parameters: Vec<String>,
-    return_type: Option<String>,
-    docstring: Option<String>,
-) -> SemanticSkeletonSymbol {
-    SemanticSkeletonSymbol {
-        symbol_id,
-        semantic_path,
-        scope_path,
-        node_kind: node_kind.to_string(),
-        byte_range,
-        signature,
-        parameters,
-        return_type,
-        docstring,
-    }
-}
-
 pub(crate) fn semantic_parent_path(path: &str) -> Option<String> {
     if path.contains("::") {
         return None;
@@ -357,17 +333,17 @@ fn build_python_skeleton(
         let docstring = python_docstring(item, source)?;
         let byte_range = python_display_byte_range(item);
         available_paths.push(path.clone());
-        available_symbols.push(skeleton_symbol(
-            symbol_id.clone(),
-            path.clone(),
+        available_symbols.push(SemanticSkeletonSymbol {
+            symbol_id: symbol_id.clone(),
+            semantic_path: path.clone(),
             scope_path,
-            item.kind(),
+            node_kind: item.kind().to_string(),
             byte_range,
-            signature.clone(),
+            signature: signature.clone(),
             parameters,
             return_type,
             docstring,
-        ));
+        });
         symbol_items.push((item, path, symbol_id));
     }
 
@@ -424,17 +400,17 @@ fn build_c_skeleton(
                     let parameters = c_parameters(child, source)?;
                     let return_type = c_return_type(child, source)?;
                     available_paths.push(symbol.clone());
-                    available_symbols.push(skeleton_symbol(
+                    available_symbols.push(SemanticSkeletonSymbol {
                         symbol_id,
-                        symbol,
+                        semantic_path: symbol,
                         scope_path,
-                        child.kind(),
-                        (child.start_byte(), child.end_byte()),
-                        Some(text),
+                        node_kind: child.kind().to_string(),
+                        byte_range: (child.start_byte(), child.end_byte()),
+                        signature: Some(text),
                         parameters,
                         return_type,
-                        None,
-                    ));
+                        docstring: None,
+                    });
                 }
             }
             "declaration" if contains_kind(child, "function_declarator") => {
@@ -447,17 +423,17 @@ fn build_c_skeleton(
                     let parameters = c_parameters(child, source)?;
                     let return_type = c_return_type(child, source)?;
                     available_paths.push(symbol.clone());
-                    available_symbols.push(skeleton_symbol(
+                    available_symbols.push(SemanticSkeletonSymbol {
                         symbol_id,
-                        symbol,
+                        semantic_path: symbol,
                         scope_path,
-                        child.kind(),
-                        (child.start_byte(), child.end_byte()),
-                        Some(text),
+                        node_kind: child.kind().to_string(),
+                        byte_range: (child.start_byte(), child.end_byte()),
+                        signature: Some(text),
                         parameters,
                         return_type,
-                        None,
-                    ));
+                        docstring: None,
+                    });
                 }
             }
             "function_definition" => {
@@ -476,17 +452,17 @@ fn build_c_skeleton(
                         skeleton_items.push(signature.clone());
                     }
                     available_paths.push(symbol.clone());
-                    available_symbols.push(skeleton_symbol(
+                    available_symbols.push(SemanticSkeletonSymbol {
                         symbol_id,
-                        symbol,
+                        semantic_path: symbol,
                         scope_path,
-                        child.kind(),
-                        (child.start_byte(), child.end_byte()),
-                        Some(signature),
+                        node_kind: child.kind().to_string(),
+                        byte_range: (child.start_byte(), child.end_byte()),
+                        signature: Some(signature),
                         parameters,
                         return_type,
-                        None,
-                    ));
+                        docstring: None,
+                    });
                 }
             }
             _ => {}
