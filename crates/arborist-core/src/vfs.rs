@@ -29,6 +29,7 @@ pub struct VirtualFileSystem {
     symbol_indexes: HashMap<String, PathBuf>,
 }
 
+#[derive(Clone)]
 struct VirtualFileEntry {
     path: PathBuf,
     language_id: LanguageId,
@@ -149,12 +150,38 @@ impl VirtualFileSystem {
             });
         }
 
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let previous = self
+            .entries
+            .get(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+            .clone();
+
         let mut last_result = None;
-        for edit in edits {
-            let snapshot = self.read_file(path)?;
-            let start_byte = offset_for_position(&snapshot.source, &edit.start)?;
-            let old_end_byte = offset_for_position(&snapshot.source, &edit.end)?;
-            last_result = Some(self.apply_edit(path, start_byte, old_end_byte, &edit.new_text)?);
+        for (index, edit) in edits.iter().enumerate() {
+            let result = (|| -> Result<VirtualEditResult> {
+                let source = self
+                    .entries
+                    .get(&normalized)
+                    .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+                    .source
+                    .clone();
+                let start_byte = offset_for_position(&source, &edit.start)?;
+                let old_end_byte = offset_for_position(&source, &edit.end)?;
+                self.apply_edit(&path, start_byte, old_end_byte, &edit.new_text)
+            })()
+            .with_context(|| format!("failed to apply position edit at index {index}"));
+
+            match result {
+                Ok(result) => last_result = Some(result),
+                Err(error) => {
+                    self.entries.insert(normalized, previous);
+                    return Err(error);
+                }
+            }
         }
 
         last_result.ok_or_else(|| anyhow!("position edits did not produce a result"))
@@ -754,6 +781,41 @@ mod tests {
         assert!(result.source.contains("return 20"));
         assert!(result.source.contains("# staged"));
         assert!(result.dirty);
+    }
+
+    #[test]
+    fn rolls_back_position_edits_when_later_edit_fails() {
+        let file = temp_file("def value() -> int:\n    return 10\n");
+        let mut vfs = VirtualFileSystem::new();
+        let initial = vfs.read_file(&file).unwrap();
+
+        let error = vfs
+            .apply_position_edits(
+                &file,
+                &[
+                    PositionEdit {
+                        start: Position { row: 1, column: 11 },
+                        end: Position { row: 1, column: 13 },
+                        new_text: "20".to_string(),
+                    },
+                    PositionEdit {
+                        start: Position { row: 99, column: 0 },
+                        end: Position { row: 99, column: 0 },
+                        new_text: "# bad\n".to_string(),
+                    },
+                ],
+            )
+            .expect_err("later edit failure should reject the whole batch");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to apply position edit at index 1")
+        );
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert_eq!(snapshot.source, initial.source);
+        assert_eq!(snapshot.version, initial.version);
+        assert_eq!(snapshot.dirty, initial.dirty);
     }
 
     #[test]

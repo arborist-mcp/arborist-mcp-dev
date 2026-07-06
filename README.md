@@ -177,7 +177,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Python `expand_nodes` selectors can expand nested symbols even when those symbols are deeper than the default `depth_limit`
 - Skeleton discovery now returns structured symbol metadata, including scope, docstring, and input/output signature context, so read-path exploration can hand precise selectors straight into trace and patch flows
 - `did_open` accepts editor buffer contents without forcing a disk write first
-- `did_change` applies ordered line/column edits onto the current virtual buffer
+- `did_change` applies ordered line/column edits atomically onto the current virtual buffer
 - `did_close` can discard or persist the session buffer and unload it from memory
 - `trace_symbol_graph` now prefers dirty VirtualState buffers over disk when no persisted index is requested
 - `patch_ast_node` uses the same VFS session machinery and commits on success
