@@ -8,6 +8,31 @@ from pathlib import Path
 from typing import Any
 
 
+TOOL_NAMES = (
+    "arborist/get_semantic_skeleton",
+    "arborist/patch_ast_node",
+    "arborist/patch_virtual_ast_node",
+    "arborist/register_symbol_index",
+    "arborist/refresh_symbol_index_for_file",
+    "arborist/unregister_symbol_index",
+    "arborist/list_symbol_indexes",
+    "arborist/did_open",
+    "arborist/did_change",
+    "arborist/did_close",
+    "arborist/list_virtual_files",
+    "arborist/read_virtual_file",
+    "arborist/apply_buffer_edit",
+    "arborist/commit_virtual_file",
+    "arborist/discard_virtual_file",
+    "arborist/rebuild_symbol_index",
+    "arborist/trace_symbol_graph",
+    "arborist/replay_patch_evidence_against_trace",
+    "arborist/validate_patch_commit_with_trace",
+    "arborist/validate_patch_with_trace_context",
+    "arborist/execute_tree_query",
+)
+
+
 class JsonRpcError(ValueError):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
@@ -67,31 +92,7 @@ class ArboristGateway:
                         "name": "arborist-mcp",
                         "version": "0.1.0",
                     },
-                    "capabilities": {
-                        "tools": [
-                            "arborist/get_semantic_skeleton",
-                            "arborist/patch_ast_node",
-                            "arborist/patch_virtual_ast_node",
-                            "arborist/register_symbol_index",
-                            "arborist/refresh_symbol_index_for_file",
-                            "arborist/unregister_symbol_index",
-                            "arborist/list_symbol_indexes",
-                            "arborist/did_open",
-                            "arborist/did_change",
-                            "arborist/did_close",
-                            "arborist/list_virtual_files",
-                            "arborist/read_virtual_file",
-                            "arborist/apply_buffer_edit",
-                            "arborist/commit_virtual_file",
-                            "arborist/discard_virtual_file",
-                            "arborist/rebuild_symbol_index",
-                            "arborist/trace_symbol_graph",
-                            "arborist/replay_patch_evidence_against_trace",
-                            "arborist/validate_patch_commit_with_trace",
-                            "arborist/validate_patch_with_trace_context",
-                            "arborist/execute_tree_query",
-                        ]
-                    },
+                    "capabilities": {"tools": list(TOOL_NAMES)},
                     "supportedLanguages": self._require_core().supported_languages(),
                 }
             elif method == "arborist/get_semantic_skeleton":

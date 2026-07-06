@@ -917,9 +917,9 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 1)
         self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
-        self.assertIn(
-            "arborist/validate_patch_with_trace_context",
+        self.assertEqual(
             response["result"]["capabilities"]["tools"],
+            list(gateway_module.TOOL_NAMES),
         )
 
     def test_rejects_nonstandard_json_from_core(self) -> None:
@@ -1065,9 +1065,9 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 26)
         self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
-        self.assertIn(
-            "arborist/get_semantic_skeleton",
+        self.assertEqual(
             response["result"]["capabilities"]["tools"],
+            list(gateway_module.TOOL_NAMES),
         )
 
     def test_stdio_notification_does_not_emit_response(self) -> None:
