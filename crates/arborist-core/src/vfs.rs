@@ -916,7 +916,7 @@ mod tests {
     fn trace_symbol_graph_ignores_virtual_files_in_skipped_dirs() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");
-        let venv_path = workspace.join("venv").join("installed.py");
+        let venv_path = workspace.join("VENV").join("installed.py");
 
         fs::create_dir_all(venv_path.parent().unwrap()).unwrap();
         fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
@@ -1058,7 +1058,7 @@ mod tests {
     fn commits_skip_registered_index_refresh_for_ignored_dirs() {
         let workspace = temp_workspace();
         let helper_path = workspace.join("helper.py");
-        let venv_path = workspace.join("venv").join("installed.py");
+        let venv_path = workspace.join("VENV").join("installed.py");
         let db_path = workspace.join("symbols.db");
 
         fs::create_dir_all(venv_path.parent().unwrap()).unwrap();

@@ -6011,10 +6011,12 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let helper = dir.join("helper.py");
         let cache_dir = dir.join(".pytest_cache");
         let venv_dir = dir.join("venv");
+        let uppercase_venv_dir = dir.join(".VENV");
         let db_path = dir.join("symbols.db");
 
         fs::create_dir_all(&cache_dir).unwrap();
         fs::create_dir_all(&venv_dir).unwrap();
+        fs::create_dir_all(&uppercase_venv_dir).unwrap();
         fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
         fs::write(
             cache_dir.join("cached.py"),
@@ -6026,6 +6028,11 @@ def orchestrate(value: int) -> int:\n    return value\n",
             "def installed() -> int:\n    return 3\n",
         )
         .unwrap();
+        fs::write(
+            uppercase_venv_dir.join("uppercase_installed.py"),
+            "def uppercase_installed() -> int:\n    return 4\n",
+        )
+        .unwrap();
 
         let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
 
@@ -6035,13 +6042,17 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert!(
             trace_symbol_graph_from_index(&db_path, "installed", TraceDirection::Both).is_err()
         );
+        assert!(
+            trace_symbol_graph_from_index(&db_path, "uppercase_installed", TraceDirection::Both)
+                .is_err()
+        );
     }
 
     #[test]
     fn refresh_symbol_index_ignores_files_in_skipped_dirs() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");
-        let venv_dir = dir.join("venv");
+        let venv_dir = dir.join("VENV");
         let installed = venv_dir.join("installed.py");
         let db_path = dir.join("symbols.db");
 

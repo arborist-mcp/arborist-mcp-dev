@@ -387,7 +387,9 @@ fn should_skip_index_path(workspace_root: &Path, path: &Path) -> bool {
 }
 
 fn should_skip_dir_name(name: &str) -> bool {
-    SKIPPED_WORKSPACE_DIR_NAMES.contains(&name)
+    SKIPPED_WORKSPACE_DIR_NAMES
+        .iter()
+        .any(|skipped| name.eq_ignore_ascii_case(skipped))
 }
 
 fn build_workspace_index(
@@ -2245,6 +2247,10 @@ mod tests {
             assert!(
                 should_skip_dir_name(name),
                 "{name} should be skipped during workspace indexing"
+            );
+            assert!(
+                should_skip_dir_name(&name.to_ascii_uppercase()),
+                "{name} should be skipped case-insensitively during workspace indexing"
             );
         }
 
