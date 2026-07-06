@@ -887,6 +887,50 @@ class GatewayProtocolTests(unittest.TestCase):
                 )
             )
 
+    def test_source_backed_requests_return_normalized_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            nested = Path(temp_dir).joinpath("child")
+            nested.mkdir()
+            file_path = Path(temp_dir).joinpath("sample.py")
+            alias_path = nested.joinpath("..", "sample.py")
+            expected_file = str(file_path).replace("\\", "/")
+            gateway = ArboristGateway()
+
+            skeleton_response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 46,
+                    "method": "arborist/get_semantic_skeleton",
+                    "params": {
+                        "file_path": str(alias_path),
+                        "source": "def top_level() -> int:\n    return 1\n",
+                    },
+                }
+            )
+            patch_response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 47,
+                    "method": "arborist/patch_ast_node",
+                    "params": {
+                        "file_path": str(alias_path),
+                        "source": "def top_level() -> int:\n    return 1\n",
+                        "semantic_path": "top_level",
+                        "new_code": "def top_level() -> int:\n    return 2\n",
+                    },
+                }
+            )
+
+            self.assertEqual(skeleton_response["jsonrpc"], "2.0")
+            self.assertEqual(skeleton_response["id"], 46)
+            self.assertNotIn("error", skeleton_response)
+            self.assertEqual(skeleton_response["result"]["file"], expected_file)
+            self.assertEqual(patch_response["jsonrpc"], "2.0")
+            self.assertEqual(patch_response["id"], 47)
+            self.assertNotIn("error", patch_response)
+            self.assertEqual(patch_response["result"]["file"], expected_file)
+            self.assertFalse(file_path.exists())
+
     def test_allows_null_nullable_string_params(self) -> None:
         class StubCore:
             def patch_ast_node_json(
