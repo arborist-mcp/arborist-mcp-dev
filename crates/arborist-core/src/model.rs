@@ -58,6 +58,7 @@ pub struct QueryCaptureResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationIssue {
     pub kind: String,
     pub message: String,
@@ -68,12 +69,14 @@ pub struct ValidationIssue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationBinding {
     pub name: String,
     pub symbol: SymbolSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationAmbiguity {
     pub name: String,
     pub candidates: Vec<SymbolSummary>,
@@ -82,6 +85,7 @@ pub struct ValidationAmbiguity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationBindingDecision {
     pub name: String,
     pub status: String,
@@ -91,6 +95,7 @@ pub struct ValidationBindingDecision {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PatchEvidenceInvariantReport {
     pub name: String,
     pub status: String,
@@ -100,6 +105,7 @@ pub struct PatchEvidenceInvariantReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PatchCommitGateReport {
     pub status: String,
     pub allowed: bool,
@@ -126,6 +132,7 @@ impl Default for PatchCommitGateReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct DisambiguationContext {
     pub active_include_family: Option<String>,
     pub preferred_family: Option<String>,
@@ -135,6 +142,7 @@ pub struct DisambiguationContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PatchValidationReport {
     pub syntax_errors: Vec<ValidationIssue>,
     pub unresolved_identifiers: Vec<String>,
@@ -145,6 +153,7 @@ pub struct PatchValidationReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PatchAstNodeResult {
     pub file: String,
     pub target_path: String,
@@ -166,6 +175,7 @@ pub enum TraceDirection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolMeta {
     pub symbol_id: String,
     pub semantic_path: String,
@@ -249,6 +259,7 @@ impl SymbolMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolSummary {
     pub symbol_id: String,
     pub semantic_path: String,
@@ -323,6 +334,7 @@ fn symbol_evidence_key(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TraceEvidenceKeys {
     pub symbol: String,
     pub callers: Vec<String>,
@@ -367,6 +379,7 @@ pub struct TraceBackedPatchResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TraceSymbolGraphResult {
     pub symbol: SymbolMeta,
     pub callers: Vec<SymbolSummary>,
@@ -420,7 +433,7 @@ pub struct VirtualFileStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{Position, PositionEdit};
+    use super::{PatchAstNodeResult, Position, PositionEdit, TraceSymbolGraphResult};
 
     #[test]
     fn position_rejects_unknown_fields() {
@@ -438,5 +451,72 @@ mod tests {
         .expect_err("position edits should reject unknown fields");
 
         assert!(error.to_string().contains("unknown field `newText`"));
+    }
+
+    #[test]
+    fn patch_result_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<PatchAstNodeResult>(
+            r#"{
+                "file":"sample.py",
+                "target_path":"top_level",
+                "resolved_path":"top_level",
+                "resolved_symbol_id":"top_level",
+                "applied":true,
+                "bypass_applied":false,
+                "updated_source":"def top_level() -> int:\n    return 1\n",
+                "validation":{
+                    "syntax_errors":[],
+                    "unresolved_identifiers":[],
+                    "resolved_identifiers":[],
+                    "ambiguous_identifiers":[],
+                    "binding_decisions":[],
+                    "commit_gate":{
+                        "status":"allowed",
+                        "allowed":true,
+                        "reason":"ok",
+                        "bypass_reason":null,
+                        "blocking_decisions":[],
+                        "evidence_invariants":[],
+                        "syntax_error_count":0,
+                        "unexpected":true
+                    }
+                }
+            }"#,
+        )
+        .expect_err("patch results should reject unknown nested fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn trace_result_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<TraceSymbolGraphResult>(
+            r#"{
+                "symbol":{
+                    "symbol_id":"top_level",
+                    "semantic_path":"top_level",
+                    "file_path":"sample.py",
+                    "node_kind":"function_definition",
+                    "origin_type":"trace_root",
+                    "evidence_key":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range":[0,10],
+                    "parameters":[],
+                    "dependencies":[],
+                    "references":[],
+                    "unexpected":true
+                },
+                "callers":[],
+                "callees":[],
+                "evidence_keys":{
+                    "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers":[],
+                    "callees":[]
+                },
+                "indexed_files":1
+            }"#,
+        )
+        .expect_err("trace results should reject unknown nested fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
     }
 }
