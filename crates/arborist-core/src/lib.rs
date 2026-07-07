@@ -73,20 +73,18 @@ pub fn replay_patch_evidence_against_trace(
     trace: &TraceSymbolGraphResult,
 ) -> TracePatchEvidenceReplayResult {
     let trace_callers = trace
-        .evidence_keys
         .callers
         .iter()
-        .cloned()
+        .map(|symbol| symbol.evidence_key.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let trace_callees = trace
-        .evidence_keys
         .callees
         .iter()
-        .cloned()
+        .map(|symbol| symbol.evidence_key.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let trace_symbol = trace.evidence_keys.symbol.clone();
-    let normalized_trace_callers = normalized_evidence_key_set(trace.evidence_keys.callers.iter());
-    let normalized_trace_callees = normalized_evidence_key_set(trace.evidence_keys.callees.iter());
+    let trace_symbol = trace.symbol.evidence_key.clone();
+    let normalized_trace_callers = normalized_evidence_key_set(trace_callers.iter());
+    let normalized_trace_callees = normalized_evidence_key_set(trace_callees.iter());
     let normalized_trace_symbol = evidence_key_without_origin_type(&trace_symbol);
 
     let items = patch
@@ -1831,6 +1829,51 @@ int helper(int value) {
         assert_eq!(decision.patch_gate_status, "allowed");
         assert_eq!(decision.replay_status, "missing");
         assert!(!decision.replay.consistent);
+    }
+
+    #[test]
+    fn ignores_tampered_trace_evidence_key_summaries_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let selected_evidence_key = patch.validation.commit_gate.evidence_invariants[0]
+            .selected_evidence_key
+            .clone()
+            .expect("resolved patch evidence should have a selected key");
+        let mut trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Callers).unwrap();
+        assert!(trace.callees.is_empty());
+        trace.evidence_keys.callees.push(selected_evidence_key);
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace);
+        assert!(!replay.consistent);
+        assert_eq!(replay.items[0].status, "missing");
+        assert!(!replay.items[0].matched_in_trace);
+
+        let decision = validate_patch_commit_with_trace(&patch, &trace);
+        assert!(!decision.allowed);
+        assert_eq!(decision.status, "rejected_by_trace_replay");
+        assert_eq!(decision.replay_status, "missing");
     }
 
     #[test]
