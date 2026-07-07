@@ -33,6 +33,12 @@ class GatewayProtocolTests(unittest.TestCase):
             with self.subTest(handler_name=handler_name):
                 self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
 
+    def test_advertised_tools_have_param_specs(self) -> None:
+        self.assertEqual(
+            set(gateway_module.TOOL_HANDLERS),
+            set(gateway_module.TOOL_PARAM_NAMES),
+        )
+
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -258,6 +264,54 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["id"], 9)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("file_path", response["error"]["message"])
+
+    def test_rejects_unexpected_top_level_params_without_calling_core(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                raise AssertionError("core should not be called")
+
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def close_virtual_file_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/list_symbol_indexes",
+                {"unexpected": True},
+                "unexpected",
+            ),
+            (
+                "arborist/trace_symbol_graph",
+                {"symbol_path": "top_level", "workspaceRoot": "."},
+                "workspaceRoot",
+            ),
+            (
+                "arborist/did_close",
+                {"file_path": "sample.py", "persist": False, "save": True},
+                "save",
+            ),
+        ]
+
+        for method, params, expected_key in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 44,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 44)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_key, response["error"]["message"])
 
     def test_rejects_non_json_serializable_edits_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)

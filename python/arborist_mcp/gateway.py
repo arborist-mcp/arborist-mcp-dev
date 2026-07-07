@@ -35,6 +35,67 @@ TOOL_HANDLERS = {
     "arborist/execute_tree_query": "_execute_tree_query",
 }
 TOOL_NAMES = tuple(TOOL_HANDLERS)
+TOOL_PARAM_NAMES = {
+    "arborist/get_semantic_skeleton": (
+        "file_path",
+        "depth_limit",
+        "source",
+        "expand_nodes",
+    ),
+    "arborist/patch_ast_node": (
+        "file_path",
+        "semantic_path",
+        "new_code",
+        "source",
+        "bypass_reason",
+    ),
+    "arborist/patch_virtual_ast_node": (
+        "file_path",
+        "semantic_path",
+        "new_code",
+        "bypass_reason",
+    ),
+    "arborist/register_symbol_index": ("workspace_root", "db_path"),
+    "arborist/refresh_symbol_index_for_file": (
+        "workspace_root",
+        "db_path",
+        "file_path",
+    ),
+    "arborist/unregister_symbol_index": ("workspace_root",),
+    "arborist/list_symbol_indexes": (),
+    "arborist/did_open": ("file_path", "source"),
+    "arborist/did_change": ("file_path", "edits"),
+    "arborist/did_close": ("file_path", "persist"),
+    "arborist/list_virtual_files": ("dirty_only",),
+    "arborist/read_virtual_file": ("file_path",),
+    "arborist/apply_buffer_edit": (
+        "file_path",
+        "start_byte",
+        "old_end_byte",
+        "new_text",
+    ),
+    "arborist/commit_virtual_file": ("file_path",),
+    "arborist/discard_virtual_file": ("file_path",),
+    "arborist/rebuild_symbol_index": ("workspace_root", "db_path"),
+    "arborist/trace_symbol_graph": (
+        "workspace_root",
+        "symbol_path",
+        "direction",
+        "index_db_path",
+    ),
+    "arborist/replay_patch_evidence_against_trace": ("patch", "trace"),
+    "arborist/validate_patch_commit_with_trace": ("patch", "trace"),
+    "arborist/validate_patch_with_trace_context": (
+        "workspace_root",
+        "file_path",
+        "semantic_path",
+        "new_code",
+        "source",
+        "bypass_reason",
+        "direction",
+    ),
+    "arborist/execute_tree_query": ("file_path", "query", "source"),
+}
 
 
 class JsonRpcError(ValueError):
@@ -100,6 +161,7 @@ class ArboristGateway:
                     "supportedLanguages": self._require_core().supported_languages(),
                 }
             elif method in TOOL_HANDLERS:
+                self._reject_unexpected_params(params, TOOL_PARAM_NAMES[method])
                 handler = getattr(self, TOOL_HANDLERS[method])
                 result = handler(params)
             else:
@@ -516,6 +578,15 @@ class ArboristGateway:
                     -32602,
                     f"invalid non-negative int param: {key}.{coordinate}",
                 )
+
+    @staticmethod
+    def _reject_unexpected_params(
+        params: dict[str, Any], allowed_keys: tuple[str, ...]
+    ) -> None:
+        unexpected_keys = set(params) - set(allowed_keys)
+        if unexpected_keys:
+            key = sorted(unexpected_keys)[0]
+            raise JsonRpcError(-32602, f"unexpected param: {key}")
 
     @staticmethod
     def _encode_json_param(value: Any, key: str) -> str:
