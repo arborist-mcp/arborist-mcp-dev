@@ -68,11 +68,61 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
+    patch.validate_trace_replay_input()?;
+
+    let expected_commit_gate = patching::evaluate_patch_commit_gate(
+        &patch.validation,
+        patch.validation.commit_gate.bypass_reason.as_deref(),
+    );
+    let commit_gate = &patch.validation.commit_gate;
+
+    if commit_gate.status != expected_commit_gate.status {
+        bail!(
+            "invalid patch.validation.commit_gate.status: expected `{}` derived from patch.validation",
+            expected_commit_gate.status
+        );
+    }
+    if commit_gate.allowed != expected_commit_gate.allowed {
+        bail!(
+            "invalid patch.validation.commit_gate.allowed: expected {} derived from patch.validation",
+            expected_commit_gate.allowed
+        );
+    }
+    if commit_gate.reason != expected_commit_gate.reason {
+        bail!(
+            "invalid patch.validation.commit_gate.reason: expected reason derived from patch.validation"
+        );
+    }
+    if commit_gate.bypass_reason != expected_commit_gate.bypass_reason {
+        bail!(
+            "invalid patch.validation.commit_gate.bypass_reason: expected bypass reason derived from patch.validation"
+        );
+    }
+    if commit_gate.blocking_decisions != expected_commit_gate.blocking_decisions {
+        bail!(
+            "invalid patch.validation.commit_gate.blocking_decisions: expected blocking decisions derived from patch.validation.binding_decisions"
+        );
+    }
+    if commit_gate.evidence_invariants != expected_commit_gate.evidence_invariants {
+        bail!(
+            "invalid patch.validation.commit_gate.evidence_invariants: expected evidence invariants derived from patch.validation.binding_decisions"
+        );
+    }
+    if commit_gate.syntax_error_count != expected_commit_gate.syntax_error_count {
+        bail!(
+            "invalid patch.validation.commit_gate.syntax_error_count: expected syntax error count derived from patch.validation.syntax_errors"
+        );
+    }
+
+    Ok(())
+}
+
 pub fn replay_patch_evidence_against_trace(
     patch: &PatchAstNodeResult,
     trace: &TraceSymbolGraphResult,
 ) -> Result<TracePatchEvidenceReplayResult> {
-    patch.validate_trace_replay_input()?;
+    validate_replay_patch_payload(patch)?;
     trace.validate_trace_replay_input()?;
 
     let trace_callers = trace
@@ -1978,6 +2028,78 @@ int helper(int value) {
         let replay = replay_patch_evidence_against_trace(&patch, &trace)
             .expect_err("inconsistent patch applied flag should be rejected");
         assert!(replay.to_string().contains("patch.applied"));
+    }
+
+    #[test]
+    fn rejects_tampered_patch_commit_gate_reason_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.commit_gate.reason = "manually overridden".to_string();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("tampered patch gate reasons should be rejected");
+        assert!(replay.to_string().contains("commit_gate.reason"));
+    }
+
+    #[test]
+    fn rejects_tampered_patch_commit_gate_invariants_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.commit_gate.evidence_invariants[0].status = "blocked".to_string();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("tampered patch gate evidence invariants should be rejected");
+        assert!(
+            replay
+                .to_string()
+                .contains("commit_gate.evidence_invariants")
+        );
     }
 
     #[test]

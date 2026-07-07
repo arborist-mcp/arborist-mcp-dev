@@ -261,7 +261,7 @@ pub(crate) fn build_patch_result(
     })
 }
 
-fn evaluate_patch_commit_gate(
+pub(crate) fn evaluate_patch_commit_gate(
     validation: &PatchValidationReport,
     bypass_reason: Option<&str>,
 ) -> PatchCommitGateReport {
