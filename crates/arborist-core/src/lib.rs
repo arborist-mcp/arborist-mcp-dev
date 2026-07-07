@@ -118,12 +118,33 @@ fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
     Ok(())
 }
 
+fn validate_replay_trace_target(
+    patch: &PatchAstNodeResult,
+    trace: &TraceSymbolGraphResult,
+) -> Result<()> {
+    if trace.symbol.symbol_id != patch.resolved_symbol_id {
+        bail!(
+            "invalid trace.symbol.symbol_id: expected `{}` to match patch.resolved_symbol_id",
+            patch.resolved_symbol_id
+        );
+    }
+    if trace.symbol.semantic_path != patch.resolved_path {
+        bail!(
+            "invalid trace.symbol.semantic_path: expected `{}` to match patch.resolved_path",
+            patch.resolved_path
+        );
+    }
+
+    Ok(())
+}
+
 pub fn replay_patch_evidence_against_trace(
     patch: &PatchAstNodeResult,
     trace: &TraceSymbolGraphResult,
 ) -> Result<TracePatchEvidenceReplayResult> {
     validate_replay_patch_payload(patch)?;
     trace.validate_trace_replay_input()?;
+    validate_replay_trace_target(patch, trace)?;
 
     let trace_callers = trace
         .callers
@@ -1924,6 +1945,43 @@ int helper(int value) {
         let decision = validate_patch_commit_with_trace(&patch, &trace)
             .expect_err("tampered trace evidence summaries should be rejected");
         assert!(decision.to_string().contains("trace.evidence_keys.callees"));
+    }
+
+    #[test]
+    fn rejects_mismatched_trace_root_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "helper", TraceDirection::Both).unwrap();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("mismatched trace roots should be rejected");
+        assert!(replay.to_string().contains("trace.symbol.symbol_id"));
+
+        let decision = validate_patch_commit_with_trace(&patch, &trace)
+            .expect_err("mismatched trace roots should be rejected");
+        assert!(decision.to_string().contains("trace.symbol.symbol_id"));
     }
 
     #[test]
