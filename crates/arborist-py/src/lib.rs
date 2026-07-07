@@ -482,7 +482,7 @@ fn _arborist_core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{PositionEdit, parse_json_arg};
+    use super::{PositionEdit, TraceSymbolGraphResult, parse_json_arg};
     use std::sync::Once;
 
     fn prepare_python() {
@@ -533,5 +533,27 @@ mod tests {
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "x");
+    }
+
+    #[test]
+    fn parse_json_arg_rejects_missing_nested_trace_fields() {
+        prepare_python();
+
+        let error = parse_json_arg::<TraceSymbolGraphResult>(
+            r#"{
+                "symbol":{"symbol_id":"top_level"},
+                "callers":[],
+                "callees":[],
+                "evidence_keys":{
+                    "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers":[],
+                    "callees":[]
+                },
+                "indexed_files":1
+            }"#,
+        )
+        .expect_err("trace payloads should reject missing nested symbol fields");
+
+        assert!(error.to_string().contains("missing field"));
     }
 }

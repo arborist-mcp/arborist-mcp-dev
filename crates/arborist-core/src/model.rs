@@ -131,7 +131,6 @@ impl Default for PatchCommitGateReport {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct DisambiguationContext {
     pub active_include_family: Option<String>,
@@ -174,7 +173,6 @@ pub enum TraceDirection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolMeta {
     pub symbol_id: String,
@@ -258,7 +256,6 @@ impl SymbolMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(default)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolSummary {
     pub symbol_id: String,
@@ -518,5 +515,27 @@ mod tests {
         .expect_err("trace results should reject unknown nested fields");
 
         assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn trace_result_rejects_missing_nested_fields() {
+        let error = serde_json::from_str::<TraceSymbolGraphResult>(
+            r#"{
+                "symbol":{
+                    "symbol_id":"top_level"
+                },
+                "callers":[],
+                "callees":[],
+                "evidence_keys":{
+                    "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers":[],
+                    "callees":[]
+                },
+                "indexed_files":1
+            }"#,
+        )
+        .expect_err("trace results should reject missing nested symbol fields");
+
+        assert!(error.to_string().contains("missing field"));
     }
 }
