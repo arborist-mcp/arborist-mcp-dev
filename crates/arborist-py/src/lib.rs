@@ -934,4 +934,64 @@ mod tests {
 
         assert!(error.to_string().contains("trace.symbol.symbol_id"));
     }
+
+    #[test]
+    fn replay_patch_evidence_against_trace_json_rejects_mismatched_trace_root_file() {
+        prepare_python();
+
+        let core = ArboristCore::new();
+        let error = core
+            .replay_patch_evidence_against_trace_json(
+                r#"{
+                    "file":"sample_a.py",
+                    "target_path":"top_level",
+                    "resolved_path":"top_level",
+                    "resolved_symbol_id":"top_level",
+                    "applied":true,
+                    "bypass_applied":false,
+                    "updated_source":"def top_level() -> int:\n    return 1\n",
+                    "validation":{
+                        "syntax_errors":[],
+                        "unresolved_identifiers":[],
+                        "resolved_identifiers":[],
+                        "ambiguous_identifiers":[],
+                        "binding_decisions":[],
+                        "commit_gate":{
+                            "status":"allowed",
+                            "allowed":true,
+                            "reason":"syntax and symbol binding validation passed",
+                            "bypass_reason":null,
+                            "blocking_decisions":[],
+                            "evidence_invariants":[],
+                            "syntax_error_count":0
+                        }
+                    }
+                }"#,
+                r#"{
+                    "symbol":{
+                        "symbol_id":"top_level",
+                        "semantic_path":"top_level",
+                        "file_path":"sample_b.py",
+                        "node_kind":"function_definition",
+                        "origin_type":"trace_root",
+                        "evidence_key":"top_level|sample_b.py|function_definition|trace_root|0..10|",
+                        "byte_range":[0,10],
+                        "parameters":[],
+                        "dependencies":[],
+                        "references":[]
+                    },
+                    "callers":[],
+                    "callees":[],
+                    "evidence_keys":{
+                        "symbol":"top_level|sample_b.py|function_definition|trace_root|0..10|",
+                        "callers":[],
+                        "callees":[]
+                    },
+                    "indexed_files":1
+                }"#,
+            )
+            .expect_err("mismatched trace root files should be rejected");
+
+        assert!(error.to_string().contains("trace.symbol.file_path"));
+    }
 }

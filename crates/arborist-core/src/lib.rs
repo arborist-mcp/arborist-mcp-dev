@@ -134,6 +134,12 @@ fn validate_replay_trace_target(
             patch.resolved_path
         );
     }
+    if trace.symbol.file_path != patch.file {
+        bail!(
+            "invalid trace.symbol.file_path: expected `{}` to match patch.file",
+            patch.file
+        );
+    }
 
     Ok(())
 }
@@ -1982,6 +1988,43 @@ int helper(int value) {
         let decision = validate_patch_commit_with_trace(&patch, &trace)
             .expect_err("mismatched trace roots should be rejected");
         assert!(decision.to_string().contains("trace.symbol.symbol_id"));
+    }
+
+    #[test]
+    fn rejects_mismatched_trace_root_file_during_replay() {
+        let dir = temporary_dir();
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &caller,
+            "def top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 2\n",
+            None,
+        )
+        .unwrap();
+        let mut trace = trace_symbol_graph(&dir, "top_level", TraceDirection::Both).unwrap();
+        trace.symbol.file_path = dir.join("other.py").to_string_lossy().replace('\\', "/");
+        trace.symbol.evidence_key = format!(
+            "{}|{}|{}|{}|{}..{}|{}",
+            trace.symbol.symbol_id,
+            trace.symbol.file_path,
+            trace.symbol.node_kind,
+            trace.symbol.origin_type,
+            trace.symbol.byte_range.0,
+            trace.symbol.byte_range.1,
+            trace.symbol.signature.as_deref().unwrap_or("")
+        );
+        trace.evidence_keys.symbol = trace.symbol.evidence_key.clone();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("mismatched trace root files should be rejected");
+        assert!(replay.to_string().contains("trace.symbol.file_path"));
     }
 
     #[test]
