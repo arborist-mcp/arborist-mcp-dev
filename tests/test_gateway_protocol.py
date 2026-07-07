@@ -66,6 +66,28 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("invalid params", response["error"]["message"])
 
+    def test_rejects_unexpected_initialize_params_without_calling_core(self) -> None:
+        class StubCore:
+            def supported_languages(self) -> list[str]:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "initialize",
+                "params": {"clientInfo": {"name": "codex"}},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 8)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("clientInfo", response["error"]["message"])
+
     def test_rejects_missing_method_as_invalid_request(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

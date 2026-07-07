@@ -152,6 +152,7 @@ class ArboristGateway:
 
         try:
             if method == "initialize":
+                self._reject_unexpected_params(params, ())
                 result = {
                     "serverInfo": {
                         "name": "arborist-mcp",
