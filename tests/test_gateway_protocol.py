@@ -1717,6 +1717,80 @@ class GatewayProtocolTests(unittest.TestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("trace.evidence_keys.callees", response["error"]["message"])
 
+    def test_rejects_inconsistent_patch_gate_flags_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+        ]
+
+        params = {
+            "patch": {
+                "file": "sample.py",
+                "target_path": "top_level",
+                "resolved_path": "top_level",
+                "resolved_symbol_id": "top_level",
+                "applied": False,
+                "bypass_applied": False,
+                "updated_source": "def top_level() -> int:\n    return 1\n",
+                "validation": {
+                    "syntax_errors": [],
+                    "unresolved_identifiers": [],
+                    "resolved_identifiers": [],
+                    "ambiguous_identifiers": [],
+                    "binding_decisions": [],
+                    "commit_gate": {
+                        "status": "allowed",
+                        "allowed": True,
+                        "reason": "ok",
+                        "bypass_reason": None,
+                        "blocking_decisions": [],
+                        "evidence_invariants": [],
+                        "syntax_error_count": 0,
+                    },
+                },
+            },
+            "trace": {
+                "symbol": {
+                    "symbol_id": "top_level",
+                    "semantic_path": "top_level",
+                    "file_path": "sample.py",
+                    "node_kind": "function_definition",
+                    "origin_type": "trace_root",
+                    "evidence_key": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range": [0, 10],
+                    "parameters": [],
+                    "dependencies": [],
+                    "references": [],
+                },
+                "callers": [],
+                "callees": [],
+                "evidence_keys": {
+                    "symbol": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers": [],
+                    "callees": [],
+                },
+                "indexed_files": 1,
+            },
+        }
+
+        for method in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 57,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 57)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("patch.applied", response["error"]["message"])
+
     def test_rejects_non_json_serializable_trace_object_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

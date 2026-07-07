@@ -171,7 +171,11 @@ impl PatchAstNodeResult {
         ensure_nonblank(&self.target_path, "patch.target_path")?;
         ensure_nonblank(&self.resolved_path, "patch.resolved_path")?;
         ensure_nonblank(&self.resolved_symbol_id, "patch.resolved_symbol_id")?;
-        self.validation.commit_gate.validate_trace_replay_input()
+        self.validation.commit_gate.validate_trace_replay_input(
+            self.applied,
+            self.bypass_applied,
+            self.validation.syntax_errors.len(),
+        )
     }
 }
 
@@ -429,14 +433,100 @@ pub struct TraceSymbolGraphResult {
 }
 
 impl PatchCommitGateReport {
-    fn validate_trace_replay_input(&self) -> Result<()> {
+    fn validate_trace_replay_input(
+        &self,
+        applied: bool,
+        bypass_applied: bool,
+        syntax_error_count_expected: usize,
+    ) -> Result<()> {
         ensure_nonblank(&self.status, "patch.validation.commit_gate.status")?;
         ensure_nonblank(&self.reason, "patch.validation.commit_gate.reason")?;
         if let Some(bypass_reason) = &self.bypass_reason {
             ensure_nonblank(bypass_reason, "patch.validation.commit_gate.bypass_reason")?;
         }
+        if self.syntax_error_count != syntax_error_count_expected {
+            bail!(
+                "invalid patch.validation.commit_gate.syntax_error_count: expected {syntax_error_count_expected} to match patch.validation.syntax_errors"
+            );
+        }
         for (index, invariant) in self.evidence_invariants.iter().enumerate() {
             invariant.validate_trace_replay_input(index)?;
+        }
+
+        let has_evidence_failure = self
+            .evidence_invariants
+            .iter()
+            .any(|invariant| invariant.status == "failed");
+        let has_gate_blocker = syntax_error_count_expected > 0
+            || !self.blocking_decisions.is_empty()
+            || has_evidence_failure;
+
+        match self.status.as_str() {
+            "allowed" => {
+                if !self.allowed {
+                    bail!(
+                        "invalid patch.validation.commit_gate.allowed: expected true when status is allowed"
+                    );
+                }
+                if self.bypass_reason.is_some() {
+                    bail!(
+                        "invalid patch.validation.commit_gate.bypass_reason: expected no bypass reason when status is allowed"
+                    );
+                }
+                if has_gate_blocker {
+                    bail!(
+                        "invalid patch.validation.commit_gate.status: allowed patches must not report syntax errors, blocking decisions, or failed evidence invariants"
+                    );
+                }
+            }
+            "allowed_with_bypass" => {
+                if !self.allowed {
+                    bail!(
+                        "invalid patch.validation.commit_gate.allowed: expected true when status is allowed_with_bypass"
+                    );
+                }
+                if self.bypass_reason.is_none() {
+                    bail!(
+                        "invalid patch.validation.commit_gate.bypass_reason: expected a bypass reason when status is allowed_with_bypass"
+                    );
+                }
+                if !has_gate_blocker {
+                    bail!(
+                        "invalid patch.validation.commit_gate.status: allowed_with_bypass requires syntax errors, blocking decisions, or failed evidence invariants"
+                    );
+                }
+            }
+            "rejected" => {
+                if self.allowed {
+                    bail!(
+                        "invalid patch.validation.commit_gate.allowed: expected false when status is rejected"
+                    );
+                }
+                if self.bypass_reason.is_some() {
+                    bail!(
+                        "invalid patch.validation.commit_gate.bypass_reason: expected no bypass reason when status is rejected"
+                    );
+                }
+                if !has_gate_blocker {
+                    bail!(
+                        "invalid patch.validation.commit_gate.status: rejected patches must report syntax errors, blocking decisions, or failed evidence invariants"
+                    );
+                }
+            }
+            other => {
+                bail!("invalid patch.validation.commit_gate.status: unsupported status `{other}`");
+            }
+        }
+
+        if applied != self.allowed {
+            bail!(
+                "invalid patch.applied: expected patch.applied to match patch.validation.commit_gate.allowed"
+            );
+        }
+        if bypass_applied != (self.status == "allowed_with_bypass") {
+            bail!(
+                "invalid patch.bypass_applied: expected patch.bypass_applied to match patch.validation.commit_gate.status"
+            );
         }
         Ok(())
     }

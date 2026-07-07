@@ -1760,12 +1760,11 @@ int helper(int value) {
         let mut inconsistent_patch = patch.clone();
         inconsistent_patch.validation.commit_gate.status = "allowed".to_string();
         inconsistent_patch.validation.commit_gate.bypass_reason = None;
+        inconsistent_patch.bypass_applied = false;
 
-        let rejected = validate_patch_commit_with_trace(&inconsistent_patch, &trace).unwrap();
-        assert!(!rejected.allowed);
-        assert_eq!(rejected.status, "rejected_by_trace_replay");
-        assert_eq!(rejected.patch_gate_status, "allowed");
-        assert_eq!(rejected.replay_status, "blocked");
+        let rejected = validate_patch_commit_with_trace(&inconsistent_patch, &trace)
+            .expect_err("tampered blocked replay payloads should be rejected");
+        assert!(rejected.to_string().contains("commit_gate.status"));
     }
 
     #[test]
@@ -1910,6 +1909,75 @@ int helper(int value) {
         let replay = replay_patch_evidence_against_trace(&patch, &trace)
             .expect_err("blank selected evidence keys should be rejected");
         assert!(replay.to_string().contains("selected_evidence_key"));
+    }
+
+    #[test]
+    fn rejects_inconsistent_patch_gate_status_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.commit_gate.status = "allowed_with_bypass".to_string();
+        patch.bypass_applied = true;
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("inconsistent patch gate status should be rejected");
+        assert!(replay.to_string().contains("bypass_reason"));
+    }
+
+    #[test]
+    fn rejects_inconsistent_patch_applied_flags_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.applied = false;
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("inconsistent patch applied flag should be rejected");
+        assert!(replay.to_string().contains("patch.applied"));
     }
 
     #[test]
