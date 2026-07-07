@@ -486,6 +486,39 @@ mod tests {
     }
 
     #[test]
+    fn patch_result_rejects_missing_nested_fields() {
+        let error = serde_json::from_str::<PatchAstNodeResult>(
+            r#"{
+                "file":"sample.py",
+                "target_path":"top_level",
+                "resolved_path":"top_level",
+                "resolved_symbol_id":"top_level",
+                "applied":true,
+                "bypass_applied":false,
+                "updated_source":"def top_level() -> int:\n    return 1\n",
+                "validation":{
+                    "syntax_errors":[],
+                    "resolved_identifiers":[],
+                    "ambiguous_identifiers":[],
+                    "binding_decisions":[],
+                    "commit_gate":{
+                        "status":"allowed",
+                        "allowed":true,
+                        "reason":"ok",
+                        "bypass_reason":null,
+                        "blocking_decisions":[],
+                        "evidence_invariants":[],
+                        "syntax_error_count":0
+                    }
+                }
+            }"#,
+        )
+        .expect_err("patch results should reject missing nested validation fields");
+
+        assert!(error.to_string().contains("missing field"));
+    }
+
+    #[test]
     fn trace_result_rejects_unknown_nested_fields() {
         let error = serde_json::from_str::<TraceSymbolGraphResult>(
             r#"{
