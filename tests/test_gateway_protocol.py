@@ -1538,6 +1538,185 @@ class GatewayProtocolTests(unittest.TestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("missing field", response["error"]["message"])
 
+    def test_rejects_blank_patch_replay_evidence_keys_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+        ]
+
+        params = {
+            "patch": {
+                "file": "sample.py",
+                "target_path": "top_level",
+                "resolved_path": "top_level",
+                "resolved_symbol_id": "top_level",
+                "applied": True,
+                "bypass_applied": False,
+                "updated_source": "def top_level() -> int:\n    return 1\n",
+                "validation": {
+                    "syntax_errors": [],
+                    "unresolved_identifiers": [],
+                    "resolved_identifiers": [],
+                    "ambiguous_identifiers": [],
+                    "binding_decisions": [],
+                    "commit_gate": {
+                        "status": "allowed",
+                        "allowed": True,
+                        "reason": "ok",
+                        "bypass_reason": None,
+                        "blocking_decisions": [],
+                        "evidence_invariants": [
+                            {
+                                "name": "helper",
+                                "status": "passed",
+                                "reason": "ok",
+                                "selected_evidence_key": "   ",
+                                "candidate_evidence_keys": [
+                                    "top_level|sample.py|function_definition|trace_root|0..10|"
+                                ],
+                            }
+                        ],
+                        "syntax_error_count": 0,
+                    },
+                },
+            },
+            "trace": {
+                "symbol": {
+                    "symbol_id": "top_level",
+                    "semantic_path": "top_level",
+                    "file_path": "sample.py",
+                    "node_kind": "function_definition",
+                    "origin_type": "trace_root",
+                    "evidence_key": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range": [0, 10],
+                    "parameters": [],
+                    "dependencies": [],
+                    "references": [],
+                },
+                "callers": [],
+                "callees": [],
+                "evidence_keys": {
+                    "symbol": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers": [],
+                    "callees": [],
+                },
+                "indexed_files": 1,
+            },
+        }
+
+        for method in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 55,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 55)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("selected_evidence_key", response["error"]["message"])
+
+    def test_rejects_inconsistent_trace_evidence_summaries_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+        ]
+
+        params = {
+            "patch": {
+                "file": "sample.py",
+                "target_path": "top_level",
+                "resolved_path": "top_level",
+                "resolved_symbol_id": "top_level",
+                "applied": True,
+                "bypass_applied": False,
+                "updated_source": "def top_level() -> int:\n    return helper()\n",
+                "validation": {
+                    "syntax_errors": [],
+                    "unresolved_identifiers": [],
+                    "resolved_identifiers": [],
+                    "ambiguous_identifiers": [],
+                    "binding_decisions": [],
+                    "commit_gate": {
+                        "status": "allowed",
+                        "allowed": True,
+                        "reason": "ok",
+                        "bypass_reason": None,
+                        "blocking_decisions": [],
+                        "evidence_invariants": [
+                            {
+                                "name": "helper",
+                                "status": "passed",
+                                "reason": "ok",
+                                "selected_evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                                "candidate_evidence_keys": [
+                                    "helper|sample.py|function_definition|callee|12..34|"
+                                ],
+                            }
+                        ],
+                        "syntax_error_count": 0,
+                    },
+                },
+            },
+            "trace": {
+                "symbol": {
+                    "symbol_id": "top_level",
+                    "semantic_path": "top_level",
+                    "file_path": "sample.py",
+                    "node_kind": "function_definition",
+                    "origin_type": "trace_root",
+                    "evidence_key": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range": [0, 10],
+                    "parameters": [],
+                    "dependencies": [],
+                    "references": [],
+                },
+                "callers": [],
+                "callees": [
+                    {
+                        "symbol_id": "helper",
+                        "semantic_path": "helper",
+                        "file_path": "sample.py",
+                        "node_kind": "function_definition",
+                        "origin_type": "callee",
+                        "evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                        "byte_range": [12, 34],
+                        "parameters": [],
+                    }
+                ],
+                "evidence_keys": {
+                    "symbol": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers": [],
+                    "callees": [],
+                },
+                "indexed_files": 1,
+            },
+        }
+
+        for method in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 56,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 56)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("trace.evidence_keys.callees", response["error"]["message"])
+
     def test_rejects_non_json_serializable_trace_object_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 

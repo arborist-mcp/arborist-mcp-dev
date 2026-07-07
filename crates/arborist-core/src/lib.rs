@@ -71,7 +71,10 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
 pub fn replay_patch_evidence_against_trace(
     patch: &PatchAstNodeResult,
     trace: &TraceSymbolGraphResult,
-) -> TracePatchEvidenceReplayResult {
+) -> Result<TracePatchEvidenceReplayResult> {
+    patch.validate_trace_replay_input()?;
+    trace.validate_trace_replay_input()?;
+
     let trace_callers = trace
         .callers
         .iter()
@@ -149,12 +152,12 @@ pub fn replay_patch_evidence_against_trace(
         .iter()
         .all(|item| matches!(item.status.as_str(), "matched" | "blocked"));
 
-    TracePatchEvidenceReplayResult {
+    Ok(TracePatchEvidenceReplayResult {
         consistent,
         matched_items,
         blocked_items,
         items,
-    }
+    })
 }
 
 fn normalized_evidence_key_set<'a>(
@@ -186,42 +189,42 @@ fn is_patch_scope_evidence_key(evidence_key: &str) -> bool {
 pub fn validate_patch_commit_with_trace(
     patch: &PatchAstNodeResult,
     trace: &TraceSymbolGraphResult,
-) -> PatchTraceValidationResult {
-    let replay = replay_patch_evidence_against_trace(patch, trace);
+) -> Result<PatchTraceValidationResult> {
+    let replay = replay_patch_evidence_against_trace(patch, trace)?;
     let replay_status = summarize_replay_status(&replay);
     let patch_gate_status = patch.validation.commit_gate.status.clone();
 
     if !patch.validation.commit_gate.allowed {
-        return PatchTraceValidationResult {
+        return Ok(PatchTraceValidationResult {
             allowed: false,
             status: "rejected_by_patch_gate".to_string(),
             reason: patch.validation.commit_gate.reason.clone(),
             patch_gate_status,
             replay_status,
             replay,
-        };
+        });
     }
 
     if matches!(replay_status.as_str(), "missing" | "failed") {
-        return PatchTraceValidationResult {
+        return Ok(PatchTraceValidationResult {
             allowed: false,
             status: "rejected_by_trace_replay".to_string(),
             reason: "trace replay did not confirm the patch evidence".to_string(),
             patch_gate_status,
             replay_status,
             replay,
-        };
+        });
     }
 
     if replay_status == "blocked" && patch_gate_status != "allowed_with_bypass" {
-        return PatchTraceValidationResult {
+        return Ok(PatchTraceValidationResult {
             allowed: false,
             status: "rejected_by_trace_replay".to_string(),
             reason: "trace replay found blocked evidence without an explicit bypass".to_string(),
             patch_gate_status,
             replay_status,
             replay,
-        };
+        });
     }
 
     let (status, reason) = if patch.validation.commit_gate.status == "allowed_with_bypass" {
@@ -236,14 +239,14 @@ pub fn validate_patch_commit_with_trace(
         )
     };
 
-    PatchTraceValidationResult {
+    Ok(PatchTraceValidationResult {
         allowed: true,
         status,
         reason,
         patch_gate_status,
         replay_status,
         replay,
-    }
+    })
 }
 
 pub fn validate_patch_with_trace_context_from_path(
@@ -317,7 +320,7 @@ pub fn validate_patch_with_trace_context(
         &trace_target,
         direction,
     )?;
-    let trace_validation = validate_patch_commit_with_trace(&patch, &trace);
+    let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
 
     Ok(TraceBackedPatchResult {
         patch,
@@ -1655,7 +1658,7 @@ int helper(int value) {
         )
         .unwrap();
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
-        let replay = replay_patch_evidence_against_trace(&patch, &trace);
+        let replay = replay_patch_evidence_against_trace(&patch, &trace).unwrap();
 
         assert!(replay.consistent);
         assert_eq!(replay.matched_items, 1);
@@ -1701,7 +1704,7 @@ int helper(int value) {
         )
         .unwrap();
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
-        let replay = replay_patch_evidence_against_trace(&patch, &trace);
+        let replay = replay_patch_evidence_against_trace(&patch, &trace).unwrap();
 
         assert!(replay.consistent);
         assert_eq!(replay.matched_items, 0);
@@ -1749,7 +1752,7 @@ int helper(int value) {
         .unwrap();
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
 
-        let bypass_decision = validate_patch_commit_with_trace(&patch, &trace);
+        let bypass_decision = validate_patch_commit_with_trace(&patch, &trace).unwrap();
         assert!(bypass_decision.allowed);
         assert_eq!(bypass_decision.status, "allowed_with_bypass");
         assert_eq!(bypass_decision.replay_status, "blocked");
@@ -1758,7 +1761,7 @@ int helper(int value) {
         inconsistent_patch.validation.commit_gate.status = "allowed".to_string();
         inconsistent_patch.validation.commit_gate.bypass_reason = None;
 
-        let rejected = validate_patch_commit_with_trace(&inconsistent_patch, &trace);
+        let rejected = validate_patch_commit_with_trace(&inconsistent_patch, &trace).unwrap();
         assert!(!rejected.allowed);
         assert_eq!(rejected.status, "rejected_by_trace_replay");
         assert_eq!(rejected.patch_gate_status, "allowed");
@@ -1792,7 +1795,7 @@ int helper(int value) {
         )
         .unwrap();
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
-        let decision = validate_patch_commit_with_trace(&patch, &trace);
+        let decision = validate_patch_commit_with_trace(&patch, &trace).unwrap();
 
         assert!(decision.allowed);
         assert_eq!(decision.status, "allowed");
@@ -1822,7 +1825,7 @@ int helper(int value) {
         )
         .unwrap();
         let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Callers).unwrap();
-        let decision = validate_patch_commit_with_trace(&patch, &trace);
+        let decision = validate_patch_commit_with_trace(&patch, &trace).unwrap();
 
         assert!(!decision.allowed);
         assert_eq!(decision.status, "rejected_by_trace_replay");
@@ -1832,7 +1835,7 @@ int helper(int value) {
     }
 
     #[test]
-    fn ignores_tampered_trace_evidence_key_summaries_during_replay() {
+    fn rejects_tampered_trace_evidence_key_summaries_during_replay() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");
         let source = dir.join("helper.c");
@@ -1865,15 +1868,48 @@ int helper(int value) {
         assert!(trace.callees.is_empty());
         trace.evidence_keys.callees.push(selected_evidence_key);
 
-        let replay = replay_patch_evidence_against_trace(&patch, &trace);
-        assert!(!replay.consistent);
-        assert_eq!(replay.items[0].status, "missing");
-        assert!(!replay.items[0].matched_in_trace);
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("tampered trace evidence summaries should be rejected");
+        assert!(replay.to_string().contains("trace.evidence_keys.callees"));
 
-        let decision = validate_patch_commit_with_trace(&patch, &trace);
-        assert!(!decision.allowed);
-        assert_eq!(decision.status, "rejected_by_trace_replay");
-        assert_eq!(decision.replay_status, "missing");
+        let decision = validate_patch_commit_with_trace(&patch, &trace)
+            .expect_err("tampered trace evidence summaries should be rejected");
+        assert!(decision.to_string().contains("trace.evidence_keys.callees"));
+    }
+
+    #[test]
+    fn rejects_blank_patch_replay_selected_evidence_keys() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.commit_gate.evidence_invariants[0].selected_evidence_key =
+            Some("   ".to_string());
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("blank selected evidence keys should be rejected");
+        assert!(replay.to_string().contains("selected_evidence_key"));
     }
 
     #[test]

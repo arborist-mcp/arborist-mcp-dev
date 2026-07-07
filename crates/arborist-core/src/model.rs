@@ -1,3 +1,4 @@
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +165,16 @@ pub struct PatchAstNodeResult {
     pub validation: PatchValidationReport,
 }
 
+impl PatchAstNodeResult {
+    pub fn validate_trace_replay_input(&self) -> Result<()> {
+        ensure_nonblank(&self.file, "patch.file")?;
+        ensure_nonblank(&self.target_path, "patch.target_path")?;
+        ensure_nonblank(&self.resolved_path, "patch.resolved_path")?;
+        ensure_nonblank(&self.resolved_symbol_id, "patch.resolved_symbol_id")?;
+        self.validation.commit_gate.validate_trace_replay_input()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TraceDirection {
@@ -253,6 +264,22 @@ impl SymbolMeta {
             references: self.references.clone(),
         })
     }
+
+    pub fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
+        validate_symbol_identity(
+            SymbolIdentityRef {
+                symbol_id: &self.symbol_id,
+                semantic_path: &self.semantic_path,
+                file_path: &self.file_path,
+                node_kind: &self.node_kind,
+                origin_type: &self.origin_type,
+                evidence_key: &self.evidence_key,
+                byte_range: self.byte_range,
+                signature: self.signature.as_deref(),
+            },
+            field,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -311,6 +338,22 @@ impl SymbolSummary {
             return_type: init.return_type,
             docstring: init.docstring,
         }
+    }
+
+    pub fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
+        validate_symbol_identity(
+            SymbolIdentityRef {
+                symbol_id: &self.symbol_id,
+                semantic_path: &self.semantic_path,
+                file_path: &self.file_path,
+                node_kind: &self.node_kind,
+                origin_type: &self.origin_type,
+                evidence_key: &self.evidence_key,
+                byte_range: self.byte_range,
+                signature: self.signature.as_deref(),
+            },
+            field,
+        )
     }
 }
 
@@ -383,6 +426,132 @@ pub struct TraceSymbolGraphResult {
     pub callees: Vec<SymbolSummary>,
     pub evidence_keys: TraceEvidenceKeys,
     pub indexed_files: usize,
+}
+
+impl PatchCommitGateReport {
+    fn validate_trace_replay_input(&self) -> Result<()> {
+        ensure_nonblank(&self.status, "patch.validation.commit_gate.status")?;
+        ensure_nonblank(&self.reason, "patch.validation.commit_gate.reason")?;
+        if let Some(bypass_reason) = &self.bypass_reason {
+            ensure_nonblank(bypass_reason, "patch.validation.commit_gate.bypass_reason")?;
+        }
+        for (index, invariant) in self.evidence_invariants.iter().enumerate() {
+            invariant.validate_trace_replay_input(index)?;
+        }
+        Ok(())
+    }
+}
+
+impl PatchEvidenceInvariantReport {
+    fn validate_trace_replay_input(&self, index: usize) -> Result<()> {
+        let prefix = format!("patch.validation.commit_gate.evidence_invariants[{index}]");
+        ensure_nonblank(&self.name, &format!("{prefix}.name"))?;
+        ensure_nonblank(&self.status, &format!("{prefix}.status"))?;
+        ensure_nonblank(&self.reason, &format!("{prefix}.reason"))?;
+        if let Some(selected_evidence_key) = &self.selected_evidence_key {
+            ensure_nonblank(
+                selected_evidence_key,
+                &format!("{prefix}.selected_evidence_key"),
+            )?;
+        }
+        ensure_nonblank_strings(
+            &self.candidate_evidence_keys,
+            &format!("{prefix}.candidate_evidence_keys"),
+        )?;
+        Ok(())
+    }
+}
+
+impl TraceSymbolGraphResult {
+    pub fn validate_trace_replay_input(&self) -> Result<()> {
+        self.symbol.validate_trace_replay_input("trace.symbol")?;
+        for (index, caller) in self.callers.iter().enumerate() {
+            caller.validate_trace_replay_input(&format!("trace.callers[{index}]"))?;
+        }
+        for (index, callee) in self.callees.iter().enumerate() {
+            callee.validate_trace_replay_input(&format!("trace.callees[{index}]"))?;
+        }
+
+        let expected_callers = self
+            .callers
+            .iter()
+            .map(|symbol| symbol.evidence_key.clone())
+            .collect::<Vec<_>>();
+        let expected_callees = self
+            .callees
+            .iter()
+            .map(|symbol| symbol.evidence_key.clone())
+            .collect::<Vec<_>>();
+
+        if self.evidence_keys.symbol != self.symbol.evidence_key {
+            bail!(
+                "invalid trace.evidence_keys.symbol: expected traced symbol evidence key to match trace.symbol.evidence_key"
+            );
+        }
+        if self.evidence_keys.callers != expected_callers {
+            bail!(
+                "invalid trace.evidence_keys.callers: expected caller evidence keys to match trace.callers"
+            );
+        }
+        if self.evidence_keys.callees != expected_callees {
+            bail!(
+                "invalid trace.evidence_keys.callees: expected callee evidence keys to match trace.callees"
+            );
+        }
+
+        Ok(())
+    }
+}
+
+fn ensure_nonblank(value: &str, field: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        bail!("invalid {field}: value must not be blank");
+    }
+    Ok(())
+}
+
+fn ensure_nonblank_strings(values: &[String], field: &str) -> Result<()> {
+    if let Some(index) = values.iter().position(|value| value.trim().is_empty()) {
+        bail!("invalid {field}[{index}]: value must not be blank");
+    }
+    Ok(())
+}
+
+struct SymbolIdentityRef<'a> {
+    symbol_id: &'a str,
+    semantic_path: &'a str,
+    file_path: &'a str,
+    node_kind: &'a str,
+    origin_type: &'a str,
+    evidence_key: &'a str,
+    byte_range: (usize, usize),
+    signature: Option<&'a str>,
+}
+
+fn validate_symbol_identity(identity: SymbolIdentityRef<'_>, field: &str) -> Result<()> {
+    ensure_nonblank(identity.symbol_id, &format!("{field}.symbol_id"))?;
+    ensure_nonblank(identity.semantic_path, &format!("{field}.semantic_path"))?;
+    ensure_nonblank(identity.file_path, &format!("{field}.file_path"))?;
+    ensure_nonblank(identity.node_kind, &format!("{field}.node_kind"))?;
+    ensure_nonblank(identity.origin_type, &format!("{field}.origin_type"))?;
+    ensure_nonblank(identity.evidence_key, &format!("{field}.evidence_key"))?;
+    if identity.byte_range.0 > identity.byte_range.1 {
+        bail!("invalid {field}.byte_range: start byte is after end byte");
+    }
+
+    let expected = symbol_evidence_key(
+        identity.symbol_id,
+        identity.file_path,
+        identity.node_kind,
+        identity.origin_type,
+        identity.byte_range,
+        identity.signature,
+    );
+    if identity.evidence_key != expected {
+        bail!("invalid {field}.evidence_key: expected evidence key to match symbol identity");
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

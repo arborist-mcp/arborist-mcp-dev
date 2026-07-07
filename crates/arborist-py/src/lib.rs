@@ -164,7 +164,7 @@ impl ArboristCore {
     ) -> PyResult<String> {
         let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
         let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
-        let result = replay_patch_evidence_against_trace(&patch, &trace);
+        let result = replay_patch_evidence_against_trace(&patch, &trace).map_err(to_py_error)?;
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
@@ -175,7 +175,7 @@ impl ArboristCore {
     ) -> PyResult<String> {
         let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
         let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
-        let result = validate_patch_commit_with_trace(&patch, &trace);
+        let result = validate_patch_commit_with_trace(&patch, &trace).map_err(to_py_error)?;
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
@@ -482,7 +482,9 @@ fn _arborist_core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{PatchAstNodeResult, PositionEdit, TraceSymbolGraphResult, parse_json_arg};
+    use super::{
+        ArboristCore, PatchAstNodeResult, PositionEdit, TraceSymbolGraphResult, parse_json_arg,
+    };
     use std::sync::Once;
 
     fn prepare_python() {
@@ -590,5 +592,71 @@ mod tests {
         .expect_err("patch payloads should reject missing nested validation fields");
 
         assert!(error.to_string().contains("missing field"));
+    }
+
+    #[test]
+    fn replay_patch_evidence_against_trace_json_rejects_blank_selected_evidence_keys() {
+        prepare_python();
+
+        let core = ArboristCore::new();
+        let error = core
+            .replay_patch_evidence_against_trace_json(
+                r#"{
+                    "file":"sample.py",
+                    "target_path":"top_level",
+                    "resolved_path":"top_level",
+                    "resolved_symbol_id":"top_level",
+                    "applied":true,
+                    "bypass_applied":false,
+                    "updated_source":"def top_level() -> int:\n    return 1\n",
+                    "validation":{
+                        "syntax_errors":[],
+                        "unresolved_identifiers":[],
+                        "resolved_identifiers":[],
+                        "ambiguous_identifiers":[],
+                        "binding_decisions":[],
+                        "commit_gate":{
+                            "status":"allowed",
+                            "allowed":true,
+                            "reason":"ok",
+                            "bypass_reason":null,
+                            "blocking_decisions":[],
+                            "evidence_invariants":[{
+                                "name":"helper",
+                                "status":"passed",
+                                "reason":"ok",
+                                "selected_evidence_key":"   ",
+                                "candidate_evidence_keys":["top_level|sample.py|function_definition|trace_root|0..10|"]
+                            }],
+                            "syntax_error_count":0
+                        }
+                    }
+                }"#,
+                r#"{
+                    "symbol":{
+                        "symbol_id":"top_level",
+                        "semantic_path":"top_level",
+                        "file_path":"sample.py",
+                        "node_kind":"function_definition",
+                        "origin_type":"trace_root",
+                        "evidence_key":"top_level|sample.py|function_definition|trace_root|0..10|",
+                        "byte_range":[0,10],
+                        "parameters":[],
+                        "dependencies":[],
+                        "references":[]
+                    },
+                    "callers":[],
+                    "callees":[],
+                    "evidence_keys":{
+                        "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                        "callers":[],
+                        "callees":[]
+                    },
+                    "indexed_files":1
+                }"#,
+            )
+            .expect_err("blank selected evidence keys should be rejected");
+
+        assert!(error.to_string().contains("selected_evidence_key"));
     }
 }
