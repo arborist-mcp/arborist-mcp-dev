@@ -375,27 +375,27 @@ pub fn validate_patch_with_trace_context(
     let trace_target = patch.resolved_symbol_id.clone();
 
     if !patch.validation.syntax_errors.is_empty() {
-        return Ok(TraceBackedPatchResult {
+        let result = TraceBackedPatchResult {
             patch,
             trace_target,
             trace: None,
             trace_validation: None,
-            trace_error: Some(
-                "trace skipped because patch validation reported syntax errors".to_string(),
-            ),
-        });
+            trace_error: Some(trace_skip_reason_for_syntax_errors().to_string()),
+        };
+        validate_trace_backed_patch_result(&result)?;
+        return Ok(result);
     }
 
     if !patch.applied {
-        return Ok(TraceBackedPatchResult {
+        let result = TraceBackedPatchResult {
             patch,
             trace_target,
             trace: None,
             trace_validation: None,
-            trace_error: Some(
-                "trace skipped because patch validation rejected the patch".to_string(),
-            ),
-        });
+            trace_error: Some(trace_skip_reason_for_patch_gate_rejection().to_string()),
+        };
+        validate_trace_backed_patch_result(&result)?;
+        return Ok(result);
     }
 
     let mut overrides = BTreeMap::new();
@@ -408,13 +408,15 @@ pub fn validate_patch_with_trace_context(
     )?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
 
-    Ok(TraceBackedPatchResult {
+    let result = TraceBackedPatchResult {
         patch,
         trace_target,
         trace: Some(trace),
         trace_validation: Some(trace_validation),
         trace_error: None,
-    })
+    };
+    validate_trace_backed_patch_result(&result)?;
+    Ok(result)
 }
 
 fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
@@ -442,6 +444,75 @@ fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
     "matched".to_string()
 }
 
+fn trace_skip_reason_for_syntax_errors() -> &'static str {
+    "trace skipped because patch validation reported syntax errors"
+}
+
+fn trace_skip_reason_for_patch_gate_rejection() -> &'static str {
+    "trace skipped because patch validation rejected the patch"
+}
+
+fn validate_trace_backed_patch_result(result: &TraceBackedPatchResult) -> Result<()> {
+    if result.trace_target != result.patch.resolved_symbol_id {
+        bail!("invalid trace_target: expected trace_target to match patch.resolved_symbol_id");
+    }
+
+    if !result.patch.validation.syntax_errors.is_empty() {
+        if result.trace.is_some() {
+            bail!("invalid trace: expected no trace when patch validation reports syntax errors");
+        }
+        if result.trace_validation.is_some() {
+            bail!(
+                "invalid trace_validation: expected no trace validation when patch validation reports syntax errors"
+            );
+        }
+        if result.trace_error.as_deref() != Some(trace_skip_reason_for_syntax_errors()) {
+            bail!(
+                "invalid trace_error: expected syntax-error trace skip reason when patch validation reports syntax errors"
+            );
+        }
+        return Ok(());
+    }
+
+    if !result.patch.applied {
+        if result.trace.is_some() {
+            bail!("invalid trace: expected no trace when patch validation rejects the patch");
+        }
+        if result.trace_validation.is_some() {
+            bail!(
+                "invalid trace_validation: expected no trace validation when patch validation rejects the patch"
+            );
+        }
+        if result.trace_error.as_deref() != Some(trace_skip_reason_for_patch_gate_rejection()) {
+            bail!(
+                "invalid trace_error: expected patch-gate trace skip reason when patch validation rejects the patch"
+            );
+        }
+        return Ok(());
+    }
+
+    let trace = result
+        .trace
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("invalid trace: expected trace for applied patches"))?;
+    let trace_validation = result.trace_validation.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("invalid trace_validation: expected trace validation for applied patches")
+    })?;
+    if result.trace_error.is_some() {
+        bail!("invalid trace_error: expected no trace error for applied patches");
+    }
+
+    validate_replay_trace_target(&result.patch, trace)?;
+    let expected = validate_patch_commit_with_trace(&result.patch, trace)?;
+    if trace_validation != &expected {
+        bail!(
+            "invalid trace_validation: expected trace-backed validation derived from patch and trace"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -457,6 +528,7 @@ mod tests {
         rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
         trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
         validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
+        validate_trace_backed_patch_result,
     };
     use crate::language::normalize_path;
 
@@ -2538,6 +2610,39 @@ int helper(int value) {
             result.trace_error.as_deref(),
             Some("trace skipped because patch validation reported syntax errors")
         );
+    }
+
+    #[test]
+    fn rejects_tampered_trace_context_result_target_mismatch() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let mut result = validate_patch_with_trace_context_from_path(
+            &dir,
+            &caller,
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+            None,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        result.trace_target = "helper".to_string();
+
+        let error = validate_trace_backed_patch_result(&result)
+            .expect_err("tampered trace context targets should be rejected");
+        assert!(error.to_string().contains("trace_target"));
     }
 
     #[test]
