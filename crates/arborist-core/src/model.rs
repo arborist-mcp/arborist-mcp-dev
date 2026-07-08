@@ -274,6 +274,79 @@ impl QueryCaptureResult {
     }
 }
 
+impl SymbolIndexStats {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.db_path, "symbol_index.db_path")?;
+        if self.rebuilt_files + self.reused_files != self.indexed_files {
+            bail!(
+                "invalid symbol_index.indexed_files: expected indexed_files to equal rebuilt_files + reused_files"
+            );
+        }
+        Ok(())
+    }
+}
+
+impl RegisteredSymbolIndex {
+    pub(crate) fn validate_public_output(&self, index: usize) -> Result<()> {
+        let prefix = format!("registered_symbol_indexes[{index}]");
+        ensure_nonblank(&self.workspace_root, &format!("{prefix}.workspace_root"))?;
+        ensure_nonblank(&self.db_path, &format!("{prefix}.db_path"))?;
+        Ok(())
+    }
+}
+
+impl VirtualFileSnapshot {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.file, "virtual_snapshot.file")?;
+        if self.dirty != (self.source != self.disk_source) {
+            bail!(
+                "invalid virtual_snapshot.dirty: expected dirty to match whether source differs from disk_source"
+            );
+        }
+        Ok(())
+    }
+}
+
+impl VirtualEditResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.file, "virtual_edit.file")?;
+        for (index, issue) in self.validation.syntax_errors.iter().enumerate() {
+            issue.validate_trace_replay_input(index)?;
+        }
+        ensure_nonblank_strings(
+            &self.validation.unresolved_identifiers,
+            "virtual_edit.validation.unresolved_identifiers",
+        )?;
+        if !self.validation.resolved_identifiers.is_empty() {
+            bail!(
+                "invalid virtual_edit.validation.resolved_identifiers: buffer edit results must not report resolved identifiers"
+            );
+        }
+        if !self.validation.ambiguous_identifiers.is_empty() {
+            bail!(
+                "invalid virtual_edit.validation.ambiguous_identifiers: buffer edit results must not report ambiguous identifiers"
+            );
+        }
+        if !self.validation.binding_decisions.is_empty() {
+            bail!(
+                "invalid virtual_edit.validation.binding_decisions: buffer edit results must not report binding decisions"
+            );
+        }
+        if self.validation.commit_gate != PatchCommitGateReport::default() {
+            bail!(
+                "invalid virtual_edit.validation.commit_gate: buffer edit results must leave commit_gate at the default not_evaluated state"
+            );
+        }
+        Ok(())
+    }
+}
+
+impl VirtualFileStatus {
+    pub(crate) fn validate_public_output(&self, index: usize) -> Result<()> {
+        ensure_nonblank(&self.file, &format!("virtual_statuses[{index}].file"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TraceDirection {
@@ -1144,10 +1217,11 @@ pub struct VirtualFileStatus {
 #[cfg(test)]
 mod tests {
     use super::{
-        PatchAstNodeResult, PatchTraceValidationResult, Position, PositionEdit, QueryCaptureResult,
-        RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats,
-        TraceBackedPatchResult, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult,
+        PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
+        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, TraceBackedPatchResult,
+        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, VirtualEditResult,
+        VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -1593,5 +1667,74 @@ mod tests {
             .expect_err("query capture validation should reject partial owner fields");
 
         assert!(error.to_string().contains("owner_symbol_id"));
+    }
+
+    #[test]
+    fn symbol_index_stats_validation_rejects_inconsistent_totals() {
+        let stats = SymbolIndexStats {
+            db_path: "symbols.db".to_string(),
+            indexed_files: 3,
+            indexed_symbols: 4,
+            rebuilt_files: 1,
+            reused_files: 1,
+        };
+
+        let error = stats
+            .validate_public_output()
+            .expect_err("symbol index stats validation should reject inconsistent totals");
+
+        assert!(error.to_string().contains("symbol_index.indexed_files"));
+    }
+
+    #[test]
+    fn virtual_snapshot_validation_rejects_dirty_state_mismatch() {
+        let snapshot = VirtualFileSnapshot {
+            file: "sample.py".to_string(),
+            source: "def value() -> int:\n    return 2\n".to_string(),
+            disk_source: "def value() -> int:\n    return 1\n".to_string(),
+            dirty: false,
+            version: 1,
+            syntax_error_count: 0,
+        };
+
+        let error = snapshot
+            .validate_public_output()
+            .expect_err("virtual snapshots should reject dirty/source mismatches");
+
+        assert!(error.to_string().contains("virtual_snapshot.dirty"));
+    }
+
+    #[test]
+    fn virtual_edit_validation_rejects_non_default_commit_gate() {
+        let result = VirtualEditResult {
+            file: "sample.py".to_string(),
+            source: "def value() -> int:\n    return 1\n".to_string(),
+            dirty: false,
+            version: 1,
+            incremental_parse: true,
+            validation: PatchValidationReport {
+                syntax_errors: Vec::new(),
+                unresolved_identifiers: Vec::new(),
+                resolved_identifiers: Vec::new(),
+                ambiguous_identifiers: Vec::new(),
+                binding_decisions: Vec::new(),
+                commit_gate: PatchCommitGateReport {
+                    status: "allowed".to_string(),
+                    allowed: true,
+                    reason: "tampered".to_string(),
+                    ..Default::default()
+                },
+            },
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("virtual edit validation should reject non-default commit gates");
+
+        assert!(
+            error
+                .to_string()
+                .contains("virtual_edit.validation.commit_gate")
+        );
     }
 }

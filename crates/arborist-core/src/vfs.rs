@@ -71,7 +71,7 @@ impl VirtualFileSystem {
             .entries
             .get(&normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-        Ok(snapshot_from_entry(&normalized, entry))
+        snapshot_from_entry(&normalized, entry)
     }
 
     pub fn read_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
@@ -118,7 +118,7 @@ impl VirtualFileSystem {
         entry.version += 1;
         entry.dirty = entry.source != entry.disk_source;
 
-        Ok(VirtualEditResult {
+        let result = VirtualEditResult {
             file: normalized,
             source: updated_source,
             dirty: entry.dirty,
@@ -132,7 +132,9 @@ impl VirtualFileSystem {
                 binding_decisions: Vec::new(),
                 commit_gate: Default::default(),
             },
-        })
+        };
+        result.validate_public_output()?;
+        Ok(result)
     }
 
     pub fn apply_position_edits(
@@ -141,14 +143,31 @@ impl VirtualFileSystem {
         edits: &[PositionEdit],
     ) -> Result<VirtualEditResult> {
         if edits.is_empty() {
-            return self.read_file(path).map(|snapshot| VirtualEditResult {
-                file: snapshot.file,
-                source: snapshot.source,
-                dirty: snapshot.dirty,
-                version: snapshot.version,
+            let (path, normalized) = normalized_virtual_path(path)?;
+            self.ensure_loaded(&path, None)?;
+            self.refresh_if_clean(&normalized)?;
+
+            let entry = self
+                .entries
+                .get(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            let result = VirtualEditResult {
+                file: normalized,
+                source: entry.source.clone(),
+                dirty: entry.dirty,
+                version: entry.version,
                 incremental_parse: true,
-                validation: PatchValidationReport::default(),
-            });
+                validation: PatchValidationReport {
+                    syntax_errors: collect_syntax_errors(entry.tree.root_node(), &entry.source),
+                    unresolved_identifiers: Vec::new(),
+                    resolved_identifiers: Vec::new(),
+                    ambiguous_identifiers: Vec::new(),
+                    binding_decisions: Vec::new(),
+                    commit_gate: Default::default(),
+                },
+            };
+            result.validate_public_output()?;
+            return Ok(result);
         }
 
         let (path, normalized) = normalized_virtual_path(path)?;
@@ -275,7 +294,7 @@ impl VirtualFileSystem {
             .entries
             .get(&normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-        Ok(snapshot_from_entry(&normalized, entry))
+        snapshot_from_entry(&normalized, entry)
     }
 
     pub fn discard_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
@@ -296,7 +315,7 @@ impl VirtualFileSystem {
         entry.version += 1;
         entry.dirty = false;
 
-        Ok(snapshot_from_entry(&normalized, entry))
+        snapshot_from_entry(&normalized, entry)
     }
 
     pub fn close_file(&mut self, path: &Path, persist: bool) -> Result<VirtualFileSnapshot> {
@@ -343,6 +362,14 @@ impl VirtualFileSystem {
         indexes
     }
 
+    pub fn registered_symbol_indexes_checked(&self) -> Result<Vec<RegisteredSymbolIndex>> {
+        let indexes = self.registered_symbol_indexes();
+        for (index, registered) in indexes.iter().enumerate() {
+            registered.validate_public_output(index)?;
+        }
+        Ok(indexes)
+    }
+
     pub fn virtual_file_statuses(&mut self, dirty_only: bool) -> Result<Vec<VirtualFileStatus>> {
         let loaded_files: Vec<_> = self.entries.keys().cloned().collect();
         for normalized in &loaded_files {
@@ -370,6 +397,9 @@ impl VirtualFileSystem {
             })
             .collect();
         statuses.sort_by(|left, right| left.file.cmp(&right.file));
+        for (index, status) in statuses.iter().enumerate() {
+            status.validate_public_output(index)?;
+        }
         Ok(statuses)
     }
 
@@ -480,15 +510,17 @@ impl VirtualFileSystem {
     }
 }
 
-fn snapshot_from_entry(file: &str, entry: &VirtualFileEntry) -> VirtualFileSnapshot {
-    VirtualFileSnapshot {
+fn snapshot_from_entry(file: &str, entry: &VirtualFileEntry) -> Result<VirtualFileSnapshot> {
+    let snapshot = VirtualFileSnapshot {
         file: file.to_string(),
         source: entry.source.clone(),
         disk_source: entry.disk_source.clone(),
         dirty: entry.dirty,
         version: entry.version,
         syntax_error_count: collect_syntax_errors(entry.tree.root_node(), &entry.source).len(),
-    }
+    };
+    snapshot.validate_public_output()?;
+    Ok(snapshot)
 }
 
 fn validate_edit_range(source: &str, start_byte: usize, old_end_byte: usize) -> Result<()> {
@@ -857,6 +889,19 @@ mod tests {
         assert!(result.source.contains("return 20"));
         assert!(result.source.contains("# staged"));
         assert!(result.dirty);
+    }
+
+    #[test]
+    fn empty_position_edits_report_current_syntax_errors() {
+        let file = temp_file("def value(\n");
+        let mut vfs = VirtualFileSystem::new();
+
+        let result = vfs.apply_position_edits(&file, &[]).unwrap();
+
+        assert!(result.incremental_parse);
+        assert!(!result.validation.syntax_errors.is_empty());
+        assert!(result.validation.resolved_identifiers.is_empty());
+        assert_eq!(result.validation.commit_gate.status, "not_evaluated");
     }
 
     #[test]

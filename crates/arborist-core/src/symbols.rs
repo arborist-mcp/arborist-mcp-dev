@@ -126,13 +126,15 @@ pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<Sym
         indexed_files,
     )?;
 
-    Ok(SymbolIndexStats {
+    let result = SymbolIndexStats {
         db_path: normalize_path(&db_path),
         indexed_files,
         indexed_symbols: resolved_symbols.len(),
         rebuilt_files,
         reused_files,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 pub fn trace_symbol_graph_from_index(
@@ -248,13 +250,15 @@ pub fn refresh_symbol_index_for_file(
         indexed_files,
     })?;
 
-    Ok(SymbolIndexStats {
+    let result = SymbolIndexStats {
         db_path: normalize_path(&db_path),
         indexed_files,
         indexed_symbols: resolved_symbols.len(),
         rebuilt_files,
         reused_files,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 fn expanded_refresh_file_paths(workspace_root: &Path, file_path: &Path) -> Result<Vec<PathBuf>> {

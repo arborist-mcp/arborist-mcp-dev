@@ -258,7 +258,11 @@ impl ArboristCore {
     }
 
     fn list_symbol_indexes_json(&self) -> PyResult<String> {
-        let result = self.vfs.borrow().registered_symbol_indexes();
+        let result = self
+            .vfs
+            .borrow()
+            .registered_symbol_indexes_checked()
+            .map_err(to_py_error)?;
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
