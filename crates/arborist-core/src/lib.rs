@@ -238,12 +238,14 @@ pub fn replay_patch_evidence_against_trace(
         .iter()
         .all(|item| matches!(item.status.as_str(), "matched" | "blocked"));
 
-    Ok(TracePatchEvidenceReplayResult {
+    let result = TracePatchEvidenceReplayResult {
         consistent,
         matched_items,
         blocked_items,
         items,
-    })
+    };
+    validate_trace_patch_evidence_replay_result(&result)?;
+    Ok(result)
 }
 
 fn normalized_evidence_key_set<'a>(
@@ -277,62 +279,9 @@ pub fn validate_patch_commit_with_trace(
     trace: &TraceSymbolGraphResult,
 ) -> Result<PatchTraceValidationResult> {
     let replay = replay_patch_evidence_against_trace(patch, trace)?;
-    let replay_status = summarize_replay_status(&replay);
-    let patch_gate_status = patch.validation.commit_gate.status.clone();
-
-    if !patch.validation.commit_gate.allowed {
-        return Ok(PatchTraceValidationResult {
-            allowed: false,
-            status: "rejected_by_patch_gate".to_string(),
-            reason: patch.validation.commit_gate.reason.clone(),
-            patch_gate_status,
-            replay_status,
-            replay,
-        });
-    }
-
-    if matches!(replay_status.as_str(), "missing" | "failed") {
-        return Ok(PatchTraceValidationResult {
-            allowed: false,
-            status: "rejected_by_trace_replay".to_string(),
-            reason: "trace replay did not confirm the patch evidence".to_string(),
-            patch_gate_status,
-            replay_status,
-            replay,
-        });
-    }
-
-    if replay_status == "blocked" && patch_gate_status != "allowed_with_bypass" {
-        return Ok(PatchTraceValidationResult {
-            allowed: false,
-            status: "rejected_by_trace_replay".to_string(),
-            reason: "trace replay found blocked evidence without an explicit bypass".to_string(),
-            patch_gate_status,
-            replay_status,
-            replay,
-        });
-    }
-
-    let (status, reason) = if patch.validation.commit_gate.status == "allowed_with_bypass" {
-        (
-            "allowed_with_bypass".to_string(),
-            "patch gate allowed the write with bypass and trace replay did not contradict the evidence".to_string(),
-        )
-    } else {
-        (
-            "allowed".to_string(),
-            "patch gate and trace replay both accepted the evidence".to_string(),
-        )
-    };
-
-    Ok(PatchTraceValidationResult {
-        allowed: true,
-        status,
-        reason,
-        patch_gate_status,
-        replay_status,
-        replay,
-    })
+    let result = build_patch_trace_validation_result(patch, replay);
+    validate_patch_trace_validation_result(&result)?;
+    Ok(result)
 }
 
 pub fn validate_patch_with_trace_context_from_path(
@@ -444,6 +393,320 @@ fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
     "matched".to_string()
 }
 
+fn build_patch_trace_validation_result(
+    patch: &PatchAstNodeResult,
+    replay: TracePatchEvidenceReplayResult,
+) -> PatchTraceValidationResult {
+    let replay_status = summarize_replay_status(&replay);
+    let patch_gate_status = patch.validation.commit_gate.status.clone();
+
+    if !patch.validation.commit_gate.allowed {
+        return PatchTraceValidationResult {
+            allowed: false,
+            status: "rejected_by_patch_gate".to_string(),
+            reason: patch.validation.commit_gate.reason.clone(),
+            patch_gate_status,
+            replay_status,
+            replay,
+        };
+    }
+
+    if matches!(replay_status.as_str(), "missing" | "failed") {
+        return PatchTraceValidationResult {
+            allowed: false,
+            status: "rejected_by_trace_replay".to_string(),
+            reason: "trace replay did not confirm the patch evidence".to_string(),
+            patch_gate_status,
+            replay_status,
+            replay,
+        };
+    }
+
+    if replay_status == "blocked" && patch_gate_status != "allowed_with_bypass" {
+        return PatchTraceValidationResult {
+            allowed: false,
+            status: "rejected_by_trace_replay".to_string(),
+            reason: "trace replay found blocked evidence without an explicit bypass".to_string(),
+            patch_gate_status,
+            replay_status,
+            replay,
+        };
+    }
+
+    let (status, reason) = if patch.validation.commit_gate.status == "allowed_with_bypass" {
+        (
+            "allowed_with_bypass".to_string(),
+            "patch gate allowed the write with bypass and trace replay did not contradict the evidence".to_string(),
+        )
+    } else {
+        (
+            "allowed".to_string(),
+            "patch gate and trace replay both accepted the evidence".to_string(),
+        )
+    };
+
+    PatchTraceValidationResult {
+        allowed: true,
+        status,
+        reason,
+        patch_gate_status,
+        replay_status,
+        replay,
+    }
+}
+
+fn validate_trace_patch_evidence_replay_result(
+    replay: &TracePatchEvidenceReplayResult,
+) -> Result<()> {
+    for (index, item) in replay.items.iter().enumerate() {
+        validate_trace_patch_evidence_replay_item(item, index)?;
+    }
+
+    let expected_matched_items = replay
+        .items
+        .iter()
+        .filter(|item| item.status == "matched")
+        .count();
+    if replay.matched_items != expected_matched_items {
+        bail!("invalid matched_items: expected matched_items to match replay item statuses");
+    }
+
+    let expected_blocked_items = replay
+        .items
+        .iter()
+        .filter(|item| item.status == "blocked")
+        .count();
+    if replay.blocked_items != expected_blocked_items {
+        bail!("invalid blocked_items: expected blocked_items to match replay item statuses");
+    }
+
+    let expected_consistent = replay
+        .items
+        .iter()
+        .all(|item| matches!(item.status.as_str(), "matched" | "blocked"));
+    if replay.consistent != expected_consistent {
+        bail!("invalid consistent: expected consistent to match replay item statuses");
+    }
+
+    Ok(())
+}
+
+fn validate_trace_patch_evidence_replay_item(
+    item: &TracePatchEvidenceReplayItem,
+    index: usize,
+) -> Result<()> {
+    let prefix = format!("replay.items[{index}]");
+    ensure_nonblank_text(&item.name, &format!("{prefix}.name"))?;
+    if let Some(selected_evidence_key) = &item.selected_evidence_key {
+        ensure_nonblank_text(
+            selected_evidence_key,
+            &format!("{prefix}.selected_evidence_key"),
+        )?;
+    }
+    ensure_nonblank_text(
+        &item.trace_match_scope,
+        &format!("{prefix}.trace_match_scope"),
+    )?;
+    ensure_nonblank_texts(
+        &item.candidate_evidence_keys,
+        &format!("{prefix}.candidate_evidence_keys"),
+    )?;
+    ensure_unique_texts(
+        &item.candidate_evidence_keys,
+        &format!("{prefix}.candidate_evidence_keys"),
+    )?;
+
+    match item.trace_match_scope.as_str() {
+        "callers" | "callees" | "symbol" | "patch_scope" | "none" => {}
+        other => {
+            bail!("invalid {prefix}.trace_match_scope: unsupported scope `{other}`");
+        }
+    }
+    if item.matched_in_trace && item.trace_match_scope == "none" {
+        bail!(
+            "invalid {prefix}.trace_match_scope: expected a concrete scope when matched_in_trace is true"
+        );
+    }
+    if !item.matched_in_trace && item.trace_match_scope != "none" {
+        bail!("invalid {prefix}.trace_match_scope: expected `none` when matched_in_trace is false");
+    }
+
+    match item.status.as_str() {
+        "matched" => {
+            if !item.matched_in_trace {
+                bail!(
+                    "invalid {prefix}.matched_in_trace: expected matched replay items to be matched in trace"
+                );
+            }
+            if item.selected_evidence_key.is_none() {
+                bail!(
+                    "invalid {prefix}.selected_evidence_key: expected matched replay items to include a selected evidence key"
+                );
+            }
+        }
+        "missing" => {
+            if item.matched_in_trace {
+                bail!(
+                    "invalid {prefix}.matched_in_trace: expected missing replay items not to be matched in trace"
+                );
+            }
+            if item.selected_evidence_key.is_none() {
+                bail!(
+                    "invalid {prefix}.selected_evidence_key: expected missing replay items to include a selected evidence key"
+                );
+            }
+        }
+        "blocked" => {
+            if item.matched_in_trace {
+                bail!(
+                    "invalid {prefix}.matched_in_trace: expected blocked replay items not to be matched in trace"
+                );
+            }
+            if item.selected_evidence_key.is_some() {
+                bail!(
+                    "invalid {prefix}.selected_evidence_key: expected blocked replay items not to include a selected evidence key"
+                );
+            }
+        }
+        "failed" => {}
+        other => {
+            bail!("invalid {prefix}.status: unsupported replay status `{other}`");
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_patch_trace_validation_result(result: &PatchTraceValidationResult) -> Result<()> {
+    ensure_nonblank_text(&result.status, "trace_validation.status")?;
+    ensure_nonblank_text(&result.reason, "trace_validation.reason")?;
+    ensure_nonblank_text(
+        &result.patch_gate_status,
+        "trace_validation.patch_gate_status",
+    )?;
+    ensure_nonblank_text(&result.replay_status, "trace_validation.replay_status")?;
+    validate_trace_patch_evidence_replay_result(&result.replay)?;
+
+    let expected_replay_status = summarize_replay_status(&result.replay);
+    if result.replay_status != expected_replay_status {
+        bail!(
+            "invalid trace_validation.replay_status: expected replay_status to match replay item statuses"
+        );
+    }
+
+    match result.patch_gate_status.as_str() {
+        "allowed" | "allowed_with_bypass" | "rejected" => {}
+        other => {
+            bail!(
+                "invalid trace_validation.patch_gate_status: unsupported patch gate status `{other}`"
+            );
+        }
+    }
+
+    match result.status.as_str() {
+        "rejected_by_patch_gate" => {
+            if result.allowed {
+                bail!(
+                    "invalid trace_validation.allowed: rejected_by_patch_gate results must not be allowed"
+                );
+            }
+            if result.patch_gate_status != "rejected" {
+                bail!(
+                    "invalid trace_validation.patch_gate_status: rejected_by_patch_gate results must report a rejected patch gate"
+                );
+            }
+        }
+        "rejected_by_trace_replay" => {
+            if result.allowed {
+                bail!(
+                    "invalid trace_validation.allowed: rejected_by_trace_replay results must not be allowed"
+                );
+            }
+            if result.patch_gate_status == "rejected" {
+                bail!(
+                    "invalid trace_validation.patch_gate_status: rejected_by_trace_replay results require the patch gate to have allowed the patch"
+                );
+            }
+            if !matches!(
+                result.replay_status.as_str(),
+                "missing" | "failed" | "blocked"
+            ) {
+                bail!(
+                    "invalid trace_validation.replay_status: rejected_by_trace_replay results require missing, failed, or blocked replay evidence"
+                );
+            }
+            if result.replay_status == "blocked"
+                && result.patch_gate_status == "allowed_with_bypass"
+            {
+                bail!(
+                    "invalid trace_validation.patch_gate_status: blocked replay evidence with an allowed_with_bypass patch gate should not be rejected by trace replay"
+                );
+            }
+        }
+        "allowed" => {
+            if !result.allowed {
+                bail!("invalid trace_validation.allowed: allowed results must be allowed");
+            }
+            if result.patch_gate_status != "allowed" {
+                bail!(
+                    "invalid trace_validation.patch_gate_status: allowed results must report an allowed patch gate"
+                );
+            }
+            if result.replay_status != "matched" {
+                bail!(
+                    "invalid trace_validation.replay_status: allowed results require matched replay evidence"
+                );
+            }
+        }
+        "allowed_with_bypass" => {
+            if !result.allowed {
+                bail!(
+                    "invalid trace_validation.allowed: allowed_with_bypass results must be allowed"
+                );
+            }
+            if result.patch_gate_status != "allowed_with_bypass" {
+                bail!(
+                    "invalid trace_validation.patch_gate_status: allowed_with_bypass results must report an allowed_with_bypass patch gate"
+                );
+            }
+            if !matches!(result.replay_status.as_str(), "matched" | "blocked") {
+                bail!(
+                    "invalid trace_validation.replay_status: allowed_with_bypass results require matched or blocked replay evidence"
+                );
+            }
+        }
+        other => {
+            bail!("invalid trace_validation.status: unsupported trace validation status `{other}`");
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_nonblank_text(value: &str, field: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        bail!("invalid {field}: value must not be blank");
+    }
+    Ok(())
+}
+
+fn ensure_nonblank_texts(values: &[String], field: &str) -> Result<()> {
+    if let Some(index) = values.iter().position(|value| value.trim().is_empty()) {
+        bail!("invalid {field}[{index}]: value must not be blank");
+    }
+    Ok(())
+}
+
+fn ensure_unique_texts(values: &[String], field: &str) -> Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        if !seen.insert(value.clone()) {
+            bail!("invalid {field}[{index}]: duplicate values are not allowed");
+        }
+    }
+    Ok(())
+}
+
 fn trace_skip_reason_for_syntax_errors() -> &'static str {
     "trace skipped because patch validation reported syntax errors"
 }
@@ -527,8 +790,9 @@ mod tests {
         get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
         rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
         trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
-        validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
-        validate_trace_backed_patch_result,
+        validate_patch_trace_validation_result, validate_patch_with_trace_context,
+        validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
+        validate_trace_patch_evidence_replay_result,
     };
     use crate::language::normalize_path;
 
@@ -1962,6 +2226,41 @@ int helper(int value) {
     }
 
     #[test]
+    fn rejects_tampered_trace_validation_replay_status() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        let mut decision = validate_patch_commit_with_trace(&patch, &trace).unwrap();
+        decision.replay_status = "blocked".to_string();
+
+        let error = validate_patch_trace_validation_result(&decision)
+            .expect_err("tampered replay_status should be rejected");
+        assert!(error.to_string().contains("trace_validation.replay_status"));
+    }
+
+    #[test]
     fn rejects_trace_validated_patch_commit_when_replay_is_missing() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");
@@ -2212,6 +2511,42 @@ int helper(int value) {
         let replay = replay_patch_evidence_against_trace(&patch, &trace)
             .expect_err("duplicate trace evidence entries should be rejected");
         assert!(replay.to_string().contains("trace.callees[1].evidence_key"));
+    }
+
+    #[test]
+    fn rejects_tampered_replay_match_counts() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        let mut replay = replay_patch_evidence_against_trace(&patch, &trace).unwrap();
+        assert!(replay.matched_items > 0);
+        replay.matched_items = 0;
+
+        let error = validate_trace_patch_evidence_replay_result(&replay)
+            .expect_err("tampered replay match counts should be rejected");
+        assert!(error.to_string().contains("matched_items"));
     }
 
     #[test]
