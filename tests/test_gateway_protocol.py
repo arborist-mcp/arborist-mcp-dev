@@ -1622,6 +1622,146 @@ class GatewayProtocolTests(unittest.TestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("selected_evidence_key", response["error"]["message"])
 
+    def test_rejects_unsupported_binding_decision_statuses_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+        ]
+
+        params = {
+            "patch": {
+                "file": "sample.py",
+                "target_path": "top_level",
+                "resolved_path": "top_level",
+                "resolved_symbol_id": "top_level",
+                "applied": True,
+                "bypass_applied": False,
+                "updated_source": "def top_level() -> int:\n    return helper()\n",
+                "validation": {
+                    "syntax_errors": [],
+                    "unresolved_identifiers": [],
+                    "resolved_identifiers": [
+                        {
+                            "name": "helper",
+                            "symbol": {
+                                "symbol_id": "helper",
+                                "semantic_path": "helper",
+                                "scope_path": None,
+                                "file_path": "sample.py",
+                                "node_kind": "function_definition",
+                                "origin_type": "callee",
+                                "evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                                "byte_range": [12, 34],
+                                "signature": None,
+                                "parameters": [],
+                                "return_type": None,
+                                "docstring": None,
+                            },
+                        }
+                    ],
+                    "ambiguous_identifiers": [],
+                    "binding_decisions": [
+                        {
+                            "name": "helper",
+                            "status": "mystery",
+                            "reason": "manually tampered",
+                            "selected_symbol_id": "helper",
+                            "candidates": [
+                                {
+                                    "symbol_id": "helper",
+                                    "semantic_path": "helper",
+                                    "scope_path": None,
+                                    "file_path": "sample.py",
+                                    "node_kind": "function_definition",
+                                    "origin_type": "callee",
+                                    "evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                                    "byte_range": [12, 34],
+                                    "signature": None,
+                                    "parameters": [],
+                                    "return_type": None,
+                                    "docstring": None,
+                                }
+                            ],
+                        }
+                    ],
+                    "commit_gate": {
+                        "status": "allowed",
+                        "allowed": True,
+                        "reason": "syntax and symbol binding validation passed",
+                        "bypass_reason": None,
+                        "blocking_decisions": [],
+                        "evidence_invariants": [
+                            {
+                                "name": "helper",
+                                "status": "passed",
+                                "reason": "resolved binding has one selected candidate evidence key",
+                                "selected_evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                                "candidate_evidence_keys": [
+                                    "helper|sample.py|function_definition|callee|12..34|"
+                                ],
+                            }
+                        ],
+                        "syntax_error_count": 0,
+                    },
+                },
+            },
+            "trace": {
+                "symbol": {
+                    "symbol_id": "top_level",
+                    "semantic_path": "top_level",
+                    "file_path": "sample.py",
+                    "node_kind": "function_definition",
+                    "origin_type": "trace_root",
+                    "evidence_key": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range": [0, 10],
+                    "parameters": [],
+                    "dependencies": [],
+                    "references": [],
+                },
+                "callers": [],
+                "callees": [
+                    {
+                        "symbol_id": "helper",
+                        "semantic_path": "helper",
+                        "scope_path": None,
+                        "file_path": "sample.py",
+                        "node_kind": "function_definition",
+                        "origin_type": "callee",
+                        "evidence_key": "helper|sample.py|function_definition|callee|12..34|",
+                        "byte_range": [12, 34],
+                        "signature": None,
+                        "parameters": [],
+                        "return_type": None,
+                        "docstring": None,
+                    }
+                ],
+                "evidence_keys": {
+                    "symbol": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers": [],
+                    "callees": ["helper|sample.py|function_definition|callee|12..34|"],
+                },
+                "indexed_files": 1,
+            },
+        }
+
+        for method in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 56,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 56)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("binding_decisions[0].status", response["error"]["message"])
+
     def test_rejects_inconsistent_trace_evidence_summaries_as_invalid_params(self) -> None:
         gateway = ArboristGateway()
 

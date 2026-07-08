@@ -171,6 +171,7 @@ impl PatchAstNodeResult {
         ensure_nonblank(&self.target_path, "patch.target_path")?;
         ensure_nonblank(&self.resolved_path, "patch.resolved_path")?;
         ensure_nonblank(&self.resolved_symbol_id, "patch.resolved_symbol_id")?;
+        self.validation.validate_trace_replay_input()?;
         self.validation.commit_gate.validate_trace_replay_input(
             self.applied,
             self.bypass_applied,
@@ -449,6 +450,13 @@ impl PatchCommitGateReport {
                 "invalid patch.validation.commit_gate.syntax_error_count: expected {syntax_error_count_expected} to match patch.validation.syntax_errors"
             );
         }
+        for (index, decision) in self.blocking_decisions.iter().enumerate() {
+            let prefix = format!("patch.validation.commit_gate.blocking_decisions[{index}]");
+            decision.validate_trace_replay_input(&prefix)?;
+            if decision.status == "resolved" {
+                bail!("invalid {prefix}.status: blocking decisions must not be resolved");
+            }
+        }
         for (index, invariant) in self.evidence_invariants.iter().enumerate() {
             invariant.validate_trace_replay_input(index)?;
         }
@@ -547,6 +555,175 @@ impl PatchEvidenceInvariantReport {
         ensure_nonblank_strings(
             &self.candidate_evidence_keys,
             &format!("{prefix}.candidate_evidence_keys"),
+        )?;
+        match self.status.as_str() {
+            "passed" => {
+                let selected_evidence_key =
+                    self.selected_evidence_key.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "invalid {prefix}.selected_evidence_key: expected a selected evidence key when status is passed"
+                        )
+                    })?;
+                if !self
+                    .candidate_evidence_keys
+                    .iter()
+                    .any(|candidate| candidate == selected_evidence_key)
+                {
+                    bail!(
+                        "invalid {prefix}.selected_evidence_key: expected passed invariant selected evidence key to appear in candidate_evidence_keys"
+                    );
+                }
+            }
+            "blocked" => {
+                if self.selected_evidence_key.is_some() {
+                    bail!(
+                        "invalid {prefix}.selected_evidence_key: expected no selected evidence key when status is blocked"
+                    );
+                }
+            }
+            "failed" => {}
+            other => {
+                bail!("invalid {prefix}.status: unsupported status `{other}`");
+            }
+        }
+        Ok(())
+    }
+}
+
+impl PatchValidationReport {
+    fn validate_trace_replay_input(&self) -> Result<()> {
+        ensure_nonblank_strings(
+            &self.unresolved_identifiers,
+            "patch.validation.unresolved_identifiers",
+        )?;
+        for (index, binding) in self.resolved_identifiers.iter().enumerate() {
+            binding.validate_trace_replay_input(index)?;
+        }
+        for (index, ambiguity) in self.ambiguous_identifiers.iter().enumerate() {
+            ambiguity.validate_trace_replay_input(index)?;
+        }
+        for (index, decision) in self.binding_decisions.iter().enumerate() {
+            decision.validate_trace_replay_input(&format!(
+                "patch.validation.binding_decisions[{index}]"
+            ))?;
+        }
+        Ok(())
+    }
+}
+
+impl ValidationBinding {
+    fn validate_trace_replay_input(&self, index: usize) -> Result<()> {
+        let prefix = format!("patch.validation.resolved_identifiers[{index}]");
+        ensure_nonblank(&self.name, &format!("{prefix}.name"))?;
+        self.symbol
+            .validate_trace_replay_input(&format!("{prefix}.symbol"))
+    }
+}
+
+impl ValidationAmbiguity {
+    fn validate_trace_replay_input(&self, index: usize) -> Result<()> {
+        let prefix = format!("patch.validation.ambiguous_identifiers[{index}]");
+        ensure_nonblank(&self.name, &format!("{prefix}.name"))?;
+        ensure_nonblank(&self.reason, &format!("{prefix}.reason"))?;
+        if self.candidates.len() < 2 {
+            bail!(
+                "invalid {prefix}.candidates: ambiguous bindings must contain at least two candidates"
+            );
+        }
+        for (candidate_index, candidate) in self.candidates.iter().enumerate() {
+            candidate
+                .validate_trace_replay_input(&format!("{prefix}.candidates[{candidate_index}]"))?;
+        }
+        self.disambiguation_context
+            .validate_trace_replay_input(&format!("{prefix}.disambiguation_context"))
+    }
+}
+
+impl ValidationBindingDecision {
+    fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
+        ensure_nonblank(&self.name, &format!("{field}.name"))?;
+        ensure_nonblank(&self.status, &format!("{field}.status"))?;
+        ensure_nonblank(&self.reason, &format!("{field}.reason"))?;
+        if let Some(selected_symbol_id) = &self.selected_symbol_id {
+            ensure_nonblank(selected_symbol_id, &format!("{field}.selected_symbol_id"))?;
+        }
+        for (index, candidate) in self.candidates.iter().enumerate() {
+            candidate.validate_trace_replay_input(&format!("{field}.candidates[{index}]"))?;
+        }
+
+        match self.status.as_str() {
+            "resolved" => {
+                let selected_symbol_id = self.selected_symbol_id.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "invalid {field}.selected_symbol_id: expected a selected symbol id when status is resolved"
+                    )
+                })?;
+                if self.candidates.len() != 1 {
+                    bail!(
+                        "invalid {field}.candidates: resolved bindings must contain exactly one candidate"
+                    );
+                }
+                if self.candidates[0].symbol_id != selected_symbol_id {
+                    bail!(
+                        "invalid {field}.selected_symbol_id: expected resolved selected symbol id to match the only candidate"
+                    );
+                }
+            }
+            "ambiguous" => {
+                if self.selected_symbol_id.is_some() {
+                    bail!(
+                        "invalid {field}.selected_symbol_id: expected no selected symbol id when status is ambiguous"
+                    );
+                }
+                if self.candidates.len() < 2 {
+                    bail!(
+                        "invalid {field}.candidates: ambiguous bindings must contain at least two candidates"
+                    );
+                }
+            }
+            "unresolved" => {
+                if self.selected_symbol_id.is_some() {
+                    bail!(
+                        "invalid {field}.selected_symbol_id: expected no selected symbol id when status is unresolved"
+                    );
+                }
+                if !self.candidates.is_empty() {
+                    bail!(
+                        "invalid {field}.candidates: unresolved bindings must not contain candidates"
+                    );
+                }
+            }
+            other => {
+                bail!("invalid {field}.status: unsupported status `{other}`");
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl DisambiguationContext {
+    fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
+        if let Some(active_include_family) = &self.active_include_family {
+            ensure_nonblank(
+                active_include_family,
+                &format!("{field}.active_include_family"),
+            )?;
+        }
+        if let Some(preferred_family) = &self.preferred_family {
+            ensure_nonblank(preferred_family, &format!("{field}.preferred_family"))?;
+        }
+        ensure_nonblank_strings(
+            &self.visible_include_families,
+            &format!("{field}.visible_include_families"),
+        )?;
+        ensure_nonblank_strings(
+            &self.candidate_include_families,
+            &format!("{field}.candidate_include_families"),
+        )?;
+        ensure_nonblank_strings(
+            &self.candidate_symbol_ids,
+            &format!("{field}.candidate_symbol_ids"),
         )?;
         Ok(())
     }

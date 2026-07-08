@@ -2063,6 +2063,78 @@ int helper(int value) {
     }
 
     #[test]
+    fn rejects_unsupported_binding_decision_status_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.binding_decisions[0].status = "mystery".to_string();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("unsupported binding decision statuses should be rejected");
+        assert!(replay.to_string().contains("binding_decisions[0].status"));
+    }
+
+    #[test]
+    fn rejects_resolved_binding_decision_without_selected_symbol_id_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.binding_decisions[0].selected_symbol_id = None;
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("resolved binding decisions must retain their selected symbol id");
+        assert!(
+            replay
+                .to_string()
+                .contains("binding_decisions[0].selected_symbol_id")
+        );
+    }
+
+    #[test]
     fn rejects_inconsistent_patch_gate_status_during_replay() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");
