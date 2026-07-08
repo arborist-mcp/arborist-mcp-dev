@@ -2143,6 +2143,43 @@ int helper(int value) {
     }
 
     #[test]
+    fn rejects_non_root_trace_symbol_origin_type_during_replay() {
+        let dir = temporary_dir();
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &caller,
+            "def top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 2\n",
+            None,
+        )
+        .unwrap();
+        let mut trace = trace_symbol_graph(&dir, "top_level", TraceDirection::Both).unwrap();
+        trace.symbol.origin_type = "callee".to_string();
+        trace.symbol.evidence_key = format!(
+            "{}|{}|{}|{}|{}..{}|{}",
+            trace.symbol.symbol_id,
+            trace.symbol.file_path,
+            trace.symbol.node_kind,
+            trace.symbol.origin_type,
+            trace.symbol.byte_range.0,
+            trace.symbol.byte_range.1,
+            trace.symbol.signature.as_deref().unwrap_or("")
+        );
+        trace.evidence_keys.symbol = trace.symbol.evidence_key.clone();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("non-root trace symbol origin types should be rejected");
+        assert!(replay.to_string().contains("trace.symbol.origin_type"));
+    }
+
+    #[test]
     fn rejects_tampered_resolved_identifier_summary_during_replay() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");

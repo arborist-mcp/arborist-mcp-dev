@@ -877,6 +877,11 @@ impl ValidationIssue {
 impl TraceSymbolGraphResult {
     pub fn validate_trace_replay_input(&self) -> Result<()> {
         self.symbol.validate_trace_replay_input("trace.symbol")?;
+        if self.symbol.origin_type != "trace_root" {
+            bail!(
+                "invalid trace.symbol.origin_type: expected traced root symbol origin type to be `trace_root`"
+            );
+        }
         for (index, caller) in self.callers.iter().enumerate() {
             caller.validate_trace_replay_input(&format!("trace.callers[{index}]"))?;
         }
