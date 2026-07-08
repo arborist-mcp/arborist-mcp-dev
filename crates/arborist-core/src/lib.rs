@@ -2105,6 +2105,44 @@ int helper(int value) {
     }
 
     #[test]
+    fn rejects_duplicate_trace_evidence_entries_during_replay() {
+        let dir = temporary_dir();
+        let header = dir.join("helper.h");
+        let source = dir.join("helper.c");
+        let caller = dir.join("caller.c");
+
+        fs::write(&header, "int helper(int value);\n").unwrap();
+        fs::write(
+            &source,
+            "#include \"helper.h\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "#include \"helper.h\"\n\nint orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return helper(value);\n}\n",
+            None,
+        )
+        .unwrap();
+        let mut trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        trace.callees.push(trace.callees[0].clone());
+        trace
+            .evidence_keys
+            .callees
+            .push(trace.evidence_keys.callees[0].clone());
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("duplicate trace evidence entries should be rejected");
+        assert!(replay.to_string().contains("trace.callees[1].evidence_key"));
+    }
+
+    #[test]
     fn rejects_tampered_resolved_identifier_summary_during_replay() {
         let dir = temporary_dir();
         let header = dir.join("helper.h");

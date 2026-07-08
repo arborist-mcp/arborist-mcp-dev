@@ -558,6 +558,10 @@ impl PatchEvidenceInvariantReport {
             &self.candidate_evidence_keys,
             &format!("{prefix}.candidate_evidence_keys"),
         )?;
+        ensure_unique_strings(
+            &self.candidate_evidence_keys,
+            &format!("{prefix}.candidate_evidence_keys"),
+        )?;
         match self.status.as_str() {
             "passed" => {
                 let selected_evidence_key =
@@ -752,6 +756,7 @@ impl ValidationAmbiguity {
             candidate
                 .validate_trace_replay_input(&format!("{prefix}.candidates[{candidate_index}]"))?;
         }
+        ensure_unique_symbol_evidence_keys(&self.candidates, &format!("{prefix}.candidates"))?;
         self.disambiguation_context
             .validate_trace_replay_input(&format!("{prefix}.disambiguation_context"))
     }
@@ -768,6 +773,7 @@ impl ValidationBindingDecision {
         for (index, candidate) in self.candidates.iter().enumerate() {
             candidate.validate_trace_replay_input(&format!("{field}.candidates[{index}]"))?;
         }
+        ensure_unique_symbol_evidence_keys(&self.candidates, &format!("{field}.candidates"))?;
 
         match self.status.as_str() {
             "resolved" => {
@@ -877,6 +883,8 @@ impl TraceSymbolGraphResult {
         for (index, callee) in self.callees.iter().enumerate() {
             callee.validate_trace_replay_input(&format!("trace.callees[{index}]"))?;
         }
+        ensure_unique_symbol_evidence_keys(&self.callers, "trace.callers")?;
+        ensure_unique_symbol_evidence_keys(&self.callees, "trace.callees")?;
 
         let expected_callers = self
             .callers
@@ -919,6 +927,26 @@ fn ensure_nonblank(value: &str, field: &str) -> Result<()> {
 fn ensure_nonblank_strings(values: &[String], field: &str) -> Result<()> {
     if let Some(index) = values.iter().position(|value| value.trim().is_empty()) {
         bail!("invalid {field}[{index}]: value must not be blank");
+    }
+    Ok(())
+}
+
+fn ensure_unique_strings(values: &[String], field: &str) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        if !seen.insert(value.clone()) {
+            bail!("invalid {field}[{index}]: duplicate values are not allowed");
+        }
+    }
+    Ok(())
+}
+
+fn ensure_unique_symbol_evidence_keys(symbols: &[SymbolSummary], field: &str) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for (index, symbol) in symbols.iter().enumerate() {
+        if !seen.insert(symbol.evidence_key.clone()) {
+            bail!("invalid {field}[{index}].evidence_key: duplicate evidence keys are not allowed");
+        }
     }
     Ok(())
 }
