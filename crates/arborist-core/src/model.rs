@@ -362,6 +362,108 @@ impl SymbolContextResult {
     }
 }
 
+impl TraceSymbolNeighborhoodResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.symbol
+            .validate_trace_replay_input("trace_neighborhood.symbol")?;
+        if self.symbol.origin_type != "trace_root" {
+            bail!(
+                "invalid trace_neighborhood.symbol.origin_type: expected traced root symbol origin type to be `trace_root`"
+            );
+        }
+        if self.max_nodes == 0 {
+            bail!(
+                "invalid trace_neighborhood.max_nodes: expected max_nodes to be greater than zero"
+            );
+        }
+        if self.nodes.is_empty() {
+            bail!("invalid trace_neighborhood.nodes: expected at least the root node");
+        }
+
+        let root_node = &self.nodes[0];
+        root_node.validate_public_output(0)?;
+        if root_node.depth != 0 {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].depth: expected the root node to have depth 0"
+            );
+        }
+        if root_node.symbol.symbol_id != self.symbol.symbol_id {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].symbol.symbol_id: expected the root node to match trace_neighborhood.symbol"
+            );
+        }
+        if root_node.symbol.semantic_path != self.symbol.semantic_path {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].symbol.semantic_path: expected the root node to match trace_neighborhood.symbol"
+            );
+        }
+        if root_node.symbol.file_path != self.symbol.file_path {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].symbol.file_path: expected the root node to match trace_neighborhood.symbol"
+            );
+        }
+        if root_node.symbol.node_kind != self.symbol.node_kind {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].symbol.node_kind: expected the root node to match trace_neighborhood.symbol"
+            );
+        }
+        if root_node.symbol.byte_range != self.symbol.byte_range {
+            bail!(
+                "invalid trace_neighborhood.nodes[0].symbol.byte_range: expected the root node to match trace_neighborhood.symbol"
+            );
+        }
+
+        let mut node_ids = BTreeSet::new();
+        let mut previous_depth = 0;
+        for (index, node) in self.nodes.iter().enumerate() {
+            node.validate_public_output(index)?;
+            if node.depth > self.max_depth {
+                bail!(
+                    "invalid trace_neighborhood.nodes[{index}].depth: expected node depth to be at most trace_neighborhood.max_depth"
+                );
+            }
+            if index > 0 && node.depth < previous_depth {
+                bail!(
+                    "invalid trace_neighborhood.nodes[{index}].depth: expected nodes to be ordered by nondecreasing depth"
+                );
+            }
+            previous_depth = node.depth;
+            if !node_ids.insert(node.symbol.symbol_id.clone()) {
+                bail!(
+                    "invalid trace_neighborhood.nodes[{index}].symbol.symbol_id: duplicate symbol ids are not allowed"
+                );
+            }
+        }
+
+        let node_summaries = self
+            .nodes
+            .iter()
+            .map(|node| node.symbol.clone())
+            .collect::<Vec<_>>();
+        ensure_unique_symbol_evidence_keys(&node_summaries, "trace_neighborhood.nodes")?;
+
+        let mut seen_edges = BTreeSet::new();
+        for (index, edge) in self.edges.iter().enumerate() {
+            edge.validate_public_output(index)?;
+            if !node_ids.contains(&edge.from_symbol_id) {
+                bail!(
+                    "invalid trace_neighborhood.edges[{index}].from_symbol_id: expected edge endpoints to appear in trace_neighborhood.nodes"
+                );
+            }
+            if !node_ids.contains(&edge.to_symbol_id) {
+                bail!(
+                    "invalid trace_neighborhood.edges[{index}].to_symbol_id: expected edge endpoints to appear in trace_neighborhood.nodes"
+                );
+            }
+            if !seen_edges.insert((edge.from_symbol_id.clone(), edge.to_symbol_id.clone())) {
+                bail!("invalid trace_neighborhood.edges[{index}]: duplicate edges are not allowed");
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl SymbolListResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         if self.total_symbols < self.symbols.len() {
@@ -741,6 +843,33 @@ pub struct TraceSymbolGraphResult {
     pub callees: Vec<SymbolSummary>,
     pub evidence_keys: TraceEvidenceKeys,
     pub indexed_files: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TraceSymbolNeighborhoodNode {
+    pub symbol: SymbolSummary,
+    pub depth: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TraceSymbolNeighborhoodEdge {
+    pub from_symbol_id: String,
+    pub to_symbol_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TraceSymbolNeighborhoodResult {
+    pub symbol: SymbolMeta,
+    pub direction: TraceDirection,
+    pub max_depth: usize,
+    pub max_nodes: usize,
+    pub truncated: bool,
+    pub indexed_files: usize,
+    pub nodes: Vec<TraceSymbolNeighborhoodNode>,
+    pub edges: Vec<TraceSymbolNeighborhoodEdge>,
 }
 
 impl PatchCommitGateReport {
@@ -1231,6 +1360,31 @@ impl TraceSymbolGraphResult {
 
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         self.validate_trace_replay_input()
+    }
+}
+
+impl TraceSymbolNeighborhoodNode {
+    fn validate_public_output(&self, index: usize) -> Result<()> {
+        self.symbol
+            .validate_trace_replay_input(&format!("trace_neighborhood.nodes[{index}].symbol"))?;
+        Ok(())
+    }
+}
+
+impl TraceSymbolNeighborhoodEdge {
+    fn validate_public_output(&self, index: usize) -> Result<()> {
+        ensure_nonblank(
+            &self.from_symbol_id,
+            &format!("trace_neighborhood.edges[{index}].from_symbol_id"),
+        )?;
+        ensure_nonblank(
+            &self.to_symbol_id,
+            &format!("trace_neighborhood.edges[{index}].to_symbol_id"),
+        )?;
+        if self.from_symbol_id == self.to_symbol_id {
+            bail!("invalid trace_neighborhood.edges[{index}]: self-edges are not allowed");
+        }
+        Ok(())
     }
 }
 

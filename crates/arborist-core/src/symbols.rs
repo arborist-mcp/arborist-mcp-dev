@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -19,6 +19,7 @@ use crate::model::{
     SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit,
     SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
     SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
+    TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -103,6 +104,25 @@ pub fn trace_symbol_graph(
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
+pub fn trace_symbol_neighborhood(
+    workspace_root: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    trace_neighborhood_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
 pub fn read_symbol(workspace_root: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
@@ -182,6 +202,26 @@ pub fn trace_symbol_graph_with_overrides(
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn trace_symbol_neighborhood_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    trace_neighborhood_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
 }
 
 pub fn read_symbol_with_overrides(
@@ -287,6 +327,25 @@ pub fn trace_symbol_graph_from_index(
     let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn trace_symbol_neighborhood_from_index(
+    db_path: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    trace_neighborhood_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
 }
 
 pub fn read_symbol_from_index(db_path: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
@@ -1498,6 +1557,93 @@ fn trace_from_symbols(
     Ok(result)
 }
 
+fn trace_neighborhood_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    validate_trace_symbol_path(symbol_path)?;
+    if max_nodes == 0 {
+        return Err(anyhow!("max_nodes must be greater than zero"));
+    }
+
+    let root = choose_trace_symbol(resolved_symbols, symbol_path)
+        .cloned()
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?
+        .with_origin_type("trace_root");
+    let resolved_map = resolved_symbol_map(resolved_symbols);
+
+    let mut nodes = vec![TraceSymbolNeighborhoodNode {
+        symbol: symbol_summary_from_meta(&root),
+        depth: 0,
+    }];
+    let mut edges = Vec::new();
+    let mut queued = BTreeSet::from([root.symbol_id.clone()]);
+    let mut edge_keys = BTreeSet::new();
+    let mut queue = VecDeque::from([(root.symbol_id.clone(), 0usize)]);
+    let mut truncated = false;
+
+    while let Some((symbol_id, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+
+        let Some(current) = resolved_map.get(&symbol_id) else {
+            continue;
+        };
+
+        for (from_symbol_id, to_symbol_id) in neighborhood_edges_for_symbol(current, &direction) {
+            let next_symbol_id = if from_symbol_id == current.symbol_id {
+                &to_symbol_id
+            } else {
+                &from_symbol_id
+            };
+
+            let Some(next_symbol) = resolved_map.get(next_symbol_id) else {
+                continue;
+            };
+
+            if !queued.contains(next_symbol_id) {
+                if nodes.len() >= max_nodes {
+                    truncated = true;
+                    continue;
+                }
+
+                queued.insert(next_symbol_id.clone());
+                queue.push_back((next_symbol_id.clone(), depth + 1));
+                nodes.push(TraceSymbolNeighborhoodNode {
+                    symbol: symbol_summary_from_meta(next_symbol),
+                    depth: depth + 1,
+                });
+            }
+
+            let edge_key = (from_symbol_id.clone(), to_symbol_id.clone());
+            if edge_keys.insert(edge_key.clone()) {
+                edges.push(TraceSymbolNeighborhoodEdge {
+                    from_symbol_id: edge_key.0,
+                    to_symbol_id: edge_key.1,
+                });
+            }
+        }
+    }
+
+    let result = TraceSymbolNeighborhoodResult {
+        symbol: root,
+        direction,
+        max_depth,
+        max_nodes,
+        truncated,
+        indexed_files,
+        nodes,
+        edges,
+    };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
 fn read_symbol_from_symbols(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -1726,6 +1872,34 @@ fn trace_evidence_keys(
             .map(|summary| summary.evidence_key.clone())
             .collect(),
     }
+}
+
+fn neighborhood_edges_for_symbol(
+    symbol: &SymbolMeta,
+    direction: &TraceDirection,
+) -> Vec<(String, String)> {
+    let mut edges = Vec::new();
+
+    if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
+        edges.extend(
+            symbol
+                .references
+                .iter()
+                .cloned()
+                .map(|caller_id| (caller_id, symbol.symbol_id.clone())),
+        );
+    }
+    if matches!(direction, TraceDirection::Callees | TraceDirection::Both) {
+        edges.extend(
+            symbol
+                .dependencies
+                .iter()
+                .cloned()
+                .map(|callee_id| (symbol.symbol_id.clone(), callee_id)),
+        );
+    }
+
+    edges
 }
 
 fn symbol_summary_from_meta(symbol: &SymbolMeta) -> SymbolSummary {

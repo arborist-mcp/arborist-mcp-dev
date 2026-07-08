@@ -8,8 +8,8 @@ use arborist_core::{
     read_symbol_context_from_index, read_symbol_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_from_index_filtered, supported_languages, trace_symbol_graph_from_index,
-    validate_patch_commit_with_trace, validate_patch_with_trace_context,
-    validate_patch_with_trace_context_from_path,
+    trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
+    validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -152,6 +152,38 @@ impl ArboristCore {
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    fn trace_symbol_neighborhood_json(
+        &self,
+        workspace_root: &str,
+        symbol_path: &str,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match index_db_path {
+            Some(index_db_path) => trace_symbol_neighborhood_from_index(
+                Path::new(&index_db_path),
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            None => self.vfs.borrow_mut().trace_symbol_neighborhood(
+                Path::new(workspace_root),
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
             ),
         }
         .map_err(to_py_error)?;

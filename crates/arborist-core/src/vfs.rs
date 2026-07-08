@@ -14,8 +14,8 @@ use crate::model::LanguageId;
 use crate::model::{
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
     SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolReadResult, SymbolSearchResult,
-    TraceDirection, TraceSymbolGraphResult, VirtualEditResult, VirtualFileSnapshot,
-    VirtualFileStatus,
+    TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
@@ -25,6 +25,7 @@ use crate::symbols::{
     list_symbols_with_overrides_filtered, read_symbol_context_with_overrides,
     read_symbol_with_overrides, rebuild_symbol_index, refresh_symbol_index_for_file,
     search_symbols_with_overrides_filtered, trace_symbol_graph_with_overrides,
+    trace_symbol_neighborhood_with_overrides,
 };
 
 #[derive(Default)]
@@ -415,6 +416,26 @@ impl VirtualFileSystem {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
         trace_symbol_graph_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+    }
+
+    pub fn trace_symbol_neighborhood(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<TraceSymbolNeighborhoodResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        trace_symbol_neighborhood_with_overrides(
+            &workspace_root,
+            &overrides,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+        )
     }
 
     pub fn read_symbol(
