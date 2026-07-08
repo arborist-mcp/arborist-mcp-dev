@@ -14,10 +14,11 @@ use anyhow::{Result, bail};
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
     PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSearchResult, SymbolSummary,
-    TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
-    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding,
-    ValidationIssue, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSearchMatchDetail,
+    SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TraceDirection,
+    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+    ValidationAmbiguity, ValidationBinding, ValidationIssue, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
@@ -7057,8 +7058,18 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let live = search_symbols(&dir, "helper", 10).unwrap();
         assert_eq!(live.query, "helper");
         assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.total_matches, 1);
+        assert!(!live.truncated);
         assert_eq!(live.matches.len(), 1);
         assert_eq!(live.matches[0].semantic_path, "helper");
+        assert_eq!(live.match_details.len(), 1);
+        assert_eq!(live.match_details[0].symbol_id, "helper");
+        assert_eq!(live.match_details[0].score, 1000);
+        assert!(
+            live.match_details[0]
+                .matched_fields
+                .contains(&"base_name".to_string())
+        );
         assert_eq!(live.matches[0].parameters, vec!["value: int".to_string()]);
         assert_eq!(live.matches[0].return_type.as_deref(), Some("int"));
 
@@ -7066,8 +7077,11 @@ def orchestrate(value: int) -> int:\n    return value\n",
         let persisted = search_symbols_from_index(&db_path, "helper", 10).unwrap();
         assert_eq!(persisted.query, "helper");
         assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.total_matches, 1);
+        assert!(!persisted.truncated);
         assert_eq!(persisted.matches.len(), 1);
         assert_eq!(persisted.matches[0].semantic_path, "helper");
+        assert_eq!(persisted.match_details[0].symbol_id, "helper");
         assert_eq!(
             persisted.matches[0].file_path,
             helper.to_string_lossy().replace('\\', "/")
@@ -7089,11 +7103,16 @@ def orchestrate(value: int) -> int:\n    return value\n",
         .unwrap();
 
         let live = search_symbols(&dir, "helper", 2).unwrap();
+        assert_eq!(live.total_matches, 3);
+        assert!(live.truncated);
         assert_eq!(live.matches.len(), 2);
         assert_eq!(live.matches[0].semantic_path, "helper");
+        assert_eq!(live.match_details[0].score, 1000);
 
         rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted = search_symbols_from_index(&db_path, "helper", 1).unwrap();
+        assert_eq!(persisted.total_matches, 3);
+        assert!(persisted.truncated);
         assert_eq!(persisted.matches.len(), 1);
         assert_eq!(persisted.matches[0].semantic_path, "helper");
     }
@@ -7113,8 +7132,11 @@ def orchestrate(value: int) -> int:\n    return value\n",
         .unwrap();
 
         let results = vfs.search_symbols(&dir, "renamed_helper", 10).unwrap();
+        assert_eq!(results.total_matches, 1);
+        assert!(!results.truncated);
         assert_eq!(results.matches.len(), 1);
         assert_eq!(results.matches[0].semantic_path, "renamed_helper");
+        assert_eq!(results.match_details[0].symbol_id, "renamed_helper");
 
         let old_name = vfs.search_symbols(&dir, "helper", 10).unwrap();
         assert_eq!(old_name.matches[0].semantic_path, "renamed_helper");

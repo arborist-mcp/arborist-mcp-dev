@@ -15,8 +15,8 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSearchResult, SymbolSummary,
-    SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSearchMatchDetail, SymbolSearchResult,
+    SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -1332,28 +1332,42 @@ fn search_from_symbols(
     let mut ranked_matches = resolved_symbols
         .iter()
         .filter_map(|symbol| {
-            let rank = search_match_rank(symbol, query, &normalized_query)?;
-            Some((rank, symbol))
+            let detail = search_match_detail(symbol, query, &normalized_query)?;
+            Some((detail, symbol))
         })
         .collect::<Vec<_>>();
     ranked_matches.sort_by(|left, right| {
         right
             .0
-            .cmp(&left.0)
+            .score
+            .cmp(&left.0.score)
             .then_with(|| left.1.semantic_path.cmp(&right.1.semantic_path))
             .then_with(|| left.1.file_path.cmp(&right.1.file_path))
             .then_with(|| left.1.byte_range.cmp(&right.1.byte_range))
     });
 
-    let matches = ranked_matches
+    let total_matches = ranked_matches.len();
+    let limited_matches = ranked_matches
         .into_iter()
         .take(limit)
-        .map(|(_, symbol)| symbol_summary_from_meta(symbol))
+        .map(|(detail, symbol)| (symbol_summary_from_meta(symbol), detail))
+        .collect::<Vec<_>>();
+    let truncated = total_matches > limited_matches.len();
+    let match_details = limited_matches
+        .iter()
+        .map(|(_, detail)| detail.clone())
+        .collect::<Vec<_>>();
+    let matches = limited_matches
+        .into_iter()
+        .map(|(summary, _)| summary)
         .collect::<Vec<_>>();
     let result = SymbolSearchResult {
         query: query.to_string(),
         indexed_files,
+        total_matches,
+        truncated,
         matches,
+        match_details,
     };
     result.validate_public_output()?;
     Ok(result)
@@ -1393,7 +1407,11 @@ fn symbol_summary_from_meta(symbol: &SymbolMeta) -> SymbolSummary {
     })
 }
 
-fn search_match_rank(symbol: &SymbolMeta, query: &str, normalized_query: &str) -> Option<usize> {
+fn search_match_detail(
+    symbol: &SymbolMeta,
+    query: &str,
+    normalized_query: &str,
+) -> Option<SymbolSearchMatchDetail> {
     let base_name = symbol_base_name(&symbol.semantic_path);
     let normalized_base_name = base_name.to_ascii_lowercase();
     let normalized_symbol_id = symbol.symbol_id.to_ascii_lowercase();
@@ -1422,27 +1440,45 @@ fn search_match_rank(symbol: &SymbolMeta, query: &str, normalized_query: &str) -
         .unwrap_or("")
         .to_ascii_lowercase();
 
-    if ![
-        normalized_base_name.as_str(),
-        normalized_symbol_id.as_str(),
-        normalized_semantic_path.as_str(),
-        normalized_scope_path.as_str(),
-        normalized_file_path.as_str(),
-        normalized_node_kind.as_str(),
-        normalized_signature.as_str(),
-        normalized_parameters.as_str(),
-        normalized_return_type.as_str(),
-        normalized_docstring.as_str(),
-    ]
-    .iter()
-    .any(|value| value.contains(normalized_query))
-    {
+    let mut matched_fields = Vec::new();
+    if normalized_base_name.contains(normalized_query) {
+        matched_fields.push("base_name".to_string());
+    }
+    if normalized_symbol_id.contains(normalized_query) {
+        matched_fields.push("symbol_id".to_string());
+    }
+    if normalized_semantic_path.contains(normalized_query) {
+        matched_fields.push("semantic_path".to_string());
+    }
+    if normalized_scope_path.contains(normalized_query) {
+        matched_fields.push("scope_path".to_string());
+    }
+    if normalized_file_path.contains(normalized_query) {
+        matched_fields.push("file_path".to_string());
+    }
+    if normalized_node_kind.contains(normalized_query) {
+        matched_fields.push("node_kind".to_string());
+    }
+    if normalized_signature.contains(normalized_query) {
+        matched_fields.push("signature".to_string());
+    }
+    if normalized_parameters.contains(normalized_query) {
+        matched_fields.push("parameters".to_string());
+    }
+    if normalized_return_type.contains(normalized_query) {
+        matched_fields.push("return_type".to_string());
+    }
+    if normalized_docstring.contains(normalized_query) {
+        matched_fields.push("docstring".to_string());
+    }
+
+    if matched_fields.is_empty() {
         return None;
     }
 
     let exact_query =
         query == symbol.semantic_path || query == symbol.symbol_id || query == base_name;
-    let rank = if exact_query {
+    let score = if exact_query {
         1000
     } else if normalized_base_name == normalized_query {
         950
@@ -1469,7 +1505,11 @@ fn search_match_rank(symbol: &SymbolMeta, query: &str, normalized_query: &str) -
         400
     };
 
-    Some(rank)
+    Some(SymbolSearchMatchDetail {
+        symbol_id: symbol.symbol_id.clone(),
+        score,
+        matched_fields,
+    })
 }
 
 fn persist_symbol_index(

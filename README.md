@@ -192,7 +192,7 @@ Python trace/index resolution also follows local import aliases and package re-e
 
 When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the active VFS session first, so unsaved `did_open` / `did_change` / `patch_virtual_ast_node` edits are reflected immediately without touching disk.
 
-`search_symbols` gives agents a lightweight discovery step before trace or patch work. It searches the workspace or a persisted symbol index for case-insensitive matches across stable symbol fields such as `symbol_id`, `semantic_path`, `file_path`, `signature`, parameters, return type, and docstring, then returns the same structured symbol metadata shape used elsewhere. When `index_db_path` is omitted, `search_symbols` also respects active dirty VFS buffers inside the workspace.
+`search_symbols` gives agents a lightweight discovery step before trace or patch work. It searches the workspace or a persisted symbol index for case-insensitive matches across stable symbol fields such as `symbol_id`, `semantic_path`, `file_path`, `signature`, parameters, return type, and docstring, then returns the same structured symbol metadata shape used elsewhere plus `total_matches`, `truncated`, and per-result `match_details` metadata that records the matched symbol id, ranking score, and matched fields. When `index_db_path` is omitted, `search_symbols` also respects active dirty VFS buffers inside the workspace.
 
 The stdio gateway currently accepts one JSON document per line. This keeps the environment lightweight while leaving room to swap in a full MCP transport adapter later.
 

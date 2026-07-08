@@ -833,13 +833,16 @@ class GatewayProtocolTests(unittest.TestCase):
             def search_symbols_json(self, *args: object) -> str:
                 self.calls.append(args)
                 return (
-                    '{"query":"helper","indexed_files":2,"matches":['
+                    '{"query":"helper","indexed_files":2,"total_matches":1,'
+                    '"truncated":false,"matches":['
                     '{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
                     '"file_path":"sample.py","node_kind":"function_definition",'
                     '"origin_type":"workspace_symbol",'
                     '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
                     '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
                     '"docstring":null}'
+                    '],"match_details":['
+                    '{"symbol_id":"helper","score":1000,"matched_fields":["base_name","semantic_path"]}'
                     "]}"
                 )
 
@@ -863,7 +866,11 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 57)
         self.assertEqual(response["result"]["query"], "helper")
+        self.assertEqual(response["result"]["total_matches"], 1)
+        self.assertFalse(response["result"]["truncated"])
         self.assertEqual(response["result"]["matches"][0]["semantic_path"], "helper")
+        self.assertEqual(response["result"]["match_details"][0]["symbol_id"], "helper")
+        self.assertEqual(response["result"]["match_details"][0]["score"], 1000)
         self.assertEqual(
             gateway._core.calls,
             [(".", "helper", 5, "symbols.db")],

@@ -303,10 +303,53 @@ impl RegisteredSymbolIndex {
 impl SymbolSearchResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         ensure_nonblank(&self.query, "symbol_search.query")?;
+        if self.total_matches < self.matches.len() {
+            bail!(
+                "invalid symbol_search.total_matches: expected total_matches to be at least matches.len()"
+            );
+        }
+        if self.truncated != (self.total_matches > self.matches.len()) {
+            bail!(
+                "invalid symbol_search.truncated: expected truncated to match whether total_matches exceeds matches.len()"
+            );
+        }
+        if self.matches.len() != self.match_details.len() {
+            bail!(
+                "invalid symbol_search.match_details: expected match_details to align with matches"
+            );
+        }
         for (index, item) in self.matches.iter().enumerate() {
             item.validate_trace_replay_input(&format!("symbol_search.matches[{index}]"))?;
+            self.match_details[index].validate_public_output(index, &item.symbol_id)?;
         }
         ensure_unique_symbol_evidence_keys(&self.matches, "symbol_search.matches")
+    }
+}
+
+impl SymbolSearchMatchDetail {
+    fn validate_public_output(&self, index: usize, expected_symbol_id: &str) -> Result<()> {
+        let prefix = format!("symbol_search.match_details[{index}]");
+        ensure_nonblank(&self.symbol_id, &format!("{prefix}.symbol_id"))?;
+        if self.symbol_id != expected_symbol_id {
+            bail!(
+                "invalid {prefix}.symbol_id: expected match_details to align with matches symbol ids"
+            );
+        }
+        if self.score == 0 {
+            bail!("invalid {prefix}.score: expected score to be greater than zero");
+        }
+        ensure_nonblank_strings(&self.matched_fields, &format!("{prefix}.matched_fields"))?;
+        ensure_unique_strings(&self.matched_fields, &format!("{prefix}.matched_fields"))?;
+        for field in &self.matched_fields {
+            match field.as_str() {
+                "base_name" | "symbol_id" | "semantic_path" | "scope_path" | "file_path"
+                | "node_kind" | "signature" | "parameters" | "return_type" | "docstring" => {}
+                other => {
+                    bail!("invalid {prefix}.matched_fields: unsupported field `{other}`");
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1559,7 +1602,18 @@ pub struct RegisteredSymbolIndex {
 pub struct SymbolSearchResult {
     pub query: String,
     pub indexed_files: usize,
+    pub total_matches: usize,
+    pub truncated: bool,
     pub matches: Vec<SymbolSummary>,
+    pub match_details: Vec<SymbolSearchMatchDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolSearchMatchDetail {
+    pub symbol_id: String,
+    pub score: usize,
+    pub matched_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1576,8 +1630,8 @@ mod tests {
     use super::{
         PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult,
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolSearchResult,
-        SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
+        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolSearchMatchDetail,
+        SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
         TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
         VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
@@ -1705,7 +1759,10 @@ mod tests {
         let result = SymbolSearchResult {
             query: "   ".to_string(),
             indexed_files: 1,
+            total_matches: 0,
+            truncated: false,
             matches: Vec::new(),
+            match_details: Vec::new(),
         };
 
         let error = result
@@ -1735,7 +1792,21 @@ mod tests {
         let result = SymbolSearchResult {
             query: "helper".to_string(),
             indexed_files: 1,
+            total_matches: 2,
+            truncated: false,
             matches: vec![summary.clone(), summary],
+            match_details: vec![
+                SymbolSearchMatchDetail {
+                    symbol_id: "helper".to_string(),
+                    score: 1000,
+                    matched_fields: vec!["semantic_path".to_string()],
+                },
+                SymbolSearchMatchDetail {
+                    symbol_id: "helper".to_string(),
+                    score: 1000,
+                    matched_fields: vec!["semantic_path".to_string()],
+                },
+            ],
         };
 
         let error = result
@@ -1743,6 +1814,43 @@ mod tests {
             .expect_err("duplicate evidence keys should be rejected");
 
         assert!(error.to_string().contains("duplicate evidence keys"));
+    }
+
+    #[test]
+    fn symbol_search_result_rejects_misaligned_match_details() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolSearchResult {
+            query: "helper".to_string(),
+            indexed_files: 1,
+            total_matches: 1,
+            truncated: false,
+            matches: vec![summary],
+            match_details: vec![SymbolSearchMatchDetail {
+                symbol_id: "other".to_string(),
+                score: 1000,
+                matched_fields: vec!["semantic_path".to_string()],
+            }],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("misaligned match details should be rejected");
+
+        assert!(error.to_string().contains("match_details"));
     }
 
     #[test]
