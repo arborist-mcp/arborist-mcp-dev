@@ -182,6 +182,11 @@ impl PatchAstNodeResult {
             self.validation.syntax_errors.len(),
         )
     }
+
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.updated_source, "patch.updated_source")?;
+        self.validate_trace_replay_input()
+    }
 }
 
 impl SemanticSkeleton {
@@ -1740,6 +1745,45 @@ mod tests {
                 .to_string()
                 .contains("virtual_edit.validation.commit_gate")
         );
+    }
+
+    #[test]
+    fn patch_result_validation_rejects_tampered_commit_gate_flags() {
+        let mut patch = serde_json::from_str::<PatchAstNodeResult>(
+            r#"{
+                "file":"sample.py",
+                "target_path":"top_level",
+                "resolved_path":"top_level",
+                "resolved_symbol_id":"top_level",
+                "applied":true,
+                "bypass_applied":false,
+                "updated_source":"def top_level() -> int:\n    return 1\n",
+                "validation":{
+                    "syntax_errors":[],
+                    "unresolved_identifiers":[],
+                    "resolved_identifiers":[],
+                    "ambiguous_identifiers":[],
+                    "binding_decisions":[],
+                    "commit_gate":{
+                        "status":"allowed",
+                        "allowed":true,
+                        "reason":"ok",
+                        "bypass_reason":null,
+                        "blocking_decisions":[],
+                        "evidence_invariants":[],
+                        "syntax_error_count":0
+                    }
+                }
+            }"#,
+        )
+        .expect("valid patch payload should deserialize");
+        patch.applied = false;
+
+        let error = patch
+            .validate_public_output()
+            .expect_err("patch validation should reject tampered applied flags");
+
+        assert!(error.to_string().contains("patch.applied"));
     }
 
     #[test]

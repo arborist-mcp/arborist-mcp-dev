@@ -249,7 +249,7 @@ pub(crate) fn build_patch_result(
         .transpose()?
         .unwrap_or_else(|| resolved_path.clone());
 
-    Ok(PatchAstNodeResult {
+    let result = PatchAstNodeResult {
         file: normalize_path(path),
         target_path: semantic_target.to_string(),
         resolved_path,
@@ -258,7 +258,9 @@ pub(crate) fn build_patch_result(
         bypass_applied,
         updated_source,
         validation,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 pub(crate) fn evaluate_patch_commit_gate(
