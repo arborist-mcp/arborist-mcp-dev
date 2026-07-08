@@ -389,6 +389,7 @@ pub struct TraceEvidenceKeys {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TracePatchEvidenceReplayItem {
     pub name: String,
     pub status: String,
@@ -399,6 +400,7 @@ pub struct TracePatchEvidenceReplayItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TracePatchEvidenceReplayResult {
     pub consistent: bool,
     pub matched_items: usize,
@@ -407,6 +409,7 @@ pub struct TracePatchEvidenceReplayResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PatchTraceValidationResult {
     pub allowed: bool,
     pub status: String,
@@ -417,6 +420,7 @@ pub struct PatchTraceValidationResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TraceBackedPatchResult {
     pub patch: PatchAstNodeResult,
     pub trace_target: String,
@@ -1042,7 +1046,10 @@ pub struct VirtualFileStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{PatchAstNodeResult, Position, PositionEdit, TraceSymbolGraphResult};
+    use super::{
+        PatchAstNodeResult, PatchTraceValidationResult, Position, PositionEdit,
+        TraceBackedPatchResult, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+    };
 
     #[test]
     fn position_rejects_unknown_fields() {
@@ -1182,5 +1189,117 @@ mod tests {
         .expect_err("trace results should reject missing nested symbol fields");
 
         assert!(error.to_string().contains("missing field"));
+    }
+
+    #[test]
+    fn replay_result_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<TracePatchEvidenceReplayResult>(
+            r#"{
+                "consistent":true,
+                "matched_items":1,
+                "blocked_items":0,
+                "items":[{
+                    "name":"helper",
+                    "status":"matched",
+                    "selected_evidence_key":"helper|sample.py|function_definition|local_file|0..10|",
+                    "matched_in_trace":true,
+                    "trace_match_scope":"callees",
+                    "candidate_evidence_keys":["helper|sample.py|function_definition|local_file|0..10|"],
+                    "unexpected":true
+                }]
+            }"#,
+        )
+        .expect_err("replay results should reject unknown nested fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn trace_validation_result_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<PatchTraceValidationResult>(
+            r#"{
+                "allowed":true,
+                "status":"allowed",
+                "reason":"ok",
+                "patch_gate_status":"allowed",
+                "replay_status":"matched",
+                "replay":{
+                    "consistent":true,
+                    "matched_items":1,
+                    "blocked_items":0,
+                    "items":[{
+                        "name":"helper",
+                        "status":"matched",
+                        "selected_evidence_key":"helper|sample.py|function_definition|local_file|0..10|",
+                        "matched_in_trace":true,
+                        "trace_match_scope":"callees",
+                        "candidate_evidence_keys":["helper|sample.py|function_definition|local_file|0..10|"]
+                    }],
+                    "unexpected":true
+                }
+            }"#,
+        )
+        .expect_err("trace validation results should reject unknown nested replay fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn trace_backed_patch_result_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<TraceBackedPatchResult>(
+            r#"{
+                "patch":{
+                    "file":"sample.py",
+                    "target_path":"top_level",
+                    "resolved_path":"top_level",
+                    "resolved_symbol_id":"top_level",
+                    "applied":false,
+                    "bypass_applied":false,
+                    "updated_source":"def top_level() -> int:\n    return missing_helper()\n",
+                    "validation":{
+                        "syntax_errors":[],
+                        "unresolved_identifiers":["missing_helper"],
+                        "resolved_identifiers":[],
+                        "ambiguous_identifiers":[],
+                        "binding_decisions":[{
+                            "name":"missing_helper",
+                            "status":"unresolved",
+                            "reason":"identifier is not visible from the patched symbol scope",
+                            "selected_symbol_id":null,
+                            "candidates":[]
+                        }],
+                        "commit_gate":{
+                            "status":"rejected",
+                            "allowed":false,
+                            "reason":"symbol binding could not be resolved",
+                            "bypass_reason":null,
+                            "blocking_decisions":[{
+                                "name":"missing_helper",
+                                "status":"unresolved",
+                                "reason":"identifier is not visible from the patched symbol scope",
+                                "selected_symbol_id":null,
+                                "candidates":[]
+                            }],
+                            "evidence_invariants":[{
+                                "name":"missing_helper",
+                                "status":"blocked",
+                                "reason":"no candidate evidence key is available for this binding",
+                                "selected_evidence_key":null,
+                                "candidate_evidence_keys":[]
+                            }],
+                            "syntax_error_count":0
+                        }
+                    }
+                },
+                "trace_target":"top_level",
+                "trace":null,
+                "trace_validation":null,
+                "trace_error":"trace skipped because patch validation rejected the patch",
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("trace-backed patch results should reject unknown top-level fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
     }
 }
