@@ -742,6 +742,28 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("file_path_contains", response["error"]["message"])
 
+    def test_rejects_blank_list_symbols_filters(self) -> None:
+        class StubCore:
+            def list_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 59,
+                "method": "arborist/list_symbols",
+                "params": {"workspace_root": ".", "node_kind": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 59)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("node_kind", response["error"]["message"])
+
     def test_rejects_null_string_param_with_default(self) -> None:
         class StubCore:
             def trace_symbol_graph_json(self, *args: object) -> str:
@@ -902,6 +924,52 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(
             gateway._core.calls,
             [(".", "helper", 5, "symbols.db", "graph", "function_definition")],
+        )
+
+    def test_list_symbols_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def list_symbols_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"indexed_files":2,"total_symbols":1,"truncated":false,"symbols":['
+                    '{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}'
+                    "]}"
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 60,
+                "method": "arborist/list_symbols",
+                "params": {
+                    "workspace_root": ".",
+                    "limit": 25,
+                    "index_db_path": "symbols.db",
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 60)
+        self.assertEqual(response["result"]["total_symbols"], 1)
+        self.assertFalse(response["result"]["truncated"])
+        self.assertEqual(response["result"]["symbols"][0]["semantic_path"], "helper")
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", 25, "symbols.db", "graph", "function_definition")],
         )
 
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:

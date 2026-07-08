@@ -13,7 +13,7 @@ use crate::language::{
 use crate::model::LanguageId;
 use crate::model::{
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
-    SymbolIndexStats, SymbolSearchResult, TraceDirection, TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolListResult, SymbolSearchResult, TraceDirection, TraceSymbolGraphResult,
     VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{
@@ -21,8 +21,8 @@ use crate::patching::{
     validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
-    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols_with_overrides_filtered,
-    trace_symbol_graph_with_overrides,
+    list_symbols_with_overrides_filtered, rebuild_symbol_index, refresh_symbol_index_for_file,
+    search_symbols_with_overrides_filtered, trace_symbol_graph_with_overrides,
 };
 
 #[derive(Default)]
@@ -438,6 +438,32 @@ impl VirtualFileSystem {
             &workspace_root,
             &overrides,
             query,
+            limit,
+            file_path_contains,
+            node_kind,
+        )
+    }
+
+    pub fn list_symbols(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+    ) -> Result<SymbolListResult> {
+        self.list_symbols_filtered(workspace_root, limit, None, None)
+    }
+
+    pub fn list_symbols_filtered(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+    ) -> Result<SymbolListResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        list_symbols_with_overrides_filtered(
+            &workspace_root,
+            &overrides,
             limit,
             file_path_contains,
             node_kind,

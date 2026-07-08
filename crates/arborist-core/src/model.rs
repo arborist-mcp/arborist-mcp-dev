@@ -300,6 +300,25 @@ impl RegisteredSymbolIndex {
     }
 }
 
+impl SymbolListResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        if self.total_symbols < self.symbols.len() {
+            bail!(
+                "invalid symbol_list.total_symbols: expected total_symbols to be at least symbols.len()"
+            );
+        }
+        if self.truncated != (self.total_symbols > self.symbols.len()) {
+            bail!(
+                "invalid symbol_list.truncated: expected truncated to match whether total_symbols exceeds symbols.len()"
+            );
+        }
+        for (index, item) in self.symbols.iter().enumerate() {
+            item.validate_trace_replay_input(&format!("symbol_list.symbols[{index}]"))?;
+        }
+        ensure_unique_symbol_evidence_keys(&self.symbols, "symbol_list.symbols")
+    }
+}
+
 impl SymbolSearchResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         ensure_nonblank(&self.query, "symbol_search.query")?;
@@ -1599,6 +1618,15 @@ pub struct RegisteredSymbolIndex {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
+pub struct SymbolListResult {
+    pub indexed_files: usize,
+    pub total_symbols: usize,
+    pub truncated: bool,
+    pub symbols: Vec<SymbolSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolSearchResult {
     pub query: String,
     pub indexed_files: usize,
@@ -1630,10 +1658,10 @@ mod tests {
     use super::{
         PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult,
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolSearchMatchDetail,
-        SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
-        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
-        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult,
+        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
+        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -1770,6 +1798,53 @@ mod tests {
             .expect_err("blank search queries should be rejected");
 
         assert!(error.to_string().contains("symbol_search.query"));
+    }
+
+    #[test]
+    fn symbol_list_result_rejects_duplicate_evidence_keys() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolListResult {
+            indexed_files: 1,
+            total_symbols: 2,
+            truncated: false,
+            symbols: vec![summary.clone(), summary],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("duplicate evidence keys should be rejected");
+
+        assert!(error.to_string().contains("duplicate evidence keys"));
+    }
+
+    #[test]
+    fn symbol_list_result_rejects_inconsistent_truncation() {
+        let result = SymbolListResult {
+            indexed_files: 1,
+            total_symbols: 3,
+            truncated: false,
+            symbols: Vec::new(),
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("inconsistent truncation should be rejected");
+
+        assert!(error.to_string().contains("symbol_list.truncated"));
     }
 
     #[test]

@@ -15,8 +15,9 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSearchMatchDetail, SymbolSearchResult,
-    SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit, SymbolSearchMatchDetail,
+    SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys,
+    TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -128,6 +129,27 @@ pub fn search_symbols_filtered(
     )
 }
 
+pub fn list_symbols(workspace_root: &Path, limit: usize) -> Result<SymbolListResult> {
+    list_symbols_filtered(workspace_root, limit, None, None)
+}
+
+pub fn list_symbols_filtered(
+    workspace_root: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    list_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
 pub fn trace_symbol_graph_with_overrides(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -153,6 +175,24 @@ pub fn search_symbols_with_overrides_filtered(
         &resolved_symbols,
         indexed_files,
         query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_with_overrides_filtered(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    list_from_symbols(
+        &resolved_symbols,
+        indexed_files,
         limit,
         file_path_contains,
         node_kind,
@@ -215,6 +255,27 @@ pub fn search_symbols_from_index_filtered(
         &resolved_symbols,
         indexed_files,
         query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_from_index(db_path: &Path, limit: usize) -> Result<SymbolListResult> {
+    list_symbols_from_index_filtered(db_path, limit, None, None)
+}
+
+pub fn list_symbols_from_index_filtered(
+    db_path: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    list_from_symbols(
+        &resolved_symbols,
+        indexed_files,
         limit,
         file_path_contains,
         node_kind,
@@ -1423,6 +1484,48 @@ fn search_from_symbols(
         truncated,
         matches,
         match_details,
+    };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
+fn list_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let file_path_contains =
+        normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
+    let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
+
+    let mut symbols = resolved_symbols
+        .iter()
+        .filter(|symbol| {
+            symbol_matches_search_filters(
+                symbol,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            )
+        })
+        .map(symbol_summary_from_meta)
+        .collect::<Vec<_>>();
+    symbols.sort_by(|left, right| {
+        left.file_path
+            .cmp(&right.file_path)
+            .then_with(|| left.semantic_path.cmp(&right.semantic_path))
+            .then_with(|| left.byte_range.cmp(&right.byte_range))
+            .then_with(|| left.symbol_id.cmp(&right.symbol_id))
+    });
+
+    let total_symbols = symbols.len();
+    symbols.truncate(limit);
+    let result = SymbolListResult {
+        indexed_files,
+        total_symbols,
+        truncated: total_symbols > symbols.len(),
+        symbols,
     };
     result.validate_public_output()?;
     Ok(result)

@@ -14,17 +14,18 @@ use anyhow::{Result, bail};
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
     PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSearchMatchDetail,
-    SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TraceDirection,
-    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-    ValidationAmbiguity, ValidationBinding, ValidationIssue, VirtualEditResult,
-    VirtualFileSnapshot, VirtualFileStatus,
+    SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult, SymbolMeta,
+    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
+    TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
+    TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
+    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
 pub use patching::{patch_ast_node, patch_ast_node_from_path};
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
+    list_symbols, list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
     rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_filtered,
     search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
     trace_symbol_graph_from_index,
@@ -510,11 +511,12 @@ mod tests {
 
     use super::{
         TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
-        get_semantic_skeleton, get_semantic_skeleton_from_path, patch_ast_node,
-        patch_ast_node_from_path, rebuild_symbol_index, refresh_symbol_index_for_file,
-        replay_patch_evidence_against_trace, search_symbols, search_symbols_filtered,
-        search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
-        trace_symbol_graph_from_index, validate_patch_commit_with_trace,
+        get_semantic_skeleton, get_semantic_skeleton_from_path, list_symbols,
+        list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
+        patch_ast_node, patch_ast_node_from_path, rebuild_symbol_index,
+        refresh_symbol_index_for_file, replay_patch_evidence_against_trace, search_symbols,
+        search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
+        trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
         validate_patch_trace_validation_result, validate_patch_with_trace_context,
         validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
         validate_trace_patch_evidence_replay_result,
@@ -7214,6 +7216,95 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(filtered.matches.len(), 1);
         assert_eq!(filtered.matches[0].semantic_path, "RenamedHelper");
         assert_eq!(filtered.matches[0].node_kind, "class_definition");
+    }
+
+    #[test]
+    fn lists_symbols_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live = list_symbols(&dir, 10).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.total_symbols, 2);
+        assert!(!live.truncated);
+        assert_eq!(live.symbols.len(), 2);
+        assert_eq!(live.symbols[0].semantic_path, "orchestrate");
+        assert_eq!(live.symbols[1].semantic_path, "helper");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = list_symbols_from_index(&db_path, 10).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.total_symbols, 2);
+        assert!(!persisted.truncated);
+        assert_eq!(persisted.symbols.len(), 2);
+        assert_eq!(persisted.symbols[1].semantic_path, "helper");
+    }
+
+    #[test]
+    fn list_symbols_filters_and_honors_limit() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let helper_types = dir.join("helper_types.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        fs::write(
+            &helper_types,
+            "class Helper:\n    pass\n\ndef helper_factory() -> Helper:\n    return Helper()\n",
+        )
+        .unwrap();
+
+        let live = list_symbols_filtered(&dir, 1, Some("types"), Some("class_definition")).unwrap();
+        assert_eq!(live.total_symbols, 1);
+        assert!(!live.truncated);
+        assert_eq!(live.symbols.len(), 1);
+        assert_eq!(live.symbols[0].semantic_path, "Helper");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = list_symbols_from_index_filtered(
+            &db_path,
+            1,
+            Some("helper"),
+            Some("function_definition"),
+        )
+        .unwrap();
+        assert_eq!(persisted.total_symbols, 2);
+        assert!(persisted.truncated);
+        assert_eq!(persisted.symbols.len(), 1);
+        assert_eq!(persisted.symbols[0].semantic_path, "helper");
+    }
+
+    #[test]
+    fn list_symbols_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(&helper, Some("class RenamedHelper:\n    pass\n"))
+            .unwrap();
+
+        let listed = vfs
+            .list_symbols_filtered(&dir, 10, Some("helper.py"), Some("class_definition"))
+            .unwrap();
+        assert_eq!(listed.total_symbols, 1);
+        assert_eq!(listed.symbols.len(), 1);
+        assert_eq!(listed.symbols[0].semantic_path, "RenamedHelper");
+        assert_eq!(listed.symbols[0].node_kind, "class_definition");
     }
 
     #[test]
