@@ -18,9 +18,9 @@ use crate::model::LanguageId;
 use crate::model::{
     SymbolContextResult, SymbolIndexStats, SymbolListContextResult, SymbolListResult, SymbolMeta,
     SymbolMetaInit, SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
-    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection,
-    TraceEvidenceKeys, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
-    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
+    SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
+    SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
+    TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -182,6 +182,26 @@ pub fn search_symbols_context(
     search_symbols_context_filtered(workspace_root, query, limit, None, None)
 }
 
+pub fn search_symbols_neighborhood_context(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    search_symbols_neighborhood_context_filtered(
+        workspace_root,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+        None,
+    )
+}
+
 pub fn search_symbols_filtered(
     workspace_root: &Path,
     query: &str,
@@ -198,6 +218,33 @@ pub fn search_symbols_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_filtered(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    search_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -392,6 +439,34 @@ pub fn search_symbols_context_with_overrides_filtered(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_with_overrides_filtered(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    search_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
 pub fn list_symbols_with_overrides_filtered(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -541,6 +616,19 @@ pub fn search_symbols_context_from_index(
     search_symbols_context_from_index_filtered(db_path, query, limit, None, None)
 }
 
+pub fn search_symbols_neighborhood_context_from_index(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    search_symbols_neighborhood_context_from_index_filtered(
+        db_path, query, limit, direction, max_depth, max_nodes, None, None,
+    )
+}
+
 pub fn search_symbols_from_index_filtered(
     db_path: &Path,
     query: &str,
@@ -557,6 +645,33 @@ pub fn search_symbols_from_index_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_from_index_filtered(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    search_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -2025,6 +2140,46 @@ fn search_context_from_symbols(
     }
 
     let result = SymbolSearchContextResult { search, reads };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_neighborhood_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let search = search_from_symbols(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )?;
+    let mut contexts = Vec::with_capacity(search.matches.len());
+
+    for symbol in &search.matches {
+        contexts.push(read_symbol_neighborhood_context_from_symbols(
+            resolved_symbols,
+            indexed_files,
+            &symbol.symbol_id,
+            direction.clone(),
+            max_depth,
+            max_nodes,
+            file_overrides,
+        )?);
+    }
+
+    let result = SymbolSearchNeighborhoodContextResult { search, contexts };
     result.validate_public_output()?;
     Ok(result)
 }

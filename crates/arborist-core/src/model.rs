@@ -615,6 +615,60 @@ impl SymbolSearchContextResult {
     }
 }
 
+impl SymbolSearchNeighborhoodContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.search.validate_public_output()?;
+        if self.contexts.len() != self.search.matches.len() {
+            bail!(
+                "invalid symbol_search_neighborhood_context.contexts: expected contexts to align with search.matches"
+            );
+        }
+
+        for (index, context) in self.contexts.iter().enumerate() {
+            context.validate_public_output()?;
+            let symbol = &self.search.matches[index];
+            let root = &context.neighborhood.symbol;
+            if context.neighborhood.indexed_files != self.search.indexed_files {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.indexed_files: expected indexed_files to match search.indexed_files"
+                );
+            }
+            if root.symbol_id != symbol.symbol_id {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.symbol_id: expected contexts to align with search.matches"
+                );
+            }
+            if root.semantic_path != symbol.semantic_path {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.semantic_path: expected contexts to align with search.matches"
+                );
+            }
+            if root.file_path != symbol.file_path {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.file_path: expected contexts to align with search.matches"
+                );
+            }
+            if root.node_kind != symbol.node_kind {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.node_kind: expected contexts to align with search.matches"
+                );
+            }
+            if root.byte_range != symbol.byte_range {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.byte_range: expected contexts to align with search.matches"
+                );
+            }
+            if root.signature != symbol.signature {
+                bail!(
+                    "invalid symbol_search_neighborhood_context.contexts[{index}].neighborhood.symbol.signature: expected contexts to align with search.matches"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl SymbolListContextResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         self.list.validate_public_output()?;
@@ -2271,6 +2325,13 @@ pub struct SymbolSearchContextResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
+pub struct SymbolSearchNeighborhoodContextResult {
+    pub search: SymbolSearchResult,
+    pub contexts: Vec<SymbolNeighborhoodContextResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolSearchMatchDetail {
     pub symbol_id: String,
     pub score: usize,
@@ -2293,10 +2354,12 @@ mod tests {
         PatchCommitGateReport, PatchTraceValidationResult, PatchValidationReport, Position,
         PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
         SemanticSkeletonSymbol, SymbolIndexStats, SymbolListContextResult, SymbolListResult,
-        SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
-        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
-        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+        SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
+        SymbolSummary, TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
+        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodNode,
+        TraceSymbolNeighborhoodResult, ValidationBindingDecision, VirtualEditResult,
+        VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -2797,6 +2860,113 @@ mod tests {
                 .to_string()
                 .contains("symbol_list_context.reads[0].symbol.symbol_id")
         );
+    }
+
+    #[test]
+    fn symbol_search_neighborhood_context_rejects_misaligned_contexts() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolSearchNeighborhoodContextResult {
+            search: SymbolSearchResult {
+                query: "helper".to_string(),
+                indexed_files: 1,
+                total_matches: 1,
+                truncated: false,
+                matches: vec![summary],
+                match_details: vec![SymbolSearchMatchDetail {
+                    symbol_id: "helper".to_string(),
+                    score: 1000,
+                    matched_fields: vec!["semantic_path".to_string()],
+                }],
+            },
+            contexts: vec![SymbolNeighborhoodContextResult {
+                neighborhood: TraceSymbolNeighborhoodResult {
+                    symbol: SymbolMeta {
+                        symbol_id: "other".to_string(),
+                        semantic_path: "other".to_string(),
+                        scope_path: None,
+                        file_path: "sample.py".to_string(),
+                        node_kind: "function_definition".to_string(),
+                        origin_type: "trace_root".to_string(),
+                        evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                            .to_string(),
+                        byte_range: (0, 10),
+                        signature: None,
+                        parameters: Vec::new(),
+                        return_type: None,
+                        docstring: None,
+                        dependencies: Vec::new(),
+                        references: Vec::new(),
+                    },
+                    direction: TraceDirection::Both,
+                    max_depth: 2,
+                    max_nodes: 8,
+                    truncated: false,
+                    indexed_files: 1,
+                    nodes: vec![TraceSymbolNeighborhoodNode {
+                        symbol: SymbolSummary {
+                            symbol_id: "other".to_string(),
+                            semantic_path: "other".to_string(),
+                            scope_path: None,
+                            file_path: "sample.py".to_string(),
+                            node_kind: "function_definition".to_string(),
+                            origin_type: "trace_root".to_string(),
+                            evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                                .to_string(),
+                            byte_range: (0, 10),
+                            signature: None,
+                            parameters: Vec::new(),
+                            return_type: None,
+                            docstring: None,
+                        },
+                        depth: 0,
+                    }],
+                    edges: Vec::new(),
+                },
+                reads: vec![SymbolReadResult {
+                    indexed_files: 1,
+                    symbol: SymbolSummary {
+                        symbol_id: "other".to_string(),
+                        semantic_path: "other".to_string(),
+                        scope_path: None,
+                        file_path: "sample.py".to_string(),
+                        node_kind: "function_definition".to_string(),
+                        origin_type: "trace_root".to_string(),
+                        evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                            .to_string(),
+                        byte_range: (0, 10),
+                        signature: None,
+                        parameters: Vec::new(),
+                        return_type: None,
+                        docstring: None,
+                    },
+                    source: "def other() -> int:\n    return 1\n".to_string(),
+                    start_point: Position { row: 0, column: 0 },
+                    end_point: Position { row: 1, column: 12 },
+                }],
+            }],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("search neighborhood contexts should align with search matches");
+
+        assert!(error.to_string().contains(
+            "symbol_search_neighborhood_context.contexts[0].neighborhood.symbol.symbol_id"
+        ));
     }
 
     #[test]

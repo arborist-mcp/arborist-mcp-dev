@@ -15,8 +15,9 @@ use crate::model::{
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
     SymbolContextResult, SymbolIndexStats, SymbolListContextResult, SymbolListResult,
     SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
-    SymbolSearchResult, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
+    TraceSymbolGraphResult, TraceSymbolNeighborhoodResult, VirtualEditResult, VirtualFileSnapshot,
+    VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
@@ -26,8 +27,10 @@ use crate::symbols::{
     list_symbols_context_with_overrides_filtered, list_symbols_with_overrides_filtered,
     read_symbol_context_with_overrides, read_symbol_neighborhood_context_with_overrides,
     read_symbol_with_overrides, rebuild_symbol_index, refresh_symbol_index_for_file,
-    search_symbols_context_with_overrides_filtered, search_symbols_with_overrides_filtered,
-    trace_symbol_graph_with_overrides, trace_symbol_neighborhood_with_overrides,
+    search_symbols_context_with_overrides_filtered,
+    search_symbols_neighborhood_context_with_overrides_filtered,
+    search_symbols_with_overrides_filtered, trace_symbol_graph_with_overrides,
+    trace_symbol_neighborhood_with_overrides,
 };
 
 #[derive(Default)]
@@ -534,6 +537,54 @@ impl VirtualFileSystem {
             &overrides,
             query,
             limit,
+            file_path_contains,
+            node_kind,
+        )
+    }
+
+    pub fn search_symbols_neighborhood_context(
+        &mut self,
+        workspace_root: &Path,
+        query: &str,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<SymbolSearchNeighborhoodContextResult> {
+        self.search_symbols_neighborhood_context_filtered(
+            workspace_root,
+            query,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_symbols_neighborhood_context_filtered(
+        &mut self,
+        workspace_root: &Path,
+        query: &str,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+    ) -> Result<SymbolSearchNeighborhoodContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        search_symbols_neighborhood_context_with_overrides_filtered(
+            &workspace_root,
+            &overrides,
+            query,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
             file_path_contains,
             node_kind,
         )

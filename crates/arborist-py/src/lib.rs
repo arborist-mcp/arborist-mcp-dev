@@ -9,7 +9,8 @@ use arborist_core::{
     read_symbol_from_index, read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_context_from_index_filtered, search_symbols_from_index_filtered,
-    supported_languages, trace_symbol_graph_from_index, trace_symbol_neighborhood_from_index,
+    search_symbols_neighborhood_context_from_index_filtered, supported_languages,
+    trace_symbol_graph_from_index, trace_symbol_neighborhood_from_index,
     validate_patch_commit_with_trace, validate_patch_with_graph_context,
     validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
     validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
@@ -326,6 +327,51 @@ impl ArboristCore {
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    fn search_symbols_neighborhood_context_json(
+        &self,
+        workspace_root: &str,
+        query: &str,
+        limit: usize,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+        file_path_contains: Option<String>,
+        node_kind: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match index_db_path {
+            Some(index_db_path) => search_symbols_neighborhood_context_from_index_filtered(
+                Path::new(&index_db_path),
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            None => self
+                .vfs
+                .borrow_mut()
+                .search_symbols_neighborhood_context_filtered(
+                    Path::new(workspace_root),
+                    query,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                ),
         }
         .map_err(to_py_error)?;
 
