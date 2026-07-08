@@ -775,11 +775,59 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["id"], 41)
         self.assertNotIn("error", response)
         self.assertFalse(response["result"]["patch"]["applied"])
+        self.assertEqual(
+            response["result"]["trace_target"],
+            response["result"]["patch"]["resolved_symbol_id"],
+        )
         self.assertIsNone(response["result"]["trace"])
         self.assertIsNone(response["result"]["trace_validation"])
         self.assertEqual(
             response["result"]["trace_error"],
             "trace skipped because patch validation rejected the patch",
+        )
+
+    def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            caller = workspace.joinpath("caller.py")
+            caller.write_text(
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                encoding="utf-8",
+            )
+
+            gateway = ArboristGateway()
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 42,
+                    "method": "arborist/validate_patch_with_trace_context",
+                    "params": {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(\n"
+                        ),
+                        "direction": "both",
+                    },
+                }
+            )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 42)
+        self.assertNotIn("error", response)
+        self.assertFalse(response["result"]["patch"]["applied"])
+        self.assertEqual(
+            response["result"]["trace_target"],
+            response["result"]["patch"]["resolved_symbol_id"],
+        )
+        self.assertTrue(response["result"]["patch"]["validation"]["syntax_errors"])
+        self.assertIsNone(response["result"]["trace"])
+        self.assertIsNone(response["result"]["trace_validation"])
+        self.assertEqual(
+            response["result"]["trace_error"],
+            "trace skipped because patch validation reported syntax errors",
         )
 
     def test_trace_context_accepts_unsaved_source(self) -> None:
@@ -826,8 +874,16 @@ class GatewayProtocolTests(unittest.TestCase):
             self.assertFalse(caller.exists())
             self.assertTrue(response["result"]["patch"]["applied"])
             self.assertEqual(response["result"]["patch"]["file"], expected_file)
+            self.assertEqual(
+                response["result"]["trace_target"],
+                response["result"]["patch"]["resolved_symbol_id"],
+            )
             self.assertIsNone(response["result"]["trace_error"])
             self.assertTrue(response["result"]["trace_validation"]["allowed"])
+            self.assertEqual(
+                response["result"]["trace_validation"]["replay_status"],
+                "matched",
+            )
             self.assertEqual(
                 response["result"]["trace"]["symbol"]["semantic_path"],
                 "orchestrate",
