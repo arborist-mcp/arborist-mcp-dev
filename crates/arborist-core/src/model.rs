@@ -562,6 +562,59 @@ impl SymbolSearchResult {
     }
 }
 
+impl SymbolSearchContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.search.validate_public_output()?;
+        if self.reads.len() != self.search.matches.len() {
+            bail!(
+                "invalid symbol_search_context.reads: expected reads to align with search.matches"
+            );
+        }
+
+        for (index, read) in self.reads.iter().enumerate() {
+            read.validate_public_output()?;
+            let symbol = &self.search.matches[index];
+            if read.indexed_files != self.search.indexed_files {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].indexed_files: expected indexed_files to match search.indexed_files"
+                );
+            }
+            if read.symbol.symbol_id != symbol.symbol_id {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.symbol_id: expected reads to align with search.matches"
+                );
+            }
+            if read.symbol.semantic_path != symbol.semantic_path {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.semantic_path: expected reads to align with search.matches"
+                );
+            }
+            if read.symbol.file_path != symbol.file_path {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.file_path: expected reads to align with search.matches"
+                );
+            }
+            if read.symbol.node_kind != symbol.node_kind {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.node_kind: expected reads to align with search.matches"
+                );
+            }
+            if read.symbol.byte_range != symbol.byte_range {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.byte_range: expected reads to align with search.matches"
+                );
+            }
+            if read.symbol.signature != symbol.signature {
+                bail!(
+                    "invalid symbol_search_context.reads[{index}].symbol.signature: expected reads to align with search.matches"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl SymbolSearchMatchDetail {
     fn validate_public_output(&self, index: usize, expected_symbol_id: &str) -> Result<()> {
         let prefix = format!("symbol_search.match_details[{index}]");
@@ -2153,6 +2206,13 @@ pub struct SymbolSearchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
+pub struct SymbolSearchContextResult {
+    pub search: SymbolSearchResult,
+    pub reads: Vec<SymbolReadResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolSearchMatchDetail {
     pub symbol_id: String,
     pub score: usize,
@@ -2175,10 +2235,10 @@ mod tests {
         PatchCommitGateReport, PatchTraceValidationResult, PatchValidationReport, Position,
         PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
         SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult,
-        SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchMatchDetail,
-        SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
-        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
-        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
+        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -2557,6 +2617,70 @@ mod tests {
             .expect_err("misaligned match details should be rejected");
 
         assert!(error.to_string().contains("match_details"));
+    }
+
+    #[test]
+    fn symbol_search_context_rejects_misaligned_reads() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolSearchContextResult {
+            search: SymbolSearchResult {
+                query: "helper".to_string(),
+                indexed_files: 1,
+                total_matches: 1,
+                truncated: false,
+                matches: vec![summary],
+                match_details: vec![SymbolSearchMatchDetail {
+                    symbol_id: "helper".to_string(),
+                    score: 1000,
+                    matched_fields: vec!["semantic_path".to_string()],
+                }],
+            },
+            reads: vec![SymbolReadResult {
+                indexed_files: 1,
+                symbol: SymbolSummary {
+                    symbol_id: "other".to_string(),
+                    semantic_path: "other".to_string(),
+                    scope_path: None,
+                    file_path: "sample.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "workspace_symbol".to_string(),
+                    evidence_key: "other|sample.py|function_definition|workspace_symbol|0..10|"
+                        .to_string(),
+                    byte_range: (0, 10),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                },
+                source: "def other() -> int:\n    return 1\n".to_string(),
+                start_point: Position { row: 0, column: 0 },
+                end_point: Position { row: 1, column: 12 },
+            }],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("search context reads should align with search matches");
+
+        assert!(
+            error
+                .to_string()
+                .contains("symbol_search_context.reads[0].symbol.symbol_id")
+        );
     }
 
     #[test]

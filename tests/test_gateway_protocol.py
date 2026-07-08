@@ -1148,6 +1148,65 @@ class GatewayProtocolTests(unittest.TestCase):
             [(".", "helper", 5, "symbols.db", "graph", "function_definition")],
         )
 
+    def test_search_symbols_context_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def search_symbols_context_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"search":{"query":"helper","indexed_files":2,"total_matches":1,'
+                    '"truncated":false,"matches":['
+                    '{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}'
+                    '],"match_details":['
+                    '{"symbol_id":"helper","score":1000,"matched_fields":["base_name","semantic_path"]}'
+                    ']},'
+                    '"reads":['
+                    '{"indexed_files":2,"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":12}}]}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 77,
+                "method": "arborist/search_symbols_context",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "limit": 5,
+                    "index_db_path": "symbols.db",
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 77)
+        self.assertEqual(response["result"]["search"]["query"], "helper")
+        self.assertEqual(response["result"]["search"]["total_matches"], 1)
+        self.assertEqual(response["result"]["reads"][0]["symbol"]["semantic_path"], "helper")
+        self.assertIn("def helper()", response["result"]["reads"][0]["source"])
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "helper", 5, "symbols.db", "graph", "function_definition")],
+        )
+
     def test_list_symbols_routes_params_to_core(self) -> None:
         class StubCore:
             def __init__(self) -> None:

@@ -17,9 +17,10 @@ use crate::language::{
 use crate::model::LanguageId;
 use crate::model::{
     SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit,
-    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult,
-    SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
-    TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
+    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection,
+    TraceEvidenceKeys, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
+    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -173,6 +174,14 @@ pub fn search_symbols(
     search_symbols_filtered(workspace_root, query, limit, None, None)
 }
 
+pub fn search_symbols_context(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchContextResult> {
+    search_symbols_context_filtered(workspace_root, query, limit, None, None)
+}
+
 pub fn search_symbols_filtered(
     workspace_root: &Path,
     query: &str,
@@ -189,6 +198,26 @@ pub fn search_symbols_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn search_symbols_context_filtered(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    search_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -317,6 +346,27 @@ pub fn search_symbols_with_overrides_filtered(
     )
 }
 
+pub fn search_symbols_context_with_overrides_filtered(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    search_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
 pub fn list_symbols_with_overrides_filtered(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -439,6 +489,14 @@ pub fn search_symbols_from_index(
     search_symbols_from_index_filtered(db_path, query, limit, None, None)
 }
 
+pub fn search_symbols_context_from_index(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchContextResult> {
+    search_symbols_context_from_index_filtered(db_path, query, limit, None, None)
+}
+
 pub fn search_symbols_from_index_filtered(
     db_path: &Path,
     query: &str,
@@ -455,6 +513,26 @@ pub fn search_symbols_from_index_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn search_symbols_context_from_index_filtered(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    search_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -1839,6 +1917,45 @@ fn search_from_symbols(
         matches,
         match_details,
     };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
+fn search_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolSearchContextResult> {
+    let search = search_from_symbols(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )?;
+    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let mut reads = Vec::with_capacity(search.matches.len());
+
+    for symbol in &search.matches {
+        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+            anyhow!(
+                "symbol not found in workspace index while reading search match: {}",
+                symbol.symbol_id
+            )
+        })?;
+        reads.push(read_symbol_result_from_meta(
+            meta,
+            indexed_files,
+            file_overrides,
+        )?);
+    }
+
+    let result = SymbolSearchContextResult { search, reads };
     result.validate_public_output()?;
     Ok(result)
 }
