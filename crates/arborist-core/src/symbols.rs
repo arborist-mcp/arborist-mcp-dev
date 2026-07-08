@@ -16,9 +16,9 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit, SymbolReadResult,
-    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection,
-    TraceEvidenceKeys, TraceSymbolGraphResult,
+    SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit,
+    SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
+    SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -109,6 +109,22 @@ pub fn read_symbol(workspace_root: &Path, symbol_path: &str) -> Result<SymbolRea
     read_symbol_from_symbols(&resolved_symbols, indexed_files, symbol_path, None)
 }
 
+pub fn read_symbol_context(
+    workspace_root: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        None,
+    )
+}
+
 pub fn search_symbols(
     workspace_root: &Path,
     query: &str,
@@ -179,6 +195,23 @@ pub fn read_symbol_with_overrides(
         &resolved_symbols,
         indexed_files,
         symbol_path,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_context_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    read_symbol_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
         Some(file_overrides),
     )
 }
@@ -260,6 +293,22 @@ pub fn read_symbol_from_index(db_path: &Path, symbol_path: &str) -> Result<Symbo
     let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
     read_symbol_from_symbols(&resolved_symbols, indexed_files, symbol_path, None)
+}
+
+pub fn read_symbol_context_from_index(
+    db_path: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        None,
+    )
 }
 
 pub fn search_symbols_from_index(
@@ -1472,6 +1521,21 @@ fn read_symbol_from_symbols(
         start_point,
         end_point,
     };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
+fn read_symbol_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolContextResult> {
+    let read =
+        read_symbol_from_symbols(resolved_symbols, indexed_files, symbol_path, file_overrides)?;
+    let trace = trace_from_symbols(resolved_symbols, indexed_files, symbol_path, direction)?;
+    let result = SymbolContextResult { read, trace };
     result.validate_public_output()?;
     Ok(result)
 }

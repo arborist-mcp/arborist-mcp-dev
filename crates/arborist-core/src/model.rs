@@ -317,6 +317,51 @@ impl SymbolReadResult {
     }
 }
 
+impl SymbolContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.read.validate_public_output()?;
+        self.trace.validate_public_output()?;
+
+        if self.read.indexed_files != self.trace.indexed_files {
+            bail!(
+                "invalid symbol_context: expected read.indexed_files to match trace.indexed_files"
+            );
+        }
+        if self.read.symbol.symbol_id != self.trace.symbol.symbol_id {
+            bail!(
+                "invalid symbol_context: expected read.symbol.symbol_id to match trace.symbol.symbol_id"
+            );
+        }
+        if self.read.symbol.semantic_path != self.trace.symbol.semantic_path {
+            bail!(
+                "invalid symbol_context: expected read.symbol.semantic_path to match trace.symbol.semantic_path"
+            );
+        }
+        if self.read.symbol.file_path != self.trace.symbol.file_path {
+            bail!(
+                "invalid symbol_context: expected read.symbol.file_path to match trace.symbol.file_path"
+            );
+        }
+        if self.read.symbol.node_kind != self.trace.symbol.node_kind {
+            bail!(
+                "invalid symbol_context: expected read.symbol.node_kind to match trace.symbol.node_kind"
+            );
+        }
+        if self.read.symbol.byte_range != self.trace.symbol.byte_range {
+            bail!(
+                "invalid symbol_context: expected read.symbol.byte_range to match trace.symbol.byte_range"
+            );
+        }
+        if self.read.symbol.signature != self.trace.symbol.signature {
+            bail!(
+                "invalid symbol_context: expected read.symbol.signature to match trace.symbol.signature"
+            );
+        }
+
+        Ok(())
+    }
+}
+
 impl SymbolListResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         if self.total_symbols < self.symbols.len() {
@@ -1641,6 +1686,13 @@ pub struct SymbolReadResult {
     pub source: String,
     pub start_point: Position,
     pub end_point: Position,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolContextResult {
+    pub read: SymbolReadResult,
+    pub trace: TraceSymbolGraphResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

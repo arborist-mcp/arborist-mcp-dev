@@ -13,17 +13,18 @@ use crate::language::{
 use crate::model::LanguageId;
 use crate::model::{
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
-    SymbolIndexStats, SymbolListResult, SymbolReadResult, SymbolSearchResult, TraceDirection,
-    TraceSymbolGraphResult, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolReadResult, SymbolSearchResult,
+    TraceDirection, TraceSymbolGraphResult, VirtualEditResult, VirtualFileSnapshot,
+    VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
     validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
-    list_symbols_with_overrides_filtered, read_symbol_with_overrides, rebuild_symbol_index,
-    refresh_symbol_index_for_file, search_symbols_with_overrides_filtered,
-    trace_symbol_graph_with_overrides,
+    list_symbols_with_overrides_filtered, read_symbol_context_with_overrides,
+    read_symbol_with_overrides, rebuild_symbol_index, refresh_symbol_index_for_file,
+    search_symbols_with_overrides_filtered, trace_symbol_graph_with_overrides,
 };
 
 #[derive(Default)]
@@ -424,6 +425,17 @@ impl VirtualFileSystem {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
         read_symbol_with_overrides(&workspace_root, &overrides, symbol_path)
+    }
+
+    pub fn read_symbol_context(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+    ) -> Result<SymbolContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        read_symbol_context_with_overrides(&workspace_root, &overrides, symbol_path, direction)
     }
 
     pub fn search_symbols(

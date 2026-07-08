@@ -14,11 +14,11 @@ use anyhow::{Result, bail};
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
     PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolReadResult,
-    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
-    TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
-    TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta,
+    SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
+    TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
+    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding,
+    ValidationIssue, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
@@ -26,9 +26,10 @@ pub use patching::{patch_ast_node, patch_ast_node_from_path};
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
     list_symbols, list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-    read_symbol, read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file,
-    search_symbols, search_symbols_filtered, search_symbols_from_index,
-    search_symbols_from_index_filtered, trace_symbol_graph, trace_symbol_graph_from_index,
+    read_symbol, read_symbol_context, read_symbol_context_from_index, read_symbol_from_index,
+    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_filtered,
+    search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
+    trace_symbol_graph_from_index,
 };
 pub use vfs::VirtualFileSystem;
 
@@ -513,13 +514,14 @@ mod tests {
         TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
         get_semantic_skeleton, get_semantic_skeleton_from_path, list_symbols,
         list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-        patch_ast_node, patch_ast_node_from_path, read_symbol, read_symbol_from_index,
-        rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
-        search_symbols, search_symbols_filtered, search_symbols_from_index,
-        search_symbols_from_index_filtered, trace_symbol_graph, trace_symbol_graph_from_index,
-        validate_patch_commit_with_trace, validate_patch_trace_validation_result,
-        validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
-        validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
+        patch_ast_node, patch_ast_node_from_path, read_symbol, read_symbol_context,
+        read_symbol_context_from_index, read_symbol_from_index, rebuild_symbol_index,
+        refresh_symbol_index_for_file, replay_patch_evidence_against_trace, search_symbols,
+        search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
+        trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
+        validate_patch_trace_validation_result, validate_patch_with_trace_context,
+        validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
+        validate_trace_patch_evidence_replay_result,
     };
     use crate::language::normalize_path;
 
@@ -7351,6 +7353,76 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(result.symbol.semantic_path, "renamed_helper");
         assert_eq!(result.source, renamed_source.trim_end_matches('\n'));
         assert_eq!(result.start_point.row, 0);
+    }
+
+    #[test]
+    fn reads_symbol_context_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+        let db_path = dir.join("symbols.db");
+
+        let helper_source = "def helper(value: int) -> int:\n    return value + 1\n";
+        fs::write(&helper, helper_source).unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live = read_symbol_context(&dir, "helper", TraceDirection::Callers).unwrap();
+        assert_eq!(live.read.indexed_files, 2);
+        assert_eq!(live.trace.indexed_files, 2);
+        assert_eq!(live.read.symbol.semantic_path, "helper");
+        assert_eq!(live.trace.symbol.semantic_path, "helper");
+        assert_eq!(live.read.source, helper_source.trim_end_matches('\n'));
+        assert_eq!(live.trace.callers.len(), 1);
+        assert_eq!(live.trace.callers[0].semantic_path, "orchestrate");
+        assert!(live.trace.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            read_symbol_context_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.read.indexed_files, 2);
+        assert_eq!(persisted.trace.indexed_files, 2);
+        assert_eq!(persisted.read.symbol.symbol_id, "helper");
+        assert_eq!(persisted.trace.symbol.symbol_id, "helper");
+        assert_eq!(persisted.read.source, helper_source.trim_end_matches('\n'));
+        assert_eq!(persisted.trace.callers.len(), 1);
+        assert_eq!(persisted.trace.callers[0].semantic_path, "orchestrate");
+    }
+
+    #[test]
+    fn read_symbol_context_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let renamed_helper = "def renamed_helper(value: int) -> int:\n    return value + 2\n";
+        let renamed_caller = "from graph_b import renamed_helper\n\n\ndef orchestrate(value: int) -> int:\n    return renamed_helper(value)\n";
+        vfs.open_file(&helper, Some(renamed_helper)).unwrap();
+        vfs.open_file(&caller, Some(renamed_caller)).unwrap();
+
+        let result = vfs
+            .read_symbol_context(&dir, "renamed_helper", TraceDirection::Callers)
+            .unwrap();
+        assert_eq!(result.read.symbol.semantic_path, "renamed_helper");
+        assert_eq!(result.trace.symbol.semantic_path, "renamed_helper");
+        assert_eq!(result.read.source, renamed_helper.trim_end_matches('\n'));
+        assert_eq!(result.trace.callers.len(), 1);
+        assert_eq!(result.trace.callers[0].semantic_path, "orchestrate");
     }
 
     #[test]

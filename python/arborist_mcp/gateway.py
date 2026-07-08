@@ -30,6 +30,7 @@ TOOL_HANDLERS = {
     "arborist/rebuild_symbol_index": "_rebuild_symbol_index",
     "arborist/trace_symbol_graph": "_trace_symbol_graph",
     "arborist/read_symbol": "_read_symbol",
+    "arborist/read_symbol_context": "_read_symbol_context",
     "arborist/list_symbols": "_list_symbols",
     "arborist/search_symbols": "_search_symbols",
     "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
@@ -89,6 +90,12 @@ TOOL_PARAM_NAMES = {
     "arborist/read_symbol": (
         "workspace_root",
         "symbol_path",
+        "index_db_path",
+    ),
+    "arborist/read_symbol_context": (
+        "workspace_root",
+        "symbol_path",
+        "direction",
         "index_db_path",
     ),
     "arborist/list_symbols": (
@@ -287,6 +294,24 @@ class ArboristGateway:
         payload = self._require_core().read_symbol_json(
             workspace_root,
             symbol_path,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _read_symbol_context(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        symbol_path = self._require_string(params, "symbol_path")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_context_json(
+            workspace_root,
+            symbol_path,
+            direction,
             index_db_path,
         )
         return self._decode_core_object(payload)

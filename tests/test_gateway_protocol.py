@@ -807,6 +807,27 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("direction", response["error"]["message"])
 
+    def test_rejects_invalid_read_symbol_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 62,
+                "method": "arborist/read_symbol_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 62)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
     def test_rejects_invalid_trace_context_direction_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -1013,6 +1034,73 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["result"]["symbol"]["semantic_path"], "helper")
         self.assertIn("def helper()", response["result"]["source"])
         self.assertEqual(gateway._core.calls, [(".", "helper", "symbols.db")])
+
+    def test_read_symbol_context_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_context_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"read":{"indexed_files":2,"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}},'
+                    '"trace":{"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"helper|sample.py|function_definition|trace_root|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":[],"references":["orchestrate"]},'
+                    '"callers":[{'
+                    '"symbol_id":"orchestrate","semantic_path":"orchestrate","scope_path":null,'
+                    '"file_path":"caller.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|caller.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}],'
+                    '"callees":[],"evidence_keys":{'
+                    '"symbol":"helper|sample.py|function_definition|trace_root|0..10|",'
+                    '"callers":["orchestrate|caller.py|function_definition|trace_caller|0..20|"],'
+                    '"callees":[]},'
+                    '"indexed_files":2}}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 63,
+                "method": "arborist/read_symbol_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 63)
+        self.assertEqual(response["result"]["read"]["symbol"]["semantic_path"], "helper")
+        self.assertIn("def helper()", response["result"]["read"]["source"])
+        self.assertEqual(response["result"]["trace"]["symbol"]["semantic_path"], "helper")
+        self.assertEqual(response["result"]["trace"]["callers"][0]["semantic_path"], "orchestrate")
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "helper", "callers", "symbols.db")],
+        )
 
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
