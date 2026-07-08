@@ -5,10 +5,10 @@ use arborist_core::{
     PatchAstNodeResult, PositionEdit, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
     execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
     get_semantic_skeleton_from_path, list_symbols_from_index_filtered, patch_ast_node,
-    rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
-    search_symbols_from_index_filtered, supported_languages, trace_symbol_graph_from_index,
-    validate_patch_commit_with_trace, validate_patch_with_trace_context,
-    validate_patch_with_trace_context_from_path,
+    read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file,
+    replay_patch_evidence_against_trace, search_symbols_from_index_filtered, supported_languages,
+    trace_symbol_graph_from_index, validate_patch_commit_with_trace,
+    validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -152,6 +152,25 @@ impl ArboristCore {
                 symbol_path,
                 direction,
             ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None))]
+    fn read_symbol_json(
+        &self,
+        workspace_root: &str,
+        symbol_path: &str,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_from_index(Path::new(&index_db_path), symbol_path),
+            None => self
+                .vfs
+                .borrow_mut()
+                .read_symbol(Path::new(workspace_root), symbol_path),
         }
         .map_err(to_py_error)?;
 

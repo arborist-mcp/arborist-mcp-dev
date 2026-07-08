@@ -24,6 +24,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `commit_virtual_file`
 - `discard_virtual_file`
 - `rebuild_symbol_index`
+- `read_symbol`
 - `list_symbols`
 - `search_symbols`
 - `trace_symbol_graph`
@@ -154,12 +155,13 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":11,"method":"arborist/patch_virtual_ast_node","params":{"file_path":"tests/fixtures/sample.py","semantic_path":"top_level","new_code":"def top_level(value: int) -> int:\n    return value + 3\n"}}
 {"jsonrpc":"2.0","id":12,"method":"arborist/commit_virtual_file","params":{"file_path":"tests/fixtures/sample.py"}}
 {"jsonrpc":"2.0","id":13,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":14,"method":"arborist/list_symbols","params":{"workspace_root":"tests/fixtures","limit":20,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":15,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":16,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":17,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":18,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
-{"jsonrpc":"2.0","id":19,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
+{"jsonrpc":"2.0","id":14,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":15,"method":"arborist/list_symbols","params":{"workspace_root":"tests/fixtures","limit":20,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":16,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":17,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":18,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":19,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
+{"jsonrpc":"2.0","id":20,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
 For one-shot analysis and validation, `get_semantic_skeleton`,
@@ -194,6 +196,8 @@ Python trace/index resolution also follows local import aliases and package re-e
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.
 
 When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the active VFS session first, so unsaved `did_open` / `did_change` / `patch_virtual_ast_node` edits are reflected immediately without touching disk.
+
+`read_symbol` bridges discovery and action directly: given a `semantic_path` or precise `symbol_id`, it returns the structured symbol summary plus the exact source snippet and start/end points for that symbol. Like the other discovery flows, it can read from the persisted index or the live VFS-backed workspace when `index_db_path` is omitted.
 
 `list_symbols` gives agents a stable workspace-wide symbol inventory before they decide whether they need fuzzy search, trace, or patch work. It lists the same structured symbol summaries used elsewhere, reports `total_symbols` plus `truncated`, supports optional `file_path_contains` and `node_kind` narrowing filters, and respects active dirty VFS buffers when `index_db_path` is omitted.
 

@@ -11,13 +11,14 @@ use tree_sitter::Node;
 use crate::language::{
     c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
     detect_language, is_c_header_path, node_text, normalize_absolute_path, normalize_path,
-    parse_document, read_source, resolve_local_c_include, visit_tree,
+    parse_document, point_for_offset, position_from, read_source, resolve_local_c_include,
+    visit_tree,
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit, SymbolSearchMatchDetail,
-    SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys,
-    TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit, SymbolReadResult,
+    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection,
+    TraceEvidenceKeys, TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -102,6 +103,12 @@ pub fn trace_symbol_graph(
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
+pub fn read_symbol(workspace_root: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_from_symbols(&resolved_symbols, indexed_files, symbol_path, None)
+}
+
 pub fn search_symbols(
     workspace_root: &Path,
     query: &str,
@@ -159,6 +166,21 @@ pub fn trace_symbol_graph_with_overrides(
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn read_symbol_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+) -> Result<SymbolReadResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    read_symbol_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        Some(file_overrides),
+    )
 }
 
 pub fn search_symbols_with_overrides_filtered(
@@ -232,6 +254,12 @@ pub fn trace_symbol_graph_from_index(
     let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn read_symbol_from_index(db_path: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_from_symbols(&resolved_symbols, indexed_files, symbol_path, None)
 }
 
 pub fn search_symbols_from_index(
@@ -1421,6 +1449,33 @@ fn trace_from_symbols(
     Ok(result)
 }
 
+fn read_symbol_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .cloned()
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    let source = symbol_source_text(&symbol, file_overrides)?;
+    let snippet = symbol_source_slice(&symbol, &source)?.to_string();
+    let start_point = position_from(point_for_offset(&source, symbol.byte_range.0)?);
+    let end_point = position_from(point_for_offset(&source, symbol.byte_range.1)?);
+
+    let result = SymbolReadResult {
+        indexed_files,
+        symbol: symbol_summary_from_meta(&symbol),
+        source: snippet,
+        start_point,
+        end_point,
+    };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
 fn search_from_symbols(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -1487,6 +1542,32 @@ fn search_from_symbols(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+fn symbol_source_text(
+    symbol: &SymbolMeta,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<String> {
+    if let Some(file_overrides) = file_overrides
+        && let Some(source) = file_overrides.get(&symbol.file_path)
+    {
+        return Ok(source.clone());
+    }
+
+    read_source(Path::new(&symbol.file_path))
+}
+
+fn symbol_source_slice<'a>(symbol: &SymbolMeta, source: &'a str) -> Result<&'a str> {
+    if symbol.byte_range.0 > symbol.byte_range.1 {
+        return Err(anyhow!(
+            "invalid symbol byte range for {}: start byte is after end byte",
+            symbol.symbol_id
+        ));
+    }
+
+    source
+        .get(symbol.byte_range.0..symbol.byte_range.1)
+        .ok_or_else(|| anyhow!("symbol source range is invalid for {}", symbol.symbol_id))
 }
 
 fn list_from_symbols(

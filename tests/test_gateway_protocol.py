@@ -972,6 +972,48 @@ class GatewayProtocolTests(unittest.TestCase):
             [(".", 25, "symbols.db", "graph", "function_definition")],
         )
 
+    def test_read_symbol_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"indexed_files":2,"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 61,
+                "method": "arborist/read_symbol",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 61)
+        self.assertEqual(response["result"]["symbol"]["semantic_path"], "helper")
+        self.assertIn("def helper()", response["result"]["source"])
+        self.assertEqual(gateway._core.calls, [(".", "helper", "symbols.db")])
+
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)

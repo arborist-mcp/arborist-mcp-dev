@@ -14,7 +14,7 @@ use anyhow::{Result, bail};
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
     PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult, SymbolMeta,
+    SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolReadResult,
     SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
     TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
     TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
@@ -26,9 +26,9 @@ pub use patching::{patch_ast_node, patch_ast_node_from_path};
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
     list_symbols, list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_filtered,
-    search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
-    trace_symbol_graph_from_index,
+    read_symbol, read_symbol_from_index, rebuild_symbol_index, refresh_symbol_index_for_file,
+    search_symbols, search_symbols_filtered, search_symbols_from_index,
+    search_symbols_from_index_filtered, trace_symbol_graph, trace_symbol_graph_from_index,
 };
 pub use vfs::VirtualFileSystem;
 
@@ -513,13 +513,13 @@ mod tests {
         TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
         get_semantic_skeleton, get_semantic_skeleton_from_path, list_symbols,
         list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-        patch_ast_node, patch_ast_node_from_path, rebuild_symbol_index,
-        refresh_symbol_index_for_file, replay_patch_evidence_against_trace, search_symbols,
-        search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
-        trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
-        validate_patch_trace_validation_result, validate_patch_with_trace_context,
-        validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
-        validate_trace_patch_evidence_replay_result,
+        patch_ast_node, patch_ast_node_from_path, read_symbol, read_symbol_from_index,
+        rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
+        search_symbols, search_symbols_filtered, search_symbols_from_index,
+        search_symbols_from_index_filtered, trace_symbol_graph, trace_symbol_graph_from_index,
+        validate_patch_commit_with_trace, validate_patch_trace_validation_result,
+        validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
+        validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
     };
     use crate::language::normalize_path;
 
@@ -7305,6 +7305,52 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(listed.symbols.len(), 1);
         assert_eq!(listed.symbols[0].semantic_path, "RenamedHelper");
         assert_eq!(listed.symbols[0].node_kind, "class_definition");
+    }
+
+    #[test]
+    fn reads_symbol_source_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+        let db_path = dir.join("symbols.db");
+
+        let helper_source = "def helper(value: int) -> int:\n    return value + 1\n";
+        fs::write(&helper, helper_source).unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live = read_symbol(&dir, "helper").unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.semantic_path, "helper");
+        assert_eq!(live.source, helper_source.trim_end_matches('\n'));
+        assert_eq!(live.start_point.row, 0);
+        assert!(live.end_point.row >= live.start_point.row);
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = read_symbol_from_index(&db_path, "helper").unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.symbol.symbol_id, "helper");
+        assert_eq!(persisted.source, helper_source.trim_end_matches('\n'));
+    }
+
+    #[test]
+    fn read_symbol_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let renamed_source = "def renamed_helper() -> int:\n    return 2\n";
+        vfs.open_file(&helper, Some(renamed_source)).unwrap();
+
+        let result = vfs.read_symbol(&dir, "renamed_helper").unwrap();
+        assert_eq!(result.symbol.semantic_path, "renamed_helper");
+        assert_eq!(result.source, renamed_source.trim_end_matches('\n'));
+        assert_eq!(result.start_point.row, 0);
     }
 
     #[test]

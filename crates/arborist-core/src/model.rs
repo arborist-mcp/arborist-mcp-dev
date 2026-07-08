@@ -300,6 +300,23 @@ impl RegisteredSymbolIndex {
     }
 }
 
+impl SymbolReadResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        if self.source.is_empty() {
+            bail!("invalid symbol_read.source: expected source to be non-empty");
+        }
+        self.symbol
+            .validate_trace_replay_input("symbol_read.symbol")?;
+        if self.start_point.row > self.end_point.row
+            || (self.start_point.row == self.end_point.row
+                && self.start_point.column > self.end_point.column)
+        {
+            bail!("invalid symbol_read: expected start_point to be before end_point");
+        }
+        Ok(())
+    }
+}
+
 impl SymbolListResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         if self.total_symbols < self.symbols.len() {
@@ -1616,6 +1633,16 @@ pub struct RegisteredSymbolIndex {
     pub db_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolReadResult {
+    pub indexed_files: usize,
+    pub symbol: SymbolSummary,
+    pub source: String,
+    pub start_point: Position,
+    pub end_point: Position,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolListResult {
@@ -1659,9 +1686,10 @@ mod tests {
         PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult,
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
         SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult,
-        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
-        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
+        TraceBackedPatchResult, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
+        TraceSymbolGraphResult, ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot,
+        VirtualFileStatus,
     };
 
     #[test]
@@ -1845,6 +1873,37 @@ mod tests {
             .expect_err("inconsistent truncation should be rejected");
 
         assert!(error.to_string().contains("symbol_list.truncated"));
+    }
+
+    #[test]
+    fn symbol_read_result_rejects_empty_source() {
+        let result = SymbolReadResult {
+            indexed_files: 1,
+            symbol: SymbolSummary {
+                symbol_id: "helper".to_string(),
+                semantic_path: "helper".to_string(),
+                scope_path: None,
+                file_path: "sample.py".to_string(),
+                node_kind: "function_definition".to_string(),
+                origin_type: "workspace_symbol".to_string(),
+                evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                    .to_string(),
+                byte_range: (0, 10),
+                signature: None,
+                parameters: Vec::new(),
+                return_type: None,
+                docstring: None,
+            },
+            source: String::new(),
+            start_point: Position { row: 0, column: 0 },
+            end_point: Position { row: 0, column: 10 },
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("empty symbol source should be rejected");
+
+        assert!(error.to_string().contains("symbol_read.source"));
     }
 
     #[test]

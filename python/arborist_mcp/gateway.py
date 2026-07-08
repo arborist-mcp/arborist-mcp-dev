@@ -29,6 +29,7 @@ TOOL_HANDLERS = {
     "arborist/discard_virtual_file": "_discard_virtual_file",
     "arborist/rebuild_symbol_index": "_rebuild_symbol_index",
     "arborist/trace_symbol_graph": "_trace_symbol_graph",
+    "arborist/read_symbol": "_read_symbol",
     "arborist/list_symbols": "_list_symbols",
     "arborist/search_symbols": "_search_symbols",
     "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
@@ -83,6 +84,11 @@ TOOL_PARAM_NAMES = {
         "workspace_root",
         "symbol_path",
         "direction",
+        "index_db_path",
+    ),
+    "arborist/read_symbol": (
+        "workspace_root",
+        "symbol_path",
         "index_db_path",
     ),
     "arborist/list_symbols": (
@@ -270,6 +276,17 @@ class ArboristGateway:
             workspace_root,
             symbol_path,
             direction,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _read_symbol(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        symbol_path = self._require_string(params, "symbol_path")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_json(
+            workspace_root,
+            symbol_path,
             index_db_path,
         )
         return self._decode_core_object(payload)
