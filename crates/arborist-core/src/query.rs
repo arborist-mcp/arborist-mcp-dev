@@ -53,6 +53,10 @@ pub fn execute_tree_query(
         });
     }
 
+    for (index, capture) in captures.iter().enumerate() {
+        capture.validate_public_output(index)?;
+    }
+
     Ok(captures)
 }
 

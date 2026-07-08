@@ -368,12 +368,14 @@ fn build_python_skeleton(
         }
     }
 
-    Ok(SemanticSkeleton {
+    let result = SemanticSkeleton {
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),
         available_paths,
         available_symbols,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 fn build_c_skeleton(
@@ -470,12 +472,14 @@ fn build_c_skeleton(
         }
     }
 
-    Ok(SemanticSkeleton {
+    let result = SemanticSkeleton {
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),
         available_paths,
         available_symbols,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 fn find_python_semantic_node<'tree>(
