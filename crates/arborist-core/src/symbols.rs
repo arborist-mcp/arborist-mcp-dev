@@ -16,8 +16,9 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolContextResult, SymbolIndexStats, SymbolListContextResult, SymbolListResult, SymbolMeta,
-    SymbolMetaInit, SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolContextResult, SymbolIndexStats, SymbolListContextResult,
+    SymbolListNeighborhoodContextResult, SymbolListResult, SymbolMeta, SymbolMetaInit,
+    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
     SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
     SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
     TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
@@ -279,6 +280,24 @@ pub fn list_symbols_context(
     list_symbols_context_filtered(workspace_root, limit, None, None)
 }
 
+pub fn list_symbols_neighborhood_context(
+    workspace_root: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    list_symbols_neighborhood_context_filtered(
+        workspace_root,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+        None,
+    )
+}
+
 pub fn list_symbols_filtered(
     workspace_root: &Path,
     limit: usize,
@@ -308,6 +327,31 @@ pub fn list_symbols_context_filtered(
         &resolved_symbols,
         indexed_files,
         limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_filtered(
+    workspace_root: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    list_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
         file_path_contains,
         node_kind,
         None,
@@ -498,6 +542,32 @@ pub fn list_symbols_context_with_overrides_filtered(
         &resolved_symbols,
         indexed_files,
         limit,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_with_overrides_filtered(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    list_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
         file_path_contains,
         node_kind,
         Some(file_overrides),
@@ -706,6 +776,18 @@ pub fn list_symbols_context_from_index(
     list_symbols_context_from_index_filtered(db_path, limit, None, None)
 }
 
+pub fn list_symbols_neighborhood_context_from_index(
+    db_path: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    list_symbols_neighborhood_context_from_index_filtered(
+        db_path, limit, direction, max_depth, max_nodes, None, None,
+    )
+}
+
 pub fn list_symbols_from_index_filtered(
     db_path: &Path,
     limit: usize,
@@ -735,6 +817,31 @@ pub fn list_symbols_context_from_index_filtered(
         &resolved_symbols,
         indexed_files,
         limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_from_index_filtered(
+    db_path: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    list_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
         file_path_contains,
         node_kind,
         None,
@@ -2309,6 +2416,45 @@ fn list_context_from_symbols(
     result.validate_public_output()?;
     Ok(result)
 }
+
+#[allow(clippy::too_many_arguments)]
+fn list_neighborhood_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let list = list_from_symbols(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+    )?;
+    let mut contexts = Vec::with_capacity(list.symbols.len());
+
+    for symbol in &list.symbols {
+        contexts.push(read_symbol_neighborhood_context_from_symbols(
+            resolved_symbols,
+            indexed_files,
+            &symbol.symbol_id,
+            direction.clone(),
+            max_depth,
+            max_nodes,
+            file_overrides,
+        )?);
+    }
+
+    let result = SymbolListNeighborhoodContextResult { list, contexts };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
 fn normalize_optional_search_filter(value: Option<&str>, field: &str) -> Result<Option<String>> {
     match value {
         Some(value) => {

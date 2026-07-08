@@ -937,6 +937,48 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 
+    def test_rejects_invalid_list_symbols_neighborhood_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 79,
+                "method": "arborist/list_symbols_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 79)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_list_symbols_neighborhood_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 80,
+                "method": "arborist/list_symbols_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 80)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
     def test_rejects_invalid_trace_context_direction_as_invalid_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -1391,6 +1433,85 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(
             gateway._core.calls,
             [(".", 25, "symbols.db", "graph", "function_definition")],
+        )
+
+    def test_list_symbols_neighborhood_context_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def list_symbols_neighborhood_context_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"list":{"indexed_files":2,"total_symbols":1,"truncated":false,"symbols":['
+                    '{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}'
+                    ']},'
+                    '"contexts":['
+                    '{"neighborhood":{"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"helper|sample.py|function_definition|trace_root|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":[],"references":["orchestrate"]},'
+                    '"direction":"callers","max_depth":2,"max_nodes":10,"truncated":false,'
+                    '"indexed_files":2,"nodes":['
+                    '{"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"depth":0}'
+                    '],"edges":[]},'
+                    '"reads":['
+                    '{"indexed_files":2,"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":12}}]}]}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 81,
+                "method": "arborist/list_symbols_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "limit": 25,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 81)
+        self.assertEqual(response["result"]["list"]["total_symbols"], 1)
+        self.assertEqual(
+            response["result"]["contexts"][0]["neighborhood"]["symbol"]["semantic_path"],
+            "helper",
+        )
+        self.assertIn(
+            "def helper()",
+            response["result"]["contexts"][0]["reads"][0]["source"],
+        )
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", 25, "callers", 2, 10, "symbols.db", "graph", "function_definition")],
         )
 
     def test_read_symbol_routes_params_to_core(self) -> None:

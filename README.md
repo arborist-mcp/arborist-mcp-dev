@@ -29,6 +29,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `read_symbol_neighborhood_context`
 - `list_symbols`
 - `list_symbols_context`
+- `list_symbols_neighborhood_context`
 - `search_symbols`
 - `search_symbols_context`
 - `search_symbols_neighborhood_context`
@@ -169,15 +170,16 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":17,"method":"arborist/read_symbol_neighborhood_context","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":18,"method":"arborist/list_symbols","params":{"workspace_root":"tests/fixtures","limit":20,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
 {"jsonrpc":"2.0","id":19,"method":"arborist/list_symbols_context","params":{"workspace_root":"tests/fixtures","limit":20,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":20,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":21,"method":"arborist/search_symbols_context","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":22,"method":"arborist/search_symbols_neighborhood_context","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
-{"jsonrpc":"2.0","id":23,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":24,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":25,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
-{"jsonrpc":"2.0","id":26,"method":"arborist/validate_patch_with_graph_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
-{"jsonrpc":"2.0","id":27,"method":"arborist/validate_patch_with_neighborhood_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
-{"jsonrpc":"2.0","id":28,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
+{"jsonrpc":"2.0","id":20,"method":"arborist/list_symbols_neighborhood_context","params":{"workspace_root":"tests/fixtures","limit":20,"direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":21,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":22,"method":"arborist/search_symbols_context","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":23,"method":"arborist/search_symbols_neighborhood_context","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db","file_path_contains":"graph","node_kind":"function_definition"}}
+{"jsonrpc":"2.0","id":24,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":25,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":26,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
+{"jsonrpc":"2.0","id":27,"method":"arborist/validate_patch_with_graph_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":28,"method":"arborist/validate_patch_with_neighborhood_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":29,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
 For one-shot analysis and validation, `get_semantic_skeleton`,
@@ -227,6 +229,8 @@ When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the a
 `list_symbols` gives agents a stable workspace-wide symbol inventory before they decide whether they need fuzzy search, trace, or patch work. It lists the same structured symbol summaries used elsewhere, reports `total_symbols` plus `truncated`, supports optional `file_path_contains` and `node_kind` narrowing filters, and respects active dirty VFS buffers when `index_db_path` is omitted.
 
 `list_symbols_context` removes the follow-up read loop after a bounded workspace listing. It returns the same `list_symbols` payload under `list` plus an aligned `reads` array whose entries line up positionally with `list.symbols`, so agents can inspect the exact source snippet for each listed symbol immediately without issuing separate `read_symbol` calls. Like `list_symbols`, it supports optional `file_path_contains` and `node_kind` filters and respects live VFS buffers whenever `index_db_path` is omitted.
+
+`list_symbols_neighborhood_context` makes the bounded inventory path as thick as the search path. It returns the same `list_symbols` payload under `list` plus an aligned `contexts` array whose entries line up positionally with `list.symbols`; each entry is a full `read_symbol_neighborhood_context` bundle for the corresponding listed symbol. That lets agents enumerate a workspace slice, inspect exact symbol bodies, and understand bounded local caller/callee neighborhoods without issuing separate graph reads per listed symbol. Like the underlying neighborhood read, it supports `direction`, `max_depth`, `max_nodes`, optional `file_path_contains` and `node_kind` filters, and live VFS buffers whenever `index_db_path` is omitted.
 
 `search_symbols` gives agents a lightweight discovery step before trace or patch work. It searches the workspace or a persisted symbol index for case-insensitive matches across stable symbol fields such as `symbol_id`, `semantic_path`, `file_path`, `signature`, parameters, return type, and docstring, then returns the same structured symbol metadata shape used elsewhere plus `total_matches`, `truncated`, and per-result `match_details` metadata that records the matched symbol id, ranking score, and matched fields. Optional `file_path_contains` and `node_kind` params let callers narrow the candidate set before ranking. When `index_db_path` is omitted, `search_symbols` also respects active dirty VFS buffers inside the workspace.
 
