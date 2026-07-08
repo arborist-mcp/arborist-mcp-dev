@@ -415,6 +415,42 @@ impl SymbolNeighborhoodContextResult {
     }
 }
 
+impl SymbolReadDiscoveryContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        SymbolContextResult {
+            read: self.read.clone(),
+            trace: self.trace.clone(),
+        }
+        .validate_public_output()?;
+        self.neighborhood_context.validate_public_output()?;
+
+        if self.neighborhood_context.neighborhood.indexed_files != self.trace.indexed_files {
+            bail!(
+                "invalid symbol_read_discovery_context.neighborhood_context.neighborhood.indexed_files: expected neighborhood indexed_files to match trace.indexed_files"
+            );
+        }
+        if self.neighborhood_context.neighborhood.symbol.symbol_id != self.trace.symbol.symbol_id {
+            bail!(
+                "invalid symbol_read_discovery_context.neighborhood_context.neighborhood.symbol.symbol_id: expected neighborhood root to match trace.symbol.symbol_id"
+            );
+        }
+        if self.neighborhood_context.neighborhood.symbol.semantic_path
+            != self.trace.symbol.semantic_path
+        {
+            bail!(
+                "invalid symbol_read_discovery_context.neighborhood_context.neighborhood.symbol.semantic_path: expected neighborhood root to match trace.symbol.semantic_path"
+            );
+        }
+        if self.neighborhood_context.neighborhood.symbol.file_path != self.trace.symbol.file_path {
+            bail!(
+                "invalid symbol_read_discovery_context.neighborhood_context.neighborhood.symbol.file_path: expected neighborhood root to match trace.symbol.file_path"
+            );
+        }
+
+        Ok(())
+    }
+}
+
 impl TraceSymbolNeighborhoodResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         self.symbol
@@ -2522,6 +2558,14 @@ pub struct SymbolNeighborhoodContextResult {
     pub reads: Vec<SymbolReadResult>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolReadDiscoveryContextResult {
+    pub read: SymbolReadResult,
+    pub trace: TraceSymbolGraphResult,
+    pub neighborhood_context: SymbolNeighborhoodContextResult,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolListResult {
@@ -2611,13 +2655,13 @@ mod tests {
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
         SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolListContextResult,
         SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
-        SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
-        SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
-        SymbolSearchNeighborhoodContextResult, SymbolSearchResult, SymbolSummary,
-        TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
-        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodNode,
-        TraceSymbolNeighborhoodResult, ValidationBindingDecision, VirtualEditResult,
-        VirtualFileSnapshot, VirtualFileStatus,
+        SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
+        SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
+        SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
+        SymbolSummary, TraceBackedPatchResult, TraceDirection, TraceEvidenceKeys,
+        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+        TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationBindingDecision,
+        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -3439,6 +3483,150 @@ mod tests {
 
         assert!(error.to_string().contains(
             "symbol_search_neighborhood_context.contexts[0].neighborhood.symbol.symbol_id"
+        ));
+    }
+
+    #[test]
+    fn symbol_read_discovery_context_rejects_misaligned_neighborhood() {
+        let result = SymbolReadDiscoveryContextResult {
+            read: SymbolReadResult {
+                indexed_files: 1,
+                symbol: SymbolSummary {
+                    symbol_id: "helper".to_string(),
+                    semantic_path: "helper".to_string(),
+                    scope_path: None,
+                    file_path: "sample.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "workspace_symbol".to_string(),
+                    evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                        .to_string(),
+                    byte_range: (0, 10),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                },
+                source: "def helper() -> int:\n    return 1\n".to_string(),
+                start_point: Position { row: 0, column: 0 },
+                end_point: Position { row: 1, column: 12 },
+            },
+            trace: TraceSymbolGraphResult {
+                symbol: SymbolMeta {
+                    symbol_id: "helper".to_string(),
+                    semantic_path: "helper".to_string(),
+                    scope_path: None,
+                    file_path: "sample.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "trace_root".to_string(),
+                    evidence_key: "helper|sample.py|function_definition|trace_root|0..10|"
+                        .to_string(),
+                    byte_range: (0, 10),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                    dependencies: Vec::new(),
+                    references: vec!["orchestrate".to_string()],
+                },
+                callers: vec![SymbolSummary {
+                    symbol_id: "orchestrate".to_string(),
+                    semantic_path: "orchestrate".to_string(),
+                    scope_path: None,
+                    file_path: "caller.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "trace_caller".to_string(),
+                    evidence_key: "orchestrate|caller.py|function_definition|trace_caller|0..20|"
+                        .to_string(),
+                    byte_range: (0, 20),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                }],
+                callees: Vec::new(),
+                evidence_keys: TraceEvidenceKeys {
+                    symbol: "helper|sample.py|function_definition|trace_root|0..10|".to_string(),
+                    callers: vec![
+                        "orchestrate|caller.py|function_definition|trace_caller|0..20|".to_string(),
+                    ],
+                    callees: Vec::new(),
+                },
+                indexed_files: 1,
+            },
+            neighborhood_context: SymbolNeighborhoodContextResult {
+                neighborhood: TraceSymbolNeighborhoodResult {
+                    symbol: SymbolMeta {
+                        symbol_id: "other".to_string(),
+                        semantic_path: "other".to_string(),
+                        scope_path: None,
+                        file_path: "sample.py".to_string(),
+                        node_kind: "function_definition".to_string(),
+                        origin_type: "trace_root".to_string(),
+                        evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                            .to_string(),
+                        byte_range: (0, 10),
+                        signature: None,
+                        parameters: Vec::new(),
+                        return_type: None,
+                        docstring: None,
+                        dependencies: Vec::new(),
+                        references: Vec::new(),
+                    },
+                    direction: TraceDirection::Callers,
+                    max_depth: 2,
+                    max_nodes: 8,
+                    truncated: false,
+                    indexed_files: 1,
+                    nodes: vec![TraceSymbolNeighborhoodNode {
+                        symbol: SymbolSummary {
+                            symbol_id: "other".to_string(),
+                            semantic_path: "other".to_string(),
+                            scope_path: None,
+                            file_path: "sample.py".to_string(),
+                            node_kind: "function_definition".to_string(),
+                            origin_type: "trace_root".to_string(),
+                            evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                                .to_string(),
+                            byte_range: (0, 10),
+                            signature: None,
+                            parameters: Vec::new(),
+                            return_type: None,
+                            docstring: None,
+                        },
+                        depth: 0,
+                    }],
+                    edges: Vec::new(),
+                },
+                reads: vec![SymbolReadResult {
+                    indexed_files: 1,
+                    symbol: SymbolSummary {
+                        symbol_id: "other".to_string(),
+                        semantic_path: "other".to_string(),
+                        scope_path: None,
+                        file_path: "sample.py".to_string(),
+                        node_kind: "function_definition".to_string(),
+                        origin_type: "trace_root".to_string(),
+                        evidence_key: "other|sample.py|function_definition|trace_root|0..10|"
+                            .to_string(),
+                        byte_range: (0, 10),
+                        signature: None,
+                        parameters: Vec::new(),
+                        return_type: None,
+                        docstring: None,
+                    },
+                    source: "def other() -> int:\n    return 1\n".to_string(),
+                    start_point: Position { row: 0, column: 0 },
+                    end_point: Position { row: 1, column: 12 },
+                }],
+            },
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("read discovery context should align the neighborhood root");
+
+        assert!(error.to_string().contains(
+            "symbol_read_discovery_context.neighborhood_context.neighborhood.symbol.symbol_id"
         ));
     }
 

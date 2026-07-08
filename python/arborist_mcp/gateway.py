@@ -33,6 +33,7 @@ TOOL_HANDLERS = {
     "arborist/read_symbol": "_read_symbol",
     "arborist/read_symbol_context": "_read_symbol_context",
     "arborist/read_symbol_neighborhood_context": "_read_symbol_neighborhood_context",
+    "arborist/read_symbol_discovery_context": "_read_symbol_discovery_context",
     "arborist/list_symbols": "_list_symbols",
     "arborist/list_symbols_context": "_list_symbols_context",
     "arborist/list_symbols_neighborhood_context": "_list_symbols_neighborhood_context",
@@ -118,6 +119,14 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
     ),
     "arborist/read_symbol_neighborhood_context": (
+        "workspace_root",
+        "symbol_path",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+    ),
+    "arborist/read_symbol_discovery_context": (
         "workspace_root",
         "symbol_path",
         "direction",
@@ -472,6 +481,30 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().read_symbol_neighborhood_context_json(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _read_symbol_discovery_context(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        symbol_path = self._require_string(params, "symbol_path")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_discovery_context_json(
             workspace_root,
             symbol_path,
             direction,

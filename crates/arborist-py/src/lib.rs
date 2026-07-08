@@ -7,8 +7,8 @@ use arborist_core::{
     get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
     list_symbols_discovery_context_from_index_filtered, list_symbols_from_index_filtered,
     list_symbols_neighborhood_context_from_index_filtered, patch_ast_node,
-    read_symbol_context_from_index, read_symbol_from_index,
-    read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
+    read_symbol_context_from_index, read_symbol_discovery_context_from_index,
+    read_symbol_from_index, read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_context_from_index_filtered,
     search_symbols_discovery_context_from_index_filtered, search_symbols_from_index_filtered,
@@ -263,6 +263,38 @@ impl ArboristCore {
                 max_nodes,
             ),
             None => self.vfs.borrow_mut().read_symbol_neighborhood_context(
+                Path::new(workspace_root),
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    fn read_symbol_discovery_context_json(
+        &self,
+        workspace_root: &str,
+        symbol_path: &str,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_discovery_context_from_index(
+                Path::new(&index_db_path),
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            None => self.vfs.borrow_mut().read_symbol_discovery_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
