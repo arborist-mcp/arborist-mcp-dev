@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -592,6 +594,9 @@ impl PatchEvidenceInvariantReport {
 
 impl PatchValidationReport {
     fn validate_trace_replay_input(&self) -> Result<()> {
+        for (index, issue) in self.syntax_errors.iter().enumerate() {
+            issue.validate_trace_replay_input(index)?;
+        }
         ensure_nonblank_strings(
             &self.unresolved_identifiers,
             "patch.validation.unresolved_identifiers",
@@ -607,6 +612,119 @@ impl PatchValidationReport {
                 "patch.validation.binding_decisions[{index}]"
             ))?;
         }
+        self.validate_binding_summary_consistency()?;
+        Ok(())
+    }
+
+    fn validate_binding_summary_consistency(&self) -> Result<()> {
+        let mut expected_unresolved = Vec::new();
+        let mut expected_resolved = Vec::new();
+        let mut expected_ambiguous = Vec::new();
+
+        for decision in &self.binding_decisions {
+            match decision.status.as_str() {
+                "resolved"
+                    if !expected_unresolved
+                        .iter()
+                        .any(|name| name == &decision.name)
+                        && !expected_ambiguous.iter().any(|name| name == &decision.name)
+                        && !expected_resolved.iter().any(|name| name == &decision.name) =>
+                {
+                    expected_resolved.push(decision.name.clone());
+                }
+                "ambiguous"
+                    if !expected_unresolved
+                        .iter()
+                        .any(|name| name == &decision.name) =>
+                {
+                    expected_resolved.retain(|name| name != &decision.name);
+                    if !expected_ambiguous.iter().any(|name| name == &decision.name) {
+                        expected_ambiguous.push(decision.name.clone());
+                    }
+                }
+                "unresolved" => {
+                    expected_resolved.retain(|name| name != &decision.name);
+                    expected_ambiguous.retain(|name| name != &decision.name);
+                    if !expected_unresolved
+                        .iter()
+                        .any(|name| name == &decision.name)
+                    {
+                        expected_unresolved.push(decision.name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if self.unresolved_identifiers != expected_unresolved {
+            bail!(
+                "invalid patch.validation.unresolved_identifiers: expected unresolved identifier summary derived from patch.validation.binding_decisions"
+            );
+        }
+
+        let resolved_names = self
+            .resolved_identifiers
+            .iter()
+            .map(|binding| binding.name.clone())
+            .collect::<Vec<_>>();
+        if resolved_names != expected_resolved {
+            bail!(
+                "invalid patch.validation.resolved_identifiers: expected resolved binding summary derived from patch.validation.binding_decisions"
+            );
+        }
+
+        let ambiguous_names = self
+            .ambiguous_identifiers
+            .iter()
+            .map(|ambiguity| ambiguity.name.clone())
+            .collect::<Vec<_>>();
+        if ambiguous_names != expected_ambiguous {
+            bail!(
+                "invalid patch.validation.ambiguous_identifiers: expected ambiguous binding summary derived from patch.validation.binding_decisions"
+            );
+        }
+
+        let mut seen_resolved = BTreeSet::new();
+        for (index, binding) in self.resolved_identifiers.iter().enumerate() {
+            if !seen_resolved.insert(binding.name.clone()) {
+                bail!(
+                    "invalid patch.validation.resolved_identifiers[{index}].name: duplicate resolved binding names are not allowed"
+                );
+            }
+            let has_match = self.binding_decisions.iter().any(|decision| {
+                decision.status == "resolved"
+                    && decision.name == binding.name
+                    && decision.selected_symbol_id.as_deref()
+                        == Some(binding.symbol.symbol_id.as_str())
+                    && decision.candidates.first() == Some(&binding.symbol)
+            });
+            if !has_match {
+                bail!(
+                    "invalid patch.validation.resolved_identifiers[{index}]: expected resolved binding summary to match a resolved patch.validation.binding_decisions entry"
+                );
+            }
+        }
+
+        let mut seen_ambiguous = BTreeSet::new();
+        for (index, ambiguity) in self.ambiguous_identifiers.iter().enumerate() {
+            if !seen_ambiguous.insert(ambiguity.name.clone()) {
+                bail!(
+                    "invalid patch.validation.ambiguous_identifiers[{index}].name: duplicate ambiguous binding names are not allowed"
+                );
+            }
+            let has_match = self.binding_decisions.iter().any(|decision| {
+                decision.status == "ambiguous"
+                    && decision.name == ambiguity.name
+                    && decision.reason == ambiguity.reason
+                    && decision.candidates == ambiguity.candidates
+            });
+            if !has_match {
+                bail!(
+                    "invalid patch.validation.ambiguous_identifiers[{index}]: expected ambiguous binding summary to match an ambiguous patch.validation.binding_decisions entry"
+                );
+            }
+        }
+
         Ok(())
     }
 }
@@ -729,6 +847,27 @@ impl DisambiguationContext {
     }
 }
 
+impl ValidationIssue {
+    fn validate_trace_replay_input(&self, index: usize) -> Result<()> {
+        let prefix = format!("patch.validation.syntax_errors[{index}]");
+        ensure_nonblank(&self.kind, &format!("{prefix}.kind"))?;
+        ensure_nonblank(&self.message, &format!("{prefix}.message"))?;
+        match self.kind.as_str() {
+            "error" | "missing" => {}
+            other => {
+                bail!("invalid {prefix}.kind: unsupported syntax issue kind `{other}`");
+            }
+        }
+        if self.start_byte > self.end_byte {
+            bail!("invalid {prefix}: start byte is after end byte");
+        }
+        if point_is_after(&self.start_point, &self.end_point) {
+            bail!("invalid {prefix}: start point is after end point");
+        }
+        Ok(())
+    }
+}
+
 impl TraceSymbolGraphResult {
     pub fn validate_trace_replay_input(&self) -> Result<()> {
         self.symbol.validate_trace_replay_input("trace.symbol")?;
@@ -782,6 +921,10 @@ fn ensure_nonblank_strings(values: &[String], field: &str) -> Result<()> {
         bail!("invalid {field}[{index}]: value must not be blank");
     }
     Ok(())
+}
+
+fn point_is_after(start: &Position, end: &Position) -> bool {
+    start.row > end.row || (start.row == end.row && start.column > end.column)
 }
 
 struct SymbolIdentityRef<'a> {
