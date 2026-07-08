@@ -141,12 +141,40 @@ The full gate also checks PowerShell script syntax, version consistency, builds
 and syncs the local gateway extension, and runs a real `initialize` smoke
 request.
 
-Or run the core checks directly:
+For the everyday inner loop, run the focused test entrypoint:
+
+```powershell
+.\scripts\test.ps1
+```
+
+`test.ps1` defaults to the fast local loop of Rust tests plus the gateway
+protocol suite. It also supports narrower suites so protocol changes do not have
+to wait on unrelated Python coverage:
+
+```powershell
+.\scripts\test.ps1 -Suite rust
+.\scripts\test.ps1 -Suite gateway
+.\scripts\test.ps1 -Suite gateway-request-validation
+.\scripts\test.ps1 -Suite gateway-symbol-routes
+.\scripts\test.ps1 -Suite gateway-execution
+.\scripts\test.ps1 -Suite gateway-trace-payloads
+.\scripts\test.ps1 -Suite gateway-runtime
+.\scripts\test.ps1 -Suite python
+.\scripts\test.ps1 -Suite all
+```
+
+The gateway protocol tests now live under `tests/gateway_protocol/` and remain
+available through the legacy `tests.test_gateway_protocol` module, so old
+commands still work while targeted modules are easier to run in isolation.
+
+Or run the underlying commands directly:
 
 ```powershell
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
+python -m unittest tests.test_gateway_protocol
+python -m unittest tests.gateway_protocol.request_validation
 python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
 python -m arborist_mcp.gateway --version

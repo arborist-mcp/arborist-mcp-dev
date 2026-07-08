@@ -1,0 +1,1271 @@
+from __future__ import annotations
+
+import io
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import arborist_mcp
+from arborist_mcp import gateway as gateway_module
+from arborist_mcp import _version as version_module
+from arborist_mcp.gateway import ArboristGateway
+
+
+class GatewayRequestValidationTests(unittest.TestCase):
+    def test_gateway_reuses_package_version(self) -> None:
+        self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
+        self.assertEqual(gateway_module.__version__, version_module.__version__)
+
+    def test_cli_version_reports_package_version(self) -> None:
+        stdout = io.StringIO()
+
+        with mock.patch("sys.stdout", stdout):
+            with self.assertRaises(SystemExit) as context:
+                gateway_module.main(["--version"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn(gateway_module.__version__, stdout.getvalue())
+
+    def test_advertised_tools_have_gateway_handlers(self) -> None:
+        self.assertEqual(gateway_module.TOOL_NAMES, tuple(gateway_module.TOOL_HANDLERS))
+        for handler_name in gateway_module.TOOL_HANDLERS.values():
+            with self.subTest(handler_name=handler_name):
+                self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
+
+    def test_advertised_tools_have_param_specs(self) -> None:
+        self.assertEqual(
+            set(gateway_module.TOOL_HANDLERS),
+            set(gateway_module.TOOL_PARAM_NAMES),
+        )
+
+    def test_rejects_non_object_request_without_calling_core(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(["initialize"])
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("expected object", response["error"]["message"])
+
+    def test_rejects_non_object_params_without_calling_core_method(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "arborist/get_semantic_skeleton",
+                "params": [],
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 7)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("invalid params", response["error"]["message"])
+
+    def test_rejects_unexpected_initialize_params_without_calling_core(self) -> None:
+        class StubCore:
+            def supported_languages(self) -> list[str]:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "initialize",
+                "params": {"clientInfo": {"name": "codex"}},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 8)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("clientInfo", response["error"]["message"])
+
+    def test_rejects_missing_method_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request({"jsonrpc": "2.0", "id": 3, "params": {}})
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 3)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("missing method", response["error"]["message"])
+
+    def test_reports_unknown_method_with_method_not_found_code(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"jsonrpc": "2.0", "id": 5, "method": "arborist/nope", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 5)
+        self.assertEqual(response["error"]["code"], -32601)
+        self.assertIn("method not found", response["error"]["message"])
+
+    def test_rejects_missing_jsonrpc_version(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"id": 6, "method": "arborist/list_symbol_indexes", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 6)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_rejects_non_2_0_jsonrpc_version(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "1.0",
+                "id": 8,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 8)
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_invalid_jsonrpc_version_with_array_id_returns_null_id(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "1.0",
+                "id": [],
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_missing_jsonrpc_with_bool_id_returns_null_id(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {"id": True, "method": "arborist/list_symbol_indexes", "params": {}}
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("jsonrpc", response["error"]["message"])
+
+    def test_rejects_array_request_id_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": [],
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_rejects_bool_request_id_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": True,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_rejects_nan_request_id_object_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": float("nan"),
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_rejects_infinite_request_id_object_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": float("inf"),
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_rejects_fractional_request_id_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1.5,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_rejects_float_request_id_as_invalid_request(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1.0,
+                "method": "arborist/list_symbol_indexes",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertIsNone(response["id"])
+        self.assertEqual(response["error"]["code"], -32600)
+        self.assertIn("invalid id", response["error"]["message"])
+
+    def test_reports_missing_required_param_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 9)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path", response["error"]["message"])
+
+    def test_rejects_unexpected_top_level_params_without_calling_core(self) -> None:
+        class StubCore:
+            def list_symbol_indexes_json(self) -> str:
+                raise AssertionError("core should not be called")
+
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def close_virtual_file_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/list_symbol_indexes",
+                {"unexpected": True},
+                "unexpected",
+            ),
+            (
+                "arborist/trace_symbol_graph",
+                {"symbol_path": "top_level", "workspaceRoot": "."},
+                "workspaceRoot",
+            ),
+            (
+                "arborist/did_close",
+                {"file_path": "sample.py", "persist": False, "save": True},
+                "save",
+            ),
+        ]
+
+        for method, params, expected_key in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 44,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 44)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_key, response["error"]["message"])
+
+    def test_rejects_non_json_serializable_edits_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [{"new_text": {1, 2, 3}}],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 10)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits", response["error"]["message"])
+
+    def test_rejects_non_finite_edits_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [{"start": {"row": float("nan"), "column": 0}}],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 12)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits", response["error"]["message"])
+
+    def test_rejects_negative_position_edit_coordinates(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 28,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": -1, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 28)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].start.row", response["error"]["message"])
+
+    def test_rejects_missing_position_edit_new_text(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 29,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 29)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].new_text", response["error"]["message"])
+
+    def test_rejects_reversed_position_edit_range(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 37,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 2, "column": 0},
+                            "end": {"row": 1, "column": 9},
+                            "new_text": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 37)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].start", response["error"]["message"])
+
+    def test_rejects_unknown_position_edit_fields(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 40,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                            "newText": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 40)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].newText", response["error"]["message"])
+
+    def test_rejects_unknown_position_fields(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 41,
+                "method": "arborist/did_change",
+                "params": {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0, "character": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 41)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("edits[0].start.character", response["error"]["message"])
+
+    def test_rejects_string_bool_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "arborist/list_virtual_files",
+                "params": {"dirty_only": "false"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 11)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("dirty_only", response["error"]["message"])
+
+    def test_rejects_string_int_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 13,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py", "depth_limit": "2"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 13)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("depth_limit", response["error"]["message"])
+
+    def test_rejects_bool_int_params(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def apply_buffer_edit_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/get_semantic_skeleton",
+                {"file_path": "sample.py", "depth_limit": True},
+                "depth_limit",
+            ),
+            (
+                "arborist/apply_buffer_edit",
+                {
+                    "file_path": "sample.py",
+                    "start_byte": True,
+                    "old_end_byte": 1,
+                    "new_text": "x",
+                },
+                "start_byte",
+            ),
+        ]
+
+        for method, params, expected_message in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 42,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 42)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_message, response["error"]["message"])
+
+    def test_rejects_negative_optional_int_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "sample.py", "depth_limit": -1},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 14)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("depth_limit", response["error"]["message"])
+
+    def test_rejects_negative_search_limit(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 55,
+                "method": "arborist/search_symbols",
+                "params": {"workspace_root": ".", "query": "helper", "limit": -1},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 55)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("limit", response["error"]["message"])
+
+    def test_rejects_non_string_optional_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": 123, "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 15)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
+    def test_rejects_blank_required_string_params(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 39,
+                "method": "arborist/get_semantic_skeleton",
+                "params": {"file_path": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 39)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path", response["error"]["message"])
+
+    def test_rejects_blank_optional_string_params(self) -> None:
+        class StubCore:
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 40,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": "   ", "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 40)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
+    def test_rejects_blank_search_query(self) -> None:
+        class StubCore:
+            def search_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 56,
+                "method": "arborist/search_symbols",
+                "params": {"workspace_root": ".", "query": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 56)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("query", response["error"]["message"])
+
+    def test_rejects_blank_search_filters(self) -> None:
+        class StubCore:
+            def search_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 58,
+                "method": "arborist/search_symbols",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "file_path_contains": "   ",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 58)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path_contains", response["error"]["message"])
+
+    def test_rejects_blank_list_symbols_filters(self) -> None:
+        class StubCore:
+            def list_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 59,
+                "method": "arborist/list_symbols",
+                "params": {"workspace_root": ".", "node_kind": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 59)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("node_kind", response["error"]["message"])
+
+    def test_rejects_null_string_param_with_default(self) -> None:
+        class StubCore:
+            def trace_symbol_graph_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 38,
+                "method": "arborist/trace_symbol_graph",
+                "params": {"workspace_root": None, "symbol_path": "top_level"},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 38)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("workspace_root", response["error"]["message"])
+
+    def test_rejects_invalid_trace_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 16,
+                "method": "arborist/trace_symbol_graph",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 16)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_invalid_trace_symbol_neighborhood_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 64,
+                "method": "arborist/trace_symbol_neighborhood",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 64)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_negative_trace_symbol_neighborhood_limits(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 65,
+                "method": "arborist/trace_symbol_neighborhood",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "max_depth": -1,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 65)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_depth", response["error"]["message"])
+
+    def test_rejects_zero_trace_symbol_neighborhood_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 67,
+                "method": "arborist/trace_symbol_neighborhood",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 67)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_read_symbol_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 62,
+                "method": "arborist/read_symbol_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 62)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_invalid_read_symbol_neighborhood_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 70,
+                "method": "arborist/read_symbol_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 70)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_read_symbol_neighborhood_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 71,
+                "method": "arborist/read_symbol_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 71)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_read_symbol_discovery_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 72,
+                "method": "arborist/read_symbol_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 72)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_read_symbol_discovery_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 73,
+                "method": "arborist/read_symbol_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "orchestrate",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 73)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_list_symbols_neighborhood_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 79,
+                "method": "arborist/list_symbols_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 79)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_list_symbols_neighborhood_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 80,
+                "method": "arborist/list_symbols_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 80)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_search_symbols_discovery_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 82,
+                "method": "arborist/search_symbols_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 82)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_search_symbols_discovery_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 83,
+                "method": "arborist/search_symbols_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 83)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_list_symbols_discovery_context_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 84,
+                "method": "arborist/list_symbols_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 84)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_list_symbols_discovery_context_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 85,
+                "method": "arborist/list_symbols_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 85)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_trace_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 17,
+                "method": "arborist/validate_patch_with_trace_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.c",
+                    "semantic_path": "orchestrate",
+                    "new_code": "int orchestrate(void) { return 0; }",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 17)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_invalid_graph_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 68,
+                "method": "arborist/validate_patch_with_graph_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.c",
+                    "semantic_path": "orchestrate",
+                    "new_code": "int orchestrate(void) { return 0; }",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 68)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_graph_context_max_nodes_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 69,
+                "method": "arborist/validate_patch_with_graph_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": "def orchestrate() -> int:\n    return 1\n",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 69)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_neighborhood_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 73,
+                "method": "arborist/validate_patch_with_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.c",
+                    "semantic_path": "orchestrate",
+                    "new_code": "int orchestrate(void) { return 0; }",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 73)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_neighborhood_context_max_nodes_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 74,
+                "method": "arborist/validate_patch_with_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": "def orchestrate() -> int:\n    return 1\n",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 74)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_discovery_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 77,
+                "method": "arborist/validate_patch_with_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.c",
+                    "semantic_path": "orchestrate",
+                    "new_code": "int orchestrate(void) { return 0; }",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 77)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_discovery_context_max_nodes_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 78,
+                "method": "arborist/validate_patch_with_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": "def orchestrate() -> int:\n    return 1\n",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 78)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])

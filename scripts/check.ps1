@@ -157,11 +157,11 @@ try {
     Invoke-PowerShellSyntaxCheck
     Invoke-VersionConsistencyCheck $repoRoot
     Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
-    Invoke-NativeOrThrow "Running Rust tests..." "cargo" @("test", "--locked")
+    Invoke-ScriptOrThrow "Running Rust tests..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite rust -Quiet }
     Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
     Invoke-NativeOrThrow "Building gateway extension..." "cargo" @("build", "--locked", "-p", "arborist-py")
     Invoke-ScriptOrThrow "Syncing gateway extension..." { & (Join-Path $PSScriptRoot "sync-extension.ps1") -SkipBuild }
-    Invoke-NativeOrThrow "Running Python tests..." $Python @("-m", "unittest", "discover", "-s", "tests")
+    Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -Quiet }
     Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
     Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
     Invoke-GatewayInitializeSmoke $Python
