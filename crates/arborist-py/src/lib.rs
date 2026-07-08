@@ -661,6 +661,73 @@ mod tests {
     }
 
     #[test]
+    fn replay_patch_evidence_against_trace_json_rejects_tampered_syntax_error_details() {
+        prepare_python();
+
+        let core = ArboristCore::new();
+        let error = core
+            .replay_patch_evidence_against_trace_json(
+                r#"{
+                    "file":"sample.py",
+                    "target_path":"top_level",
+                    "resolved_path":"top_level",
+                    "resolved_symbol_id":"top_level",
+                    "applied":false,
+                    "bypass_applied":false,
+                    "updated_source":"def top_level() -> int:\n    return (\n",
+                    "validation":{
+                        "syntax_errors":[{
+                            "kind":"error",
+                            "message":"manually tampered",
+                            "start_byte":0,
+                            "end_byte":1,
+                            "start_point":{"row":0,"column":0},
+                            "end_point":{"row":0,"column":1}
+                        }],
+                        "unresolved_identifiers":[],
+                        "resolved_identifiers":[],
+                        "ambiguous_identifiers":[],
+                        "binding_decisions":[],
+                        "commit_gate":{
+                            "status":"rejected",
+                            "allowed":false,
+                            "reason":"syntax validation failed",
+                            "bypass_reason":null,
+                            "blocking_decisions":[],
+                            "evidence_invariants":[],
+                            "syntax_error_count":1
+                        }
+                    }
+                }"#,
+                r#"{
+                    "symbol":{
+                        "symbol_id":"top_level",
+                        "semantic_path":"top_level",
+                        "file_path":"sample.py",
+                        "node_kind":"function_definition",
+                        "origin_type":"trace_root",
+                        "evidence_key":"top_level|sample.py|function_definition|trace_root|0..10|",
+                        "byte_range":[0,10],
+                        "parameters":[],
+                        "dependencies":[],
+                        "references":[]
+                    },
+                    "callers":[],
+                    "callees":[],
+                    "evidence_keys":{
+                        "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                        "callers":[],
+                        "callees":[]
+                    },
+                    "indexed_files":1
+                }"#,
+            )
+            .expect_err("tampered syntax error details should be rejected");
+
+        assert!(error.to_string().contains("patch.validation.syntax_errors"));
+    }
+
+    #[test]
     fn replay_patch_evidence_against_trace_json_rejects_tampered_resolved_identifier_summaries() {
         prepare_python();
 

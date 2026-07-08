@@ -71,6 +71,15 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
 fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
     patch.validate_trace_replay_input()?;
 
+    let document = language::parse_document(Path::new(&patch.file), &patch.updated_source)?;
+    let expected_syntax_errors =
+        patching::collect_syntax_errors(document.tree.root_node(), &patch.updated_source);
+    if patch.validation.syntax_errors != expected_syntax_errors {
+        bail!(
+            "invalid patch.validation.syntax_errors: expected syntax errors derived from patch.updated_source"
+        );
+    }
+
     let expected_commit_gate = patching::evaluate_patch_commit_gate(
         &patch.validation,
         patch.validation.commit_gate.bypass_reason.as_deref(),
@@ -2060,6 +2069,39 @@ int helper(int value) {
         let replay = replay_patch_evidence_against_trace(&patch, &trace)
             .expect_err("blank selected evidence keys should be rejected");
         assert!(replay.to_string().contains("selected_evidence_key"));
+    }
+
+    #[test]
+    fn rejects_tampered_syntax_error_details_during_replay() {
+        let dir = temporary_dir();
+        let caller = dir.join("caller.c");
+
+        fs::write(
+            &caller,
+            "int orchestrate(int value) {\n    return value + 1;\n}\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "orchestrate",
+            "int orchestrate(int value) {\n    return value + 1\n}\n",
+            None,
+        )
+        .unwrap();
+        assert!(!patch.applied);
+        assert_eq!(patch.validation.syntax_errors.len(), 1);
+
+        let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+        patch.validation.syntax_errors[0].message = "manually tampered".to_string();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("tampered syntax error details should be rejected");
+        assert!(
+            replay
+                .to_string()
+                .contains("patch.validation.syntax_errors")
+        );
     }
 
     #[test]

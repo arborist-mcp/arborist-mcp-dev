@@ -1622,6 +1622,89 @@ class GatewayProtocolTests(unittest.TestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("selected_evidence_key", response["error"]["message"])
 
+    def test_rejects_tampered_syntax_error_details_as_invalid_params(self) -> None:
+        gateway = ArboristGateway()
+
+        cases = [
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+        ]
+
+        params = {
+            "patch": {
+                "file": "sample.py",
+                "target_path": "top_level",
+                "resolved_path": "top_level",
+                "resolved_symbol_id": "top_level",
+                "applied": False,
+                "bypass_applied": False,
+                "updated_source": "def top_level() -> int:\n    return (\n",
+                "validation": {
+                    "syntax_errors": [
+                        {
+                            "kind": "error",
+                            "message": "manually tampered",
+                            "start_byte": 0,
+                            "end_byte": 1,
+                            "start_point": {"row": 0, "column": 0},
+                            "end_point": {"row": 0, "column": 1},
+                        }
+                    ],
+                    "unresolved_identifiers": [],
+                    "resolved_identifiers": [],
+                    "ambiguous_identifiers": [],
+                    "binding_decisions": [],
+                    "commit_gate": {
+                        "status": "rejected",
+                        "allowed": False,
+                        "reason": "syntax validation failed",
+                        "bypass_reason": None,
+                        "blocking_decisions": [],
+                        "evidence_invariants": [],
+                        "syntax_error_count": 1,
+                    },
+                },
+            },
+            "trace": {
+                "symbol": {
+                    "symbol_id": "top_level",
+                    "semantic_path": "top_level",
+                    "file_path": "sample.py",
+                    "node_kind": "function_definition",
+                    "origin_type": "trace_root",
+                    "evidence_key": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range": [0, 10],
+                    "parameters": [],
+                    "dependencies": [],
+                    "references": [],
+                },
+                "callers": [],
+                "callees": [],
+                "evidence_keys": {
+                    "symbol": "top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers": [],
+                    "callees": [],
+                },
+                "indexed_files": 1,
+            },
+        }
+
+        for method in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 56,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 56)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("patch.validation.syntax_errors", response["error"]["message"])
+
     def test_rejects_tampered_resolved_identifier_summaries_as_invalid_params(
         self,
     ) -> None:
