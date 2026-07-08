@@ -36,9 +36,11 @@ TOOL_HANDLERS = {
     "arborist/list_symbols": "_list_symbols",
     "arborist/list_symbols_context": "_list_symbols_context",
     "arborist/list_symbols_neighborhood_context": "_list_symbols_neighborhood_context",
+    "arborist/list_symbols_discovery_context": "_list_symbols_discovery_context",
     "arborist/search_symbols": "_search_symbols",
     "arborist/search_symbols_context": "_search_symbols_context",
     "arborist/search_symbols_neighborhood_context": "_search_symbols_neighborhood_context",
+    "arborist/search_symbols_discovery_context": "_search_symbols_discovery_context",
     "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
     "arborist/validate_patch_commit_with_trace": "_validate_patch_commit_with_trace",
     "arborist/validate_patch_with_trace_context": "_validate_patch_with_trace_context",
@@ -146,6 +148,16 @@ TOOL_PARAM_NAMES = {
         "file_path_contains",
         "node_kind",
     ),
+    "arborist/list_symbols_discovery_context": (
+        "workspace_root",
+        "limit",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+        "file_path_contains",
+        "node_kind",
+    ),
     "arborist/search_symbols": (
         "workspace_root",
         "query",
@@ -163,6 +175,17 @@ TOOL_PARAM_NAMES = {
         "node_kind",
     ),
     "arborist/search_symbols_neighborhood_context": (
+        "workspace_root",
+        "query",
+        "limit",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+        "file_path_contains",
+        "node_kind",
+    ),
+    "arborist/search_symbols_discovery_context": (
         "workspace_root",
         "query",
         "limit",
@@ -510,6 +533,36 @@ class ArboristGateway:
         )
         return self._decode_core_object(payload)
 
+    def _search_symbols_discovery_context(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        query = self._require_string(params, "query")
+        limit = self._optional_int(params, "limit", default=20)
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        file_path_contains = self._optional_string(params, "file_path_contains")
+        node_kind = self._optional_string(params, "node_kind")
+        payload = self._require_core().search_symbols_discovery_context_json(
+            workspace_root,
+            query,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+        )
+        return self._decode_core_object(payload)
+
     def _list_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         limit = self._optional_int(params, "limit", default=100)
@@ -559,6 +612,36 @@ class ArboristGateway:
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
         payload = self._require_core().list_symbols_neighborhood_context_json(
+            workspace_root,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+        )
+        return self._decode_core_object(payload)
+
+    def _list_symbols_discovery_context(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        limit = self._optional_int(params, "limit", default=100)
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        file_path_contains = self._optional_string(params, "file_path_contains")
+        node_kind = self._optional_string(params, "node_kind")
+        payload = self._require_core().list_symbols_discovery_context_json(
             workspace_root,
             limit,
             direction,

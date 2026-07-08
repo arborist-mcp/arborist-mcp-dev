@@ -5,11 +5,13 @@ use arborist_core::{
     PatchAstNodeResult, PositionEdit, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
     execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
     get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
-    list_symbols_from_index_filtered, list_symbols_neighborhood_context_from_index_filtered,
-    patch_ast_node, read_symbol_context_from_index, read_symbol_from_index,
+    list_symbols_discovery_context_from_index_filtered, list_symbols_from_index_filtered,
+    list_symbols_neighborhood_context_from_index_filtered, patch_ast_node,
+    read_symbol_context_from_index, read_symbol_from_index,
     read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
-    search_symbols_context_from_index_filtered, search_symbols_from_index_filtered,
+    search_symbols_context_from_index_filtered,
+    search_symbols_discovery_context_from_index_filtered, search_symbols_from_index_filtered,
     search_symbols_neighborhood_context_from_index_filtered, supported_languages,
     trace_symbol_graph_from_index, trace_symbol_neighborhood_from_index,
     validate_patch_commit_with_trace, validate_patch_with_graph_context,
@@ -379,6 +381,51 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    fn search_symbols_discovery_context_json(
+        &self,
+        workspace_root: &str,
+        query: &str,
+        limit: usize,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+        file_path_contains: Option<String>,
+        node_kind: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match index_db_path {
+            Some(index_db_path) => search_symbols_discovery_context_from_index_filtered(
+                Path::new(&index_db_path),
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            None => self
+                .vfs
+                .borrow_mut()
+                .search_symbols_discovery_context_filtered(
+                    Path::new(workspace_root),
+                    query,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
     #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None))]
     fn list_symbols_json(
         &self,
@@ -463,6 +510,48 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .list_symbols_neighborhood_context_filtered(
+                    Path::new(workspace_root),
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    fn list_symbols_discovery_context_json(
+        &self,
+        workspace_root: &str,
+        limit: usize,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+        file_path_contains: Option<String>,
+        node_kind: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match index_db_path {
+            Some(index_db_path) => list_symbols_discovery_context_from_index_filtered(
+                Path::new(&index_db_path),
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            None => self
+                .vfs
+                .borrow_mut()
+                .list_symbols_discovery_context_filtered(
                     Path::new(workspace_root),
                     limit,
                     direction,
