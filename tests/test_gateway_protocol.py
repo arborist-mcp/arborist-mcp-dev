@@ -716,6 +716,32 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("query", response["error"]["message"])
 
+    def test_rejects_blank_search_filters(self) -> None:
+        class StubCore:
+            def search_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 58,
+                "method": "arborist/search_symbols",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "file_path_contains": "   ",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 58)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("file_path_contains", response["error"]["message"])
+
     def test_rejects_null_string_param_with_default(self) -> None:
         class StubCore:
             def trace_symbol_graph_json(self, *args: object) -> str:
@@ -859,6 +885,8 @@ class GatewayProtocolTests(unittest.TestCase):
                     "query": "helper",
                     "limit": 5,
                     "index_db_path": "symbols.db",
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
                 },
             }
         )
@@ -873,7 +901,7 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["result"]["match_details"][0]["score"], 1000)
         self.assertEqual(
             gateway._core.calls,
-            [(".", "helper", 5, "symbols.db")],
+            [(".", "helper", 5, "symbols.db", "graph", "function_definition")],
         )
 
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:

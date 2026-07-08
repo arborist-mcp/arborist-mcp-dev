@@ -25,8 +25,9 @@ pub use language::{read_source, supported_languages};
 pub use patching::{patch_ast_node, patch_ast_node_from_path};
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
-    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_from_index,
-    trace_symbol_graph, trace_symbol_graph_from_index,
+    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_filtered,
+    search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
+    trace_symbol_graph_from_index,
 };
 pub use vfs::VirtualFileSystem;
 
@@ -511,8 +512,9 @@ mod tests {
         TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
         get_semantic_skeleton, get_semantic_skeleton_from_path, patch_ast_node,
         patch_ast_node_from_path, rebuild_symbol_index, refresh_symbol_index_for_file,
-        replay_patch_evidence_against_trace, search_symbols, search_symbols_from_index,
-        trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
+        replay_patch_evidence_against_trace, search_symbols, search_symbols_filtered,
+        search_symbols_from_index, search_symbols_from_index_filtered, trace_symbol_graph,
+        trace_symbol_graph_from_index, validate_patch_commit_with_trace,
         validate_patch_trace_validation_result, validate_patch_with_trace_context,
         validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
         validate_trace_patch_evidence_replay_result,
@@ -7146,6 +7148,72 @@ def orchestrate(value: int) -> int:\n    return value\n",
                 .iter()
                 .any(|symbol| symbol.semantic_path == "helper")
         );
+    }
+
+    #[test]
+    fn search_symbols_filters_by_file_path_and_node_kind() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let helper_class = dir.join("helper_types.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        fs::write(
+            &helper_class,
+            "class Helper:\n    pass\n\n\ndef helper_factory() -> Helper:\n    return Helper()\n",
+        )
+        .unwrap();
+
+        let live =
+            search_symbols_filtered(&dir, "helper", 10, Some("types"), Some("class_definition"))
+                .unwrap();
+        assert_eq!(live.total_matches, 1);
+        assert_eq!(live.matches.len(), 1);
+        assert_eq!(live.matches[0].semantic_path, "Helper");
+        assert_eq!(live.matches[0].node_kind, "class_definition");
+        assert!(live.matches[0].file_path.ends_with("helper_types.py"));
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = search_symbols_from_index_filtered(
+            &db_path,
+            "helper",
+            10,
+            Some("types"),
+            Some("class_definition"),
+        )
+        .unwrap();
+        assert_eq!(persisted.total_matches, 1);
+        assert_eq!(persisted.matches.len(), 1);
+        assert_eq!(persisted.matches[0].semantic_path, "Helper");
+        assert_eq!(persisted.matches[0].node_kind, "class_definition");
+    }
+
+    #[test]
+    fn search_symbols_filtered_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        fs::write(&db_path, "").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(&helper, Some("class RenamedHelper:\n    pass\n"))
+            .unwrap();
+
+        let filtered = vfs
+            .search_symbols_filtered(
+                &dir,
+                "helper",
+                10,
+                Some("helper.py"),
+                Some("class_definition"),
+            )
+            .unwrap();
+        assert_eq!(filtered.total_matches, 1);
+        assert_eq!(filtered.matches.len(), 1);
+        assert_eq!(filtered.matches[0].semantic_path, "RenamedHelper");
+        assert_eq!(filtered.matches[0].node_kind, "class_definition");
     }
 
     #[test]

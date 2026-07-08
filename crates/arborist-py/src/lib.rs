@@ -5,9 +5,10 @@ use arborist_core::{
     PatchAstNodeResult, PositionEdit, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
     execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
     get_semantic_skeleton_from_path, patch_ast_node, rebuild_symbol_index,
-    refresh_symbol_index_for_file, replay_patch_evidence_against_trace, search_symbols_from_index,
-    supported_languages, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
-    validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
+    refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
+    search_symbols_from_index_filtered, supported_languages, trace_symbol_graph_from_index,
+    validate_patch_commit_with_trace, validate_patch_with_trace_context,
+    validate_patch_with_trace_context_from_path,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -157,22 +158,31 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None))]
     fn search_symbols_json(
         &self,
         workspace_root: &str,
         query: &str,
         limit: usize,
         index_db_path: Option<String>,
+        file_path_contains: Option<String>,
+        node_kind: Option<String>,
     ) -> PyResult<String> {
         let result = match index_db_path {
-            Some(index_db_path) => {
-                search_symbols_from_index(Path::new(&index_db_path), query, limit)
-            }
-            None => self
-                .vfs
-                .borrow_mut()
-                .search_symbols(Path::new(workspace_root), query, limit),
+            Some(index_db_path) => search_symbols_from_index_filtered(
+                Path::new(&index_db_path),
+                query,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            None => self.vfs.borrow_mut().search_symbols_filtered(
+                Path::new(workspace_root),
+                query,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
         }
         .map_err(to_py_error)?;
 

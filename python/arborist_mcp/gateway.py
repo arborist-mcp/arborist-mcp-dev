@@ -89,6 +89,8 @@ TOOL_PARAM_NAMES = {
         "query",
         "limit",
         "index_db_path",
+        "file_path_contains",
+        "node_kind",
     ),
     "arborist/replay_patch_evidence_against_trace": ("patch", "trace"),
     "arborist/validate_patch_commit_with_trace": ("patch", "trace"),
@@ -269,11 +271,15 @@ class ArboristGateway:
         query = self._require_string(params, "query")
         limit = self._optional_int(params, "limit", default=20)
         index_db_path = self._optional_string(params, "index_db_path")
+        file_path_contains = self._optional_string(params, "file_path_contains")
+        node_kind = self._optional_string(params, "node_kind")
         payload = self._require_core().search_symbols_json(
             workspace_root,
             query,
             limit,
             index_db_path,
+            file_path_contains,
+            node_kind,
         )
         return self._decode_core_object(payload)
 

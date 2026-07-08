@@ -106,9 +106,26 @@ pub fn search_symbols(
     query: &str,
     limit: usize,
 ) -> Result<SymbolSearchResult> {
+    search_symbols_filtered(workspace_root, query, limit, None, None)
+}
+
+pub fn search_symbols_filtered(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
-    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
+    search_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
 }
 
 pub fn trace_symbol_graph_with_overrides(
@@ -122,15 +139,24 @@ pub fn trace_symbol_graph_with_overrides(
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
-pub fn search_symbols_with_overrides(
+pub fn search_symbols_with_overrides_filtered(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
     query: &str,
     limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
-    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
+    search_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
 }
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
@@ -173,9 +199,26 @@ pub fn search_symbols_from_index(
     query: &str,
     limit: usize,
 ) -> Result<SymbolSearchResult> {
+    search_symbols_from_index_filtered(db_path, query, limit, None, None)
+}
+
+pub fn search_symbols_from_index_filtered(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchResult> {
     let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
-    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
+    search_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
 }
 
 pub fn refresh_symbol_index_for_file(
@@ -1322,16 +1365,28 @@ fn search_from_symbols(
     indexed_files: usize,
     query: &str,
     limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
     let query = query.trim();
     if query.is_empty() {
         return Err(anyhow!("query must not be blank"));
     }
+    let file_path_contains =
+        normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
+    let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
 
     let normalized_query = query.to_ascii_lowercase();
     let mut ranked_matches = resolved_symbols
         .iter()
         .filter_map(|symbol| {
+            if !symbol_matches_search_filters(
+                symbol,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ) {
+                return None;
+            }
             let detail = search_match_detail(symbol, query, &normalized_query)?;
             Some((detail, symbol))
         })
@@ -1371,6 +1426,40 @@ fn search_from_symbols(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+fn normalize_optional_search_filter(value: Option<&str>, field: &str) -> Result<Option<String>> {
+    match value {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(anyhow!("{field} must not be blank"));
+            }
+            Ok(Some(trimmed.to_ascii_lowercase()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn symbol_matches_search_filters(
+    symbol: &SymbolMeta,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> bool {
+    if let Some(file_path_contains) = file_path_contains
+        && !symbol
+            .file_path
+            .to_ascii_lowercase()
+            .contains(file_path_contains)
+    {
+        return false;
+    }
+    if let Some(node_kind) = node_kind
+        && symbol.node_kind.to_ascii_lowercase() != node_kind
+    {
+        return false;
+    }
+    true
 }
 
 fn trace_evidence_keys(

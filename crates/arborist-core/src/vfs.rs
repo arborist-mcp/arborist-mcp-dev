@@ -21,7 +21,7 @@ use crate::patching::{
     validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
-    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols_with_overrides,
+    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols_with_overrides_filtered,
     trace_symbol_graph_with_overrides,
 };
 
@@ -421,9 +421,27 @@ impl VirtualFileSystem {
         query: &str,
         limit: usize,
     ) -> Result<SymbolSearchResult> {
+        self.search_symbols_filtered(workspace_root, query, limit, None, None)
+    }
+
+    pub fn search_symbols_filtered(
+        &mut self,
+        workspace_root: &Path,
+        query: &str,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+    ) -> Result<SymbolSearchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        search_symbols_with_overrides(&workspace_root, &overrides, query, limit)
+        search_symbols_with_overrides_filtered(
+            &workspace_root,
+            &overrides,
+            query,
+            limit,
+            file_path_contains,
+            node_kind,
+        )
     }
 
     fn ensure_loaded(&mut self, path: &Path, source_override: Option<&str>) -> Result<()> {
