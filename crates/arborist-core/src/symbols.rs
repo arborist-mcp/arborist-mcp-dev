@@ -1275,13 +1275,15 @@ fn trace_from_symbols(
         Vec::new()
     };
 
-    Ok(TraceSymbolGraphResult {
+    let result = TraceSymbolGraphResult {
         evidence_keys: trace_evidence_keys(&symbol, &callers, &callees),
         symbol,
         callers,
         callees,
         indexed_files,
-    })
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 fn trace_evidence_keys(

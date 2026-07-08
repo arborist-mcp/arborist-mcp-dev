@@ -1089,6 +1089,10 @@ impl TraceSymbolGraphResult {
 
         Ok(())
     }
+
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.validate_trace_replay_input()
+    }
 }
 
 fn ensure_nonblank(value: &str, field: &str) -> Result<()> {
@@ -1736,5 +1740,41 @@ mod tests {
                 .to_string()
                 .contains("virtual_edit.validation.commit_gate")
         );
+    }
+
+    #[test]
+    fn trace_result_validation_rejects_tampered_evidence_keys() {
+        let mut trace = serde_json::from_str::<TraceSymbolGraphResult>(
+            r#"{
+                "symbol":{
+                    "symbol_id":"top_level",
+                    "semantic_path":"top_level",
+                    "file_path":"sample.py",
+                    "node_kind":"function_definition",
+                    "origin_type":"trace_root",
+                    "evidence_key":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "byte_range":[0,10],
+                    "parameters":[],
+                    "dependencies":[],
+                    "references":[]
+                },
+                "callers":[],
+                "callees":[],
+                "evidence_keys":{
+                    "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                    "callers":[],
+                    "callees":[]
+                },
+                "indexed_files":1
+            }"#,
+        )
+        .expect("valid trace payload should deserialize");
+        trace.evidence_keys.symbol = "tampered".to_string();
+
+        let error = trace
+            .validate_public_output()
+            .expect_err("trace validation should reject tampered evidence key summaries");
+
+        assert!(error.to_string().contains("trace.evidence_keys.symbol"));
     }
 }
