@@ -474,19 +474,9 @@ fn trace_skip_reason_for_patch_gate_rejection() -> &'static str {
 }
 
 fn validate_trace_backed_patch_result(result: &TraceBackedPatchResult) -> Result<()> {
-    if result.trace_target != result.patch.resolved_symbol_id {
-        bail!("invalid trace_target: expected trace_target to match patch.resolved_symbol_id");
-    }
+    result.validate_public_output()?;
 
     if !result.patch.validation.syntax_errors.is_empty() {
-        if result.trace.is_some() {
-            bail!("invalid trace: expected no trace when patch validation reports syntax errors");
-        }
-        if result.trace_validation.is_some() {
-            bail!(
-                "invalid trace_validation: expected no trace validation when patch validation reports syntax errors"
-            );
-        }
         if result.trace_error.as_deref() != Some(trace_skip_reason_for_syntax_errors()) {
             bail!(
                 "invalid trace_error: expected syntax-error trace skip reason when patch validation reports syntax errors"
@@ -496,14 +486,6 @@ fn validate_trace_backed_patch_result(result: &TraceBackedPatchResult) -> Result
     }
 
     if !result.patch.applied {
-        if result.trace.is_some() {
-            bail!("invalid trace: expected no trace when patch validation rejects the patch");
-        }
-        if result.trace_validation.is_some() {
-            bail!(
-                "invalid trace_validation: expected no trace validation when patch validation rejects the patch"
-            );
-        }
         if result.trace_error.as_deref() != Some(trace_skip_reason_for_patch_gate_rejection()) {
             bail!(
                 "invalid trace_error: expected patch-gate trace skip reason when patch validation rejects the patch"
