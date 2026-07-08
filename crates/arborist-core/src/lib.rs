@@ -69,7 +69,7 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
 }
 
 fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
-    patch.validate_trace_replay_input()?;
+    patch.validate_public_output()?;
 
     let document = language::parse_document(Path::new(&patch.file), &patch.updated_source)?;
     let expected_syntax_errors =
@@ -158,7 +158,7 @@ pub fn replay_patch_evidence_against_trace(
     trace: &TraceSymbolGraphResult,
 ) -> Result<TracePatchEvidenceReplayResult> {
     validate_replay_patch_payload(patch)?;
-    trace.validate_trace_replay_input()?;
+    trace.validate_public_output()?;
     validate_replay_trace_target(patch, trace)?;
 
     let trace_callers = trace
@@ -2213,6 +2213,32 @@ int helper(int value) {
                 .to_string()
                 .contains("patch.validation.syntax_errors")
         );
+    }
+
+    #[test]
+    fn rejects_blank_patch_updated_source_during_replay() {
+        let dir = temporary_dir();
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &caller,
+            "def top_level(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let mut patch = patch_ast_node_from_path(
+            &caller,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 2\n",
+            None,
+        )
+        .unwrap();
+        let trace = trace_symbol_graph(&dir, "top_level", TraceDirection::Both).unwrap();
+        patch.updated_source = "   ".to_string();
+
+        let replay = replay_patch_evidence_against_trace(&patch, &trace)
+            .expect_err("blank patch sources should be rejected before replay");
+        assert!(replay.to_string().contains("patch.updated_source"));
     }
 
     #[test]
