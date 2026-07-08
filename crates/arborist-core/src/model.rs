@@ -300,6 +300,16 @@ impl RegisteredSymbolIndex {
     }
 }
 
+impl SymbolSearchResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.query, "symbol_search.query")?;
+        for (index, item) in self.matches.iter().enumerate() {
+            item.validate_trace_replay_input(&format!("symbol_search.matches[{index}]"))?;
+        }
+        ensure_unique_symbol_evidence_keys(&self.matches, "symbol_search.matches")
+    }
+}
+
 impl VirtualFileSnapshot {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         ensure_nonblank(&self.file, "virtual_snapshot.file")?;
@@ -1544,6 +1554,14 @@ pub struct RegisteredSymbolIndex {
     pub db_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolSearchResult {
+    pub query: String,
+    pub indexed_files: usize,
+    pub matches: Vec<SymbolSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VirtualFileStatus {
@@ -1558,9 +1576,10 @@ mod tests {
     use super::{
         PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult,
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, TraceBackedPatchResult,
-        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, SymbolSearchResult,
+        SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
+        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
+        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -1679,6 +1698,51 @@ mod tests {
         .expect_err("trace results should reject unknown nested fields");
 
         assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn symbol_search_result_rejects_blank_query() {
+        let result = SymbolSearchResult {
+            query: "   ".to_string(),
+            indexed_files: 1,
+            matches: Vec::new(),
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("blank search queries should be rejected");
+
+        assert!(error.to_string().contains("symbol_search.query"));
+    }
+
+    #[test]
+    fn symbol_search_result_rejects_duplicate_evidence_keys() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolSearchResult {
+            query: "helper".to_string(),
+            indexed_files: 1,
+            matches: vec![summary.clone(), summary],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("duplicate evidence keys should be rejected");
+
+        assert!(error.to_string().contains("duplicate evidence keys"));
     }
 
     #[test]

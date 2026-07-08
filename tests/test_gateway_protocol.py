@@ -616,6 +616,23 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("depth_limit", response["error"]["message"])
 
+    def test_rejects_negative_search_limit(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 55,
+                "method": "arborist/search_symbols",
+                "params": {"workspace_root": ".", "query": "helper", "limit": -1},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 55)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("limit", response["error"]["message"])
+
     def test_rejects_non_string_optional_params(self) -> None:
         gateway = ArboristGateway.__new__(ArboristGateway)
 
@@ -676,6 +693,28 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["id"], 40)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("workspace_root", response["error"]["message"])
+
+    def test_rejects_blank_search_query(self) -> None:
+        class StubCore:
+            def search_symbols_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 56,
+                "method": "arborist/search_symbols",
+                "params": {"workspace_root": ".", "query": "   "},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 56)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("query", response["error"]["message"])
 
     def test_rejects_null_string_param_with_default(self) -> None:
         class StubCore:
@@ -784,6 +823,50 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(
             response["result"]["trace_error"],
             "trace skipped because patch validation rejected the patch",
+        )
+
+    def test_search_symbols_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def search_symbols_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"query":"helper","indexed_files":2,"matches":['
+                    '{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"sample.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}'
+                    "]}"
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 57,
+                "method": "arborist/search_symbols",
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "limit": 5,
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 57)
+        self.assertEqual(response["result"]["query"], "helper")
+        self.assertEqual(response["result"]["matches"][0]["semantic_path"], "helper")
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "helper", 5, "symbols.db")],
         )
 
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:

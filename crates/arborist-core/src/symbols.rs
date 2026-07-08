@@ -15,8 +15,8 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSummary, SymbolSummaryInit, TraceDirection,
-    TraceEvidenceKeys, TraceSymbolGraphResult,
+    SymbolIndexStats, SymbolMeta, SymbolMetaInit, SymbolSearchResult, SymbolSummary,
+    SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
 };
 use crate::patching::{
     collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
@@ -101,6 +101,16 @@ pub fn trace_symbol_graph(
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
+pub fn search_symbols(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
+}
+
 pub fn trace_symbol_graph_with_overrides(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -110,6 +120,17 @@ pub fn trace_symbol_graph_with_overrides(
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn search_symbols_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
 }
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
@@ -145,6 +166,16 @@ pub fn trace_symbol_graph_from_index(
     let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn search_symbols_from_index(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    search_from_symbols(&resolved_symbols, indexed_files, query, limit)
 }
 
 pub fn refresh_symbol_index_for_file(
@@ -1286,6 +1317,48 @@ fn trace_from_symbols(
     Ok(result)
 }
 
+fn search_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+) -> Result<SymbolSearchResult> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err(anyhow!("query must not be blank"));
+    }
+
+    let normalized_query = query.to_ascii_lowercase();
+    let mut ranked_matches = resolved_symbols
+        .iter()
+        .filter_map(|symbol| {
+            let rank = search_match_rank(symbol, query, &normalized_query)?;
+            Some((rank, symbol))
+        })
+        .collect::<Vec<_>>();
+    ranked_matches.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.semantic_path.cmp(&right.1.semantic_path))
+            .then_with(|| left.1.file_path.cmp(&right.1.file_path))
+            .then_with(|| left.1.byte_range.cmp(&right.1.byte_range))
+    });
+
+    let matches = ranked_matches
+        .into_iter()
+        .take(limit)
+        .map(|(_, symbol)| symbol_summary_from_meta(symbol))
+        .collect::<Vec<_>>();
+    let result = SymbolSearchResult {
+        query: query.to_string(),
+        indexed_files,
+        matches,
+    };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
 fn trace_evidence_keys(
     symbol: &SymbolMeta,
     callers: &[SymbolSummary],
@@ -1302,6 +1375,101 @@ fn trace_evidence_keys(
             .map(|summary| summary.evidence_key.clone())
             .collect(),
     }
+}
+
+fn symbol_summary_from_meta(symbol: &SymbolMeta) -> SymbolSummary {
+    SymbolSummary::new(SymbolSummaryInit {
+        symbol_id: symbol.symbol_id.clone(),
+        semantic_path: symbol.semantic_path.clone(),
+        scope_path: symbol.scope_path.clone(),
+        file_path: symbol.file_path.clone(),
+        node_kind: symbol.node_kind.clone(),
+        origin_type: symbol.origin_type.clone(),
+        byte_range: symbol.byte_range,
+        signature: symbol.signature.clone(),
+        parameters: symbol.parameters.clone(),
+        return_type: symbol.return_type.clone(),
+        docstring: symbol.docstring.clone(),
+    })
+}
+
+fn search_match_rank(symbol: &SymbolMeta, query: &str, normalized_query: &str) -> Option<usize> {
+    let base_name = symbol_base_name(&symbol.semantic_path);
+    let normalized_base_name = base_name.to_ascii_lowercase();
+    let normalized_symbol_id = symbol.symbol_id.to_ascii_lowercase();
+    let normalized_semantic_path = symbol.semantic_path.to_ascii_lowercase();
+    let normalized_scope_path = symbol
+        .scope_path
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let normalized_file_path = symbol.file_path.to_ascii_lowercase();
+    let normalized_node_kind = symbol.node_kind.to_ascii_lowercase();
+    let normalized_signature = symbol
+        .signature
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let normalized_parameters = symbol.parameters.join(" ").to_ascii_lowercase();
+    let normalized_return_type = symbol
+        .return_type
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let normalized_docstring = symbol
+        .docstring
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if ![
+        normalized_base_name.as_str(),
+        normalized_symbol_id.as_str(),
+        normalized_semantic_path.as_str(),
+        normalized_scope_path.as_str(),
+        normalized_file_path.as_str(),
+        normalized_node_kind.as_str(),
+        normalized_signature.as_str(),
+        normalized_parameters.as_str(),
+        normalized_return_type.as_str(),
+        normalized_docstring.as_str(),
+    ]
+    .iter()
+    .any(|value| value.contains(normalized_query))
+    {
+        return None;
+    }
+
+    let exact_query =
+        query == symbol.semantic_path || query == symbol.symbol_id || query == base_name;
+    let rank = if exact_query {
+        1000
+    } else if normalized_base_name == normalized_query {
+        950
+    } else if normalized_symbol_id == normalized_query {
+        925
+    } else if normalized_semantic_path == normalized_query {
+        900
+    } else if normalized_base_name.starts_with(normalized_query) {
+        850
+    } else if normalized_semantic_path.starts_with(normalized_query) {
+        825
+    } else if normalized_symbol_id.starts_with(normalized_query) {
+        800
+    } else if normalized_file_path.contains(normalized_query) {
+        300
+    } else if normalized_signature.contains(normalized_query)
+        || normalized_parameters.contains(normalized_query)
+        || normalized_return_type.contains(normalized_query)
+    {
+        200
+    } else if normalized_docstring.contains(normalized_query) {
+        100
+    } else {
+        400
+    };
+
+    Some(rank)
 }
 
 fn persist_symbol_index(

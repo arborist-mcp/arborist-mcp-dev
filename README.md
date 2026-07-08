@@ -24,6 +24,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `commit_virtual_file`
 - `discard_virtual_file`
 - `rebuild_symbol_index`
+- `search_symbols`
 - `trace_symbol_graph`
 - `replay_patch_evidence_against_trace`
 - `validate_patch_commit_with_trace`
@@ -63,6 +64,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Virtual dry-run patch validation with syntax interception
 - Heuristic local symbol validation and bypass support
 - Workspace-level symbol graph indexing for Python and C
+- Workspace-level symbol search for Python and C, with the same structured symbol metadata used by skeleton, trace, and patch flows
 - Python trace/index resolution now follows local imported-module aliases such as `import graph_b as gb`, imported symbol aliases such as `from graph_b import helper as h`, and imported submodule aliases such as `from pkg import graph_c as gc`
 - SQLite-backed persisted symbol registry
 - Incremental rebuilds keyed by persisted file fingerprints
@@ -150,10 +152,11 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":11,"method":"arborist/patch_virtual_ast_node","params":{"file_path":"tests/fixtures/sample.py","semantic_path":"top_level","new_code":"def top_level(value: int) -> int:\n    return value + 3\n"}}
 {"jsonrpc":"2.0","id":12,"method":"arborist/commit_virtual_file","params":{"file_path":"tests/fixtures/sample.py"}}
 {"jsonrpc":"2.0","id":13,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":14,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":15,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
-{"jsonrpc":"2.0","id":16,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
-{"jsonrpc":"2.0","id":17,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
+{"jsonrpc":"2.0","id":14,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":15,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":16,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
+{"jsonrpc":"2.0","id":17,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
+{"jsonrpc":"2.0","id":18,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
 For one-shot analysis and validation, `get_semantic_skeleton`,
@@ -188,6 +191,8 @@ Python trace/index resolution also follows local import aliases and package re-e
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.
 
 When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the active VFS session first, so unsaved `did_open` / `did_change` / `patch_virtual_ast_node` edits are reflected immediately without touching disk.
+
+`search_symbols` gives agents a lightweight discovery step before trace or patch work. It searches the workspace or a persisted symbol index for case-insensitive matches across stable symbol fields such as `symbol_id`, `semantic_path`, `file_path`, `signature`, parameters, return type, and docstring, then returns the same structured symbol metadata shape used elsewhere. When `index_db_path` is omitted, `search_symbols` also respects active dirty VFS buffers inside the workspace.
 
 The stdio gateway currently accepts one JSON document per line. This keeps the environment lightweight while leaving room to swap in a full MCP transport adapter later.
 

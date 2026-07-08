@@ -14,18 +14,18 @@ use anyhow::{Result, bail};
 pub use model::{
     LanguageId, PatchAstNodeResult, PatchTraceValidationResult, PatchValidationReport, Position,
     PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSummary, TraceBackedPatchResult,
-    TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
-    TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SemanticSkeletonSymbol, SymbolIndexStats, SymbolMeta, SymbolSearchResult, SymbolSummary,
+    TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
+    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationAmbiguity, ValidationBinding,
+    ValidationIssue, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
 pub use patching::{patch_ast_node, patch_ast_node_from_path};
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
-    rebuild_symbol_index, refresh_symbol_index_for_file, trace_symbol_graph,
-    trace_symbol_graph_from_index,
+    rebuild_symbol_index, refresh_symbol_index_for_file, search_symbols, search_symbols_from_index,
+    trace_symbol_graph, trace_symbol_graph_from_index,
 };
 pub use vfs::VirtualFileSystem;
 
@@ -507,9 +507,10 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        TraceDirection, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
-        get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
-        rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
+        TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
+        get_semantic_skeleton, get_semantic_skeleton_from_path, patch_ast_node,
+        patch_ast_node_from_path, rebuild_symbol_index, refresh_symbol_index_for_file,
+        replay_patch_evidence_against_trace, search_symbols, search_symbols_from_index,
         trace_symbol_graph, trace_symbol_graph_from_index, validate_patch_commit_with_trace,
         validate_patch_trace_validation_result, validate_patch_with_trace_context,
         validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
@@ -7033,6 +7034,96 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(trace.callees.len(), 1);
         assert_eq!(trace.callees[0].semantic_path, "helper");
         assert!(!trace.symbol.file_path.contains("/../"));
+    }
+
+    #[test]
+    fn searches_symbols_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    \"\"\"Increment a value.\"\"\"\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let live = search_symbols(&dir, "helper", 10).unwrap();
+        assert_eq!(live.query, "helper");
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.matches.len(), 1);
+        assert_eq!(live.matches[0].semantic_path, "helper");
+        assert_eq!(live.matches[0].parameters, vec!["value: int".to_string()]);
+        assert_eq!(live.matches[0].return_type.as_deref(), Some("int"));
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = search_symbols_from_index(&db_path, "helper", 10).unwrap();
+        assert_eq!(persisted.query, "helper");
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.matches.len(), 1);
+        assert_eq!(persisted.matches[0].semantic_path, "helper");
+        assert_eq!(
+            persisted.matches[0].file_path,
+            helper.to_string_lossy().replace('\\', "/")
+        );
+    }
+
+    #[test]
+    fn search_symbols_prefers_exact_matches_and_honors_limit() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let helper_tools = dir.join("helper_tools.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        fs::write(
+            &helper_tools,
+            "def helper_tool() -> int:\n    return 2\n\ndef helper_secondary() -> int:\n    return 3\n",
+        )
+        .unwrap();
+
+        let live = search_symbols(&dir, "helper", 2).unwrap();
+        assert_eq!(live.matches.len(), 2);
+        assert_eq!(live.matches[0].semantic_path, "helper");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = search_symbols_from_index(&db_path, "helper", 1).unwrap();
+        assert_eq!(persisted.matches.len(), 1);
+        assert_eq!(persisted.matches[0].semantic_path, "helper");
+    }
+
+    #[test]
+    fn search_symbols_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(
+            &helper,
+            Some("def renamed_helper() -> int:\n    return 1\n"),
+        )
+        .unwrap();
+
+        let results = vfs.search_symbols(&dir, "renamed_helper", 10).unwrap();
+        assert_eq!(results.matches.len(), 1);
+        assert_eq!(results.matches[0].semantic_path, "renamed_helper");
+
+        let old_name = vfs.search_symbols(&dir, "helper", 10).unwrap();
+        assert_eq!(old_name.matches[0].semantic_path, "renamed_helper");
+        assert!(
+            !old_name
+                .matches
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
     }
 
     #[test]
