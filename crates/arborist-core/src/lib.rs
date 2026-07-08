@@ -12,15 +12,15 @@ use std::path::Path;
 use anyhow::{Result, bail};
 
 pub use model::{
-    GraphBackedPatchResult, LanguageId, PatchAstNodeResult, PatchTraceValidationResult,
-    PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-    SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexStats,
-    SymbolListResult, SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadResult,
-    SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
-    TraceDirection, TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult,
-    TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
-    TraceSymbolNeighborhoodResult, ValidationAmbiguity, ValidationBinding, ValidationIssue,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    GraphBackedPatchResult, LanguageId, NeighborhoodContextPatchResult, PatchAstNodeResult,
+    PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit, QueryCaptureResult,
+    RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult,
+    SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolNeighborhoodContextResult,
+    SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
+    TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
+    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
+    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationAmbiguity,
+    ValidationBinding, ValidationIssue, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use language::{read_source, supported_languages};
@@ -342,6 +342,34 @@ pub fn validate_patch_with_graph_context_from_path(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn validate_patch_with_neighborhood_context_from_path(
+    workspace_root: &Path,
+    path: &Path,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<NeighborhoodContextPatchResult> {
+    let workspace_root = language::normalize_absolute_path(workspace_root)?;
+    let path = language::normalize_absolute_path(path)?;
+    ensure_path_inside_workspace(&workspace_root, &path)?;
+    let source = read_source(&path)?;
+    validate_patch_with_neighborhood_context(
+        &workspace_root,
+        &path,
+        &source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
 pub fn validate_patch_with_trace_context(
     workspace_root: &Path,
     path: &Path,
@@ -483,6 +511,85 @@ pub fn validate_patch_with_graph_context(
         trace_error: None,
     };
     validate_graph_backed_patch_result(&result)?;
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn validate_patch_with_neighborhood_context(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<NeighborhoodContextPatchResult> {
+    let workspace_root = language::normalize_absolute_path(workspace_root)?;
+    let path = language::normalize_absolute_path(path)?;
+    ensure_path_inside_workspace(&workspace_root, &path)?;
+
+    let patch = patch_ast_node(&path, source, semantic_target, new_code, bypass_reason)?;
+    let trace_target = patch.resolved_symbol_id.clone();
+
+    if !patch.validation.syntax_errors.is_empty() {
+        let result = NeighborhoodContextPatchResult {
+            patch,
+            trace_target,
+            trace: None,
+            neighborhood_context: None,
+            trace_validation: None,
+            trace_error: Some(
+                TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+            ),
+        };
+        validate_neighborhood_context_patch_result(&result)?;
+        return Ok(result);
+    }
+
+    if !patch.applied {
+        let result = NeighborhoodContextPatchResult {
+            patch,
+            trace_target,
+            trace: None,
+            neighborhood_context: None,
+            trace_validation: None,
+            trace_error: Some(
+                TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection().to_string(),
+            ),
+        };
+        validate_neighborhood_context_patch_result(&result)?;
+        return Ok(result);
+    }
+
+    let mut overrides = BTreeMap::new();
+    overrides.insert(patch.file.clone(), patch.updated_source.clone());
+    let trace = symbols::trace_symbol_graph_with_overrides(
+        &workspace_root,
+        &overrides,
+        &trace_target,
+        direction.clone(),
+    )?;
+    let neighborhood_context = symbols::read_symbol_neighborhood_context_with_overrides(
+        &workspace_root,
+        &overrides,
+        &trace_target,
+        direction,
+        max_depth,
+        max_nodes,
+    )?;
+    let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
+
+    let result = NeighborhoodContextPatchResult {
+        patch,
+        trace_target,
+        trace: Some(trace),
+        neighborhood_context: Some(neighborhood_context),
+        trace_validation: Some(trace_validation),
+        trace_error: None,
+    };
+    validate_neighborhood_context_patch_result(&result)?;
     Ok(result)
 }
 
@@ -647,6 +754,46 @@ fn validate_graph_backed_patch_result(result: &GraphBackedPatchResult) -> Result
     Ok(())
 }
 
+fn validate_neighborhood_context_patch_result(
+    result: &NeighborhoodContextPatchResult,
+) -> Result<()> {
+    result.validate_public_output()?;
+    if !result.patch.validation.syntax_errors.is_empty() || !result.patch.applied {
+        return Ok(());
+    }
+
+    let trace = result
+        .trace
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("invalid trace: expected trace for applied patches"))?;
+    let neighborhood_context = result.neighborhood_context.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid neighborhood_context: expected neighborhood_context for applied patches"
+        )
+    })?;
+    let trace_validation = result.trace_validation.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("invalid trace_validation: expected trace validation for applied patches")
+    })?;
+    if result.trace_error.is_some() {
+        bail!("invalid trace_error: expected no trace error for applied patches");
+    }
+
+    validate_replay_trace_target(&result.patch, trace)?;
+    let expected = validate_patch_commit_with_trace(&result.patch, trace)?;
+    if trace_validation != &expected {
+        bail!(
+            "invalid trace_validation: expected trace-backed validation derived from patch and trace"
+        );
+    }
+    if neighborhood_context.neighborhood.symbol.symbol_id != trace.symbol.symbol_id {
+        bail!(
+            "invalid neighborhood_context.neighborhood.symbol.symbol_id: expected neighborhood root to match trace root symbol id"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -668,7 +815,8 @@ mod tests {
         trace_symbol_graph, trace_symbol_graph_from_index, trace_symbol_neighborhood,
         trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
         validate_patch_trace_validation_result, validate_patch_with_graph_context,
-        validate_patch_with_graph_context_from_path, validate_patch_with_trace_context,
+        validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
+        validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
         validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
         validate_trace_patch_evidence_replay_result,
     };
@@ -2964,6 +3112,133 @@ int helper(int value) {
         assert!(!rejected.patch.applied);
         assert!(rejected.trace.is_none());
         assert!(rejected.neighborhood.is_none());
+        assert!(rejected.trace_validation.is_none());
+        assert_eq!(
+            rejected.trace_error.as_deref(),
+            Some("trace skipped because patch validation rejected the patch")
+        );
+    }
+
+    #[test]
+    fn validates_patch_with_neighborhood_context_in_one_call() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let entry = dir.join("entry.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &entry,
+            "from caller import orchestrate\n\n\ndef entrypoint(value: int) -> int:\n    return orchestrate(value)\n",
+        )
+        .unwrap();
+
+        let result = validate_patch_with_neighborhood_context_from_path(
+            &dir,
+            &caller,
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+        )
+        .unwrap();
+
+        assert!(result.patch.applied);
+        assert_eq!(result.trace_target, result.patch.resolved_symbol_id);
+        assert!(result.trace.is_some());
+        assert!(result.neighborhood_context.is_some());
+        assert!(result.trace_validation.is_some());
+        assert!(result.trace_error.is_none());
+        assert!(
+            result
+                .trace_validation
+                .as_ref()
+                .is_some_and(|decision| decision.allowed)
+        );
+        let neighborhood_context = result
+            .neighborhood_context
+            .as_ref()
+            .expect("neighborhood context should be available");
+        assert_eq!(
+            neighborhood_context.neighborhood.symbol.semantic_path,
+            "orchestrate"
+        );
+        assert_eq!(
+            neighborhood_context.reads.len(),
+            neighborhood_context.neighborhood.nodes.len()
+        );
+        assert!(
+            neighborhood_context
+                .reads
+                .iter()
+                .any(|read| read.symbol.semantic_path == "helper")
+        );
+        assert!(
+            neighborhood_context
+                .reads
+                .iter()
+                .any(|read| read.symbol.semantic_path == "entrypoint")
+        );
+    }
+
+    #[test]
+    fn neighborhood_context_accepts_unsaved_source_and_keeps_skip_reason() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let success = validate_patch_with_neighborhood_context(
+            &dir,
+            &caller,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return value + 1\n",
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+        )
+        .unwrap();
+
+        assert!(success.patch.applied);
+        assert!(success.trace.is_some());
+        assert!(success.neighborhood_context.is_some());
+        assert!(success.trace_error.is_none());
+        assert!(!caller.exists());
+
+        let rejected = validate_patch_with_neighborhood_context(
+            &dir,
+            &caller,
+            "def orchestrate(value: int) -> int:\n    return value + 1\n",
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return missing_helper(value)\n",
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+        )
+        .unwrap();
+
+        assert!(!rejected.patch.applied);
+        assert!(rejected.trace.is_none());
+        assert!(rejected.neighborhood_context.is_none());
         assert!(rejected.trace_validation.is_none());
         assert_eq!(
             rejected.trace_error.as_deref(),

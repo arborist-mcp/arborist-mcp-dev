@@ -1006,6 +1006,52 @@ class GatewayProtocolTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 
+    def test_rejects_invalid_neighborhood_context_direction_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 73,
+                "method": "arborist/validate_patch_with_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.c",
+                    "semantic_path": "orchestrate",
+                    "new_code": "int orchestrate(void) { return 0; }",
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 73)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_neighborhood_context_max_nodes_as_invalid_params(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 74,
+                "method": "arborist/validate_patch_with_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "sample.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": "def orchestrate() -> int:\n    return 1\n",
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 74)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
     def test_trace_context_returns_trace_error_when_patch_gate_rejects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -1506,6 +1552,136 @@ class GatewayProtocolTests(unittest.TestCase):
             )],
         )
 
+    def test_neighborhood_context_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def validate_patch_with_neighborhood_context_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"patch":{"file":"caller.py","target_path":"orchestrate",'
+                    '"resolved_path":"orchestrate","resolved_symbol_id":"orchestrate",'
+                    '"applied":true,"bypass_applied":false,'
+                    '"updated_source":"def orchestrate(value: int) -> int:\\n    return helper(value)\\n",'
+                    '"validation":{"syntax_errors":[],"unresolved_identifiers":[],'
+                    '"resolved_identifiers":[],"ambiguous_identifiers":[],"binding_decisions":[],'
+                    '"commit_gate":{"status":"allowed","allowed":true,"reason":"ok",'
+                    '"bypass_reason":null,"blocking_decisions":[],"evidence_invariants":[],'
+                    '"syntax_error_count":0}}},'
+                    '"trace_target":"orchestrate",'
+                    '"trace":{"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate",'
+                    '"scope_path":null,"file_path":"caller.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"orchestrate|caller.py|function_definition|trace_root|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":["helper"],"references":["entrypoint"]},'
+                    '"callers":[{"symbol_id":"entrypoint","semantic_path":"entrypoint","scope_path":null,'
+                    '"file_path":"entry.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller",'
+                    '"evidence_key":"entrypoint|entry.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}],"callees":[{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"helper.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_callee",'
+                    '"evidence_key":"helper|helper.py|function_definition|trace_callee|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}],"evidence_keys":{"symbol":"orchestrate|caller.py|function_definition|trace_root|0..20|",'
+                    '"callers":["entrypoint|entry.py|function_definition|trace_caller|0..20|"],'
+                    '"callees":["helper|helper.py|function_definition|trace_callee|0..10|"]},'
+                    '"indexed_files":3},'
+                    '"neighborhood_context":{"neighborhood":{"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate",'
+                    '"scope_path":null,"file_path":"caller.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"orchestrate|caller.py|function_definition|trace_root|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":["helper"],"references":["entrypoint"]},'
+                    '"direction":"both","max_depth":2,"max_nodes":10,"truncated":false,'
+                    '"indexed_files":3,"nodes":['
+                    '{"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate","scope_path":null,'
+                    '"file_path":"caller.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"orchestrate|caller.py|function_definition|workspace_symbol|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"depth":0},'
+                    '{"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"helper.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_callee",'
+                    '"evidence_key":"helper|helper.py|function_definition|trace_callee|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"depth":1}],"edges":[{"from_symbol_id":"orchestrate","to_symbol_id":"helper"}]},'
+                    '"reads":['
+                    '{"indexed_files":3,"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate",'
+                    '"scope_path":null,"file_path":"caller.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"orchestrate|caller.py|function_definition|workspace_symbol|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def orchestrate(value: int) -> int:\\n    return helper(value)\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":24}},'
+                    '{"indexed_files":3,"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"helper.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_callee",'
+                    '"evidence_key":"helper|helper.py|function_definition|trace_callee|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":12}}]},'
+                    '"trace_validation":{"allowed":true,"status":"allowed","reason":"ok",'
+                    '"patch_gate_status":"allowed","replay_status":"matched",'
+                    '"replay":{"consistent":true,"matched_items":0,"blocked_items":0,"items":[]}},'
+                    '"trace_error":null}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 75,
+                "method": "arborist/validate_patch_with_neighborhood_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 75)
+        self.assertTrue(response["result"]["patch"]["applied"])
+        self.assertEqual(
+            response["result"]["trace"]["symbol"]["semantic_path"],
+            "orchestrate",
+        )
+        self.assertEqual(
+            response["result"]["neighborhood_context"]["neighborhood"]["nodes"][1]["symbol"]["semantic_path"],
+            "helper",
+        )
+        self.assertEqual(
+            response["result"]["neighborhood_context"]["reads"][1]["symbol"]["semantic_path"],
+            "helper",
+        )
+        self.assertTrue(response["result"]["trace_validation"]["allowed"])
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                ".",
+                "caller.py",
+                "orchestrate",
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                None,
+                None,
+                "both",
+                2,
+                10,
+            )],
+        )
+
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             workspace = Path(temp_dir)
@@ -1681,6 +1857,74 @@ class GatewayProtocolTests(unittest.TestCase):
                 any(
                     node["symbol"]["semantic_path"] == "helper"
                     for node in response["result"]["neighborhood"]["nodes"]
+                )
+            )
+
+    def test_neighborhood_context_accepts_unsaved_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            nested = workspace.joinpath("child")
+            helper = workspace.joinpath("helper.py")
+            caller = workspace.joinpath("caller.py")
+            entry = workspace.joinpath("entry.py")
+            nested.mkdir()
+            helper.write_text(
+                "def helper(value: int) -> int:\n    return value + 1\n",
+                encoding="utf-8",
+            )
+            entry.write_text(
+                "from caller import orchestrate\n\n\ndef entrypoint(value: int) -> int:\n    return orchestrate(value)\n",
+                encoding="utf-8",
+            )
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            gateway = ArboristGateway()
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 76,
+                    "method": "arborist/validate_patch_with_neighborhood_context",
+                    "params": {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return value + 1\n"
+                        ),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "direction": "both",
+                        "max_depth": 2,
+                        "max_nodes": 10,
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 76)
+            self.assertNotIn("error", response)
+            self.assertFalse(caller.exists())
+            self.assertTrue(response["result"]["patch"]["applied"])
+            self.assertEqual(response["result"]["patch"]["file"], expected_file)
+            self.assertIsNone(response["result"]["trace_error"])
+            self.assertTrue(response["result"]["trace_validation"]["allowed"])
+            self.assertEqual(
+                response["result"]["trace"]["symbol"]["semantic_path"],
+                "orchestrate",
+            )
+            self.assertEqual(
+                response["result"]["neighborhood_context"]["neighborhood"]["symbol"]["semantic_path"],
+                "orchestrate",
+            )
+            self.assertTrue(
+                any(
+                    read["symbol"]["semantic_path"] == "helper"
+                    for read in response["result"]["neighborhood_context"]["reads"]
                 )
             )
 

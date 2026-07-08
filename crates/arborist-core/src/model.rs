@@ -901,6 +901,17 @@ pub struct GraphBackedPatchResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct NeighborhoodContextPatchResult {
+    pub patch: PatchAstNodeResult,
+    pub trace_target: String,
+    pub trace: Option<TraceSymbolGraphResult>,
+    pub neighborhood_context: Option<SymbolNeighborhoodContextResult>,
+    pub trace_validation: Option<PatchTraceValidationResult>,
+    pub trace_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TraceSymbolGraphResult {
     pub symbol: SymbolMeta,
     pub callers: Vec<SymbolSummary>,
@@ -1867,6 +1878,108 @@ impl GraphBackedPatchResult {
     }
 }
 
+impl NeighborhoodContextPatchResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.patch.validate_public_output()?;
+        ensure_nonblank(&self.trace_target, "trace_target")?;
+        if self.trace_target != self.patch.resolved_symbol_id {
+            bail!("invalid trace_target: expected trace_target to match patch.resolved_symbol_id");
+        }
+
+        if !self.patch.validation.syntax_errors.is_empty() || !self.patch.applied {
+            if self.trace.is_some() {
+                bail!("invalid trace: expected no trace when the patch was not safely applied");
+            }
+            if self.neighborhood_context.is_some() {
+                bail!(
+                    "invalid neighborhood_context: expected no neighborhood_context when the patch was not safely applied"
+                );
+            }
+            if self.trace_validation.is_some() {
+                bail!(
+                    "invalid trace_validation: expected no trace validation when the patch was not safely applied"
+                );
+            }
+            let trace_error = self
+                .trace_error
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("invalid trace_error: expected trace_error when the patch was not safely applied"))?;
+            ensure_nonblank(trace_error, "trace_error")?;
+            let expected_reason = if !self.patch.validation.syntax_errors.is_empty() {
+                TraceBackedPatchResult::trace_skip_reason_for_syntax_errors()
+            } else {
+                TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
+            };
+            if trace_error != expected_reason {
+                bail!(
+                    "invalid trace_error: expected trace skip reason consistent with patch validation state"
+                );
+            }
+            return Ok(());
+        }
+
+        let trace = self
+            .trace
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("invalid trace: expected trace for applied patches"))?;
+        trace.validate_public_output()?;
+        let neighborhood_context = self.neighborhood_context.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid neighborhood_context: expected neighborhood_context for applied patches"
+            )
+        })?;
+        neighborhood_context.validate_public_output()?;
+        let trace_validation = self.trace_validation.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid trace_validation: expected trace validation for applied patches"
+            )
+        })?;
+        trace_validation.validate_public_output()?;
+        if self.trace_error.is_some() {
+            bail!("invalid trace_error: expected no trace error for applied patches");
+        }
+        if trace.symbol.symbol_id != self.patch.resolved_symbol_id {
+            bail!(
+                "invalid trace.symbol.symbol_id: expected trace root symbol id to match patch.resolved_symbol_id"
+            );
+        }
+        if trace.symbol.semantic_path != self.patch.resolved_path {
+            bail!(
+                "invalid trace.symbol.semantic_path: expected trace root semantic path to match patch.resolved_path"
+            );
+        }
+        if trace.symbol.file_path != self.patch.file {
+            bail!(
+                "invalid trace.symbol.file_path: expected trace root file path to match patch.file"
+            );
+        }
+
+        let neighborhood = &neighborhood_context.neighborhood;
+        if neighborhood.symbol.symbol_id != self.patch.resolved_symbol_id {
+            bail!(
+                "invalid neighborhood_context.neighborhood.symbol.symbol_id: expected neighborhood root symbol id to match patch.resolved_symbol_id"
+            );
+        }
+        if neighborhood.symbol.semantic_path != self.patch.resolved_path {
+            bail!(
+                "invalid neighborhood_context.neighborhood.symbol.semantic_path: expected neighborhood root semantic path to match patch.resolved_path"
+            );
+        }
+        if neighborhood.symbol.file_path != self.patch.file {
+            bail!(
+                "invalid neighborhood_context.neighborhood.symbol.file_path: expected neighborhood root file path to match patch.file"
+            );
+        }
+        if neighborhood.symbol.symbol_id != trace.symbol.symbol_id {
+            bail!(
+                "invalid neighborhood_context.neighborhood.symbol.symbol_id: expected neighborhood root to match trace root symbol id"
+            );
+        }
+
+        Ok(())
+    }
+}
+
 fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
     if replay.items.iter().any(|item| item.status == "failed") {
         return "failed".to_string();
@@ -2058,13 +2171,14 @@ pub struct VirtualFileStatus {
 #[cfg(test)]
 mod tests {
     use super::{
-        GraphBackedPatchResult, PatchAstNodeResult, PatchCommitGateReport,
-        PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit,
-        QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol,
-        SymbolIndexStats, SymbolListResult, SymbolNeighborhoodContextResult, SymbolReadResult,
-        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
-        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        GraphBackedPatchResult, NeighborhoodContextPatchResult, PatchAstNodeResult,
+        PatchCommitGateReport, PatchTraceValidationResult, PatchValidationReport, Position,
+        PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
+        SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult,
+        SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchMatchDetail,
+        SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
+        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
+        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -3237,5 +3351,86 @@ mod tests {
             .expect_err("applied graph-backed patch results should require a neighborhood");
 
         assert!(error.to_string().contains("neighborhood"));
+    }
+
+    #[test]
+    fn neighborhood_context_patch_validation_rejects_missing_neighborhood_context_for_applied_patch()
+     {
+        let result = NeighborhoodContextPatchResult {
+            patch: PatchAstNodeResult {
+                file: "sample.py".to_string(),
+                target_path: "top_level".to_string(),
+                resolved_path: "top_level".to_string(),
+                resolved_symbol_id: "top_level".to_string(),
+                applied: true,
+                bypass_applied: false,
+                updated_source: "def top_level() -> int:\n    return 1\n".to_string(),
+                validation: PatchValidationReport {
+                    syntax_errors: Vec::new(),
+                    unresolved_identifiers: Vec::new(),
+                    resolved_identifiers: Vec::new(),
+                    ambiguous_identifiers: Vec::new(),
+                    binding_decisions: Vec::new(),
+                    commit_gate: PatchCommitGateReport {
+                        status: "allowed".to_string(),
+                        allowed: true,
+                        reason: "ok".to_string(),
+                        bypass_reason: None,
+                        blocking_decisions: Vec::new(),
+                        evidence_invariants: Vec::new(),
+                        syntax_error_count: 0,
+                    },
+                },
+            },
+            trace_target: "top_level".to_string(),
+            trace: Some(
+                serde_json::from_str(
+                    r#"{
+                        "symbol":{
+                            "symbol_id":"top_level",
+                            "semantic_path":"top_level",
+                            "file_path":"sample.py",
+                            "node_kind":"function_definition",
+                            "origin_type":"trace_root",
+                            "evidence_key":"top_level|sample.py|function_definition|trace_root|0..10|",
+                            "byte_range":[0,10],
+                            "parameters":[],
+                            "dependencies":[],
+                            "references":[]
+                        },
+                        "callers":[],
+                        "callees":[],
+                        "evidence_keys":{
+                            "symbol":"top_level|sample.py|function_definition|trace_root|0..10|",
+                            "callers":[],
+                            "callees":[]
+                        },
+                        "indexed_files":1
+                    }"#,
+                )
+                .expect("valid trace payload should deserialize"),
+            ),
+            neighborhood_context: None,
+            trace_validation: Some(PatchTraceValidationResult {
+                allowed: true,
+                status: "allowed".to_string(),
+                reason: "ok".to_string(),
+                patch_gate_status: "allowed".to_string(),
+                replay_status: "matched".to_string(),
+                replay: TracePatchEvidenceReplayResult {
+                    consistent: true,
+                    matched_items: 0,
+                    blocked_items: 0,
+                    items: Vec::new(),
+                },
+            }),
+            trace_error: None,
+        };
+
+        let error = result.validate_public_output().expect_err(
+            "applied neighborhood-context patch results should require neighborhood_context",
+        );
+
+        assert!(error.to_string().contains("neighborhood_context"));
     }
 }
