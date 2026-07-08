@@ -17,8 +17,8 @@ use crate::language::{
 use crate::model::LanguageId;
 use crate::model::{
     SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit,
-    SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary,
-    SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
+    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchMatchDetail, SymbolSearchResult,
+    SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
     TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
 };
 use crate::patching::{
@@ -145,6 +145,26 @@ pub fn read_symbol_context(
     )
 }
 
+pub fn read_symbol_neighborhood_context(
+    workspace_root: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
 pub fn search_symbols(
     workspace_root: &Path,
     query: &str,
@@ -252,6 +272,27 @@ pub fn read_symbol_context_with_overrides(
         indexed_files,
         symbol_path,
         direction,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_neighborhood_context_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    read_symbol_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
         Some(file_overrides),
     )
 }
@@ -366,6 +407,26 @@ pub fn read_symbol_context_from_index(
         indexed_files,
         symbol_path,
         direction,
+        None,
+    )
+}
+
+pub fn read_symbol_neighborhood_context_from_index(
+    db_path: &Path,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
         None,
     )
 }
@@ -1653,22 +1714,8 @@ fn read_symbol_from_symbols(
     validate_trace_symbol_path(symbol_path)?;
 
     let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .cloned()
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    let source = symbol_source_text(&symbol, file_overrides)?;
-    let snippet = symbol_source_slice(&symbol, &source)?.to_string();
-    let start_point = position_from(point_for_offset(&source, symbol.byte_range.0)?);
-    let end_point = position_from(point_for_offset(&source, symbol.byte_range.1)?);
-
-    let result = SymbolReadResult {
-        indexed_files,
-        symbol: symbol_summary_from_meta(&symbol),
-        source: snippet,
-        start_point,
-        end_point,
-    };
-    result.validate_public_output()?;
-    Ok(result)
+    read_symbol_result_from_meta(symbol, indexed_files, file_overrides)
 }
 
 fn read_symbol_context_from_symbols(
@@ -1682,6 +1729,48 @@ fn read_symbol_context_from_symbols(
         read_symbol_from_symbols(resolved_symbols, indexed_files, symbol_path, file_overrides)?;
     let trace = trace_from_symbols(resolved_symbols, indexed_files, symbol_path, direction)?;
     let result = SymbolContextResult { read, trace };
+    result.validate_public_output()?;
+    Ok(result)
+}
+
+fn read_symbol_neighborhood_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let neighborhood = trace_neighborhood_from_symbols(
+        resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )?;
+    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let mut reads = Vec::with_capacity(neighborhood.nodes.len());
+
+    for node in &neighborhood.nodes {
+        let symbol = resolved_map.get(&node.symbol.symbol_id).ok_or_else(|| {
+            anyhow!(
+                "symbol not found in workspace index while reading neighborhood node: {}",
+                node.symbol.symbol_id
+            )
+        })?;
+        reads.push(read_symbol_result_from_meta(
+            symbol,
+            indexed_files,
+            file_overrides,
+        )?);
+    }
+
+    let result = SymbolNeighborhoodContextResult {
+        neighborhood,
+        reads,
+    };
     result.validate_public_output()?;
     Ok(result)
 }
@@ -1765,6 +1854,27 @@ fn symbol_source_text(
     }
 
     read_source(Path::new(&symbol.file_path))
+}
+
+fn read_symbol_result_from_meta(
+    symbol: &SymbolMeta,
+    indexed_files: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadResult> {
+    let source = symbol_source_text(symbol, file_overrides)?;
+    let snippet = symbol_source_slice(symbol, &source)?.to_string();
+    let start_point = position_from(point_for_offset(&source, symbol.byte_range.0)?);
+    let end_point = position_from(point_for_offset(&source, symbol.byte_range.1)?);
+
+    let result = SymbolReadResult {
+        indexed_files,
+        symbol: symbol_summary_from_meta(symbol),
+        source: snippet,
+        start_point,
+        end_point,
+    };
+    result.validate_public_output()?;
+    Ok(result)
 }
 
 fn symbol_source_slice<'a>(symbol: &SymbolMeta, source: &'a str) -> Result<&'a str> {

@@ -362,6 +362,59 @@ impl SymbolContextResult {
     }
 }
 
+impl SymbolNeighborhoodContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.neighborhood.validate_public_output()?;
+        if self.reads.len() != self.neighborhood.nodes.len() {
+            bail!(
+                "invalid symbol_neighborhood_context.reads: expected reads to align with neighborhood.nodes"
+            );
+        }
+
+        for (index, read) in self.reads.iter().enumerate() {
+            read.validate_public_output()?;
+            let node = &self.neighborhood.nodes[index];
+            if read.indexed_files != self.neighborhood.indexed_files {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].indexed_files: expected indexed_files to match neighborhood.indexed_files"
+                );
+            }
+            if read.symbol.symbol_id != node.symbol.symbol_id {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.symbol_id: expected reads to align with neighborhood.nodes"
+                );
+            }
+            if read.symbol.semantic_path != node.symbol.semantic_path {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.semantic_path: expected reads to align with neighborhood.nodes"
+                );
+            }
+            if read.symbol.file_path != node.symbol.file_path {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.file_path: expected reads to align with neighborhood.nodes"
+                );
+            }
+            if read.symbol.node_kind != node.symbol.node_kind {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.node_kind: expected reads to align with neighborhood.nodes"
+                );
+            }
+            if read.symbol.byte_range != node.symbol.byte_range {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.byte_range: expected reads to align with neighborhood.nodes"
+                );
+            }
+            if read.symbol.signature != node.symbol.signature {
+                bail!(
+                    "invalid symbol_neighborhood_context.reads[{index}].symbol.signature: expected reads to align with neighborhood.nodes"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl TraceSymbolNeighborhoodResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         self.symbol
@@ -1958,6 +2011,13 @@ pub struct SymbolContextResult {
     pub trace: TraceSymbolGraphResult,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolNeighborhoodContextResult {
+    pub neighborhood: TraceSymbolNeighborhoodResult,
+    pub reads: Vec<SymbolReadResult>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolListResult {
@@ -2001,10 +2061,10 @@ mod tests {
         GraphBackedPatchResult, PatchAstNodeResult, PatchCommitGateReport,
         PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit,
         QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol,
-        SymbolIndexStats, SymbolListResult, SymbolReadResult, SymbolSearchMatchDetail,
-        SymbolSearchResult, SymbolSummary, TraceBackedPatchResult, TracePatchEvidenceReplayItem,
-        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, ValidationBindingDecision,
-        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        SymbolIndexStats, SymbolListResult, SymbolNeighborhoodContextResult, SymbolReadResult,
+        SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
+        TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -2219,6 +2279,89 @@ mod tests {
             .expect_err("empty symbol source should be rejected");
 
         assert!(error.to_string().contains("symbol_read.source"));
+    }
+
+    #[test]
+    fn symbol_neighborhood_context_rejects_misaligned_reads() {
+        let result = SymbolNeighborhoodContextResult {
+            neighborhood: serde_json::from_str(
+                r#"{
+                    "symbol":{
+                        "symbol_id":"helper",
+                        "semantic_path":"helper",
+                        "scope_path":null,
+                        "file_path":"sample.py",
+                        "node_kind":"function_definition",
+                        "origin_type":"trace_root",
+                        "evidence_key":"helper|sample.py|function_definition|trace_root|0..10|",
+                        "byte_range":[0,10],
+                        "signature":null,
+                        "parameters":[],
+                        "return_type":null,
+                        "docstring":null,
+                        "dependencies":[],
+                        "references":["orchestrate"]
+                    },
+                    "direction":"callers",
+                    "max_depth":2,
+                    "max_nodes":10,
+                    "truncated":false,
+                    "indexed_files":2,
+                    "nodes":[
+                        {
+                            "symbol":{
+                                "symbol_id":"helper",
+                                "semantic_path":"helper",
+                                "scope_path":null,
+                                "file_path":"sample.py",
+                                "node_kind":"function_definition",
+                                "origin_type":"workspace_symbol",
+                                "evidence_key":"helper|sample.py|function_definition|workspace_symbol|0..10|",
+                                "byte_range":[0,10],
+                                "signature":null,
+                                "parameters":[],
+                                "return_type":null,
+                                "docstring":null
+                            },
+                            "depth":0
+                        }
+                    ],
+                    "edges":[]
+                }"#,
+            )
+            .expect("valid neighborhood payload should deserialize"),
+            reads: vec![SymbolReadResult {
+                indexed_files: 2,
+                symbol: SymbolSummary {
+                    symbol_id: "other".to_string(),
+                    semantic_path: "other".to_string(),
+                    scope_path: None,
+                    file_path: "sample.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "workspace_symbol".to_string(),
+                    evidence_key:
+                        "other|sample.py|function_definition|workspace_symbol|0..10|".to_string(),
+                    byte_range: (0, 10),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                },
+                source: "def other() -> int:\n    return 1\n".to_string(),
+                start_point: Position { row: 0, column: 0 },
+                end_point: Position { row: 1, column: 12 },
+            }],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("neighborhood context reads should align with neighborhood nodes");
+
+        assert!(
+            error
+                .to_string()
+                .contains("symbol_neighborhood_context.reads[0].symbol.symbol_id")
+        );
     }
 
     #[test]
