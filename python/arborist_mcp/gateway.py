@@ -34,6 +34,7 @@ TOOL_HANDLERS = {
     "arborist/read_symbol_context": "_read_symbol_context",
     "arborist/read_symbol_neighborhood_context": "_read_symbol_neighborhood_context",
     "arborist/list_symbols": "_list_symbols",
+    "arborist/list_symbols_context": "_list_symbols_context",
     "arborist/search_symbols": "_search_symbols",
     "arborist/search_symbols_context": "_search_symbols_context",
     "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
@@ -120,6 +121,13 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
     ),
     "arborist/list_symbols": (
+        "workspace_root",
+        "limit",
+        "index_db_path",
+        "file_path_contains",
+        "node_kind",
+    ),
+    "arborist/list_symbols_context": (
         "workspace_root",
         "limit",
         "index_db_path",
@@ -456,6 +464,21 @@ class ArboristGateway:
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
         payload = self._require_core().list_symbols_json(
+            workspace_root,
+            limit,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+        )
+        return self._decode_core_object(payload)
+
+    def _list_symbols_context(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        limit = self._optional_int(params, "limit", default=100)
+        index_db_path = self._optional_string(params, "index_db_path")
+        file_path_contains = self._optional_string(params, "file_path_contains")
+        node_kind = self._optional_string(params, "node_kind")
+        payload = self._require_core().list_symbols_context_json(
             workspace_root,
             limit,
             index_db_path,

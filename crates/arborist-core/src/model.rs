@@ -615,6 +615,57 @@ impl SymbolSearchContextResult {
     }
 }
 
+impl SymbolListContextResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.list.validate_public_output()?;
+        if self.reads.len() != self.list.symbols.len() {
+            bail!("invalid symbol_list_context.reads: expected reads to align with list.symbols");
+        }
+
+        for (index, read) in self.reads.iter().enumerate() {
+            read.validate_public_output()?;
+            let symbol = &self.list.symbols[index];
+            if read.indexed_files != self.list.indexed_files {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].indexed_files: expected indexed_files to match list.indexed_files"
+                );
+            }
+            if read.symbol.symbol_id != symbol.symbol_id {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.symbol_id: expected reads to align with list.symbols"
+                );
+            }
+            if read.symbol.semantic_path != symbol.semantic_path {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.semantic_path: expected reads to align with list.symbols"
+                );
+            }
+            if read.symbol.file_path != symbol.file_path {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.file_path: expected reads to align with list.symbols"
+                );
+            }
+            if read.symbol.node_kind != symbol.node_kind {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.node_kind: expected reads to align with list.symbols"
+                );
+            }
+            if read.symbol.byte_range != symbol.byte_range {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.byte_range: expected reads to align with list.symbols"
+                );
+            }
+            if read.symbol.signature != symbol.signature {
+                bail!(
+                    "invalid symbol_list_context.reads[{index}].symbol.signature: expected reads to align with list.symbols"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl SymbolSearchMatchDetail {
     fn validate_public_output(&self, index: usize, expected_symbol_id: &str) -> Result<()> {
         let prefix = format!("symbol_search.match_details[{index}]");
@@ -2195,6 +2246,13 @@ pub struct SymbolListResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
+pub struct SymbolListContextResult {
+    pub list: SymbolListResult,
+    pub reads: Vec<SymbolReadResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolSearchResult {
     pub query: String,
     pub indexed_files: usize,
@@ -2234,7 +2292,7 @@ mod tests {
         GraphBackedPatchResult, NeighborhoodContextPatchResult, PatchAstNodeResult,
         PatchCommitGateReport, PatchTraceValidationResult, PatchValidationReport, Position,
         PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-        SemanticSkeletonSymbol, SymbolIndexStats, SymbolListResult,
+        SemanticSkeletonSymbol, SymbolIndexStats, SymbolListContextResult, SymbolListResult,
         SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
         SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, TraceBackedPatchResult,
         TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
@@ -2680,6 +2738,64 @@ mod tests {
             error
                 .to_string()
                 .contains("symbol_search_context.reads[0].symbol.symbol_id")
+        );
+    }
+
+    #[test]
+    fn symbol_list_context_rejects_misaligned_reads() {
+        let summary = SymbolSummary {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "sample.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            evidence_key: "helper|sample.py|function_definition|workspace_symbol|0..10|"
+                .to_string(),
+            byte_range: (0, 10),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+        };
+        let result = SymbolListContextResult {
+            list: SymbolListResult {
+                indexed_files: 1,
+                total_symbols: 1,
+                truncated: false,
+                symbols: vec![summary],
+            },
+            reads: vec![SymbolReadResult {
+                indexed_files: 1,
+                symbol: SymbolSummary {
+                    symbol_id: "other".to_string(),
+                    semantic_path: "other".to_string(),
+                    scope_path: None,
+                    file_path: "sample.py".to_string(),
+                    node_kind: "function_definition".to_string(),
+                    origin_type: "workspace_symbol".to_string(),
+                    evidence_key: "other|sample.py|function_definition|workspace_symbol|0..10|"
+                        .to_string(),
+                    byte_range: (0, 10),
+                    signature: None,
+                    parameters: Vec::new(),
+                    return_type: None,
+                    docstring: None,
+                },
+                source: "def other() -> int:\n    return 1\n".to_string(),
+                start_point: Position { row: 0, column: 0 },
+                end_point: Position { row: 1, column: 12 },
+            }],
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("list context reads should align with listed symbols");
+
+        assert!(
+            error
+                .to_string()
+                .contains("symbol_list_context.reads[0].symbol.symbol_id")
         );
     }
 

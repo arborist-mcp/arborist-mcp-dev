@@ -13,19 +13,19 @@ use crate::language::{
 use crate::model::LanguageId;
 use crate::model::{
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
-    SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolNeighborhoodContextResult,
-    SymbolReadResult, SymbolSearchContextResult, SymbolSearchResult, TraceDirection,
-    TraceSymbolGraphResult, TraceSymbolNeighborhoodResult, VirtualEditResult, VirtualFileSnapshot,
-    VirtualFileStatus,
+    SymbolContextResult, SymbolIndexStats, SymbolListContextResult, SymbolListResult,
+    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolSearchResult, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
+    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
     validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
-    list_symbols_with_overrides_filtered, read_symbol_context_with_overrides,
-    read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
-    rebuild_symbol_index, refresh_symbol_index_for_file,
+    list_symbols_context_with_overrides_filtered, list_symbols_with_overrides_filtered,
+    read_symbol_context_with_overrides, read_symbol_neighborhood_context_with_overrides,
+    read_symbol_with_overrides, rebuild_symbol_index, refresh_symbol_index_for_file,
     search_symbols_context_with_overrides_filtered, search_symbols_with_overrides_filtered,
     trace_symbol_graph_with_overrides, trace_symbol_neighborhood_with_overrides,
 };
@@ -547,6 +547,14 @@ impl VirtualFileSystem {
         self.list_symbols_filtered(workspace_root, limit, None, None)
     }
 
+    pub fn list_symbols_context(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+    ) -> Result<SymbolListContextResult> {
+        self.list_symbols_context_filtered(workspace_root, limit, None, None)
+    }
+
     pub fn list_symbols_filtered(
         &mut self,
         workspace_root: &Path,
@@ -557,6 +565,24 @@ impl VirtualFileSystem {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
         list_symbols_with_overrides_filtered(
+            &workspace_root,
+            &overrides,
+            limit,
+            file_path_contains,
+            node_kind,
+        )
+    }
+
+    pub fn list_symbols_context_filtered(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+    ) -> Result<SymbolListContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        list_symbols_context_with_overrides_filtered(
             &workspace_root,
             &overrides,
             limit,

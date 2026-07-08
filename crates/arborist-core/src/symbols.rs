@@ -16,8 +16,8 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
-    SymbolContextResult, SymbolIndexStats, SymbolListResult, SymbolMeta, SymbolMetaInit,
-    SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolContextResult, SymbolIndexStats, SymbolListContextResult, SymbolListResult, SymbolMeta,
+    SymbolMetaInit, SymbolNeighborhoodContextResult, SymbolReadResult, SymbolSearchContextResult,
     SymbolSearchMatchDetail, SymbolSearchResult, SymbolSummary, SymbolSummaryInit, TraceDirection,
     TraceEvidenceKeys, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
     TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
@@ -225,6 +225,13 @@ pub fn list_symbols(workspace_root: &Path, limit: usize) -> Result<SymbolListRes
     list_symbols_filtered(workspace_root, limit, None, None)
 }
 
+pub fn list_symbols_context(
+    workspace_root: &Path,
+    limit: usize,
+) -> Result<SymbolListContextResult> {
+    list_symbols_context_filtered(workspace_root, limit, None, None)
+}
+
 pub fn list_symbols_filtered(
     workspace_root: &Path,
     limit: usize,
@@ -239,6 +246,24 @@ pub fn list_symbols_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn list_symbols_context_filtered(
+    workspace_root: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    list_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -382,6 +407,25 @@ pub fn list_symbols_with_overrides_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn list_symbols_context_with_overrides_filtered(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(workspace_root, file_overrides)?;
+    list_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
     )
 }
 
@@ -540,6 +584,13 @@ pub fn list_symbols_from_index(db_path: &Path, limit: usize) -> Result<SymbolLis
     list_symbols_from_index_filtered(db_path, limit, None, None)
 }
 
+pub fn list_symbols_context_from_index(
+    db_path: &Path,
+    limit: usize,
+) -> Result<SymbolListContextResult> {
+    list_symbols_context_from_index_filtered(db_path, limit, None, None)
+}
+
 pub fn list_symbols_from_index_filtered(
     db_path: &Path,
     limit: usize,
@@ -554,6 +605,24 @@ pub fn list_symbols_from_index_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn list_symbols_context_from_index_filtered(
+    db_path: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    list_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
     )
 }
 
@@ -2049,6 +2118,42 @@ fn list_from_symbols(
     Ok(result)
 }
 
+fn list_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolListContextResult> {
+    let list = list_from_symbols(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+    )?;
+    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let mut reads = Vec::with_capacity(list.symbols.len());
+
+    for symbol in &list.symbols {
+        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+            anyhow!(
+                "symbol not found in workspace index while reading listed symbol: {}",
+                symbol.symbol_id
+            )
+        })?;
+        reads.push(read_symbol_result_from_meta(
+            meta,
+            indexed_files,
+            file_overrides,
+        )?);
+    }
+
+    let result = SymbolListContextResult { list, reads };
+    result.validate_public_output()?;
+    Ok(result)
+}
 fn normalize_optional_search_filter(value: Option<&str>, field: &str) -> Result<Option<String>> {
     match value {
         Some(value) => {

@@ -4,9 +4,9 @@ use std::path::Path;
 use arborist_core::{
     PatchAstNodeResult, PositionEdit, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
     execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, list_symbols_from_index_filtered, patch_ast_node,
-    read_symbol_context_from_index, read_symbol_from_index,
-    read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
+    get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
+    list_symbols_from_index_filtered, patch_ast_node, read_symbol_context_from_index,
+    read_symbol_from_index, read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_context_from_index_filtered, search_symbols_from_index_filtered,
     supported_languages, trace_symbol_graph_from_index, trace_symbol_neighborhood_from_index,
@@ -349,6 +349,34 @@ impl ArboristCore {
                 node_kind.as_deref(),
             ),
             None => self.vfs.borrow_mut().list_symbols_filtered(
+                Path::new(workspace_root),
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None))]
+    fn list_symbols_context_json(
+        &self,
+        workspace_root: &str,
+        limit: usize,
+        index_db_path: Option<String>,
+        file_path_contains: Option<String>,
+        node_kind: Option<String>,
+    ) -> PyResult<String> {
+        let result = match index_db_path {
+            Some(index_db_path) => list_symbols_context_from_index_filtered(
+                Path::new(&index_db_path),
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            None => self.vfs.borrow_mut().list_symbols_context_filtered(
                 Path::new(workspace_root),
                 limit,
                 file_path_contains.as_deref(),
