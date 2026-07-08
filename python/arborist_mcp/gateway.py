@@ -37,6 +37,7 @@ TOOL_HANDLERS = {
     "arborist/replay_patch_evidence_against_trace": "_replay_patch_evidence_against_trace",
     "arborist/validate_patch_commit_with_trace": "_validate_patch_commit_with_trace",
     "arborist/validate_patch_with_trace_context": "_validate_patch_with_trace_context",
+    "arborist/validate_patch_with_graph_context": "_validate_patch_with_graph_context",
     "arborist/execute_tree_query": "_execute_tree_query",
 }
 TOOL_NAMES = tuple(TOOL_HANDLERS)
@@ -132,6 +133,17 @@ TOOL_PARAM_NAMES = {
         "source",
         "bypass_reason",
         "direction",
+    ),
+    "arborist/validate_patch_with_graph_context": (
+        "workspace_root",
+        "file_path",
+        "semantic_path",
+        "new_code",
+        "source",
+        "bypass_reason",
+        "direction",
+        "max_depth",
+        "max_nodes",
     ),
     "arborist/execute_tree_query": ("file_path", "query", "source"),
 }
@@ -438,6 +450,38 @@ class ArboristGateway:
             source,
             bypass_reason,
             direction,
+        )
+        return self._decode_core_object(payload)
+
+    def _validate_patch_with_graph_context(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        semantic_path = self._require_string(params, "semantic_path")
+        new_code = self._require_string(params, "new_code")
+        source = self._optional_string(params, "source", allow_empty=True)
+        bypass_reason = self._optional_string(params, "bypass_reason")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        payload = self._require_core().validate_patch_with_graph_context_json(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
         )
         return self._decode_core_object(payload)
 

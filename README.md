@@ -33,6 +33,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `replay_patch_evidence_against_trace`
 - `validate_patch_commit_with_trace`
 - `validate_patch_with_trace_context`
+- `validate_patch_with_graph_context`
 - `execute_tree_query`
 - Python and C language routing based on case-insensitive file extension, including C `.h`, `.hpp`, and `.hh` headers
 - Selective semantic skeleton expansion via `expand_nodes`
@@ -165,11 +166,13 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":19,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
 {"jsonrpc":"2.0","id":20,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
 {"jsonrpc":"2.0","id":21,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
-{"jsonrpc":"2.0","id":22,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
+{"jsonrpc":"2.0","id":22,"method":"arborist/validate_patch_with_graph_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":23,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
 For one-shot analysis and validation, `get_semantic_skeleton`,
-`execute_tree_query`, `patch_ast_node`, and `validate_patch_with_trace_context`
+`execute_tree_query`, `patch_ast_node`, `validate_patch_with_trace_context`, and
+`validate_patch_with_graph_context`
 accept an optional `source` string. When supplied, Arborist parses and validates
 that buffer for the requested `file_path` without creating or overwriting the
 file on disk. Use the VFS methods (`did_open`, `did_change`,
@@ -195,6 +198,7 @@ Python trace/index resolution also follows local import aliases and package re-e
 `replay_patch_evidence_against_trace` consumes a patch result plus a trace result and reports whether each patch evidence invariant is `matched`, `blocked`, `missing`, or `failed` against the trace graph keys.
 `validate_patch_commit_with_trace` builds on that replay check and returns a single `allowed/status/reason` decision, making it the first optional strong gate for trace-backed semantic writes. Blocked replay evidence is accepted only when the patch gate itself was explicitly allowed with a bypass reason.
 `validate_patch_with_trace_context` removes the manual orchestration step entirely: it runs patch validation, traces the patched symbol against the workspace with the updated file held in-memory after the patch gate accepts it, and returns the patch result plus the trace-backed validation decision in one call. If the optional `source` parameter is supplied, that buffer is used for both patch validation and the trace overlay, so clients can validate unsaved files before writing them to disk. If syntax validation or the patch gate rejects the patch first, tracing is skipped and `trace_error` explains why.
+`validate_patch_with_graph_context` pushes that workflow one step further for agents that need impact analysis immediately after a safe patch candidate is found: after the patch gate accepts the edit, Arborist returns the same patch result and trace-backed validation, plus a bounded `trace_symbol_neighborhood` expansion of the patched symbol using the in-memory post-patch source. Callers can tune `max_depth` and `max_nodes` to trade detail for speed, and the same optional `source` parameter lets the whole flow run against unsaved buffers before anything is written to disk.
 `execute_tree_query` now also returns optional `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a capture belongs to a semantic symbol. That lets a raw Tree-sitter query jump directly into later trace or patch calls without rediscovering the owning selector from source text alone.
 
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.

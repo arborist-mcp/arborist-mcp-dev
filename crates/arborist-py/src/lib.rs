@@ -9,6 +9,7 @@ use arborist_core::{
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_from_index_filtered, supported_languages, trace_symbol_graph_from_index,
     trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
+    validate_patch_with_graph_context, validate_patch_with_graph_context_from_path,
     validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -346,6 +347,49 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64))]
+    #[allow(clippy::too_many_arguments)]
+    fn validate_patch_with_graph_context_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let result = match source {
+            Some(source) => validate_patch_with_graph_context(
+                Path::new(workspace_root),
+                Path::new(file_path),
+                &source,
+                semantic_path,
+                new_code,
+                bypass_reason.as_deref(),
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            None => validate_patch_with_graph_context_from_path(
+                Path::new(workspace_root),
+                Path::new(file_path),
+                semantic_path,
+                new_code,
+                bypass_reason.as_deref(),
+                direction,
+                max_depth,
+                max_nodes,
             ),
         }
         .map_err(to_py_error)?;
