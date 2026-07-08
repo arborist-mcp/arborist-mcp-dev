@@ -329,7 +329,9 @@ pub fn validate_patch_with_trace_context(
             trace_target,
             trace: None,
             trace_validation: None,
-            trace_error: Some(trace_skip_reason_for_syntax_errors().to_string()),
+            trace_error: Some(
+                TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+            ),
         };
         validate_trace_backed_patch_result(&result)?;
         return Ok(result);
@@ -341,7 +343,9 @@ pub fn validate_patch_with_trace_context(
             trace_target,
             trace: None,
             trace_validation: None,
-            trace_error: Some(trace_skip_reason_for_patch_gate_rejection().to_string()),
+            trace_error: Some(
+                TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection().to_string(),
+            ),
         };
         validate_trace_backed_patch_result(&result)?;
         return Ok(result);
@@ -465,32 +469,9 @@ fn validate_patch_trace_validation_result(result: &PatchTraceValidationResult) -
     result.validate_public_output()
 }
 
-fn trace_skip_reason_for_syntax_errors() -> &'static str {
-    "trace skipped because patch validation reported syntax errors"
-}
-
-fn trace_skip_reason_for_patch_gate_rejection() -> &'static str {
-    "trace skipped because patch validation rejected the patch"
-}
-
 fn validate_trace_backed_patch_result(result: &TraceBackedPatchResult) -> Result<()> {
     result.validate_public_output()?;
-
-    if !result.patch.validation.syntax_errors.is_empty() {
-        if result.trace_error.as_deref() != Some(trace_skip_reason_for_syntax_errors()) {
-            bail!(
-                "invalid trace_error: expected syntax-error trace skip reason when patch validation reports syntax errors"
-            );
-        }
-        return Ok(());
-    }
-
-    if !result.patch.applied {
-        if result.trace_error.as_deref() != Some(trace_skip_reason_for_patch_gate_rejection()) {
-            bail!(
-                "invalid trace_error: expected patch-gate trace skip reason when patch validation rejects the patch"
-            );
-        }
+    if !result.patch.validation.syntax_errors.is_empty() || !result.patch.applied {
         return Ok(());
     }
 

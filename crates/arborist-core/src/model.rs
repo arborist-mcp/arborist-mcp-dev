@@ -1341,6 +1341,14 @@ impl PatchTraceValidationResult {
 }
 
 impl TraceBackedPatchResult {
+    pub(crate) fn trace_skip_reason_for_syntax_errors() -> &'static str {
+        "trace skipped because patch validation reported syntax errors"
+    }
+
+    pub(crate) fn trace_skip_reason_for_patch_gate_rejection() -> &'static str {
+        "trace skipped because patch validation rejected the patch"
+    }
+
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         self.patch.validate_public_output()?;
         ensure_nonblank(&self.trace_target, "trace_target")?;
@@ -1362,6 +1370,16 @@ impl TraceBackedPatchResult {
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("invalid trace_error: expected trace_error when the patch was not safely applied"))?;
             ensure_nonblank(trace_error, "trace_error")?;
+            let expected_reason = if !self.patch.validation.syntax_errors.is_empty() {
+                Self::trace_skip_reason_for_syntax_errors()
+            } else {
+                Self::trace_skip_reason_for_patch_gate_rejection()
+            };
+            if trace_error != expected_reason {
+                bail!(
+                    "invalid trace_error: expected trace skip reason consistent with patch validation state"
+                );
+            }
             return Ok(());
         }
 
@@ -1542,7 +1560,7 @@ mod tests {
         PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
         SemanticSkeleton, SemanticSkeletonSymbol, SymbolIndexStats, TraceBackedPatchResult,
         TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-        VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+        ValidationBindingDecision, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -2260,5 +2278,60 @@ mod tests {
         );
 
         assert!(error.to_string().contains("trace_validation"));
+    }
+
+    #[test]
+    fn trace_backed_patch_validation_rejects_wrong_skip_reason() {
+        let result = TraceBackedPatchResult {
+            patch: PatchAstNodeResult {
+                file: "sample.py".to_string(),
+                target_path: "top_level".to_string(),
+                resolved_path: "top_level".to_string(),
+                resolved_symbol_id: "top_level".to_string(),
+                applied: false,
+                bypass_applied: false,
+                updated_source: "def top_level() -> int:\n    return 1\n".to_string(),
+                validation: PatchValidationReport {
+                    syntax_errors: Vec::new(),
+                    unresolved_identifiers: vec!["missing".to_string()],
+                    resolved_identifiers: Vec::new(),
+                    ambiguous_identifiers: Vec::new(),
+                    binding_decisions: vec![ValidationBindingDecision {
+                        name: "missing".to_string(),
+                        status: "unresolved".to_string(),
+                        reason: "missing binding".to_string(),
+                        selected_symbol_id: None,
+                        candidates: Vec::new(),
+                    }],
+                    commit_gate: PatchCommitGateReport {
+                        status: "rejected".to_string(),
+                        allowed: false,
+                        reason: "missing binding".to_string(),
+                        bypass_reason: None,
+                        blocking_decisions: vec![ValidationBindingDecision {
+                            name: "missing".to_string(),
+                            status: "unresolved".to_string(),
+                            reason: "missing binding".to_string(),
+                            selected_symbol_id: None,
+                            candidates: Vec::new(),
+                        }],
+                        evidence_invariants: Vec::new(),
+                        syntax_error_count: 0,
+                    },
+                },
+            },
+            trace_target: "top_level".to_string(),
+            trace: None,
+            trace_validation: None,
+            trace_error: Some(
+                TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+            ),
+        };
+
+        let error = result
+            .validate_public_output()
+            .expect_err("trace-backed patch validation should reject inconsistent skip reasons");
+
+        assert!(error.to_string().contains("trace_error"));
     }
 }
