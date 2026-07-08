@@ -25,6 +25,7 @@ pub struct PositionEdit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SemanticSkeleton {
     pub file: String,
     pub skeleton: String,
@@ -33,7 +34,7 @@ pub struct SemanticSkeleton {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SemanticSkeletonSymbol {
     pub symbol_id: String,
     pub semantic_path: String,
@@ -47,6 +48,7 @@ pub struct SemanticSkeletonSymbol {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct QueryCaptureResult {
     pub capture_name: String,
     pub node_kind: String,
@@ -1002,6 +1004,7 @@ fn validate_symbol_identity(identity: SymbolIdentityRef<'_>, field: &str) -> Res
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolIndexStats {
     pub db_path: String,
     pub indexed_files: usize,
@@ -1011,6 +1014,7 @@ pub struct SymbolIndexStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct VirtualFileSnapshot {
     pub file: String,
     pub source: String,
@@ -1021,6 +1025,7 @@ pub struct VirtualFileSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct VirtualEditResult {
     pub file: String,
     pub source: String,
@@ -1031,12 +1036,14 @@ pub struct VirtualEditResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RegisteredSymbolIndex {
     pub workspace_root: String,
     pub db_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct VirtualFileStatus {
     pub file: String,
     pub dirty: bool,
@@ -1047,8 +1054,10 @@ pub struct VirtualFileStatus {
 #[cfg(test)]
 mod tests {
     use super::{
-        PatchAstNodeResult, PatchTraceValidationResult, Position, PositionEdit,
-        TraceBackedPatchResult, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
+        PatchAstNodeResult, PatchTraceValidationResult, Position, PositionEdit, QueryCaptureResult,
+        RegisteredSymbolIndex, SemanticSkeleton, SymbolIndexStats, TraceBackedPatchResult,
+        TracePatchEvidenceReplayResult, TraceSymbolGraphResult, VirtualEditResult,
+        VirtualFileSnapshot, VirtualFileStatus,
     };
 
     #[test]
@@ -1301,5 +1310,150 @@ mod tests {
         .expect_err("trace-backed patch results should reject unknown top-level fields");
 
         assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn semantic_skeleton_rejects_unknown_nested_fields() {
+        let error = serde_json::from_str::<SemanticSkeleton>(
+            r#"{
+                "file":"sample.py",
+                "skeleton":"def top_level() -> int:\n    return 1\n",
+                "available_paths":["top_level"],
+                "available_symbols":[{
+                    "symbol_id":"sample.py::top_level",
+                    "semantic_path":"top_level",
+                    "node_kind":"function_definition",
+                    "byte_range":[0,10],
+                    "parameters":[],
+                    "unexpected":true
+                }]
+            }"#,
+        )
+        .expect_err("semantic skeletons should reject unknown nested symbol fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn query_capture_result_rejects_unknown_fields() {
+        let error = serde_json::from_str::<QueryCaptureResult>(
+            r#"{
+                "capture_name":"name",
+                "node_kind":"identifier",
+                "text":"top_level",
+                "owner_symbol_id":"sample.py::top_level",
+                "owner_semantic_path":"top_level",
+                "owner_scope_path":null,
+                "start_byte":0,
+                "end_byte":9,
+                "start_point":{"row":0,"column":0},
+                "end_point":{"row":0,"column":9},
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("query capture results should reject unknown fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn symbol_index_stats_reject_unknown_fields() {
+        let error = serde_json::from_str::<SymbolIndexStats>(
+            r#"{
+                "db_path":"symbols.db",
+                "indexed_files":1,
+                "indexed_symbols":2,
+                "rebuilt_files":1,
+                "reused_files":0,
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("symbol index stats should reject unknown fields");
+
+        assert!(error.to_string().contains("unknown field `unexpected`"));
+    }
+
+    #[test]
+    fn virtual_results_reject_unknown_fields() {
+        let snapshot_error = serde_json::from_str::<VirtualFileSnapshot>(
+            r#"{
+                "file":"sample.py",
+                "source":"def top_level() -> int:\n    return 1\n",
+                "disk_source":"def top_level() -> int:\n    return 1\n",
+                "dirty":false,
+                "version":1,
+                "syntax_error_count":0,
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("virtual file snapshots should reject unknown fields");
+        assert!(
+            snapshot_error
+                .to_string()
+                .contains("unknown field `unexpected`")
+        );
+
+        let edit_error = serde_json::from_str::<VirtualEditResult>(
+            r#"{
+                "file":"sample.py",
+                "source":"def top_level() -> int:\n    return 1\n",
+                "dirty":false,
+                "version":1,
+                "incremental_parse":true,
+                "validation":{
+                    "syntax_errors":[],
+                    "unresolved_identifiers":[],
+                    "resolved_identifiers":[],
+                    "ambiguous_identifiers":[],
+                    "binding_decisions":[],
+                    "commit_gate":{
+                        "status":"allowed",
+                        "allowed":true,
+                        "reason":"ok",
+                        "bypass_reason":null,
+                        "blocking_decisions":[],
+                        "evidence_invariants":[],
+                        "syntax_error_count":0
+                    }
+                },
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("virtual edit results should reject unknown fields");
+        assert!(
+            edit_error
+                .to_string()
+                .contains("unknown field `unexpected`")
+        );
+
+        let registration_error = serde_json::from_str::<RegisteredSymbolIndex>(
+            r#"{
+                "workspace_root":"workspace",
+                "db_path":"symbols.db",
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("registered symbol index results should reject unknown fields");
+        assert!(
+            registration_error
+                .to_string()
+                .contains("unknown field `unexpected`")
+        );
+
+        let status_error = serde_json::from_str::<VirtualFileStatus>(
+            r#"{
+                "file":"sample.py",
+                "dirty":false,
+                "version":1,
+                "syntax_error_count":0,
+                "unexpected":true
+            }"#,
+        )
+        .expect_err("virtual file status results should reject unknown fields");
+        assert!(
+            status_error
+                .to_string()
+                .contains("unknown field `unexpected`")
+        );
     }
 }
