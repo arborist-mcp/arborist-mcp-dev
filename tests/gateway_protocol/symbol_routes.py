@@ -1487,6 +1487,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                         "both",
                         2,
                         10,
+                        None,
                     ),
                     check_result=case["check"],
                 )
@@ -1507,6 +1508,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "def orchestrate(value: int) -> int:\n    return value + 1\n",
                     "known-safe",
                     "callers",
+                    None,
                 ),
             },
             {
@@ -1524,6 +1526,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                 ),
             },
             {
@@ -1541,6 +1544,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                 ),
             },
             {
@@ -1558,6 +1562,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                 ),
             },
         ]
@@ -1841,6 +1846,66 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     read["symbol"]["semantic_path"] == "helper"
                     for read in result["neighborhood_context"]["reads"]
                 )
+            )
+
+    def test_trace_context_accepts_index_db_path_with_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+                "caller.py": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            caller = workspace.joinpath("caller.py")
+            db_path = workspace.joinpath("symbols.db")
+
+            rebuild = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/rebuild_symbol_index",
+                    {
+                        "workspace_root": str(workspace),
+                        "db_path": str(db_path),
+                    },
+                    request_id=180,
+                ),
+                request_id=180,
+            )
+
+            assert isinstance(rebuild, dict)
+            self.assertEqual(rebuild["indexed_files"], 2)
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/validate_patch_with_trace_context",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return value + 1\n"
+                        ),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "direction": "both",
+                        "index_db_path": str(db_path),
+                    },
+                    request_id=181,
+                ),
+                request_id=181,
+            )
+
+            assert isinstance(result, dict)
+            self.assertTrue(result["patch"]["applied"])
+            self.assertIsNone(result["trace_error"])
+            self.assertTrue(result["trace_validation"]["allowed"])
+            self.assertEqual(result["trace"]["symbol"]["semantic_path"], "orchestrate")
+            self.assertTrue(
+                any(symbol["semantic_path"] == "helper" for symbol in result["trace"]["callees"])
             )
 
     def test_read_at_position_accepts_unsaved_source(self) -> None:

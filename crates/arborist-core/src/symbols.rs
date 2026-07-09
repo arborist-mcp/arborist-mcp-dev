@@ -1104,6 +1104,73 @@ pub fn list_symbols_neighborhood_context_with_overrides_filtered(
     )
 }
 
+pub fn trace_symbol_graph_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
+}
+
+pub fn trace_symbol_neighborhood_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    trace_neighborhood_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn read_symbol_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+) -> Result<SymbolReadResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_neighborhood_context_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
@@ -4070,6 +4137,89 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     load_indexed_files_metadata(&connection)?;
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
+}
+
+fn load_symbol_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    if !db_path.exists() {
+        return Err(anyhow!("symbol index {} does not exist", db_path.display()));
+    }
+
+    let connection = Connection::open(db_path)?;
+    require_symbol_index_tables(&connection, db_path)?;
+    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    ensure_symbol_tables(&connection)?;
+
+    let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
+    let original_grouped_symbols = grouped_symbols.clone();
+    let mut changed_file_paths = BTreeSet::new();
+
+    for (override_path, override_source) in file_overrides {
+        let override_path = normalize_absolute_path(Path::new(override_path))?;
+        if !override_path.starts_with(&workspace_root)
+            || should_skip_index_path(&workspace_root, &override_path)
+            || detect_language(&override_path).is_err()
+        {
+            continue;
+        }
+
+        let document = parse_document(&override_path, override_source)?;
+        let symbols = index_symbols_from_document(&override_path, override_source, &document)?;
+        let normalized_path = normalize_path(&override_path);
+        grouped_symbols.insert(normalized_path.clone(), symbols);
+        changed_file_paths.insert(normalized_path);
+    }
+
+    let mut raw_symbols = grouped_symbols
+        .into_values()
+        .flat_map(|symbols| symbols.into_iter())
+        .collect::<Vec<_>>();
+    assign_symbol_ids(&mut raw_symbols)?;
+
+    let (resolved_symbols, indexed_files) = load_symbols_from_connection(&connection)?;
+    let old_resolved_map = resolved_symbol_map(&resolved_symbols);
+    let old_changed_symbols = original_grouped_symbols
+        .iter()
+        .filter(|(file_path, _)| changed_file_paths.contains(*file_path))
+        .flat_map(|(_, symbols)| symbols.iter().cloned())
+        .collect::<Vec<_>>();
+    let new_changed_symbols = raw_symbols
+        .iter()
+        .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let (resolved_map, _) = refresh_resolved_symbol_subgraph(
+        &raw_symbols,
+        &old_resolved_map,
+        &old_changed_symbols,
+        &new_changed_symbols,
+        &changed_file_paths,
+    );
+
+    Ok((
+        materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),
+        indexed_files,
+    ))
+}
+
+fn load_symbol_index_workspace_root(connection: &Connection, db_path: &Path) -> Result<PathBuf> {
+    let Some(stored_workspace) = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'workspace_root'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Err(anyhow!(
+            "missing workspace_root metadata in symbol index {}",
+            db_path.display()
+        ));
+    };
+
+    normalize_absolute_path(Path::new(&stored_workspace))
 }
 
 fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Result<()> {

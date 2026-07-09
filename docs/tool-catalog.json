@@ -2850,6 +2850,11 @@
             "both"
           ],
           "minLength": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -2946,6 +2951,11 @@
             "both"
           ],
           "minLength": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3038,6 +3048,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3146,6 +3161,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3238,6 +3258,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3346,6 +3371,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3438,6 +3468,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [
@@ -3546,6 +3581,11 @@
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
           "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
         }
       },
       "required": [

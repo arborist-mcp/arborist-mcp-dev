@@ -14,7 +14,10 @@ from arborist_mcp import gateway as gateway_module
 from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
-from tests.gateway_protocol.helpers import GatewayProtocolTestCase
+from tests.gateway_protocol.helpers import (
+    GatewayProtocolTestCase,
+    make_recording_json_core,
+)
 from tests.gateway_protocol import (
     GROUP_MODULES,
     GROUP_SUITES,
@@ -1558,6 +1561,190 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     contains="index_db_path is not supported when source is provided",
                     gateway=gateway,
                 )
+
+    def test_patch_context_entrypoints_allow_source_with_index_db_path(self) -> None:
+        source = "def orchestrate(value: int) -> int:\n    return value + 1\n"
+        new_code = "def orchestrate(value: int) -> int:\n    return helper(value)\n"
+        core = make_recording_json_core(
+            validate_patch_with_trace_context_json={},
+            validate_patch_with_trace_context_at_position_json={},
+            validate_patch_with_graph_context_json={},
+            validate_patch_with_graph_context_at_position_json={},
+            validate_patch_with_neighborhood_context_json={},
+            validate_patch_with_neighborhood_context_at_position_json={},
+            validate_patch_with_discovery_context_json={},
+            validate_patch_with_discovery_context_at_position_json={},
+        )
+        gateway = self.make_gateway(core)
+
+        cases = [
+            (
+                "validate_patch_with_trace_context_json",
+                "arborist/validate_patch_with_trace_context",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "index_db_path": "symbols.db",
+                },
+                (".", "caller.py", "orchestrate", new_code, source, None, "both", "symbols.db"),
+            ),
+            (
+                "validate_patch_with_trace_context_at_position_json",
+                "arborist/validate_patch_with_trace_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 1, "column": 4},
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "index_db_path": "symbols.db",
+                },
+                (".", "caller.py", 1, 4, new_code, source, None, "both", "symbols.db"),
+            ),
+            (
+                "validate_patch_with_graph_context_json",
+                "arborist/validate_patch_with_graph_context",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (
+                    ".",
+                    "caller.py",
+                    "orchestrate",
+                    new_code,
+                    source,
+                    None,
+                    "both",
+                    2,
+                    10,
+                    "symbols.db",
+                ),
+            ),
+            (
+                "validate_patch_with_graph_context_at_position_json",
+                "arborist/validate_patch_with_graph_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 1, "column": 4},
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (".", "caller.py", 1, 4, new_code, source, None, "both", 2, 10, "symbols.db"),
+            ),
+            (
+                "validate_patch_with_neighborhood_context_json",
+                "arborist/validate_patch_with_neighborhood_context",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (
+                    ".",
+                    "caller.py",
+                    "orchestrate",
+                    new_code,
+                    source,
+                    None,
+                    "both",
+                    2,
+                    10,
+                    "symbols.db",
+                ),
+            ),
+            (
+                "validate_patch_with_neighborhood_context_at_position_json",
+                "arborist/validate_patch_with_neighborhood_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 1, "column": 4},
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (".", "caller.py", 1, 4, new_code, source, None, "both", 2, 10, "symbols.db"),
+            ),
+            (
+                "validate_patch_with_discovery_context_json",
+                "arborist/validate_patch_with_discovery_context",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (
+                    ".",
+                    "caller.py",
+                    "orchestrate",
+                    new_code,
+                    source,
+                    None,
+                    "both",
+                    2,
+                    10,
+                    "symbols.db",
+                ),
+            ),
+            (
+                "validate_patch_with_discovery_context_at_position_json",
+                "arborist/validate_patch_with_discovery_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 1, "column": 4},
+                    "new_code": new_code,
+                    "source": source,
+                    "direction": "both",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                (".", "caller.py", 1, 4, new_code, source, None, "both", 2, 10, "symbols.db"),
+            ),
+        ]
+
+        for core_method, rpc_method, params, expected_call in cases:
+            with self.subTest(method=rpc_method):
+                result = self.assert_jsonrpc_ok(
+                    self.call_gateway(gateway, rpc_method, params, request_id=113),
+                    request_id=113,
+                )
+                self.assertEqual(result, {})
+                self.assertEqual(core.calls_for(core_method), [expected_call])
 
     def test_rejects_missing_file_path_for_source_backed_path_and_workspace_entrypoints(self) -> None:
         class StubCore:

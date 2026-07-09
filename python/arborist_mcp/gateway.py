@@ -322,6 +322,7 @@ TOOL_PARAM_NAMES = {
         "source",
         "bypass_reason",
         "direction",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_trace_context_at_position": (
         "workspace_root",
@@ -331,6 +332,7 @@ TOOL_PARAM_NAMES = {
         "source",
         "bypass_reason",
         "direction",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_graph_context": (
         "workspace_root",
@@ -342,6 +344,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_graph_context_at_position": (
         "workspace_root",
@@ -353,6 +356,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_neighborhood_context": (
         "workspace_root",
@@ -364,6 +368,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_neighborhood_context_at_position": (
         "workspace_root",
@@ -375,6 +380,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_discovery_context": (
         "workspace_root",
@@ -386,6 +392,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/validate_patch_with_discovery_context_at_position": (
         "workspace_root",
@@ -397,6 +404,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "index_db_path",
     ),
     "arborist/execute_tree_query": ("file_path", "query", "source"),
 }
@@ -1827,6 +1835,7 @@ class ArboristGateway:
             default="both",
             allowed=("callers", "callees", "both"),
         )
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_trace_context_json(
             workspace_root,
             file_path,
@@ -1835,6 +1844,7 @@ class ArboristGateway:
             source,
             bypass_reason,
             direction,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -1853,6 +1863,7 @@ class ArboristGateway:
             default="both",
             allowed=("callers", "callees", "both"),
         )
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_trace_context_at_position_json(
             workspace_root,
             file_path,
@@ -1862,6 +1873,7 @@ class ArboristGateway:
             source,
             bypass_reason,
             direction,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -1884,6 +1896,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_graph_context_json(
             workspace_root,
             file_path,
@@ -1894,6 +1907,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -1916,6 +1930,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_graph_context_at_position_json(
             workspace_root,
             file_path,
@@ -1927,6 +1942,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -1949,6 +1965,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_neighborhood_context_json(
             workspace_root,
             file_path,
@@ -1959,6 +1976,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -1981,6 +1999,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_neighborhood_context_at_position_json(
             workspace_root,
             file_path,
@@ -1992,6 +2011,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -2014,6 +2034,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_discovery_context_json(
             workspace_root,
             file_path,
@@ -2024,6 +2045,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
@@ -2046,6 +2068,7 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_discovery_context_at_position_json(
             workspace_root,
             file_path,
@@ -2057,6 +2080,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            index_db_path,
         )
         return self._decode_core_object(payload)
 
