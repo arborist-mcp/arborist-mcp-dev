@@ -183,18 +183,23 @@ For the everyday inner loop, run the focused test entrypoint:
 .\scripts\test.ps1
 ```
 
-`test.ps1` now reads a richer gateway suite manifest from
-`tests/gateway_protocol/suites.json` through the shared Python-side suite
-loader, so suite metadata, grouping, workflow selection, and legacy Python
-discovery all stay in sync from one file. The default `inner-loop` selection
-now runs Rust plus the `gateway-fast` group, which keeps the local loop on the
-pure-Python protocol suites until you explicitly ask for native-extension
-integration coverage. When a selected suite needs the synced PyO3 extension,
-`test.ps1` now builds and syncs it automatically unless you override that
-behavior with `-SyncExtension never`.
+`test.ps1` now reads a top-level Python suite manifest from
+`scripts/python_suite_manifest.py`, which merges local workflow suites from
+`tests/suites.json` with the gateway protocol manifest in
+`tests/gateway_protocol/suites.json`. That keeps suite metadata, grouping,
+workflow selection, and the legacy `tests.test_gateway_protocol` loader aligned
+through one shared graph instead of mixing manifest-driven gateway suites with a
+separate blanket discovery pass. The default `inner-loop` selection now runs
+Rust plus the `python-fast` group, which keeps the local loop on pure-Python
+workflow coverage and stubbed gateway protocol suites until you explicitly ask
+for native-extension integration coverage. When a selected suite needs the
+synced PyO3 extension, `test.ps1` now builds and syncs it automatically unless
+you override that behavior with `-SyncExtension never`.
 
 ```powershell
 .\scripts\test.ps1 -Suite rust
+.\scripts\test.ps1 -Suite python-fast
+.\scripts\test.ps1 -Suite python-native
 .\scripts\test.ps1 -Suite gateway
 .\scripts\test.ps1 -Suite gateway-fast
 .\scripts\test.ps1 -Suite gateway-native
@@ -215,12 +220,12 @@ behavior with `-SyncExtension never`.
 The gateway protocol tests now live under `tests/gateway_protocol/` and remain
 available through the legacy `tests.test_gateway_protocol` module, so old
 commands still work while targeted modules are easier to run in isolation.
-`-ListSuites` prints the current workflow matrix, `-RustFilter` forwards a
-focused filter to `cargo test --locked <filter>`, `-Suite` accepts multiple
-suite names when you want one command to cover a narrow mixed loop, and
-`-SyncExtension auto|always|never` lets you trade correctness checks against
-native-extension rebuild cost when you already know whether the local binary is
-fresh.
+`-ListSuites` now prints the combined Python suite matrix from the manifest
+graph, `-RustFilter` forwards a focused filter to `cargo test --locked
+<filter>`, `-Suite` accepts multiple suite names when you want one command to
+cover a narrow mixed loop, and `-SyncExtension auto|always|never` lets you
+trade correctness checks against native-extension rebuild cost when you already
+know whether the local binary is fresh.
 
 Or run the underlying commands directly:
 

@@ -46,7 +46,7 @@ function Invoke-ScriptOrThrow {
     }
 }
 
-function Get-GatewayManifest {
+function Get-PythonTestManifest {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Python,
@@ -54,15 +54,15 @@ function Get-GatewayManifest {
         [string]$RepoRoot
     )
 
-    $manifestEmitter = Join-Path $RepoRoot "scripts\gateway_suite_manifest.py"
+    $manifestEmitter = Join-Path $RepoRoot "scripts\python_suite_manifest.py"
     $rawOutput = & $Python $manifestEmitter 2>&1
     if ($LASTEXITCODE -ne 0) {
-        throw "Gateway suite manifest helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+        throw "Python test suite manifest helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
     }
 
     $rawManifest = $rawOutput | Out-String | ConvertFrom-Json
     if ($null -eq $rawManifest -or $null -eq $rawManifest.suites -or $null -eq $rawManifest.groups) {
-        throw "Gateway suite manifest must define 'suites' and 'groups'."
+        throw "Python test suite manifest must define 'suites' and 'groups'."
     }
 
     $suites = [ordered]@{}
@@ -70,10 +70,10 @@ function Get-GatewayManifest {
         $suiteName = $property.Name
         $metadata = $property.Value
         if ([string]::IsNullOrWhiteSpace($suiteName)) {
-            throw "Gateway suite manifest contains a blank suite name."
+            throw "Python test suite manifest contains a blank suite name."
         }
         if ($null -eq $metadata) {
-            throw "Gateway suite '$suiteName' is missing metadata."
+            throw "Python test suite '$suiteName' is missing metadata."
         }
 
         $moduleName = [string]$metadata.module
@@ -81,13 +81,13 @@ function Get-GatewayManifest {
         $requiresExtension = $metadata.requires_extension
 
         if ([string]::IsNullOrWhiteSpace($moduleName)) {
-            throw "Gateway suite '$suiteName' must define a non-empty module name."
+            throw "Python test suite '$suiteName' must define a non-empty module name."
         }
         if ([string]::IsNullOrWhiteSpace($description)) {
-            throw "Gateway suite '$suiteName' must define a non-empty description."
+            throw "Python test suite '$suiteName' must define a non-empty description."
         }
         if ($requiresExtension -isnot [bool]) {
-            throw "Gateway suite '$suiteName' must define a boolean requires_extension flag."
+            throw "Python test suite '$suiteName' must define a boolean requires_extension flag."
         }
 
         $suites[$suiteName] = [pscustomobject]@{
@@ -102,10 +102,10 @@ function Get-GatewayManifest {
         $groupName = $property.Name
         $metadata = $property.Value
         if ([string]::IsNullOrWhiteSpace($groupName)) {
-            throw "Gateway suite manifest contains a blank group name."
+            throw "Python test suite manifest contains a blank group name."
         }
         if ($null -eq $metadata) {
-            throw "Gateway group '$groupName' is missing metadata."
+            throw "Python test group '$groupName' is missing metadata."
         }
 
         $description = [string]$metadata.description
@@ -114,26 +114,26 @@ function Get-GatewayManifest {
         $moduleNames = @($metadata.module_names)
         $requiresExtension = $metadata.requires_extension
         if ([string]::IsNullOrWhiteSpace($description)) {
-            throw "Gateway group '$groupName' must define a non-empty description."
+            throw "Python test group '$groupName' must define a non-empty description."
         }
         if ($entries.Count -eq 0) {
-            throw "Gateway group '$groupName' must define at least one entry."
+            throw "Python test group '$groupName' must define at least one entry."
         }
         if ($suiteNames.Count -eq 0) {
-            throw "Gateway group '$groupName' must define at least one suite_name."
+            throw "Python test group '$groupName' must define at least one suite_name."
         }
         if ($moduleNames.Count -eq 0) {
-            throw "Gateway group '$groupName' must define at least one module_name."
+            throw "Python test group '$groupName' must define at least one module_name."
         }
         if ($requiresExtension -isnot [bool]) {
-            throw "Gateway group '$groupName' must define a boolean requires_extension flag."
+            throw "Python test group '$groupName' must define a boolean requires_extension flag."
         }
 
         $normalizedEntries = @()
         foreach ($entry in $entries) {
             $entryName = [string]$entry
             if ([string]::IsNullOrWhiteSpace($entryName)) {
-                throw "Gateway group '$groupName' contains a blank entry."
+                throw "Python test group '$groupName' contains a blank entry."
             }
             $normalizedEntries += $entryName
         }
@@ -142,7 +142,7 @@ function Get-GatewayManifest {
         foreach ($suiteName in $suiteNames) {
             $entryName = [string]$suiteName
             if ([string]::IsNullOrWhiteSpace($entryName)) {
-                throw "Gateway group '$groupName' contains a blank suite_name."
+                throw "Python test group '$groupName' contains a blank suite_name."
             }
             $normalizedSuiteNames += $entryName
         }
@@ -151,7 +151,7 @@ function Get-GatewayManifest {
         foreach ($moduleName in $moduleNames) {
             $entryName = [string]$moduleName
             if ([string]::IsNullOrWhiteSpace($entryName)) {
-                throw "Gateway group '$groupName' contains a blank module_name."
+                throw "Python test group '$groupName' contains a blank module_name."
             }
             $normalizedModuleNames += $entryName
         }
@@ -213,7 +213,7 @@ function Invoke-RustTests {
     Invoke-NativeOrThrow $description "cargo" $arguments
 }
 
-function Invoke-GatewayModules {
+function Invoke-PythonModules {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Python,
@@ -226,66 +226,57 @@ function Invoke-GatewayModules {
     Invoke-NativeOrThrow $Description $Python (@("-m", "unittest") + $ModuleNames)
 }
 
-function Invoke-GatewaySelection {
+function Invoke-TestSelection {
     param(
         [Parameter(Mandatory = $true)]
         [string]$SelectionName,
         [Parameter(Mandatory = $true)]
         [string]$Python,
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$GatewayManifest,
+        [pscustomobject]$PythonManifest,
         [Parameter(Mandatory = $true)]
         [string]$SyncExtension
     )
 
-    if ($GatewayManifest.Suites.Contains($SelectionName)) {
-        $suite = $GatewayManifest.Suites[$SelectionName]
+    if ($PythonManifest.Suites.Contains($SelectionName)) {
+        $suite = $PythonManifest.Suites[$SelectionName]
         Ensure-GatewayExtension $SyncExtension $suite.RequiresExtension
-        Invoke-GatewayModules $Python @($suite.ModuleName) "Running gateway suite '$SelectionName'..."
+        Invoke-PythonModules $Python @($suite.ModuleName) "Running Python test suite '$SelectionName'..."
         return
     }
 
-    if ($GatewayManifest.Groups.Contains($SelectionName)) {
-        $group = $GatewayManifest.Groups[$SelectionName]
+    if ($PythonManifest.Groups.Contains($SelectionName)) {
+        $group = $PythonManifest.Groups[$SelectionName]
         Ensure-GatewayExtension $SyncExtension $group.RequiresExtension
-        Invoke-GatewayModules $Python $group.ModuleNames "Running gateway suite '$SelectionName'..."
+        Invoke-PythonModules $Python $group.ModuleNames "Running Python test suite '$SelectionName'..."
         return
     }
 
-    throw "Unknown gateway suite or group: $SelectionName"
-}
-
-function Invoke-PythonDiscovery {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Python,
-        [Parameter(Mandatory = $true)]
-        [string]$SyncExtension
-    )
-
-    Ensure-GatewayExtension $SyncExtension $true
-    Invoke-NativeOrThrow "Running Python tests..." $Python @("-m", "unittest", "discover", "-s", "tests")
+    throw "Unknown Python test suite or group: $SelectionName"
 }
 
 function Get-SuiteDescriptions {
     param(
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$GatewayManifest
+        [pscustomobject]$PythonManifest
     )
 
     $descriptions = [ordered]@{
         "rust" = "Run all Rust tests via cargo test --locked."
-        "python" = "Run full Python unittest discovery under tests/."
-        "inner-loop" = "Run Rust tests plus the gateway-fast group for the default local loop."
-        "all" = "Run Rust tests plus the full Python unittest discovery suite."
+        "python" = $PythonManifest.Groups["python"].Description
+        "inner-loop" = "Run Rust tests plus the python-fast group for the default local loop."
+        "all" = "Run Rust tests plus the full Python suite set."
     }
 
-    foreach ($groupName in $GatewayManifest.Groups.Keys) {
-        $descriptions[$groupName] = $GatewayManifest.Groups[$groupName].Description
+    foreach ($groupName in $PythonManifest.Groups.Keys) {
+        if ($groupName -eq "python") {
+            continue
+        }
+        $descriptions[$groupName] = $PythonManifest.Groups[$groupName].Description
     }
 
-    foreach ($suiteName in $GatewayManifest.Suites.Keys) {
-        $descriptions[$suiteName] = $GatewayManifest.Suites[$suiteName].Description
+    foreach ($suiteName in $PythonManifest.Suites.Keys) {
+        $descriptions[$suiteName] = $PythonManifest.Suites[$suiteName].Description
     }
 
     return $descriptions
@@ -298,7 +289,7 @@ function Invoke-NamedSuite {
         [Parameter(Mandatory = $true)]
         [string]$Python,
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$GatewayManifest,
+        [pscustomobject]$PythonManifest,
         [AllowEmptyString()]
         [string]$RustFilter,
         [Parameter(Mandatory = $true)]
@@ -311,24 +302,24 @@ function Invoke-NamedSuite {
     }
 
     if ($SuiteName -eq "python") {
-        Invoke-PythonDiscovery $Python $SyncExtension
+        Invoke-TestSelection "python" $Python $PythonManifest $SyncExtension
         return
     }
 
     if ($SuiteName -eq "inner-loop") {
         Invoke-RustTests $RustFilter
-        Invoke-GatewaySelection "gateway-fast" $Python $GatewayManifest $SyncExtension
+        Invoke-TestSelection "python-fast" $Python $PythonManifest $SyncExtension
         return
     }
 
     if ($SuiteName -eq "all") {
         Invoke-RustTests $RustFilter
-        Invoke-PythonDiscovery $Python $SyncExtension
+        Invoke-TestSelection "python" $Python $PythonManifest $SyncExtension
         return
     }
 
-    if ($GatewayManifest.Groups.Contains($SuiteName) -or $GatewayManifest.Suites.Contains($SuiteName)) {
-        Invoke-GatewaySelection $SuiteName $Python $GatewayManifest $SyncExtension
+    if ($PythonManifest.Groups.Contains($SuiteName) -or $PythonManifest.Suites.Contains($SuiteName)) {
+        Invoke-TestSelection $SuiteName $Python $PythonManifest $SyncExtension
         return
     }
 
@@ -336,8 +327,8 @@ function Invoke-NamedSuite {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$gatewayManifest = Get-GatewayManifest $Python $repoRoot
-$suiteDescriptions = Get-SuiteDescriptions $gatewayManifest
+$pythonManifest = Get-PythonTestManifest $Python $repoRoot
+$suiteDescriptions = Get-SuiteDescriptions $pythonManifest
 
 if ($ListSuites) {
     foreach ($suiteName in $suiteDescriptions.Keys) {
@@ -358,7 +349,7 @@ if ($unknownSuites.Count -gt 0) {
 Push-Location $repoRoot
 try {
     foreach ($suiteName in $Suite) {
-        Invoke-NamedSuite $suiteName $Python $gatewayManifest $RustFilter $SyncExtension
+        Invoke-NamedSuite $suiteName $Python $pythonManifest $RustFilter $SyncExtension
     }
 } finally {
     Pop-Location

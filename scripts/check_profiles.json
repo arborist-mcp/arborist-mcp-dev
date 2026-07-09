@@ -21,7 +21,7 @@
       "needs_rust": true
     },
     "python-discovery": {
-      "description": "Build and sync the native gateway extension, then run full Python unittest discovery.",
+      "description": "Build and sync the native gateway extension, then run the full manifest-defined Python unittest suite.",
       "needs_python": true,
       "needs_rust": true
     },

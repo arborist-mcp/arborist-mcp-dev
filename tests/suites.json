@@ -1,0 +1,38 @@
+{
+  "suites": {
+    "check-workflow": {
+      "module": "tests.test_check_workflow",
+      "description": "Run check-profile manifest and CI workflow contract tests.",
+      "requires_extension": false
+    },
+    "test-workflow": {
+      "module": "tests.test_test_workflow",
+      "description": "Run Python test-suite manifest and test.ps1 contract tests.",
+      "requires_extension": false
+    }
+  },
+  "groups": {
+    "python-fast": {
+      "description": "Run fast pure-Python workflow tests plus the gateway-fast protocol suites.",
+      "entries": [
+        "check-workflow",
+        "test-workflow",
+        "gateway-fast"
+      ]
+    },
+    "python-native": {
+      "description": "Run the Python suites that execute against the synced native extension.",
+      "entries": [
+        "gateway-native"
+      ]
+    },
+    "python": {
+      "description": "Run the full Python unittest suite set.",
+      "entries": [
+        "check-workflow",
+        "test-workflow",
+        "gateway"
+      ]
+    }
+  }
+}

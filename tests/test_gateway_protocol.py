@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import unittest
 
-from tests.gateway_protocol import GROUP_MODULES
+from tests import GROUP_MODULES
 
 
 def load_tests(loader: unittest.TestLoader, _: unittest.TestSuite, __: str | None) -> unittest.TestSuite:
