@@ -159,13 +159,18 @@ run the same named slices instead of maintaining separate ad hoc command sets:
 .\scripts\check.ps1 -Profile sanity
 .\scripts\check.ps1 -Profile rust
 .\scripts\check.ps1 -Profile gateway-fast
+.\scripts\check.ps1 -Profile gateway-native
+.\scripts\check.ps1 -Profile python-discovery
+.\scripts\check.ps1 -Profile gateway-smoke
 .\scripts\check.ps1 -Profile python-native
 .\scripts\check.ps1 -Profile sanity,rust
 ```
 
 The GitHub Actions workflow now uses those same profiles in parallel on
 Windows, which makes failures easier to localize and lets quick pure-Python
-gateway regressions surface without waiting on the native-extension job.
+gateway regressions surface without waiting on the native-extension jobs. The
+legacy `python-native` profile remains as a local aggregate over the
+finer-grained native checks.
 
 For the everyday inner loop, run the focused test entrypoint:
 
@@ -174,13 +179,14 @@ For the everyday inner loop, run the focused test entrypoint:
 ```
 
 `test.ps1` now reads a richer gateway suite manifest from
-`tests/gateway_protocol/suites.json`, so suite metadata, grouping, and legacy
-Python discovery all stay in sync from one file. The default `inner-loop`
-selection now runs Rust plus the `gateway-fast` group, which keeps the local
-loop on the pure-Python protocol suites until you explicitly ask for
-native-extension integration coverage. When a selected suite needs the synced
-PyO3 extension, `test.ps1` now builds and syncs it automatically unless you
-override that behavior with `-SyncExtension never`.
+`tests/gateway_protocol/suites.json` through the shared Python-side suite
+loader, so suite metadata, grouping, workflow selection, and legacy Python
+discovery all stay in sync from one file. The default `inner-loop` selection
+now runs Rust plus the `gateway-fast` group, which keeps the local loop on the
+pure-Python protocol suites until you explicitly ask for native-extension
+integration coverage. When a selected suite needs the synced PyO3 extension,
+`test.ps1` now builds and syncs it automatically unless you override that
+behavior with `-SyncExtension never`.
 
 ```powershell
 .\scripts\test.ps1 -Suite rust
@@ -191,6 +197,7 @@ override that behavior with `-SyncExtension never`.
 .\scripts\test.ps1 -Suite gateway-symbol-routes
 .\scripts\test.ps1 -Suite gateway-execution
 .\scripts\test.ps1 -Suite gateway-trace-payloads
+.\scripts\test.ps1 -Suite gateway-management-routes
 .\scripts\test.ps1 -Suite gateway-runtime
 .\scripts\test.ps1 -Suite python
 .\scripts\test.ps1 -Suite all

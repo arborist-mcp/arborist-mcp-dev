@@ -14,11 +14,11 @@ def _load_manifest() -> dict[str, object]:
     return raw
 
 
-def _load_suite_modules(manifest: dict[str, object]) -> dict[str, str]:
+def _load_suites(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
     raw = manifest["suites"]
     if not isinstance(raw, dict):
         raise RuntimeError("gateway protocol suite manifest 'suites' must be a JSON object")
-    suite_modules: dict[str, str] = {}
+    suites: dict[str, dict[str, object]] = {}
     for suite_name, metadata in raw.items():
         if not isinstance(suite_name, str) or not suite_name.strip():
             raise RuntimeError("gateway protocol suite names must be non-empty strings")
@@ -33,29 +33,45 @@ def _load_suite_modules(manifest: dict[str, object]) -> dict[str, str]:
                 f"gateway protocol suite '{suite_name}' must define a non-empty module name"
             )
 
+        description = metadata.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise RuntimeError(
+                f"gateway protocol suite '{suite_name}' must define a non-empty description"
+            )
+
         requires_extension = metadata.get("requires_extension")
         if not isinstance(requires_extension, bool):
             raise RuntimeError(
                 f"gateway protocol suite '{suite_name}' must define a boolean requires_extension flag"
             )
 
-        suite_modules[suite_name] = module_name
+        suites[suite_name] = {
+            "module": module_name,
+            "description": description,
+            "requires_extension": requires_extension,
+        }
 
-    return suite_modules
+    return suites
 
 
-def _load_group_entries(manifest: dict[str, object]) -> dict[str, tuple[str, ...]]:
+def _load_groups(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
     raw = manifest["groups"]
     if not isinstance(raw, dict):
         raise RuntimeError("gateway protocol suite manifest 'groups' must be a JSON object")
 
-    group_entries: dict[str, tuple[str, ...]] = {}
+    groups: dict[str, dict[str, object]] = {}
     for group_name, metadata in raw.items():
         if not isinstance(group_name, str) or not group_name.strip():
             raise RuntimeError("gateway protocol group names must be non-empty strings")
         if not isinstance(metadata, dict):
             raise RuntimeError(
                 f"gateway protocol group '{group_name}' metadata must be a JSON object"
+            )
+
+        description = metadata.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise RuntimeError(
+                f"gateway protocol group '{group_name}' must define a non-empty description"
             )
 
         entries = metadata.get("entries")
@@ -71,34 +87,39 @@ def _load_group_entries(manifest: dict[str, object]) -> dict[str, tuple[str, ...
                 )
             normalized_entries.append(entry)
 
-        group_entries[group_name] = tuple(normalized_entries)
+        groups[group_name] = {
+            "description": description,
+            "entries": tuple(normalized_entries),
+        }
 
-    return group_entries
+    return groups
 
 
 def _expand_group(
     group_name: str,
     *,
-    suite_modules: dict[str, str],
-    group_entries: dict[str, tuple[str, ...]],
+    suites: dict[str, dict[str, object]],
+    groups: dict[str, dict[str, object]],
     stack: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
-    if group_name not in group_entries:
+    if group_name not in groups:
         raise RuntimeError(f"unknown gateway protocol group '{group_name}'")
     if group_name in stack:
         cycle = " -> ".join((*stack, group_name))
         raise RuntimeError(f"gateway protocol group cycle detected: {cycle}")
 
     ordered_suite_names: list[str] = []
-    for entry in group_entries[group_name]:
-        if entry in suite_modules:
+    entries = groups[group_name]["entries"]
+    assert isinstance(entries, tuple)
+    for entry in entries:
+        if entry in suites:
             if entry not in ordered_suite_names:
                 ordered_suite_names.append(entry)
             continue
         for nested in _expand_group(
             entry,
-            suite_modules=suite_modules,
-            group_entries=group_entries,
+            suites=suites,
+            groups=groups,
             stack=(*stack, group_name),
         ):
             if nested not in ordered_suite_names:
@@ -107,15 +128,64 @@ def _expand_group(
     return tuple(ordered_suite_names)
 
 
+def _build_resolved_groups(
+    *,
+    suites: dict[str, dict[str, object]],
+    groups: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    resolved_groups: dict[str, dict[str, object]] = {}
+    for group_name, metadata in groups.items():
+        suite_names = _expand_group(group_name, suites=suites, groups=groups)
+        module_names = tuple(suites[suite_name]["module"] for suite_name in suite_names)
+        requires_extension = any(
+            bool(suites[suite_name]["requires_extension"]) for suite_name in suite_names
+        )
+        resolved_groups[group_name] = {
+            "description": metadata["description"],
+            "entries": metadata["entries"],
+            "suite_names": suite_names,
+            "module_names": module_names,
+            "requires_extension": requires_extension,
+        }
+
+    return resolved_groups
+
+
+def build_manifest_snapshot() -> dict[str, object]:
+    return {
+        "suites": {
+            suite_name: {
+                "module": metadata["module"],
+                "description": metadata["description"],
+                "requires_extension": metadata["requires_extension"],
+            }
+            for suite_name, metadata in SUITES.items()
+        },
+        "groups": {
+            group_name: {
+                "description": metadata["description"],
+                "entries": list(metadata["entries"]),
+                "suite_names": list(metadata["suite_names"]),
+                "module_names": list(metadata["module_names"]),
+                "requires_extension": metadata["requires_extension"],
+            }
+            for group_name, metadata in GROUPS.items()
+        },
+    }
+
+
 MANIFEST = _load_manifest()
-SUITE_MODULES = _load_suite_modules(MANIFEST)
-GROUP_ENTRIES = _load_group_entries(MANIFEST)
-GROUP_SUITES = {
-    group_name: _expand_group(
-        group_name,
-        suite_modules=SUITE_MODULES,
-        group_entries=GROUP_ENTRIES,
-    )
-    for group_name in GROUP_ENTRIES
+SUITES = _load_suites(MANIFEST)
+_GROUP_DEFINITIONS = _load_groups(MANIFEST)
+SUITE_MODULES = {
+    suite_name: str(metadata["module"]) for suite_name, metadata in SUITES.items()
 }
-MODULE_NAMES = tuple(SUITE_MODULES[suite_name] for suite_name in GROUP_SUITES["gateway"])
+GROUPS = _build_resolved_groups(suites=SUITES, groups=_GROUP_DEFINITIONS)
+GROUP_SUITES = {
+    group_name: tuple(metadata["suite_names"])
+    for group_name, metadata in GROUPS.items()
+}
+GROUP_MODULES = {
+    group_name: tuple(metadata["module_names"]) for group_name, metadata in GROUPS.items()
+}
+MODULE_NAMES = GROUP_MODULES["gateway"]

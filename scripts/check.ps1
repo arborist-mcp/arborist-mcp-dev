@@ -168,6 +168,38 @@ function Ensure-GatewayExtension {
     $script:GatewayExtensionPrepared = $true
 }
 
+function Invoke-GatewayNativeCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python
+    )
+
+    Ensure-GatewayExtension $Python
+    Invoke-ScriptOrThrow "Running gateway native suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite gateway-native -SyncExtension never -Quiet }
+}
+
+function Invoke-PythonDiscoveryCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python
+    )
+
+    Ensure-GatewayExtension $Python
+    Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -SyncExtension never -Quiet }
+}
+
+function Invoke-GatewaySmokeCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python
+    )
+
+    Ensure-GatewayExtension $Python
+    Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
+    Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
+    Invoke-GatewayInitializeSmoke $Python
+}
+
 function Invoke-CheckProfile {
     param(
         [Parameter(Mandatory = $true)]
@@ -194,12 +226,22 @@ function Invoke-CheckProfile {
             Invoke-ScriptOrThrow "Running gateway fast suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite gateway-fast -SyncExtension never -Quiet }
             return
         }
+        "gateway-native" {
+            Invoke-GatewayNativeCheck $Python
+            return
+        }
+        "python-discovery" {
+            Invoke-PythonDiscoveryCheck $Python
+            return
+        }
+        "gateway-smoke" {
+            Invoke-GatewaySmokeCheck $Python
+            return
+        }
         "python-native" {
-            Ensure-GatewayExtension $Python
-            Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -SyncExtension never -Quiet }
-            Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
-            Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
-            Invoke-GatewayInitializeSmoke $Python
+            Invoke-CheckProfile "gateway-native" $Python $RepoRoot
+            Invoke-CheckProfile "python-discovery" $Python $RepoRoot
+            Invoke-CheckProfile "gateway-smoke" $Python $RepoRoot
             return
         }
         "full" {
@@ -219,8 +261,11 @@ function Get-ProfileDescriptions {
         "sanity" = "Run PowerShell syntax and cross-file version consistency checks."
         "rust" = "Run cargo fmt --check, cargo test --locked, and cargo clippy --locked --all-targets -D warnings."
         "gateway-fast" = "Run the pure-Python gateway protocol suites that do not require the synced native extension."
-        "python-native" = "Build and sync the native gateway extension, run full Python unittest discovery, and exercise gateway CLI/version/initialize smoke checks."
-        "full" = "Run the complete local check gate: sanity, rust, and python-native."
+        "gateway-native" = "Build and sync the native gateway extension, then run the gateway-native protocol suites."
+        "python-discovery" = "Build and sync the native gateway extension, then run full Python unittest discovery."
+        "gateway-smoke" = "Build and sync the native gateway extension, then exercise gateway CLI/version/initialize smoke checks."
+        "python-native" = "Run the aggregate native Python gate: gateway-native, python-discovery, and gateway-smoke."
+        "full" = "Run the complete local check gate: sanity, rust, and the aggregate python-native profile."
     }
 }
 

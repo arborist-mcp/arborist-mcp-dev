@@ -37,8 +37,16 @@ jobs:
             profile: gateway-fast
             needs_python: true
             needs_rust: false
-          - job_name: python-native
-            profile: python-native
+          - job_name: gateway-native
+            profile: gateway-native
+            needs_python: true
+            needs_rust: true
+          - job_name: python-discovery
+            profile: python-discovery
+            needs_python: true
+            needs_rust: true
+          - job_name: gateway-smoke
+            profile: gateway-smoke
             needs_python: true
             needs_rust: true
 

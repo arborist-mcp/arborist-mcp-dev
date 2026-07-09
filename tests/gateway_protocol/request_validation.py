@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import importlib
 import io
+import json
+from pathlib import Path
+import subprocess
+import sys
 from unittest import mock
 
 import arborist_mcp
@@ -10,7 +14,15 @@ from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
-from tests.gateway_protocol import GROUP_SUITES, MANIFEST, SUITE_MODULES
+from tests.gateway_protocol import (
+    GROUP_MODULES,
+    GROUP_SUITES,
+    GROUPS,
+    MANIFEST,
+    SUITE_MODULES,
+    SUITES,
+    build_manifest_snapshot,
+)
 
 SUITE_NAME = "gateway-request-validation"
 REQUIRES_EXTENSION = False
@@ -153,6 +165,31 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         for suite_name in GROUP_SUITES["gateway-native"]:
             with self.subTest(group="gateway-native", suite=suite_name):
                 self.assertTrue(suite_manifest[suite_name]["requires_extension"])
+
+    def test_gateway_manifest_snapshot_matches_loaded_metadata(self) -> None:
+        snapshot = build_manifest_snapshot()
+        self.assertEqual(snapshot["suites"], SUITES)
+
+        snapshot_groups = snapshot["groups"]
+        assert isinstance(snapshot_groups, dict)
+        self.assertEqual(set(snapshot_groups), set(GROUPS))
+        for group_name, metadata in snapshot_groups.items():
+            with self.subTest(group=group_name):
+                self.assertEqual(tuple(metadata["suite_names"]), GROUP_SUITES[group_name])
+                self.assertEqual(tuple(metadata["module_names"]), GROUP_MODULES[group_name])
+                self.assertEqual(metadata["requires_extension"], GROUPS[group_name]["requires_extension"])
+
+    def test_gateway_manifest_cli_emits_normalized_metadata(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        script_path = repo_root / "scripts" / "gateway_suite_manifest.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(json.loads(completed.stdout), build_manifest_snapshot())
 
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         self.assert_invalid_request(["initialize"], request_id=None, contains="expected object")

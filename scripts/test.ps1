@@ -49,11 +49,18 @@ function Invoke-ScriptOrThrow {
 function Get-GatewayManifest {
     param(
         [Parameter(Mandatory = $true)]
+        [string]$Python,
+        [Parameter(Mandatory = $true)]
         [string]$RepoRoot
     )
 
-    $manifestPath = Join-Path $RepoRoot "tests\gateway_protocol\suites.json"
-    $rawManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifestEmitter = Join-Path $RepoRoot "scripts\gateway_suite_manifest.py"
+    $rawOutput = & $Python $manifestEmitter 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Gateway suite manifest helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+    }
+
+    $rawManifest = $rawOutput | Out-String | ConvertFrom-Json
     if ($null -eq $rawManifest -or $null -eq $rawManifest.suites -or $null -eq $rawManifest.groups) {
         throw "Gateway suite manifest must define 'suites' and 'groups'."
     }
@@ -103,11 +110,23 @@ function Get-GatewayManifest {
 
         $description = [string]$metadata.description
         $entries = @($metadata.entries)
+        $suiteNames = @($metadata.suite_names)
+        $moduleNames = @($metadata.module_names)
+        $requiresExtension = $metadata.requires_extension
         if ([string]::IsNullOrWhiteSpace($description)) {
             throw "Gateway group '$groupName' must define a non-empty description."
         }
         if ($entries.Count -eq 0) {
             throw "Gateway group '$groupName' must define at least one entry."
+        }
+        if ($suiteNames.Count -eq 0) {
+            throw "Gateway group '$groupName' must define at least one suite_name."
+        }
+        if ($moduleNames.Count -eq 0) {
+            throw "Gateway group '$groupName' must define at least one module_name."
+        }
+        if ($requiresExtension -isnot [bool]) {
+            throw "Gateway group '$groupName' must define a boolean requires_extension flag."
         }
 
         $normalizedEntries = @()
@@ -119,69 +138,36 @@ function Get-GatewayManifest {
             $normalizedEntries += $entryName
         }
 
+        $normalizedSuiteNames = @()
+        foreach ($suiteName in $suiteNames) {
+            $entryName = [string]$suiteName
+            if ([string]::IsNullOrWhiteSpace($entryName)) {
+                throw "Gateway group '$groupName' contains a blank suite_name."
+            }
+            $normalizedSuiteNames += $entryName
+        }
+
+        $normalizedModuleNames = @()
+        foreach ($moduleName in $moduleNames) {
+            $entryName = [string]$moduleName
+            if ([string]::IsNullOrWhiteSpace($entryName)) {
+                throw "Gateway group '$groupName' contains a blank module_name."
+            }
+            $normalizedModuleNames += $entryName
+        }
+
         $groups[$groupName] = [pscustomobject]@{
             Description = $description
             Entries = $normalizedEntries
+            SuiteNames = $normalizedSuiteNames
+            ModuleNames = $normalizedModuleNames
+            RequiresExtension = $requiresExtension
         }
     }
 
     return [pscustomobject]@{
         Suites = $suites
         Groups = $groups
-    }
-}
-
-function Resolve-GatewayEntry {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$EntryName,
-        [Parameter(Mandatory = $true)]
-        [System.Collections.IDictionary]$Suites,
-        [Parameter(Mandatory = $true)]
-        [System.Collections.IDictionary]$Groups,
-        [string[]]$Stack = @()
-    )
-
-    if ($Suites.Contains($EntryName)) {
-        $suite = $Suites[$EntryName]
-        return [pscustomobject]@{
-            Modules = @($suite.ModuleName)
-            SuiteNames = @($EntryName)
-            RequiresExtension = [bool]$suite.RequiresExtension
-        }
-    }
-
-    if (-not $Groups.Contains($EntryName)) {
-        throw "Unknown gateway suite or group: $EntryName"
-    }
-    if ($Stack -contains $EntryName) {
-        throw "Gateway suite manifest contains a recursive group cycle: $($Stack + $EntryName -join ' -> ')"
-    }
-
-    $modules = @()
-    $suiteNames = @()
-    $requiresExtension = $false
-    foreach ($childEntry in $Groups[$EntryName].Entries) {
-        $resolved = Resolve-GatewayEntry $childEntry $Suites $Groups ($Stack + $EntryName)
-        foreach ($moduleName in $resolved.Modules) {
-            if ($modules -notcontains $moduleName) {
-                $modules += $moduleName
-            }
-        }
-        foreach ($suiteName in $resolved.SuiteNames) {
-            if ($suiteNames -notcontains $suiteName) {
-                $suiteNames += $suiteName
-            }
-        }
-        if ($resolved.RequiresExtension) {
-            $requiresExtension = $true
-        }
-    }
-
-    return [pscustomobject]@{
-        Modules = $modules
-        SuiteNames = $suiteNames
-        RequiresExtension = $requiresExtension
     }
 }
 
@@ -252,9 +238,21 @@ function Invoke-GatewaySelection {
         [string]$SyncExtension
     )
 
-    $resolved = Resolve-GatewayEntry $SelectionName $GatewayManifest.Suites $GatewayManifest.Groups
-    Ensure-GatewayExtension $SyncExtension $resolved.RequiresExtension
-    Invoke-GatewayModules $Python $resolved.Modules "Running gateway suite '$SelectionName'..."
+    if ($GatewayManifest.Suites.Contains($SelectionName)) {
+        $suite = $GatewayManifest.Suites[$SelectionName]
+        Ensure-GatewayExtension $SyncExtension $suite.RequiresExtension
+        Invoke-GatewayModules $Python @($suite.ModuleName) "Running gateway suite '$SelectionName'..."
+        return
+    }
+
+    if ($GatewayManifest.Groups.Contains($SelectionName)) {
+        $group = $GatewayManifest.Groups[$SelectionName]
+        Ensure-GatewayExtension $SyncExtension $group.RequiresExtension
+        Invoke-GatewayModules $Python $group.ModuleNames "Running gateway suite '$SelectionName'..."
+        return
+    }
+
+    throw "Unknown gateway suite or group: $SelectionName"
 }
 
 function Invoke-PythonDiscovery {
@@ -338,7 +336,7 @@ function Invoke-NamedSuite {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$gatewayManifest = Get-GatewayManifest $repoRoot
+$gatewayManifest = Get-GatewayManifest $Python $repoRoot
 $suiteDescriptions = Get-SuiteDescriptions $gatewayManifest
 
 if ($ListSuites) {
