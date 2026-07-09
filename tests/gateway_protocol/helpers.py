@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -31,6 +32,18 @@ def make_request(
         "method": method,
         "params": {} if params is None else params,
     }
+
+
+def deep_merge(base: object, updates: object) -> object:
+    if isinstance(base, dict) and isinstance(updates, dict):
+        merged = copy.deepcopy(base)
+        for key, value in updates.items():
+            if key in merged:
+                merged[key] = deep_merge(merged[key], value)
+            else:
+                merged[key] = copy.deepcopy(value)
+        return merged
+    return copy.deepcopy(updates)
 
 
 @contextmanager
