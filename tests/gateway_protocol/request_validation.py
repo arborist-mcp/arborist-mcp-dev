@@ -1144,6 +1144,103 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn(expected_key, response["error"]["message"])
 
+    def test_rejects_source_with_index_db_path_for_position_entrypoints(self) -> None:
+        class StubCore:
+            def __getattr__(self, name: str):
+                if name.endswith("_json"):
+                    def _unexpected(*args: object) -> str:
+                        raise AssertionError(f"core should not be called: {name}")
+
+                    return _unexpected
+                raise AttributeError(name)
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/read_symbol_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+            (
+                "arborist/read_symbol_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "direction": "callers",
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+            (
+                "arborist/read_symbol_neighborhood_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+            (
+                "arborist/read_symbol_discovery_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+            (
+                "arborist/trace_symbol_graph_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "direction": "callers",
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+            (
+                "arborist/trace_symbol_neighborhood_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 2},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "index_db_path": "symbols.db",
+                },
+            ),
+        ]
+
+        for method, params in cases:
+            with self.subTest(method=method):
+                self.assert_invalid_params(
+                    method,
+                    params,
+                    request_id=111,
+                    contains="index_db_path is not supported when source is provided",
+                    gateway=gateway,
+                )
+
     def test_rejects_invalid_patch_at_position_position_as_invalid_params(self) -> None:
         class StubCore:
             def patch_ast_node_at_position_json(self, *args: object) -> str:

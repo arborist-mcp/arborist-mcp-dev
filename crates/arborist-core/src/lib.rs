@@ -7,7 +7,7 @@ mod symbols;
 mod vfs;
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 
@@ -103,6 +103,133 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
         bail!("invalid expand_nodes selector at index {index}: selector must not be blank");
     }
     Ok(())
+}
+
+fn source_overrides_for_workspace_path(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+) -> Result<(PathBuf, PathBuf, BTreeMap<String, String>)> {
+    let workspace_root = language::normalize_absolute_path(workspace_root)?;
+    let path = language::normalize_absolute_path(path)?;
+    ensure_path_inside_workspace(&workspace_root, &path)?;
+
+    let mut overrides = BTreeMap::new();
+    overrides.insert(language::normalize_path(&path), source.to_string());
+    Ok((workspace_root, path, overrides))
+}
+
+pub fn trace_symbol_graph_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::trace_symbol_graph_at_position_with_overrides(
+        &workspace_root,
+        &overrides,
+        &path,
+        position,
+        direction,
+    )
+}
+
+pub fn trace_symbol_neighborhood_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::trace_symbol_neighborhood_at_position_with_overrides(
+        &workspace_root,
+        &overrides,
+        &path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn read_symbol_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_at_position_with_overrides(&workspace_root, &overrides, &path, position)
+}
+
+pub fn read_symbol_context_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_context_at_position_with_overrides(
+        &workspace_root,
+        &overrides,
+        &path,
+        position,
+        direction,
+    )
+}
+
+pub fn read_symbol_neighborhood_context_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_neighborhood_context_at_position_with_overrides(
+        &workspace_root,
+        &overrides,
+        &path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn read_symbol_discovery_context_at_position_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let (workspace_root, path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_discovery_context_at_position_with_overrides(
+        &workspace_root,
+        &overrides,
+        &path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+    )
 }
 
 fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
@@ -1207,6 +1334,7 @@ mod tests {
         read_symbol_context_from_index, read_symbol_discovery_context,
         read_symbol_discovery_context_at_position,
         read_symbol_discovery_context_at_position_from_index,
+        read_symbol_discovery_context_at_position_with_source,
         read_symbol_discovery_context_from_index, read_symbol_from_index,
         read_symbol_neighborhood_context, read_symbol_neighborhood_context_from_index,
         rebuild_symbol_index, refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
@@ -1215,11 +1343,12 @@ mod tests {
         search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
         search_symbols_neighborhood_context, search_symbols_neighborhood_context_from_index,
         trace_symbol_graph, trace_symbol_graph_at_position,
-        trace_symbol_graph_at_position_from_index, trace_symbol_graph_from_index,
-        trace_symbol_neighborhood, trace_symbol_neighborhood_at_position,
-        trace_symbol_neighborhood_at_position_from_index, trace_symbol_neighborhood_from_index,
-        validate_patch_commit_with_trace, validate_patch_trace_validation_result,
-        validate_patch_with_discovery_context, validate_patch_with_discovery_context_at_position,
+        trace_symbol_graph_at_position_from_index, trace_symbol_graph_at_position_with_source,
+        trace_symbol_graph_from_index, trace_symbol_neighborhood,
+        trace_symbol_neighborhood_at_position, trace_symbol_neighborhood_at_position_from_index,
+        trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
+        validate_patch_trace_validation_result, validate_patch_with_discovery_context,
+        validate_patch_with_discovery_context_at_position,
         validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
         validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
         validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
@@ -9474,6 +9603,41 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn trace_symbol_graph_at_position_with_source_normalizes_path_without_writing_disk() {
+        let dir = temporary_dir();
+        let nested = dir.join("child");
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let caller_alias = nested.join("..").join("caller.py");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+
+        let result = trace_symbol_graph_at_position_with_source(
+            &dir,
+            &caller_alias,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+            &Position { row: 3, column: 5 },
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+        assert!(!caller.exists());
+        assert_eq!(result.symbol.semantic_path, "orchestrate");
+        assert_eq!(result.symbol.file_path, normalize_path(&caller));
+        assert!(
+            result
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
     fn read_symbol_context_at_position_uses_dirty_vfs_overrides() {
         let dir = temporary_dir();
         let helper = dir.join("graph_b.py");
@@ -9678,6 +9842,52 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(
             persisted.neighborhood_context.reads[2].source,
             entry_symbol.trim_end_matches('\n')
+        );
+    }
+
+    #[test]
+    fn read_symbol_discovery_context_at_position_with_source_normalizes_path_without_writing_disk()
+    {
+        let dir = temporary_dir();
+        let nested = dir.join("child");
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let caller_alias = nested.join("..").join("caller.py");
+        let entry = dir.join("entry.py");
+
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &entry,
+            "from caller import orchestrate\n\n\ndef entrypoint(value: int) -> int:\n    return orchestrate(value)\n",
+        )
+        .unwrap();
+
+        let result = read_symbol_discovery_context_at_position_with_source(
+            &dir,
+            &caller_alias,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+            &Position { row: 3, column: 5 },
+            TraceDirection::Both,
+            2,
+            10,
+        )
+        .unwrap();
+
+        assert!(!caller.exists());
+        assert_eq!(result.read.symbol.semantic_path, "orchestrate");
+        assert_eq!(result.read.symbol.file_path, normalize_path(&caller));
+        assert_eq!(result.trace.symbol.file_path, normalize_path(&caller));
+        assert!(
+            result
+                .neighborhood_context
+                .reads
+                .iter()
+                .any(|read| read.symbol.semantic_path == "helper")
         );
     }
 

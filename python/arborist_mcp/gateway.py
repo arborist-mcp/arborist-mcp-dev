@@ -137,6 +137,7 @@ TOOL_PARAM_NAMES = {
         "file_path",
         "position",
         "direction",
+        "source",
         "index_db_path",
     ),
     "arborist/trace_symbol_neighborhood_at_position": (
@@ -146,6 +147,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "source",
         "index_db_path",
     ),
     "arborist/read_symbol": (
@@ -157,6 +159,7 @@ TOOL_PARAM_NAMES = {
         "workspace_root",
         "file_path",
         "position",
+        "source",
         "index_db_path",
     ),
     "arborist/read_symbol_context": (
@@ -170,6 +173,7 @@ TOOL_PARAM_NAMES = {
         "file_path",
         "position",
         "direction",
+        "source",
         "index_db_path",
     ),
     "arborist/read_symbol_neighborhood_context": (
@@ -187,6 +191,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "source",
         "index_db_path",
     ),
     "arborist/read_symbol_discovery_context": (
@@ -204,6 +209,7 @@ TOOL_PARAM_NAMES = {
         "direction",
         "max_depth",
         "max_nodes",
+        "source",
         "index_db_path",
     ),
     "arborist/list_symbols": (
@@ -461,6 +467,17 @@ class ArboristGateway:
             },
         }
 
+    @staticmethod
+    def _reject_source_with_index_db_path(
+        source: str | None,
+        index_db_path: str | None,
+    ) -> None:
+        if source is not None and index_db_path is not None:
+            raise JsonRpcError(
+                -32602,
+                "invalid params: index_db_path is not supported when source is provided",
+            )
+
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         depth_limit = self._optional_int(params, "depth_limit", default=2)
@@ -591,13 +608,16 @@ class ArboristGateway:
             default="both",
             allowed=("callers", "callees", "both"),
         )
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().trace_symbol_graph_at_position_json(
             workspace_root,
             file_path,
             row,
             column,
             direction,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)
@@ -618,7 +638,9 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().trace_symbol_neighborhood_at_position_json(
             workspace_root,
             file_path,
@@ -627,6 +649,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)
@@ -646,12 +669,15 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         file_path = self._require_string(params, "file_path")
         row, column = self._require_position(params, "position")
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_at_position_json(
             workspace_root,
             file_path,
             row,
             column,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)
@@ -684,13 +710,16 @@ class ArboristGateway:
             default="both",
             allowed=("callers", "callees", "both"),
         )
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_context_at_position_json(
             workspace_root,
             file_path,
             row,
             column,
             direction,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)
@@ -735,7 +764,9 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_neighborhood_context_at_position_json(
             workspace_root,
             file_path,
@@ -744,6 +775,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)
@@ -788,7 +820,9 @@ class ArboristGateway:
         max_nodes = self._optional_int(params, "max_nodes", default=64)
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_discovery_context_at_position_json(
             workspace_root,
             file_path,
@@ -797,6 +831,7 @@ class ArboristGateway:
             direction,
             max_depth,
             max_nodes,
+            source,
             index_db_path,
         )
         return self._decode_core_object(payload)

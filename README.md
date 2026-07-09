@@ -100,8 +100,9 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - LSP-style buffer session primitives for open/change/close event ingestion
 - Session-aware `trace_symbol_graph` for unsaved virtual buffers
 - Semantic patching routed through the VFS session before commit
-- One-shot skeleton, query, patch, and trace-context requests can analyze an
-  optional `source` buffer without first writing it to disk
+- One-shot skeleton, query, patch, trace-context, and position-based
+  read/trace requests can analyze an optional `source` buffer without first
+  writing it to disk
 - Session-managed symbol index registrations with commit-time auto-refresh
 - File-scoped persisted index refresh for tighter post-commit sync
 - Partial SQLite persistence updates for changed or deleted file refreshes
@@ -109,7 +110,7 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - Local C include paths are normalized before dependency tracking, so parent-relative includes such as `#include "../include/wrapper.h"` refresh the right dependents
 - Missing system includes such as `#include <stdio.h>` are not treated as local workspace dependencies during refresh
 - Workspace path checks normalize `.` and `..` segments before enforcing containment
-- Disk-backed read, patch, query, trace, index, and refresh entrypoints, plus one-shot source-backed read, patch, query, and trace-context entrypoints, normalize path segments before returning file or database paths
+- Disk-backed read, patch, query, trace, index, and refresh entrypoints, plus one-shot source-backed read, patch, query, trace-context, and position-based read/trace entrypoints, normalize path segments before returning file or database paths
 - VFS buffers are keyed by normalized absolute paths, so aliases such as `child/../sample.py` share the same dirty buffer and commit state
 - Persisted trace reads reject missing `index_db_path` databases without creating empty SQLite files
 - Workspace indexing skips common cache, build, dependency, and virtual-environment directories
@@ -392,8 +393,9 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - `trace_symbol_graph` now prefers dirty VirtualState buffers over disk when no persisted index is requested
 - `patch_ast_node` uses the same VFS session machinery and commits on success
 - `patch_virtual_ast_node` keeps the validated patch in `VirtualState` until an explicit commit
-- One-shot skeleton, query, patch, and trace-context requests accept optional
-  `source` buffers for unsaved-file analysis without mutating disk
+- One-shot skeleton, query, patch, trace-context, and position-based
+  read/trace requests accept optional `source` buffers for unsaved-file
+  analysis without mutating disk
 - Patch responses now report `resolved_symbol_id`, so callers can round-trip a precise C trace target into a later patch request
 - C patch validation now reports structured binding feedback, including resolved `symbol_id` matches and ambiguous same-name candidates
 - Python patch validation now reports structured resolved binding feedback for visible module symbols, parameters, local assignments, local or relative aliases, and package `__init__.py` re-exports
@@ -416,7 +418,10 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - Parent-relative local include paths are normalized before reverse-dependency matching, so `#include "../include/wrapper.h"` links back to the same refreshed header path as `include/wrapper.h`
 - Missing angle-bracket system includes are ignored for local reverse-dependency expansion, while missing quote-style local includes are still tracked so deleted headers can invalidate dependents
 - Workspace containment checks now normalize `.` and `..` path segments before comparing paths, so refresh and trace-backed validation requests cannot escape a workspace through lexical path tricks
-- Disk-backed file entrypoints and one-shot source-backed read, patch, query, and trace-context entrypoints normalize paths before reading or writing, so response payloads and evidence keys do not preserve caller-supplied `.` or `..` aliases
+- Disk-backed file entrypoints and one-shot source-backed read, patch, query,
+  trace-context, and position-based read/trace entrypoints normalize paths
+  before reading or writing, so response payloads and evidence keys do not
+  preserve caller-supplied `.` or `..` aliases
 - VFS operations normalize file identities before opening, editing, listing, closing, or committing buffers, so path aliases share one session entry instead of creating parallel dirty state
 - Persisted trace requests with a missing `index_db_path` now fail closed without creating an empty SQLite database
 - Persisted trace reads now fail closed on missing or corrupt symbol index metadata, symbol identity fields, file-state paths, byte ranges, or JSON graph/list columns instead of silently defaulting damaged values

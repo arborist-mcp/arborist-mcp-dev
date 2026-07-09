@@ -679,7 +679,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                 },
                 "payload": helper_read_graph,
-                "expected_call": (".", "graph_b.py", 0, 5, "symbols.db"),
+                "expected_call": (".", "graph_b.py", 0, 5, None, "symbols.db"),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertIn("def helper()", result["source"]),
@@ -716,7 +716,15 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                 },
                 "payload": helper_trace_graph,
-                "expected_call": (".", "graph_b.py", 0, 5, "callers", "symbols.db"),
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    None,
+                    "symbols.db",
+                ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(
@@ -769,6 +777,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                     "symbols.db",
                 ),
                 "check": lambda result: (
@@ -811,7 +820,15 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                 },
                 "payload": {"read": helper_read_graph, "trace": helper_trace_graph},
-                "expected_call": (".", "graph_b.py", 0, 5, "callers", "symbols.db"),
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    None,
+                    "symbols.db",
+                ),
                 "check": lambda result: (
                     self.assertEqual(result["read"]["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(
@@ -865,6 +882,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                     "symbols.db",
                 ),
                 "check": lambda result: (
@@ -931,6 +949,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     2,
                     10,
+                    None,
                     "symbols.db",
                 ),
                 "check": lambda result: (
@@ -956,6 +975,165 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     request_id=case["request_id"],
                     expected_call=case["expected_call"],
                     check_result=case["check"],
+                )
+
+    def test_position_routes_source_params_to_core(self) -> None:
+        helper_read_graph = self.helper_read(file_path="graph_b.py")
+        helper_trace_graph = self.helper_trace_context(file_path="graph_b.py")
+        helper_context_graph = self.helper_neighborhood_context(file_path="graph_b.py")
+        source = "def helper(value: int) -> int:\n    return value + 2\n"
+        cases = [
+            {
+                "core_method": "read_symbol_at_position_json",
+                "rpc_method": "arborist/read_symbol_at_position",
+                "request_id": 168,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "source": source,
+                },
+                "payload": helper_read_graph,
+                "expected_call": (".", "graph_b.py", 0, 5, source, None),
+            },
+            {
+                "core_method": "trace_symbol_graph_at_position_json",
+                "rpc_method": "arborist/trace_symbol_graph_at_position",
+                "request_id": 169,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "source": source,
+                },
+                "payload": helper_trace_graph,
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    source,
+                    None,
+                ),
+            },
+            {
+                "core_method": "trace_symbol_neighborhood_at_position_json",
+                "rpc_method": "arborist/trace_symbol_neighborhood_at_position",
+                "request_id": 170,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": source,
+                },
+                "payload": helper_context_graph["neighborhood"],
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    source,
+                    None,
+                ),
+            },
+            {
+                "core_method": "read_symbol_context_at_position_json",
+                "rpc_method": "arborist/read_symbol_context_at_position",
+                "request_id": 171,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "source": source,
+                },
+                "payload": {"read": helper_read_graph, "trace": helper_trace_graph},
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    source,
+                    None,
+                ),
+            },
+            {
+                "core_method": "read_symbol_neighborhood_context_at_position_json",
+                "rpc_method": "arborist/read_symbol_neighborhood_context_at_position",
+                "request_id": 172,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": source,
+                },
+                "payload": helper_context_graph,
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    source,
+                    None,
+                ),
+            },
+            {
+                "core_method": "read_symbol_discovery_context_at_position_json",
+                "rpc_method": "arborist/read_symbol_discovery_context_at_position",
+                "request_id": 173,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "source": source,
+                },
+                "payload": {
+                    "read": helper_read_graph,
+                    "trace": helper_trace_graph,
+                    "neighborhood_context": helper_context_graph,
+                },
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    source,
+                    None,
+                ),
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(method=case["rpc_method"]):
+                self.assert_routed_json(
+                    core_method=case["core_method"],
+                    rpc_method=case["rpc_method"],
+                    params=case["params"],
+                    payload=case["payload"],
+                    request_id=case["request_id"],
+                    expected_call=case["expected_call"],
+                    check_result=lambda result: self.assertTrue(result),
                 )
 
     def test_patch_at_position_routes_params_to_core(self) -> None:
@@ -1456,6 +1634,134 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
             self.assertTrue(result["patch"]["applied"])
             self.assertEqual(result["trace"]["symbol"]["semantic_path"], "orchestrate")
             self.assertEqual(result["read"]["symbol"]["semantic_path"], "orchestrate")
+            self.assertTrue(
+                any(
+                    read["symbol"]["semantic_path"] == "helper"
+                    for read in result["neighborhood_context"]["reads"]
+                )
+            )
+
+    def test_read_at_position_accepts_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/read_symbol_at_position",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "position": {"row": 3, "column": 5},
+                    },
+                    request_id=81,
+                ),
+                request_id=81,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["symbol"]["semantic_path"], "orchestrate")
+            self.assertEqual(result["symbol"]["file_path"], expected_file)
+            self.assertEqual(result["source"], "def orchestrate(value: int) -> int:\n    return helper(value)")
+
+    def test_trace_graph_at_position_accepts_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/trace_symbol_graph_at_position",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "position": {"row": 3, "column": 5},
+                        "direction": "both",
+                    },
+                    request_id=82,
+                ),
+                request_id=82,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["symbol"]["semantic_path"], "orchestrate")
+            self.assertEqual(result["symbol"]["file_path"], expected_file)
+            self.assertTrue(
+                any(symbol["semantic_path"] == "helper" for symbol in result["callees"])
+            )
+
+    def test_discovery_context_at_position_accepts_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+                "entry.py": (
+                    "from caller import orchestrate\n\n\n"
+                    "def entrypoint(value: int) -> int:\n"
+                    "    return orchestrate(value)\n"
+                ),
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/read_symbol_discovery_context_at_position",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "position": {"row": 3, "column": 5},
+                        "direction": "both",
+                        "max_depth": 2,
+                        "max_nodes": 10,
+                    },
+                    request_id=83,
+                ),
+                request_id=83,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["read"]["symbol"]["semantic_path"], "orchestrate")
+            self.assertEqual(result["read"]["symbol"]["file_path"], expected_file)
+            self.assertEqual(result["trace"]["symbol"]["file_path"], expected_file)
             self.assertTrue(
                 any(
                     read["symbol"]["semantic_path"] == "helper"
