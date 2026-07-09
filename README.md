@@ -162,6 +162,7 @@ run the same named slices instead of maintaining separate ad hoc command sets:
 .\scripts\check.ps1 -Profile sanity
 .\scripts\check.ps1 -Profile rust
 .\scripts\check.ps1 -Profile gateway-fast
+.\scripts\check.ps1 -Profile python-fast
 .\scripts\check.ps1 -Profile gateway-native
 .\scripts\check.ps1 -Profile python-discovery
 .\scripts\check.ps1 -Profile gateway-smoke
@@ -173,9 +174,10 @@ The GitHub Actions workflow now uses those same profiles in parallel on
 Windows, and its matrix is now derived from the same shared profile helper that
 drives `check.ps1 -ListProfiles`, which makes failures easier to localize and
 keeps CI job definitions aligned with the local script surface. Quick
-pure-Python gateway regressions now surface without waiting on the
-native-extension jobs, while the legacy `python-native` profile remains as a
-local aggregate over the finer-grained native checks.
+pure-Python workflow and gateway regressions now surface through the dedicated
+`python-fast` profile without waiting on the native-extension jobs, while the
+legacy `python-native` profile remains as a local aggregate over the
+finer-grained native checks.
 
 For the everyday inner loop, run the focused test entrypoint:
 

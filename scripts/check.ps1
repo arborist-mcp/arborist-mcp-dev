@@ -206,24 +206,35 @@ function Ensure-GatewayExtension {
     $script:GatewayExtensionPrepared = $true
 }
 
-function Invoke-GatewayNativeCheck {
+function Invoke-TestSuiteCheck {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Python
-    )
-
-    Ensure-GatewayExtension $Python
-    Invoke-ScriptOrThrow "Running gateway native suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite gateway-native -SyncExtension never -Quiet }
-}
-
-function Invoke-PythonDiscoveryCheck {
-    param(
+        [string]$Python,
         [Parameter(Mandatory = $true)]
-        [string]$Python
+        [pscustomobject]$ProfileMetadata
     )
 
-    Ensure-GatewayExtension $Python
-    Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -SyncExtension never -Quiet }
+    $suiteName = [string]$ProfileMetadata.suite
+    if ([string]::IsNullOrWhiteSpace($suiteName)) {
+        throw "Suite-backed check profiles must define a non-empty suite."
+    }
+
+    $syncExtension = [string]$ProfileMetadata.sync_extension
+    if ([string]::IsNullOrWhiteSpace($syncExtension)) {
+        $syncExtension = "auto"
+    }
+
+    $prepareExtension = $false
+    if ($ProfileMetadata.PSObject.Properties.Name -contains "prepare_extension") {
+        $prepareExtension = [bool]$ProfileMetadata.prepare_extension
+    }
+    if ($prepareExtension) {
+        Ensure-GatewayExtension $Python
+    }
+
+    Invoke-ScriptOrThrow "Running test suite '$suiteName'..." {
+        & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite $suiteName -SyncExtension $syncExtension -Quiet
+    }
 }
 
 function Invoke-GatewaySmokeCheck {
@@ -259,7 +270,8 @@ function Invoke-CheckProfile {
         return
     }
 
-    switch ($ProfileName) {
+    $handler = [string]$profileMetadata.handler
+    switch ($handler) {
         "sanity" {
             Invoke-PowerShellSyntaxCheck
             Invoke-VersionConsistencyCheck $RepoRoot
@@ -271,16 +283,8 @@ function Invoke-CheckProfile {
             Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
             return
         }
-        "gateway-fast" {
-            Invoke-ScriptOrThrow "Running gateway fast suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite gateway-fast -SyncExtension never -Quiet }
-            return
-        }
-        "gateway-native" {
-            Invoke-GatewayNativeCheck $Python
-            return
-        }
-        "python-discovery" {
-            Invoke-PythonDiscoveryCheck $Python
+        "suite" {
+            Invoke-TestSuiteCheck $Python $profileMetadata
             return
         }
         "gateway-smoke" {

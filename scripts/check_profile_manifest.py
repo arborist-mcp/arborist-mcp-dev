@@ -36,6 +36,11 @@ def _load_profiles(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
 
         entries = metadata.get("entries")
         if entries is None:
+            handler = metadata.get("handler")
+            if not isinstance(handler, str) or not handler.strip():
+                raise RuntimeError(
+                    f"check profile '{profile_name}' must define a non-empty handler"
+                )
             needs_python = metadata.get("needs_python")
             needs_rust = metadata.get("needs_rust")
             if not isinstance(needs_python, bool):
@@ -46,12 +51,35 @@ def _load_profiles(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
                 raise RuntimeError(
                     f"check profile '{profile_name}' must define a boolean needs_rust flag"
                 )
-            profiles[profile_name] = {
+            profile: dict[str, object] = {
                 "description": description,
                 "entries": (),
+                "handler": handler,
                 "needs_python": needs_python,
                 "needs_rust": needs_rust,
             }
+            if "suite" in metadata:
+                suite = metadata.get("suite")
+                if not isinstance(suite, str) or not suite.strip():
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' suite must be a non-empty string"
+                    )
+                profile["suite"] = suite
+            if "sync_extension" in metadata:
+                sync_extension = metadata.get("sync_extension")
+                if sync_extension not in {"auto", "always", "never"}:
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' sync_extension must be one of auto, always, never"
+                    )
+                profile["sync_extension"] = sync_extension
+            if "prepare_extension" in metadata:
+                prepare_extension = metadata.get("prepare_extension")
+                if not isinstance(prepare_extension, bool):
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' prepare_extension must be a boolean"
+                    )
+                profile["prepare_extension"] = prepare_extension
+            profiles[profile_name] = profile
             continue
 
         if not isinstance(entries, list) or not entries:
@@ -141,6 +169,14 @@ def build_snapshot() -> dict[str, object]:
             "needs_rust": needs_rust,
             "ci_job": profile_name in ci_profiles,
         }
+        if not entries:
+            snapshot_profiles[profile_name]["handler"] = metadata["handler"]
+            if "suite" in metadata:
+                snapshot_profiles[profile_name]["suite"] = metadata["suite"]
+            if "sync_extension" in metadata:
+                snapshot_profiles[profile_name]["sync_extension"] = metadata["sync_extension"]
+            if "prepare_extension" in metadata:
+                snapshot_profiles[profile_name]["prepare_extension"] = metadata["prepare_extension"]
 
     return {
         "profile_order": list(profiles),

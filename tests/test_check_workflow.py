@@ -33,6 +33,7 @@ class CheckWorkflowTests(unittest.TestCase):
                 "sanity",
                 "rust",
                 "gateway-fast",
+                "python-fast",
                 "gateway-native",
                 "python-discovery",
                 "gateway-smoke",
@@ -44,6 +45,15 @@ class CheckWorkflowTests(unittest.TestCase):
     def test_check_profile_snapshot_marks_aggregate_profiles(self) -> None:
         snapshot = self.module.build_snapshot()
         profiles = snapshot["profiles"]
+
+        self.assertEqual(profiles["sanity"]["handler"], "sanity")
+        self.assertEqual(profiles["python-fast"]["handler"], "suite")
+        self.assertEqual(profiles["python-fast"]["suite"], "python-fast")
+        self.assertFalse(profiles["python-fast"]["prepare_extension"])
+        self.assertEqual(profiles["gateway-native"]["handler"], "suite")
+        self.assertTrue(profiles["gateway-native"]["prepare_extension"])
+        self.assertEqual(profiles["python-discovery"]["suite"], "python")
+        self.assertEqual(profiles["gateway-smoke"]["handler"], "gateway-smoke")
 
         self.assertEqual(
             profiles["python-native"]["leaf_profiles"],
@@ -113,9 +123,15 @@ class CheckWorkflowTests(unittest.TestCase):
             workflow,
         )
 
+    def test_ci_profiles_promote_python_fast_over_gateway_fast(self) -> None:
+        snapshot = self.module.build_snapshot()
+        self.assertIn("python-fast", snapshot["ci_profiles"])
+        self.assertNotIn("gateway-fast", snapshot["ci_profiles"])
+
     def test_readme_documents_split_native_profiles(self) -> None:
         readme = (self.repo_root / "README.md").read_text(encoding="utf-8")
         for profile_name in (
+            "python-fast",
             "gateway-fast",
             "gateway-native",
             "python-discovery",
