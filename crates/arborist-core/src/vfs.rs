@@ -12,14 +12,15 @@ use crate::language::{
 };
 use crate::model::LanguageId;
 use crate::model::{
+    DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchAstNodeResult, PatchValidationReport, PositionEdit, RegisteredSymbolIndex,
     SymbolContextResult, SymbolIndexStats, SymbolListContextResult,
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
     SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult, SymbolReadResult,
     SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
-    TraceSymbolGraphResult, TraceSymbolNeighborhoodResult, VirtualEditResult, VirtualFileSnapshot,
-    VirtualFileStatus,
+    TraceBackedPatchResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
+    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_at_position, semantic_target_range,
@@ -42,6 +43,11 @@ use crate::symbols::{
     search_symbols_with_overrides_filtered, trace_symbol_graph_at_position_with_overrides,
     trace_symbol_graph_with_overrides, trace_symbol_neighborhood_at_position_with_overrides,
     trace_symbol_neighborhood_with_overrides,
+};
+use crate::{
+    validate_discovery_context_patch_result, validate_graph_backed_patch_result,
+    validate_neighborhood_context_patch_result, validate_patch_commit_with_trace,
+    validate_trace_backed_patch_result,
 };
 
 #[derive(Default)]
@@ -307,6 +313,248 @@ impl VirtualFileSystem {
         };
 
         self.patch_node(&path, &semantic_target, new_code, bypass_reason)
+    }
+
+    pub fn validate_patch_with_trace_context(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+    ) -> Result<TraceBackedPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
+        self.trace_backed_patch_result(&workspace_root, &patch, direction)
+    }
+
+    pub fn validate_patch_with_trace_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+    ) -> Result<TraceBackedPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
+        self.trace_backed_patch_result(&workspace_root, &patch, direction)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_graph_context(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<GraphBackedPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
+        self.graph_backed_patch_result(&workspace_root, &patch, direction, max_depth, max_nodes)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_graph_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<GraphBackedPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
+        self.graph_backed_patch_result(&workspace_root, &patch, direction, max_depth, max_nodes)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_neighborhood_context(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<NeighborhoodContextPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
+        self.neighborhood_context_patch_result(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_neighborhood_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<NeighborhoodContextPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
+        self.neighborhood_context_patch_result(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_discovery_context(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<DiscoveryContextPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
+        self.discovery_context_patch_result(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_discovery_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<DiscoveryContextPatchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        if !path.starts_with(&workspace_root) {
+            bail!(
+                "file {} is outside workspace {}",
+                path.display(),
+                workspace_root.display()
+            );
+        }
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
+        self.discovery_context_patch_result(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+        )
     }
 
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
@@ -1038,6 +1286,276 @@ impl VirtualFileSystem {
 
         Ok(overrides)
     }
+
+    fn trace_backed_patch_result(
+        &mut self,
+        workspace_root: &Path,
+        patch: &PatchAstNodeResult,
+        direction: TraceDirection,
+    ) -> Result<TraceBackedPatchResult> {
+        let trace_target = patch.resolved_symbol_id.clone();
+        if !patch.validation.syntax_errors.is_empty() {
+            let result = TraceBackedPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+                ),
+            };
+            validate_trace_backed_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        if !patch.applied {
+            let result = TraceBackedPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
+                        .to_string(),
+                ),
+            };
+            validate_trace_backed_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        overrides.insert(patch.file.clone(), patch.updated_source.clone());
+        let trace = trace_symbol_graph_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction,
+        )?;
+        let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
+        let result = TraceBackedPatchResult {
+            patch: patch.clone(),
+            trace_target,
+            trace: Some(trace),
+            trace_validation: Some(trace_validation),
+            trace_error: None,
+        };
+        validate_trace_backed_patch_result(&result)?;
+        Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn graph_backed_patch_result(
+        &mut self,
+        workspace_root: &Path,
+        patch: &PatchAstNodeResult,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<GraphBackedPatchResult> {
+        let trace_target = patch.resolved_symbol_id.clone();
+        if !patch.validation.syntax_errors.is_empty() {
+            let result = GraphBackedPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                neighborhood: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+                ),
+            };
+            validate_graph_backed_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        if !patch.applied {
+            let result = GraphBackedPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                neighborhood: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
+                        .to_string(),
+                ),
+            };
+            validate_graph_backed_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        overrides.insert(patch.file.clone(), patch.updated_source.clone());
+        let trace = trace_symbol_graph_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction.clone(),
+        )?;
+        let neighborhood = trace_symbol_neighborhood_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction,
+            max_depth,
+            max_nodes,
+        )?;
+        let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
+        let result = GraphBackedPatchResult {
+            patch: patch.clone(),
+            trace_target,
+            trace: Some(trace),
+            neighborhood: Some(neighborhood),
+            trace_validation: Some(trace_validation),
+            trace_error: None,
+        };
+        validate_graph_backed_patch_result(&result)?;
+        Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn neighborhood_context_patch_result(
+        &mut self,
+        workspace_root: &Path,
+        patch: &PatchAstNodeResult,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<NeighborhoodContextPatchResult> {
+        let trace_target = patch.resolved_symbol_id.clone();
+        if !patch.validation.syntax_errors.is_empty() {
+            let result = NeighborhoodContextPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                neighborhood_context: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+                ),
+            };
+            validate_neighborhood_context_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        if !patch.applied {
+            let result = NeighborhoodContextPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                neighborhood_context: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
+                        .to_string(),
+                ),
+            };
+            validate_neighborhood_context_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        overrides.insert(patch.file.clone(), patch.updated_source.clone());
+        let trace = trace_symbol_graph_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction.clone(),
+        )?;
+        let neighborhood_context = read_symbol_neighborhood_context_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction,
+            max_depth,
+            max_nodes,
+        )?;
+        let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
+        let result = NeighborhoodContextPatchResult {
+            patch: patch.clone(),
+            trace_target,
+            trace: Some(trace),
+            neighborhood_context: Some(neighborhood_context),
+            trace_validation: Some(trace_validation),
+            trace_error: None,
+        };
+        validate_neighborhood_context_patch_result(&result)?;
+        Ok(result)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn discovery_context_patch_result(
+        &mut self,
+        workspace_root: &Path,
+        patch: &PatchAstNodeResult,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<DiscoveryContextPatchResult> {
+        let trace_target = patch.resolved_symbol_id.clone();
+        if !patch.validation.syntax_errors.is_empty() {
+            let result = DiscoveryContextPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                read: None,
+                neighborhood_context: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
+                ),
+            };
+            validate_discovery_context_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        if !patch.applied {
+            let result = DiscoveryContextPatchResult {
+                patch: patch.clone(),
+                trace_target,
+                trace: None,
+                read: None,
+                neighborhood_context: None,
+                trace_validation: None,
+                trace_error: Some(
+                    TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
+                        .to_string(),
+                ),
+            };
+            validate_discovery_context_patch_result(&result)?;
+            return Ok(result);
+        }
+
+        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        overrides.insert(patch.file.clone(), patch.updated_source.clone());
+        let trace = trace_symbol_graph_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction.clone(),
+        )?;
+        let read = read_symbol_with_overrides(workspace_root, &overrides, &trace_target)?;
+        let neighborhood_context = read_symbol_neighborhood_context_with_overrides(
+            workspace_root,
+            &overrides,
+            &trace_target,
+            direction,
+            max_depth,
+            max_nodes,
+        )?;
+        let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
+        let result = DiscoveryContextPatchResult {
+            patch: patch.clone(),
+            trace_target,
+            trace: Some(trace),
+            read: Some(read),
+            neighborhood_context: Some(neighborhood_context),
+            trace_validation: Some(trace_validation),
+            trace_error: None,
+        };
+        validate_discovery_context_patch_result(&result)?;
+        Ok(result)
+    }
 }
 
 fn snapshot_from_entry(file: &str, entry: &VirtualFileEntry) -> Result<VirtualFileSnapshot> {
@@ -1592,6 +2110,77 @@ mod tests {
                 .unwrap()
                 .contains("return leaf")
         );
+    }
+
+    #[test]
+    fn trace_patch_context_uses_unsaved_workspace_overrides() {
+        let workspace = temp_workspace();
+        let helper_path = workspace.join("helper.py");
+        let caller_path = workspace.join("caller.py");
+        let consumer_path = workspace.join("consumer.py");
+
+        fs::write(
+            &helper_path,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller_path,
+            "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &consumer_path,
+            "def consume(value: int) -> int:\n    return value\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.open_file(
+            &consumer_path,
+            Some(
+                "from caller import orchestrate\n\n\ndef consume(value: int) -> int:\n    return orchestrate(value)\n",
+            ),
+        )
+        .unwrap();
+
+        let result = vfs
+            .validate_patch_with_trace_context(
+                &workspace,
+                &caller_path,
+                "orchestrate",
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                None,
+                TraceDirection::Both,
+            )
+            .unwrap();
+
+        assert!(result.patch.applied);
+        assert_eq!(result.trace_target, result.patch.resolved_symbol_id);
+        assert!(result.trace_error.is_none());
+        assert_eq!(
+            result.trace_validation.as_ref().map(|validation| validation.allowed),
+            Some(true)
+        );
+
+        let trace = result.trace.expect("trace result should be present");
+        assert!(trace
+            .callees
+            .iter()
+            .find(|symbol| symbol.semantic_path == "helper")
+            .is_some());
+        assert!(trace
+            .callers
+            .iter()
+            .find(|symbol| symbol.semantic_path == "consume")
+            .is_some());
+
+        let consumer_snapshot = vfs.read_file(&consumer_path).unwrap();
+        assert!(consumer_snapshot.dirty);
+        assert!(consumer_snapshot.source.contains("return orchestrate(value)"));
+        let consumer_disk = fs::read_to_string(&consumer_path).unwrap();
+        assert!(consumer_disk.contains("return value"));
+        assert!(!consumer_disk.contains("return orchestrate(value)"));
     }
 
     #[test]

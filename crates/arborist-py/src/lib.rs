@@ -32,23 +32,19 @@ use arborist_core::{
     trace_symbol_neighborhood_with_source, validate_patch_commit_with_trace,
     validate_patch_with_discovery_context, validate_patch_with_discovery_context_at_position,
     validate_patch_with_discovery_context_at_position_from_index,
-    validate_patch_with_discovery_context_at_position_from_path,
     validate_patch_with_discovery_context_from_index,
-    validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
+    validate_patch_with_graph_context,
     validate_patch_with_graph_context_at_position,
     validate_patch_with_graph_context_at_position_from_index,
-    validate_patch_with_graph_context_at_position_from_path,
     validate_patch_with_graph_context_from_index,
-    validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
+    validate_patch_with_neighborhood_context,
     validate_patch_with_neighborhood_context_at_position,
     validate_patch_with_neighborhood_context_at_position_from_index,
-    validate_patch_with_neighborhood_context_at_position_from_path,
     validate_patch_with_neighborhood_context_from_index,
-    validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
+    validate_patch_with_trace_context,
     validate_patch_with_trace_context_at_position,
     validate_patch_with_trace_context_at_position_from_index,
-    validate_patch_with_trace_context_at_position_from_path,
-    validate_patch_with_trace_context_from_index, validate_patch_with_trace_context_from_path,
+    validate_patch_with_trace_context_from_index,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -1379,7 +1375,7 @@ impl ArboristCore {
                     direction,
                 )
             }
-            (None, None) => validate_patch_with_trace_context_from_path(
+            (None, None) => self.vfs.borrow_mut().validate_patch_with_trace_context(
                 Path::new(workspace_root),
                 Path::new(file_path),
                 semantic_path,
@@ -1442,14 +1438,17 @@ impl ArboristCore {
                     direction,
                 )
             }
-            (None, None) => validate_patch_with_trace_context_at_position_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_trace_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -1509,7 +1508,7 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_graph_context_from_path(
+            (None, None) => self.vfs.borrow_mut().validate_patch_with_graph_context(
                 Path::new(workspace_root),
                 Path::new(file_path),
                 semantic_path,
@@ -1582,16 +1581,19 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_graph_context_at_position_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_graph_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -1653,16 +1655,19 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_neighborhood_context_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_neighborhood_context(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    semantic_path,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -1726,16 +1731,19 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_neighborhood_context_at_position_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_neighborhood_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -1795,16 +1803,19 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_discovery_context_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_discovery_context(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    semantic_path,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -1868,16 +1879,19 @@ impl ArboristCore {
                     max_nodes,
                 )
             }
-            (None, None) => validate_patch_with_discovery_context_at_position_from_path(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .validate_patch_with_discovery_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 

@@ -331,6 +331,75 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                 any(symbol["semantic_path"] == "helper" for symbol in result["trace"]["callees"])
             )
 
+    def test_trace_context_uses_unsaved_workspace_overrides_without_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+                "caller.py": (
+                    "from helper import helper\n\n\n"
+                    "def orchestrate(value: int) -> int:\n"
+                    "    return value + 1\n"
+                ),
+                "consumer.py": "def consume(value: int) -> int:\n    return value\n",
+            }
+        ) as workspace:
+            caller = workspace.joinpath("caller.py")
+            consumer = workspace.joinpath("consumer.py")
+            gateway = self.make_live_gateway()
+
+            self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    gateway,
+                    "arborist/did_open",
+                    {
+                        "file_path": str(consumer),
+                        "source": (
+                            "from caller import orchestrate\n\n\n"
+                            "def consume(value: int) -> int:\n"
+                            "    return orchestrate(value)\n"
+                        ),
+                    },
+                    request_id=104,
+                ),
+                request_id=104,
+            )
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    gateway,
+                    "arborist/validate_patch_with_trace_context",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "semantic_path": "orchestrate",
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "direction": "both",
+                    },
+                    request_id=105,
+                ),
+                request_id=105,
+            )
+
+            assert isinstance(result, dict)
+            self.assertTrue(result["patch"]["applied"])
+            self.assertEqual(result["patch"]["resolved_path"], "orchestrate")
+            self.assertEqual(result["trace_target"], result["patch"]["resolved_symbol_id"])
+            self.assertIsNone(result["trace_error"])
+            self.assertTrue(result["trace_validation"]["allowed"])
+            self.assertTrue(
+                any(symbol["semantic_path"] == "helper" for symbol in result["trace"]["callees"])
+            )
+            self.assertEqual(result["trace"]["indexed_files"], 3)
+
+            self.assertIn("return value", consumer.read_text(encoding="utf-8"))
+            self.assertNotIn(
+                "return orchestrate(value)", consumer.read_text(encoding="utf-8")
+            )
+            self.assertIn("return value + 1", caller.read_text(encoding="utf-8"))
+
     def test_rejects_blank_expand_node_selectors(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(self, *args: object) -> str:
