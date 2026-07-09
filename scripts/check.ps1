@@ -1,7 +1,8 @@
 param(
     [string]$Python = "python",
     [string[]]$Profile = @("full"),
-    [switch]$ListProfiles
+    [switch]$ListProfiles,
+    [switch]$ShowPlan
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +28,30 @@ function Get-CheckProfileSnapshot {
     }
 
     return $snapshot
+}
+
+function Get-CheckExecutionPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string[]]$ProfileNames
+    )
+
+    $manifestEmitter = Join-Path $RepoRoot "scripts\check_profile_manifest.py"
+    $rawOutput = & $Python $manifestEmitter --plan @ProfileNames 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Check execution plan helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+    }
+
+    $plan = $rawOutput | Out-String | ConvertFrom-Json
+    if ($null -eq $plan -or $null -eq $plan.steps) {
+        throw "Check execution plan helper must define 'steps'."
+    }
+
+    return $plan
 }
 
 function Get-CheckProfileMetadata {
@@ -74,6 +99,24 @@ function Invoke-ScriptOrThrow {
     if ($LASTEXITCODE -ne 0) {
         throw "$Description failed with exit code $LASTEXITCODE."
     }
+}
+
+function Expand-SelectionArguments {
+    param(
+        [string[]]$Values
+    )
+
+    $expanded = @()
+    foreach ($value in @($Values)) {
+        foreach ($entry in ([string]$value).Split(',')) {
+            $normalized = $entry.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+                $expanded += $normalized
+            }
+        }
+    }
+
+    return $expanded
 }
 
 function Invoke-GatewayInitializeSmoke {
@@ -346,8 +389,43 @@ function Invoke-CheckProfile {
     }
 }
 
+function Show-CheckExecutionPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ExecutionPlan
+    )
+
+    foreach ($step in @($ExecutionPlan.steps)) {
+        $profileName = [string]$step.profile
+        $handler = [string]$step.handler
+        $needsRust = [bool]$step.needs_rust
+        $needsPython = [bool]$step.needs_python
+        $requirements = @()
+        if ($needsRust) {
+            $requirements += "rust"
+        }
+        if ($needsPython) {
+            $requirements += "python"
+        }
+        if ($requirements.Count -eq 0) {
+            $requirements += "none"
+        }
+
+        $detail = $handler
+        if ($step.PSObject.Properties.Name -contains "suite") {
+            $detail = "$detail -> $($step.suite)"
+        }
+        if ($step.PSObject.Properties.Name -contains "prepare_extension" -and [bool]$step.prepare_extension) {
+            $detail = "$detail -> prepare-extension"
+        }
+
+        Write-Host ("{0,-16} {1} [{2}]" -f $profileName, $detail, ($requirements -join "+"))
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $profileSnapshot = Get-CheckProfileSnapshot $Python $repoRoot
+$Profile = Expand-SelectionArguments $Profile
 
 if ($ListProfiles) {
     foreach ($profileName in @($profileSnapshot.profile_order)) {
@@ -367,9 +445,17 @@ if ($unknownProfiles.Count -gt 0) {
     throw "Unknown profile name(s): $($unknownProfiles -join ', '). Use -ListProfiles to inspect supported values."
 }
 
+$executionPlan = Get-CheckExecutionPlan $Python $repoRoot $Profile
+
+if ($ShowPlan) {
+    Show-CheckExecutionPlan $executionPlan
+    return
+}
+
 Push-Location $repoRoot
 try {
-    foreach ($profileName in $Profile) {
+    foreach ($step in @($executionPlan.steps)) {
+        $profileName = [string]$step.profile
         Invoke-CheckProfile $profileName $Python $repoRoot $profileSnapshot
     }
 } finally {

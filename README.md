@@ -235,6 +235,7 @@ run the same named slices instead of maintaining separate ad hoc command sets:
 .\scripts\check.ps1 -Profile gateway-smoke
 .\scripts\check.ps1 -Profile python-native
 .\scripts\check.ps1 -Profile sanity,rust
+.\scripts\check.ps1 -Profile full,python-native -ShowPlan
 ```
 
 The GitHub Actions workflow now uses those same profiles in parallel on
@@ -244,7 +245,9 @@ keeps CI job definitions aligned with the local script surface. Quick
 pure-Python workflow and gateway regressions now surface through the dedicated
 `python-fast` profile without waiting on the native-extension jobs, while the
 legacy `python-native` profile remains as a local aggregate over the
-finer-grained native checks.
+finer-grained native checks. `-ShowPlan` now prints the deduplicated leaf check
+plan before anything runs, so overlapping profile selections can be inspected
+without manually expanding aggregates.
 
 For the everyday inner loop, run the focused test entrypoint:
 
@@ -284,6 +287,7 @@ you override that behavior with `-SyncExtension never`.
 .\scripts\test.ps1 -Suite rust -RustFilter read_symbol_at_position
 .\scripts\test.ps1 -Suite rust,gateway-fast
 .\scripts\test.ps1 -Suite gateway-native -SyncExtension always
+.\scripts\test.ps1 -Suite rust,inner-loop -ShowPlan
 ```
 
 The gateway protocol tests now live under `tests/gateway_protocol/` and remain
@@ -294,7 +298,9 @@ graph, `-RustFilter` forwards a focused filter to `cargo test --locked
 <filter>`, `-Suite` accepts multiple suite names when you want one command to
 cover a narrow mixed loop, and `-SyncExtension auto|always|never` lets you
 trade correctness checks against native-extension rebuild cost when you already
-know whether the local binary is fresh.
+know whether the local binary is fresh. `-ShowPlan` prints the deduplicated
+Rust/Python execution plan up front, including the exact Python modules that a
+mixed selection will execute.
 
 Or run the underlying commands directly:
 

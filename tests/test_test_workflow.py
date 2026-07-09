@@ -56,6 +56,30 @@ class TestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(completed.stdout), build_manifest_snapshot())
 
+    def test_python_suite_manifest_cli_emits_deduplicated_execution_plan(self) -> None:
+        script_path = self.repo_root / "scripts" / "python_suite_manifest.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path), "--plan", "rust", "inner-loop", "gateway-fast"],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        plan = json.loads(completed.stdout)
+        self.assertEqual(plan["selection_names"], ["rust", "inner-loop", "gateway-fast"])
+        self.assertEqual([step["kind"] for step in plan["steps"]], ["rust", "python"])
+        self.assertEqual(plan["steps"][0]["selection_names"], ["rust"])
+        self.assertEqual(
+            plan["steps"][1]["selection_names"],
+            ["python-fast", "gateway-fast"],
+        )
+        self.assertEqual(
+            plan["steps"][1]["module_names"],
+            list(GROUP_MODULES["python-fast"]),
+        )
+        self.assertFalse(plan["steps"][1]["requires_extension"])
+
     def test_test_script_lists_suites_from_snapshot(self) -> None:
         snapshot = build_manifest_snapshot()
         completed = subprocess.run(
@@ -84,12 +108,36 @@ class TestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(lines, expected)
 
+    def test_test_script_show_plan_reports_deduplicated_execution_steps(self) -> None:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-File",
+                "scripts/test.ps1",
+                "-Suite",
+                "rust,inner-loop,gateway-fast",
+                "-ShowPlan",
+            ],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
+        self.assertEqual(lines[0], "rust    <- rust")
+        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 6 module(s)]")
+        self.assertEqual(
+            lines[2:],
+            [f"          {module_name}" for module_name in GROUP_MODULES["python-fast"]],
+        )
+
     def test_readme_documents_python_suite_groups(self) -> None:
         readme = (self.repo_root / "README.md").read_text(encoding="utf-8")
         for suite_name in ("python-fast", "python-native", "python"):
             with self.subTest(suite=suite_name):
                 self.assertIn(f".\\scripts\\test.ps1 -Suite {suite_name}", readme)
         self.assertIn("scripts/python_suite_manifest.py", readme)
+        self.assertIn(".\\scripts\\test.ps1 -Suite rust,inner-loop -ShowPlan", readme)
 
 
 if __name__ == "__main__":

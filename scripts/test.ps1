@@ -4,6 +4,7 @@ param(
     [string]$RustFilter,
     [switch]$Quiet,
     [switch]$ListSuites,
+    [switch]$ShowPlan,
     [ValidateSet("auto", "always", "never")]
     [string]$SyncExtension = "auto"
 )
@@ -44,6 +45,24 @@ function Invoke-ScriptOrThrow {
     if ($LASTEXITCODE -ne 0) {
         throw "$Description failed with exit code $LASTEXITCODE."
     }
+}
+
+function Expand-SelectionArguments {
+    param(
+        [string[]]$Values
+    )
+
+    $expanded = @()
+    foreach ($value in @($Values)) {
+        foreach ($entry in ([string]$value).Split(',')) {
+            $normalized = $entry.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+                $expanded += $normalized
+            }
+        }
+    }
+
+    return $expanded
 }
 
 function Get-PythonTestManifest {
@@ -171,6 +190,30 @@ function Get-PythonTestManifest {
     }
 }
 
+function Get-PythonExecutionPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string[]]$SelectionNames
+    )
+
+    $manifestEmitter = Join-Path $RepoRoot "scripts\python_suite_manifest.py"
+    $rawOutput = & $Python $manifestEmitter --plan @SelectionNames 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python execution plan helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+    }
+
+    $plan = $rawOutput | Out-String | ConvertFrom-Json
+    if ($null -eq $plan -or $null -eq $plan.steps) {
+        throw "Python execution plan helper must define 'steps'."
+    }
+
+    return $plan
+}
+
 function Ensure-GatewayExtension {
     param(
         [Parameter(Mandatory = $true)]
@@ -226,109 +269,100 @@ function Invoke-PythonModules {
     Invoke-NativeOrThrow $Description $Python (@("-m", "unittest") + $ModuleNames)
 }
 
-function Invoke-TestSelection {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$SelectionName,
-        [Parameter(Mandatory = $true)]
-        [string]$Python,
-        [Parameter(Mandatory = $true)]
-        [pscustomobject]$PythonManifest,
-        [Parameter(Mandatory = $true)]
-        [string]$SyncExtension
-    )
-
-    if ($PythonManifest.Suites.Contains($SelectionName)) {
-        $suite = $PythonManifest.Suites[$SelectionName]
-        Ensure-GatewayExtension $SyncExtension $suite.RequiresExtension
-        Invoke-PythonModules $Python @($suite.ModuleName) "Running Python test suite '$SelectionName'..."
-        return
-    }
-
-    if ($PythonManifest.Groups.Contains($SelectionName)) {
-        $group = $PythonManifest.Groups[$SelectionName]
-        Ensure-GatewayExtension $SyncExtension $group.RequiresExtension
-        Invoke-PythonModules $Python $group.ModuleNames "Running Python test suite '$SelectionName'..."
-        return
-    }
-
-    throw "Unknown Python test suite or group: $SelectionName"
-}
-
 function Get-SuiteDescriptions {
     param(
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$PythonManifest
-    )
-
-    $descriptions = [ordered]@{
-        "rust" = "Run all Rust tests via cargo test --locked."
-        "python" = $PythonManifest.Groups["python"].Description
-        "inner-loop" = "Run Rust tests plus the python-fast group for the default local loop."
-        "all" = "Run Rust tests plus the full Python suite set."
-    }
-
-    foreach ($groupName in $PythonManifest.Groups.Keys) {
-        if ($groupName -eq "python") {
-            continue
-        }
-        $descriptions[$groupName] = $PythonManifest.Groups[$groupName].Description
-    }
-
-    foreach ($suiteName in $PythonManifest.Suites.Keys) {
-        $descriptions[$suiteName] = $PythonManifest.Suites[$suiteName].Description
-    }
-
-    return $descriptions
-}
-
-function Invoke-NamedSuite {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$SuiteName,
-        [Parameter(Mandatory = $true)]
         [string]$Python,
         [Parameter(Mandatory = $true)]
-        [pscustomobject]$PythonManifest,
+        [string]$RepoRoot
+    )
+
+    $manifestEmitter = Join-Path $RepoRoot "scripts\python_suite_manifest.py"
+    $rawOutput = & $Python $manifestEmitter --descriptions 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python suite description helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+    }
+
+    $descriptions = $rawOutput | Out-String | ConvertFrom-Json
+    if ($null -eq $descriptions) {
+        throw "Python suite description helper returned no data."
+    }
+
+    $table = [ordered]@{}
+    foreach ($entry in @($descriptions)) {
+        $name = [string]$entry.name
+        $description = [string]$entry.description
+        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($description)) {
+            throw "Python suite description helper returned a blank entry."
+        }
+        $table[$name] = $description
+    }
+
+    return $table
+}
+
+function Show-PythonExecutionPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ExecutionPlan
+    )
+
+    foreach ($step in @($ExecutionPlan.steps)) {
+        $kind = [string]$step.kind
+        $selectionNames = @($step.selection_names)
+        if ($kind -eq "rust") {
+            Write-Host ("rust    <- {0}" -f ($selectionNames -join ", "))
+            continue
+        }
+
+        $moduleNames = @($step.module_names)
+        $requiresExtension = [bool]$step.requires_extension
+        $extensionLabel = if ($requiresExtension) { "extension" } else { "pure-python" }
+        Write-Host ((
+            "python  <- {0} [{1}; {2} module(s)]" -f
+            ($selectionNames -join ", "),
+            $extensionLabel,
+            $moduleNames.Count
+        ))
+        foreach ($moduleName in $moduleNames) {
+            Write-Host ("          {0}" -f $moduleName)
+        }
+    }
+}
+
+function Invoke-ExecutionPlan {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ExecutionPlan,
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
         [AllowEmptyString()]
         [string]$RustFilter,
         [Parameter(Mandatory = $true)]
         [string]$SyncExtension
     )
 
-    if ($SuiteName -eq "rust") {
-        Invoke-RustTests $RustFilter
-        return
-    }
+    foreach ($step in @($ExecutionPlan.steps)) {
+        $kind = [string]$step.kind
+        if ($kind -eq "rust") {
+            Invoke-RustTests $RustFilter
+            continue
+        }
 
-    if ($SuiteName -eq "python") {
-        Invoke-TestSelection "python" $Python $PythonManifest $SyncExtension
-        return
+        $requiresExtension = [bool]$step.requires_extension
+        Ensure-GatewayExtension $SyncExtension $requiresExtension
+        $moduleNames = @($step.module_names)
+        $selectionNames = @($step.selection_names)
+        Invoke-PythonModules `
+            $Python `
+            $moduleNames `
+            ("Running Python test plan for '{0}'..." -f ($selectionNames -join ", "))
     }
-
-    if ($SuiteName -eq "inner-loop") {
-        Invoke-RustTests $RustFilter
-        Invoke-TestSelection "python-fast" $Python $PythonManifest $SyncExtension
-        return
-    }
-
-    if ($SuiteName -eq "all") {
-        Invoke-RustTests $RustFilter
-        Invoke-TestSelection "python" $Python $PythonManifest $SyncExtension
-        return
-    }
-
-    if ($PythonManifest.Groups.Contains($SuiteName) -or $PythonManifest.Suites.Contains($SuiteName)) {
-        Invoke-TestSelection $SuiteName $Python $PythonManifest $SyncExtension
-        return
-    }
-
-    throw "Unknown suite: $SuiteName"
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$pythonManifest = Get-PythonTestManifest $Python $repoRoot
-$suiteDescriptions = Get-SuiteDescriptions $pythonManifest
+$suiteDescriptions = Get-SuiteDescriptions $Python $repoRoot
+$Suite = Expand-SelectionArguments $Suite
 
 if ($ListSuites) {
     foreach ($suiteName in $suiteDescriptions.Keys) {
@@ -346,11 +380,16 @@ if ($unknownSuites.Count -gt 0) {
     throw "Unknown suite name(s): $($unknownSuites -join ', '). Use -ListSuites to inspect supported values."
 }
 
+$executionPlan = Get-PythonExecutionPlan $Python $repoRoot $Suite
+
+if ($ShowPlan) {
+    Show-PythonExecutionPlan $executionPlan
+    return
+}
+
 Push-Location $repoRoot
 try {
-    foreach ($suiteName in $Suite) {
-        Invoke-NamedSuite $suiteName $Python $pythonManifest $RustFilter $SyncExtension
-    }
+    Invoke-ExecutionPlan $executionPlan $Python $RustFilter $SyncExtension
 } finally {
     Pop-Location
 }

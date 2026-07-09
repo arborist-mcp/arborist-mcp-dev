@@ -107,6 +107,25 @@ class CheckWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(completed.stdout), self.module.build_github_matrix())
 
+    def test_check_profile_manifest_cli_emits_deduplicated_execution_plan(self) -> None:
+        script_path = self.repo_root / "scripts" / "check_profile_manifest.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path), "--plan", "full", "python-native"],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        plan = json.loads(completed.stdout)
+        self.assertEqual(plan["profile_names"], ["full", "python-native"])
+        self.assertEqual(
+            [step["profile"] for step in plan["steps"]],
+            ["sanity", "rust", "gateway-native", "python-discovery", "gateway-smoke"],
+        )
+        self.assertEqual(plan["steps"][2]["suite"], "gateway-native")
+        self.assertTrue(plan["steps"][4]["prepare_extension"])
+
     def test_check_script_lists_profiles_from_snapshot(self) -> None:
         snapshot = self.module.build_snapshot()
         completed = subprocess.run(
@@ -122,6 +141,33 @@ class CheckWorkflowTests(unittest.TestCase):
             for profile_name in snapshot["profile_order"]
         ]
         self.assertEqual(lines, expected)
+
+    def test_check_script_show_plan_reports_deduplicated_leaf_profiles(self) -> None:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-File",
+                "scripts/check.ps1",
+                "-Profile",
+                "full,python-native",
+                "-ShowPlan",
+            ],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        lines = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
+        self.assertEqual(
+            lines,
+            [
+                "sanity           sanity [none]",
+                "rust             rust [rust]",
+                "gateway-native   suite -> gateway-native -> prepare-extension [rust+python]",
+                "python-discovery suite -> python -> prepare-extension [rust+python]",
+                "gateway-smoke    gateway-smoke -> prepare-extension [rust+python]",
+            ],
+        )
 
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
@@ -154,6 +200,7 @@ class CheckWorkflowTests(unittest.TestCase):
         ):
             with self.subTest(profile=profile_name):
                 self.assertIn(f".\\scripts\\check.ps1 -Profile {profile_name}", readme)
+        self.assertIn(".\\scripts\\check.ps1 -Profile full,python-native -ShowPlan", readme)
 
 
 if __name__ == "__main__":

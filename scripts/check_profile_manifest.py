@@ -254,6 +254,48 @@ def build_github_matrix(snapshot: dict[str, object] | None = None) -> dict[str, 
     }
 
 
+def build_execution_plan(
+    profile_names: list[str], snapshot: dict[str, object] | None = None
+) -> dict[str, object]:
+    if not profile_names:
+        raise RuntimeError("execution plan requires at least one check profile")
+
+    resolved = build_snapshot() if snapshot is None else snapshot
+    profiles = resolved["profiles"]
+    assert isinstance(profiles, dict)
+
+    ordered_leaf_profiles: list[str] = []
+    for profile_name in profile_names:
+        if profile_name not in profiles:
+            raise RuntimeError(f"unknown check profile '{profile_name}'")
+        leaf_profiles = profiles[profile_name]["leaf_profiles"]
+        assert isinstance(leaf_profiles, list)
+        for leaf_name in leaf_profiles:
+            normalized_leaf = str(leaf_name)
+            if normalized_leaf not in ordered_leaf_profiles:
+                ordered_leaf_profiles.append(normalized_leaf)
+
+    return {
+        "profile_names": list(profile_names),
+        "steps": [
+            {
+                "profile": leaf_name,
+                "handler": profiles[leaf_name]["handler"],
+                "needs_python": profiles[leaf_name]["needs_python"],
+                "needs_rust": profiles[leaf_name]["needs_rust"],
+                "description": profiles[leaf_name]["description"],
+                **({"suite": profiles[leaf_name]["suite"]} if "suite" in profiles[leaf_name] else {}),
+                **(
+                    {"prepare_extension": profiles[leaf_name]["prepare_extension"]}
+                    if "prepare_extension" in profiles[leaf_name]
+                    else {}
+                ),
+            }
+            for leaf_name in ordered_leaf_profiles
+        ],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Emit normalized Arborist check-profile metadata."
@@ -263,10 +305,21 @@ def main() -> int:
         action="store_true",
         help="Emit the GitHub Actions matrix JSON instead of the full profile snapshot.",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Emit the deduplicated execution plan for the provided check profiles.",
+    )
+    parser.add_argument("profiles", nargs="*", help="Profile selections for --plan.")
     args = parser.parse_args()
 
     snapshot = build_snapshot()
-    payload = build_github_matrix(snapshot) if args.github_matrix else snapshot
+    if args.github_matrix:
+        payload = build_github_matrix(snapshot)
+    elif args.plan:
+        payload = build_execution_plan(args.profiles, snapshot)
+    else:
+        payload = snapshot
     json.dump(payload, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0
