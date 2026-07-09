@@ -4,41 +4,10 @@ from tests.gateway_protocol.helpers import (
     GatewayProtocolTestCase,
     make_recording_json_core,
 )
+from tests.gateway_protocol.semantic_fixtures import GatewaySemanticFixtureMixin
 
 
-class GatewaySymbolRouteTests(GatewayProtocolTestCase):
-    def make_symbol(
-        self,
-        symbol_id: str,
-        *,
-        file_path: str,
-        origin_type: str,
-        byte_range: tuple[int, int],
-        semantic_path: str | None = None,
-        include_trace_fields: bool = False,
-        dependencies: list[str] | None = None,
-        references: list[str] | None = None,
-    ) -> dict[str, object]:
-        start, end = byte_range
-        symbol = {
-            "symbol_id": symbol_id,
-            "semantic_path": semantic_path or symbol_id,
-            "scope_path": None,
-            "file_path": file_path,
-            "node_kind": "function_definition",
-            "origin_type": origin_type,
-            "evidence_key": f"{symbol_id}|{file_path}|function_definition|{origin_type}|{start}..{end}|",
-            "byte_range": [start, end],
-            "signature": None,
-            "parameters": [],
-            "return_type": None,
-            "docstring": None,
-        }
-        if include_trace_fields:
-            symbol["dependencies"] = dependencies or []
-            symbol["references"] = references or []
-        return symbol
-
+class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCase):
     def helper_symbol(
         self,
         *,
@@ -94,69 +63,6 @@ class GatewaySymbolRouteTests(GatewayProtocolTestCase):
     def orchestrate_updated_source(self) -> str:
         return "def orchestrate(value: int) -> int:\n    return helper(value)\n"
 
-    def make_read(
-        self,
-        symbol: dict[str, object],
-        *,
-        source: str,
-        indexed_files: int = 2,
-        end_point: tuple[int, int] = (1, 12),
-    ) -> dict[str, object]:
-        return {
-            "indexed_files": indexed_files,
-            "symbol": symbol,
-            "source": source,
-            "start_point": {"row": 0, "column": 0},
-            "end_point": {"row": end_point[0], "column": end_point[1]},
-        }
-
-    def make_trace(
-        self,
-        symbol: dict[str, object],
-        *,
-        callers: list[dict[str, object]] | None = None,
-        callees: list[dict[str, object]] | None = None,
-        indexed_files: int = 2,
-    ) -> dict[str, object]:
-        callers = callers or []
-        callees = callees or []
-        return {
-            "symbol": symbol,
-            "callers": callers,
-            "callees": callees,
-            "evidence_keys": {
-                "symbol": symbol["evidence_key"],
-                "callers": [entry["evidence_key"] for entry in callers],
-                "callees": [entry["evidence_key"] for entry in callees],
-            },
-            "indexed_files": indexed_files,
-        }
-
-    def make_neighborhood(
-        self,
-        symbol: dict[str, object],
-        *,
-        direction: str,
-        nodes: list[tuple[dict[str, object], int]],
-        edges: list[dict[str, str]],
-        indexed_files: int = 2,
-        max_depth: int = 2,
-        max_nodes: int = 10,
-    ) -> dict[str, object]:
-        return {
-            "symbol": symbol,
-            "direction": direction,
-            "max_depth": max_depth,
-            "max_nodes": max_nodes,
-            "truncated": False,
-            "indexed_files": indexed_files,
-            "nodes": [
-                {"symbol": node_symbol, "depth": depth}
-                for node_symbol, depth in nodes
-            ],
-            "edges": edges,
-        }
-
     def make_search_result(self) -> dict[str, object]:
         return {
             "query": "helper",
@@ -179,48 +85,6 @@ class GatewaySymbolRouteTests(GatewayProtocolTestCase):
             "total_symbols": 1,
             "truncated": False,
             "symbols": [self.helper_symbol()],
-        }
-
-    def make_patch_result(self) -> dict[str, object]:
-        return {
-            "file": "caller.py",
-            "target_path": "orchestrate",
-            "resolved_path": "orchestrate",
-            "resolved_symbol_id": "orchestrate",
-            "applied": True,
-            "bypass_applied": False,
-            "updated_source": self.orchestrate_updated_source(),
-            "validation": {
-                "syntax_errors": [],
-                "unresolved_identifiers": [],
-                "resolved_identifiers": [],
-                "ambiguous_identifiers": [],
-                "binding_decisions": [],
-                "commit_gate": {
-                    "status": "allowed",
-                    "allowed": True,
-                    "reason": "ok",
-                    "bypass_reason": None,
-                    "blocking_decisions": [],
-                    "evidence_invariants": [],
-                    "syntax_error_count": 0,
-                },
-            },
-        }
-
-    def make_trace_validation(self) -> dict[str, object]:
-        return {
-            "allowed": True,
-            "status": "allowed",
-            "reason": "ok",
-            "patch_gate_status": "allowed",
-            "replay_status": "matched",
-            "replay": {
-                "consistent": True,
-                "matched_items": 0,
-                "blocked_items": 0,
-                "items": [],
-            },
         }
 
     def helper_read(self, *, file_path: str = "sample.py") -> dict[str, object]:

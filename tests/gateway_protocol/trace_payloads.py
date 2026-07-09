@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase, deep_merge
+from tests.gateway_protocol.semantic_fixtures import GatewaySemanticFixtureMixin
 
 
-class GatewayTracePayloadTests(GatewayProtocolTestCase):
+class GatewayTracePayloadTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCase):
     TRACE_METHODS = (
         "arborist/replay_patch_evidence_against_trace",
         "arborist/validate_patch_commit_with_trace",
@@ -11,77 +12,6 @@ class GatewayTracePayloadTests(GatewayProtocolTestCase):
 
     def setUp(self) -> None:
         self.gateway = self.make_live_gateway()
-
-    def make_symbol(
-        self,
-        *,
-        symbol_id: str,
-        semantic_path: str | None = None,
-        file_path: str = "sample.py",
-        node_kind: str = "function_definition",
-        origin_type: str = "workspace_symbol",
-        evidence_key: str | None = None,
-        byte_range: tuple[int, int] = (0, 10),
-        include_trace_fields: bool = False,
-    ) -> dict[str, object]:
-        symbol = {
-            "symbol_id": symbol_id,
-            "semantic_path": semantic_path or symbol_id,
-            "scope_path": None,
-            "file_path": file_path,
-            "node_kind": node_kind,
-            "origin_type": origin_type,
-            "evidence_key": evidence_key
-            or f"{symbol_id}|{file_path}|{node_kind}|{origin_type}|{byte_range[0]}..{byte_range[1]}|",
-            "byte_range": list(byte_range),
-            "signature": None,
-            "parameters": [],
-            "return_type": None,
-            "docstring": None,
-        }
-        if include_trace_fields:
-            symbol["dependencies"] = []
-            symbol["references"] = []
-        return symbol
-
-    def make_binding_decision(
-        self,
-        *,
-        status: str = "resolved",
-        reason: str = "resolved uniquely",
-        selected_symbol_id: str = "helper",
-        candidates: list[dict[str, object]] | None = None,
-    ) -> dict[str, object]:
-        return {
-            "name": "helper",
-            "status": status,
-            "reason": reason,
-            "selected_symbol_id": selected_symbol_id,
-            "candidates": candidates
-            or [
-                self.make_symbol(
-                    symbol_id="helper",
-                    origin_type="callee",
-                    evidence_key="helper|sample.py|function_definition|callee|12..34|",
-                    byte_range=(12, 34),
-                )
-            ],
-        }
-
-    def make_evidence_invariant(
-        self,
-        *,
-        selected_evidence_key: str = "helper|sample.py|function_definition|callee|12..34|",
-        candidate_evidence_keys: list[str] | None = None,
-    ) -> dict[str, object]:
-        return {
-            "name": "helper",
-            "status": "passed",
-            "reason": "resolved binding has one selected candidate evidence key",
-            "selected_evidence_key": selected_evidence_key,
-            "candidate_evidence_keys": candidate_evidence_keys
-            or ["helper|sample.py|function_definition|callee|12..34|"],
-        }
 
     def minimal_params(self) -> dict[str, object]:
         root_key = "top_level|sample.py|function_definition|trace_root|0..10|"
