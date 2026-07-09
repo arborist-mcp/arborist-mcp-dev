@@ -1,36 +1,34 @@
 from __future__ import annotations
 
 import io
-import tempfile
-import unittest
-from pathlib import Path
 from unittest import mock
 
-import arborist_mcp
 from arborist_mcp import gateway as gateway_module
-from arborist_mcp import _version as version_module
-from arborist_mcp.gateway import ArboristGateway
+
+from tests.gateway_protocol.helpers import GatewayProtocolTestCase
 
 
-class GatewayRuntimeTests(unittest.TestCase):
+class GatewayRuntimeTests(GatewayProtocolTestCase):
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
                 return ["python", "c"]
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(StubCore()),
+                "initialize",
+                {},
+                request_id=1,
+            ),
+            request_id=1,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 1)
-        self.assertEqual(response["result"]["serverInfo"]["version"], gateway_module.__version__)
-        self.assertEqual(response["result"]["supportedLanguages"], ["python", "c"])
+        assert isinstance(result, dict)
+        self.assertEqual(result["serverInfo"]["version"], gateway_module.__version__)
+        self.assertEqual(result["supportedLanguages"], ["python", "c"])
         self.assertEqual(
-            response["result"]["capabilities"]["tools"],
+            result["capabilities"]["tools"],
             list(gateway_module.TOOL_NAMES),
         )
 
@@ -39,22 +37,19 @@ class GatewayRuntimeTests(unittest.TestCase):
             def list_symbol_indexes_json(self) -> str:
                 return '[{"workspace_root": NaN}]'
 
-        gateway = ArboristGateway()
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 34,
-                "method": "arborist/list_symbol_indexes",
-                "params": {},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/list_symbol_indexes",
+            {},
+            request_id=34,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 34)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=34,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
         self.assertIn("non-standard JSON constant", response["error"]["message"])
 
     def test_rejects_malformed_json_from_core(self) -> None:
@@ -62,44 +57,38 @@ class GatewayRuntimeTests(unittest.TestCase):
             def list_symbol_indexes_json(self) -> str:
                 return '[{"workspace_root": "."}'
 
-        gateway = ArboristGateway()
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 35,
-                "method": "arborist/list_symbol_indexes",
-                "params": {},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/list_symbol_indexes",
+            {},
+            request_id=35,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 35)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=35,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
 
     def test_rejects_duplicate_json_keys_from_core(self) -> None:
         class StubCore:
             def list_symbol_indexes_json(self) -> str:
                 return '[{"workspace_root": "a", "workspace_root": "b"}]'
 
-        gateway = ArboristGateway()
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 50,
-                "method": "arborist/list_symbol_indexes",
-                "params": {},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/list_symbol_indexes",
+            {},
+            request_id=50,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 50)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=50,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
         self.assertIn("duplicate JSON object key", response["error"]["message"])
 
     def test_rejects_object_core_payload_with_wrong_shape(self) -> None:
@@ -107,22 +96,19 @@ class GatewayRuntimeTests(unittest.TestCase):
             def get_semantic_skeleton_json(self, *args: object) -> str:
                 return "[]"
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 52,
-                "method": "arborist/get_semantic_skeleton",
-                "params": {"file_path": "sample.py"},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/get_semantic_skeleton",
+            {"file_path": "sample.py"},
+            request_id=52,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 52)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=52,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
         self.assertIn("expected object", response["error"]["message"])
 
     def test_rejects_list_core_payload_with_wrong_shape(self) -> None:
@@ -130,22 +116,19 @@ class GatewayRuntimeTests(unittest.TestCase):
             def list_symbol_indexes_json(self) -> str:
                 return "{}"
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 53,
-                "method": "arborist/list_symbol_indexes",
-                "params": {},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/list_symbol_indexes",
+            {},
+            request_id=53,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 53)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=53,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
         self.assertIn("expected array", response["error"]["message"])
 
     def test_rejects_list_core_payload_with_non_object_items(self) -> None:
@@ -153,48 +136,43 @@ class GatewayRuntimeTests(unittest.TestCase):
             def execute_tree_query_json(self, *args: object) -> str:
                 return "[null]"
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 54,
-                "method": "arborist/execute_tree_query",
-                "params": {"file_path": "sample.py", "query": "(module) @module"},
-            }
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/execute_tree_query",
+            {"file_path": "sample.py", "query": "(module) @module"},
+            request_id=54,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 54)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("invalid JSON from arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=54,
+            code=-32000,
+            contains="invalid JSON from arborist core",
+        )
         self.assertIn("expected object item", response["error"]["message"])
 
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
-        gateway = ArboristGateway()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 23,
-                "method": "arborist/execute_tree_query",
-                "params": {
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_live_gateway(),
+                "arborist/execute_tree_query",
+                {
                     "file_path": "tests/fixtures/sample.py",
                     "source": "@logged\ndef top_level(value):\n    return value\n",
                     "query": "(decorator (identifier) @decorator)",
                 },
-            }
+                request_id=23,
+            ),
+            request_id=23,
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 23)
-        self.assertEqual(len(response["result"]), 1)
-        self.assertEqual(response["result"][0]["capture_name"], "decorator")
-        self.assertEqual(response["result"][0]["text"], "logged")
-        self.assertEqual(response["result"][0]["owner_symbol_id"], "top_level")
-        self.assertEqual(response["result"][0]["owner_semantic_path"], "top_level")
-        self.assertIsNone(response["result"][0]["owner_scope_path"])
+        assert isinstance(result, list)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["capture_name"], "decorator")
+        self.assertEqual(result[0]["text"], "logged")
+        self.assertEqual(result[0]["owner_symbol_id"], "top_level")
+        self.assertEqual(result[0]["owner_semantic_path"], "top_level")
+        self.assertIsNone(result[0]["owner_scope_path"])
 
     def test_gateway_initialization_loads_core_lazily(self) -> None:
         class StubCore:
@@ -202,7 +180,7 @@ class GatewayRuntimeTests(unittest.TestCase):
                 self.loaded = True
 
         with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore) as loader:
-            gateway = gateway_module.ArboristGateway()
+            gateway = self.make_live_gateway()
             self.assertIsNone(gateway._core)
             loader.assert_not_called()
             self.assertIsInstance(gateway._require_core(), StubCore)
@@ -212,7 +190,7 @@ class GatewayRuntimeTests(unittest.TestCase):
         class StubCore:
             pass
 
-        gateway = gateway_module.ArboristGateway.__new__(gateway_module.ArboristGateway)
+        gateway = self.make_gateway()
 
         with mock.patch.object(gateway_module, "_load_core_class", return_value=StubCore):
             core = gateway._require_core()
@@ -221,17 +199,19 @@ class GatewayRuntimeTests(unittest.TestCase):
         self.assertIs(gateway._core, core)
 
     def test_initialize_reports_core_load_failure_as_jsonrpc_error(self) -> None:
-        gateway = gateway_module.ArboristGateway()
+        gateway = self.make_live_gateway()
 
         with mock.patch.object(gateway_module, "_load_core_class", side_effect=ImportError("boom")):
             response = gateway.handle_request(
                 {"jsonrpc": "2.0", "id": 24, "method": "initialize", "params": {}}
             )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 24)
-        self.assertEqual(response["error"]["code"], -32000)
-        self.assertIn("failed to load arborist core", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=24,
+            code=-32000,
+            contains="failed to load arborist core",
+        )
 
     def test_once_valid_request_with_core_load_failure_prints_error_response(self) -> None:
         with mock.patch.object(gateway_module, "_load_core_class", side_effect=ImportError("boom")):
@@ -642,3 +622,4 @@ class GatewayRuntimeTests(unittest.TestCase):
         self.assertIsNone(response["id"])
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("non-standard JSON constant", response["error"]["message"])
+

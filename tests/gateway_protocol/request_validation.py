@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import io
-import tempfile
-import unittest
-from pathlib import Path
 from unittest import mock
 
 import arborist_mcp
@@ -11,8 +8,45 @@ from arborist_mcp import gateway as gateway_module
 from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
+from tests.gateway_protocol.helpers import GatewayProtocolTestCase
 
-class GatewayRequestValidationTests(unittest.TestCase):
+
+class GatewayRequestValidationTests(GatewayProtocolTestCase):
+    def assert_invalid_request(
+        self,
+        request: object,
+        *,
+        request_id: object,
+        contains: str,
+    ) -> None:
+        response = self.make_gateway().handle_request(request)
+        self.assert_jsonrpc_error(
+            response,
+            request_id=request_id,
+            code=-32600,
+            contains=contains,
+        )
+
+    def assert_invalid_params(
+        self,
+        method: str,
+        params: object,
+        *,
+        request_id: object,
+        contains: str,
+        gateway: object | None = None,
+    ) -> None:
+        target_gateway = self.make_gateway() if gateway is None else gateway
+        response = target_gateway.handle_request(
+            self.request(method, params, request_id=request_id)
+        )
+        self.assert_jsonrpc_error(
+            response,
+            request_id=request_id,
+            code=-32602,
+            contains=contains,
+        )
+
     def test_gateway_reuses_package_version(self) -> None:
         self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
         self.assertEqual(gateway_module.__version__, version_module.__version__)
@@ -40,107 +74,71 @@ class GatewayRequestValidationTests(unittest.TestCase):
         )
 
     def test_rejects_non_object_request_without_calling_core(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request(["initialize"])
-
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertIsNone(response["id"])
-        self.assertEqual(response["error"]["code"], -32600)
-        self.assertIn("expected object", response["error"]["message"])
+        self.assert_invalid_request(["initialize"], request_id=None, contains="expected object")
 
     def test_rejects_non_object_params_without_calling_core_method(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 7,
-                "method": "arborist/get_semantic_skeleton",
-                "params": [],
-            }
+        self.assert_invalid_params(
+            "arborist/get_semantic_skeleton",
+            [],
+            request_id=7,
+            contains="invalid params",
         )
-
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 7)
-        self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("invalid params", response["error"]["message"])
 
     def test_rejects_unexpected_initialize_params_without_calling_core(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
-        gateway._core = StubCore()
-
-        response = gateway.handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 8,
-                "method": "initialize",
-                "params": {"clientInfo": {"name": "codex"}},
-            }
+        self.assert_invalid_params(
+            "initialize",
+            {"clientInfo": {"name": "codex"}},
+            request_id=8,
+            contains="clientInfo",
+            gateway=self.make_gateway(StubCore()),
         )
-
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 8)
-        self.assertEqual(response["error"]["code"], -32602)
-        self.assertIn("clientInfo", response["error"]["message"])
 
     def test_rejects_missing_method_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request({"jsonrpc": "2.0", "id": 3, "params": {}})
-
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 3)
-        self.assertEqual(response["error"]["code"], -32600)
-        self.assertIn("missing method", response["error"]["message"])
+        self.assert_invalid_request(
+            {"jsonrpc": "2.0", "id": 3, "params": {}},
+            request_id=3,
+            contains="missing method",
+        )
 
     def test_reports_unknown_method_with_method_not_found_code(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request(
-            {"jsonrpc": "2.0", "id": 5, "method": "arborist/nope", "params": {}}
+        response = self.call_gateway(
+            self.make_gateway(),
+            "arborist/nope",
+            {},
+            request_id=5,
         )
-
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 5)
-        self.assertEqual(response["error"]["code"], -32601)
-        self.assertIn("method not found", response["error"]["message"])
+        self.assert_jsonrpc_error(
+            response,
+            request_id=5,
+            code=-32601,
+            contains="method not found",
+        )
 
     def test_rejects_missing_jsonrpc_version(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request(
-            {"id": 6, "method": "arborist/list_symbol_indexes", "params": {}}
+        self.assert_invalid_request(
+            {"id": 6, "method": "arborist/list_symbol_indexes", "params": {}},
+            request_id=6,
+            contains="jsonrpc",
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 6)
-        self.assertEqual(response["error"]["code"], -32600)
-        self.assertIn("jsonrpc", response["error"]["message"])
-
     def test_rejects_non_2_0_jsonrpc_version(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
-
-        response = gateway.handle_request(
+        self.assert_invalid_request(
             {
                 "jsonrpc": "1.0",
                 "id": 8,
                 "method": "arborist/list_symbol_indexes",
                 "params": {},
-            }
+            },
+            request_id=8,
+            contains="jsonrpc",
         )
 
-        self.assertEqual(response["jsonrpc"], "2.0")
-        self.assertEqual(response["id"], 8)
-        self.assertEqual(response["error"]["code"], -32600)
-        self.assertIn("jsonrpc", response["error"]["message"])
-
     def test_invalid_jsonrpc_version_with_array_id_returns_null_id(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -157,7 +155,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("jsonrpc", response["error"]["message"])
 
     def test_missing_jsonrpc_with_bool_id_returns_null_id(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {"id": True, "method": "arborist/list_symbol_indexes", "params": {}}
@@ -169,7 +167,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("jsonrpc", response["error"]["message"])
 
     def test_rejects_array_request_id_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -186,7 +184,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_rejects_bool_request_id_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -203,7 +201,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_rejects_nan_request_id_object_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -220,7 +218,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_rejects_infinite_request_id_object_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -237,7 +235,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_rejects_fractional_request_id_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -254,7 +252,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_rejects_float_request_id_as_invalid_request(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -271,7 +269,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("invalid id", response["error"]["message"])
 
     def test_reports_missing_required_param_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -298,7 +296,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def close_virtual_file_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         cases = [
@@ -336,7 +334,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
                 self.assertIn(expected_key, response["error"]["message"])
 
     def test_rejects_non_json_serializable_edits_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -356,7 +354,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("edits", response["error"]["message"])
 
     def test_rejects_non_finite_edits_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -376,7 +374,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("edits", response["error"]["message"])
 
     def test_rejects_negative_position_edit_coordinates(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -402,7 +400,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("edits[0].start.row", response["error"]["message"])
 
     def test_rejects_missing_position_edit_new_text(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -431,7 +429,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def apply_position_edits_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -462,7 +460,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def apply_position_edits_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -494,7 +492,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def apply_position_edits_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -521,7 +519,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("edits[0].start.character", response["error"]["message"])
 
     def test_rejects_string_bool_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -538,7 +536,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("dirty_only", response["error"]["message"])
 
     def test_rejects_string_int_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -562,7 +560,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def apply_buffer_edit_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         cases = [
@@ -600,7 +598,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
                 self.assertIn(expected_message, response["error"]["message"])
 
     def test_rejects_negative_optional_int_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -617,7 +615,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("depth_limit", response["error"]["message"])
 
     def test_rejects_negative_search_limit(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -634,7 +632,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("limit", response["error"]["message"])
 
     def test_rejects_non_string_optional_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -655,7 +653,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def get_semantic_skeleton_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -677,7 +675,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def trace_symbol_graph_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -699,7 +697,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def search_symbols_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -721,7 +719,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def search_symbols_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -747,7 +745,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def list_symbols_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -769,7 +767,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def trace_symbol_graph_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         response = gateway.handle_request(
@@ -787,7 +785,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("workspace_root", response["error"]["message"])
 
     def test_rejects_invalid_trace_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -810,7 +808,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_trace_symbol_neighborhood_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -831,7 +829,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_negative_trace_symbol_neighborhood_limits(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -852,7 +850,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("max_depth", response["error"]["message"])
 
     def test_rejects_zero_trace_symbol_neighborhood_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -873,7 +871,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("max_nodes", response["error"]["message"])
 
     def test_rejects_invalid_read_symbol_context_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -898,7 +896,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             def read_symbol_at_position_json(self, *args: object) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         cases = [
@@ -984,7 +982,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
             ) -> str:
                 raise AssertionError("core should not be called")
 
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
         gateway._core = StubCore()
 
         cases = [
@@ -1067,7 +1065,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_read_symbol_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1091,7 +1089,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_read_symbol_neighborhood_context_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1112,7 +1110,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_read_symbol_neighborhood_context_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1135,7 +1133,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_read_symbol_neighborhood_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1159,7 +1157,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_zero_read_symbol_neighborhood_context_at_position_max_nodes(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1183,7 +1181,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_read_symbol_discovery_context_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1204,7 +1202,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_read_symbol_discovery_context_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1227,7 +1225,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_read_symbol_discovery_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1249,7 +1247,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_read_symbol_discovery_context_at_position_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1273,7 +1271,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_list_symbols_neighborhood_context_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1293,7 +1291,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_list_symbols_neighborhood_context_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1315,7 +1313,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_search_symbols_discovery_context_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1336,7 +1334,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_search_symbols_discovery_context_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1359,7 +1357,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_list_symbols_discovery_context_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1379,7 +1377,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_list_symbols_discovery_context_max_nodes(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1399,7 +1397,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("max_nodes", response["error"]["message"])
 
     def test_rejects_invalid_trace_context_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1424,7 +1422,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_trace_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1447,7 +1445,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_invalid_graph_context_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1472,7 +1470,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_graph_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1495,7 +1493,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_graph_context_max_nodes_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1520,7 +1518,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_zero_graph_context_at_position_max_nodes_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1543,7 +1541,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("max_nodes", response["error"]["message"])
 
     def test_rejects_invalid_neighborhood_context_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1568,7 +1566,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_neighborhood_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1591,7 +1589,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_neighborhood_context_max_nodes_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1616,7 +1614,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_zero_neighborhood_context_at_position_max_nodes_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1639,7 +1637,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("max_nodes", response["error"]["message"])
 
     def test_rejects_invalid_discovery_context_direction_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1664,7 +1662,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_invalid_discovery_context_at_position_direction_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1687,7 +1685,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertIn("direction", response["error"]["message"])
 
     def test_rejects_zero_discovery_context_max_nodes_as_invalid_params(self) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1712,7 +1710,7 @@ class GatewayRequestValidationTests(unittest.TestCase):
     def test_rejects_zero_discovery_context_at_position_max_nodes_as_invalid_params(
         self,
     ) -> None:
-        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway = self.make_gateway()
 
         response = gateway.handle_request(
             {
@@ -1733,3 +1731,4 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertEqual(response["id"], 95)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
+
