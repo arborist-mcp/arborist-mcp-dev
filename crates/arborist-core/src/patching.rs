@@ -9,12 +9,14 @@ use tree_sitter::Node;
 use crate::language::{
     ParsedDocument, c_companion_source_path, c_include_targets, contains_kind, contains_node,
     first_identifier, is_field_node, node_text, normalize_absolute_path, normalize_path,
-    parse_document, position_from, read_source, resolve_local_c_include, visit_tree,
+    offset_for_position, parse_document, position_from, read_source, resolve_local_c_include,
+    visit_tree,
 };
 use crate::model::{
     DisambiguationContext, LanguageId, PatchAstNodeResult, PatchCommitGateReport,
-    PatchEvidenceInvariantReport, PatchValidationReport, SymbolSummary, SymbolSummaryInit,
-    ValidationAmbiguity, ValidationBinding, ValidationBindingDecision, ValidationIssue,
+    PatchEvidenceInvariantReport, PatchValidationReport, Position, SymbolSummary,
+    SymbolSummaryInit, ValidationAmbiguity, ValidationBinding, ValidationBindingDecision,
+    ValidationIssue,
 };
 use crate::semantic::{
     ascend_to_symbol, c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node,
@@ -135,6 +137,17 @@ pub fn patch_ast_node_from_path(
     Ok(result)
 }
 
+pub fn patch_ast_node_at_position_from_path(
+    path: &Path,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+) -> Result<PatchAstNodeResult> {
+    let path = normalize_absolute_path(path)?;
+    let disk_source = read_source(&path)?;
+    patch_ast_node_at_position(&path, &disk_source, position, new_code, bypass_reason)
+}
+
 pub fn patch_ast_node(
     path: &Path,
     source: &str,
@@ -155,6 +168,51 @@ pub fn patch_ast_node(
         start_byte,
         new_code.len(),
     )
+}
+
+pub fn patch_ast_node_at_position(
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+) -> Result<PatchAstNodeResult> {
+    let path = normalize_absolute_path(path)?;
+    let semantic_target = semantic_target_at_position(&path, source, position)?;
+    patch_ast_node(&path, source, &semantic_target, new_code, bypass_reason)
+}
+
+pub fn semantic_target_at_position(
+    path: &Path,
+    source: &str,
+    position: &Position,
+) -> Result<String> {
+    let path = normalize_absolute_path(path)?;
+    let document = parse_document(&path, source)?;
+    let byte_offset = offset_for_position(source, position)?;
+    let node =
+        node_at_byte_offset(document.tree.root_node(), source, byte_offset).ok_or_else(|| {
+            anyhow!(
+                "position {}:{} does not resolve to a syntax node in {}",
+                position.row,
+                position.column,
+                path.display()
+            )
+        })?;
+    let symbol_node = ascend_to_symbol(document.language_id, node).ok_or_else(|| {
+        anyhow!(
+            "position {}:{} does not resolve to a semantic symbol in {}",
+            position.row,
+            position.column,
+            path.display()
+        )
+    })?;
+
+    match document.language_id {
+        LanguageId::Python => semantic_path(symbol_node, source),
+        LanguageId::C => c_symbol_id_for_node(&path, symbol_node, source)?
+            .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
+    }
 }
 
 pub(crate) fn semantic_target_range(
@@ -182,6 +240,28 @@ fn validate_semantic_target(semantic_target: &str) -> Result<()> {
         bail!("invalid semantic target: selector must not be blank");
     }
     Ok(())
+}
+
+fn node_at_byte_offset<'tree>(
+    root: Node<'tree>,
+    source: &str,
+    byte_offset: usize,
+) -> Option<Node<'tree>> {
+    root.named_descendant_for_byte_range(byte_offset, byte_offset)
+        .or_else(|| {
+            byte_offset
+                .checked_sub(1)
+                .and_then(|offset| root.named_descendant_for_byte_range(offset, offset))
+        })
+        .or_else(|| {
+            if byte_offset < source.len() {
+                root.descendant_for_byte_range(byte_offset, byte_offset)
+            } else {
+                byte_offset
+                    .checked_sub(1)
+                    .and_then(|offset| root.descendant_for_byte_range(offset, offset))
+            }
+        })
 }
 
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {

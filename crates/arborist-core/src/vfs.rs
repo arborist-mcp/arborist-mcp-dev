@@ -22,8 +22,8 @@ use crate::model::{
     VirtualFileStatus,
 };
 use crate::patching::{
-    build_patch_result, collect_syntax_errors, semantic_target_range, splice_source,
-    validate_bypass_reason, validate_patch_replacement,
+    build_patch_result, collect_syntax_errors, semantic_target_at_position, semantic_target_range,
+    splice_source, validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
     list_symbols_context_with_overrides_filtered,
@@ -284,6 +284,28 @@ impl VirtualFileSystem {
         }
 
         Ok(result)
+    }
+
+    pub fn patch_node_at_position(
+        &mut self,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+    ) -> Result<PatchAstNodeResult> {
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        let semantic_target = {
+            let entry = self
+                .entries
+                .get(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
+            semantic_target_at_position(&entry.path, &entry.source, position)?
+        };
+
+        self.patch_node(&path, &semantic_target, new_code, bypass_reason)
     }
 
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
@@ -1175,6 +1197,31 @@ mod tests {
         assert!(snapshot.dirty);
         assert!(snapshot.source.contains("return 3"));
         assert!(fs::read_to_string(&file).unwrap().contains("return 1"));
+    }
+
+    #[test]
+    fn patches_virtual_symbol_at_position_without_immediate_commit() {
+        let file = temp_file(
+            "def decorator(func):\n    return func\n\n@decorator\ndef value() -> int:\n    return 1\n",
+        );
+        let mut vfs = VirtualFileSystem::new();
+
+        let result = vfs
+            .patch_node_at_position(
+                &file,
+                &Position { row: 3, column: 1 },
+                "def value() -> int:\n    return 3\n",
+                None,
+            )
+            .unwrap();
+
+        assert!(result.applied);
+        assert_eq!(result.resolved_path, "value");
+        let snapshot = vfs.read_file(&file).unwrap();
+        assert!(snapshot.dirty);
+        assert!(!snapshot.source.contains("@decorator"));
+        assert!(snapshot.source.contains("return 3"));
+        assert!(fs::read_to_string(&file).unwrap().contains("@decorator"));
     }
 
     #[test]

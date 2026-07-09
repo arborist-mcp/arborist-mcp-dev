@@ -10,7 +10,9 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 
 - `get_semantic_skeleton`
 - `patch_ast_node`
+- `patch_ast_node_at_position`
 - `patch_virtual_ast_node`
+- `patch_virtual_ast_node_at_position`
 - `register_symbol_index`
 - `refresh_symbol_index_for_file`
 - `unregister_symbol_index`
@@ -45,9 +47,13 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `replay_patch_evidence_against_trace`
 - `validate_patch_commit_with_trace`
 - `validate_patch_with_trace_context`
+- `validate_patch_with_trace_context_at_position`
 - `validate_patch_with_graph_context`
+- `validate_patch_with_graph_context_at_position`
 - `validate_patch_with_neighborhood_context`
+- `validate_patch_with_neighborhood_context_at_position`
 - `validate_patch_with_discovery_context`
+- `validate_patch_with_discovery_context_at_position`
 - `execute_tree_query`
 - Python and C language routing based on case-insensitive file extension, including C `.h`, `.hpp`, and `.hh` headers
 - Selective semantic skeleton expansion via `expand_nodes`
@@ -199,6 +205,7 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 {"jsonrpc":"2.0","id":2,"method":"arborist/get_semantic_skeleton","params":{"file_path":"tests/fixtures/sample.py","depth_limit":2,"expand_nodes":["top_level"]}}
 {"jsonrpc":"2.0","id":3,"method":"arborist/patch_ast_node","params":{"file_path":"tests/fixtures/sample.py","semantic_path":"top_level","new_code":"def top_level(value: int) -> int:\n    return value + 2\n"}}
+{"jsonrpc":"2.0","id":38,"method":"arborist/patch_ast_node_at_position","params":{"file_path":"tests/fixtures/sample.py","position":{"row":0,"column":4},"new_code":"def top_level(value: int) -> int:\n    return value + 2\n"}}
 {"jsonrpc":"2.0","id":4,"method":"arborist/register_symbol_index","params":{"workspace_root":"tests/fixtures","db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":5,"method":"arborist/list_symbol_indexes","params":{}}
 {"jsonrpc":"2.0","id":6,"method":"arborist/did_open","params":{"file_path":"tests/fixtures/sample.py","source":"def top_level(value: int) -> int:\n    return value + 10\n"}}
@@ -207,6 +214,7 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":9,"method":"arborist/did_close","params":{"file_path":"tests/fixtures/sample.py","persist":false}}
 {"jsonrpc":"2.0","id":10,"method":"arborist/refresh_symbol_index_for_file","params":{"workspace_root":"tests/fixtures","db_path":"tests/fixtures/symbols.db","file_path":"tests/fixtures/graph_b.py"}}
 {"jsonrpc":"2.0","id":11,"method":"arborist/patch_virtual_ast_node","params":{"file_path":"tests/fixtures/sample.py","semantic_path":"top_level","new_code":"def top_level(value: int) -> int:\n    return value + 3\n"}}
+{"jsonrpc":"2.0","id":39,"method":"arborist/patch_virtual_ast_node_at_position","params":{"file_path":"tests/fixtures/sample.py","position":{"row":0,"column":4},"new_code":"def top_level(value: int) -> int:\n    return value + 3\n"}}
 {"jsonrpc":"2.0","id":12,"method":"arborist/commit_virtual_file","params":{"file_path":"tests/fixtures/sample.py"}}
 {"jsonrpc":"2.0","id":13,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":14,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
@@ -229,23 +237,33 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":31,"method":"arborist/replay_patch_evidence_against_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
 {"jsonrpc":"2.0","id":32,"method":"arborist/validate_patch_commit_with_trace","params":{"patch":{"...":"patch result JSON"},"trace":{"...":"trace result JSON"}}}
 {"jsonrpc":"2.0","id":33,"method":"arborist/validate_patch_with_trace_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","semantic_path":"orchestrate","new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
+{"jsonrpc":"2.0","id":40,"method":"arborist/validate_patch_with_trace_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/caller.c","position":{"row":2,"column":4},"new_code":"int orchestrate(int value) {\n    return helper(value);\n}\n","direction":"both"}}
 {"jsonrpc":"2.0","id":34,"method":"arborist/validate_patch_with_graph_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":41,"method":"arborist/validate_patch_with_graph_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","position":{"row":3,"column":5},"new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
 {"jsonrpc":"2.0","id":35,"method":"arborist/validate_patch_with_neighborhood_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":42,"method":"arborist/validate_patch_with_neighborhood_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","position":{"row":3,"column":5},"new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
 {"jsonrpc":"2.0","id":36,"method":"arborist/validate_patch_with_discovery_context","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","semantic_path":"orchestrate","new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
+{"jsonrpc":"2.0","id":43,"method":"arborist/validate_patch_with_discovery_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_a.py","position":{"row":3,"column":5},"new_code":"def orchestrate(value: int) -> int:\n    return helper(value)\n","direction":"both","max_depth":2,"max_nodes":32}}
 {"jsonrpc":"2.0","id":37,"method":"arborist/execute_tree_query","params":{"file_path":"tests/fixtures/sample.py","query":"(function_definition name: (identifier) @name)"}}
 ```
 
 For one-shot analysis and validation, `get_semantic_skeleton`,
-`execute_tree_query`, `patch_ast_node`, `validate_patch_with_trace_context`, and
-`validate_patch_with_graph_context`, `validate_patch_with_neighborhood_context`,
-and `validate_patch_with_discovery_context`
+`execute_tree_query`, `patch_ast_node`, `patch_ast_node_at_position`,
+`validate_patch_with_trace_context`, `validate_patch_with_trace_context_at_position`,
+`validate_patch_with_graph_context`, `validate_patch_with_graph_context_at_position`,
+`validate_patch_with_neighborhood_context`,
+`validate_patch_with_neighborhood_context_at_position`,
+and `validate_patch_with_discovery_context`,
+`validate_patch_with_discovery_context_at_position`
 accept an optional `source` string. When supplied, Arborist parses and validates
 that buffer for the requested `file_path` without creating or overwriting the
 file on disk. Use the VFS methods (`did_open`, `did_change`,
-`patch_virtual_ast_node`, `commit_virtual_file`, and `discard_virtual_file`) when
-the caller wants a longer-lived editor session that can be committed later.
+`patch_virtual_ast_node`, `patch_virtual_ast_node_at_position`,
+`commit_virtual_file`, and `discard_virtual_file`) when the caller wants a
+longer-lived editor session that can be committed later.
 
 For C, `patch_ast_node` and `patch_virtual_ast_node` accept either a plain selector such as `helper` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both a forward declaration and a definition for the same symbol, patch targeting now prefers the definition by default.
+`patch_ast_node_at_position` and `patch_virtual_ast_node_at_position` bring that same replacement flow to cursor-driven clients. Given `file_path + position`, Arborist resolves the enclosing semantic symbol first, then runs the existing patch validation path using the resolved selector. For Python, the cursor resolves to a stable `semantic_path`; for C, it resolves to the exact `symbol_id`, so declaration and definition sites remain distinct.
 
 `get_semantic_skeleton` now returns both `available_paths` and `available_symbols`. Each `available_symbols` item includes the symbol's stable `symbol_id`, `semantic_path`, optional `scope_path`, `node_kind`, `byte_range`, structured `parameters`, optional `return_type`, and optional `signature` / `docstring`, which lets an agent round-trip directly from lightweight exploration into later trace or patch requests without reconstructing selectors from raw text. For Python decorated definitions, `signature` and `byte_range` cover the full decorated source span rather than only the inner `def` / `class` header.
 For C, `expand_nodes` accepts either a plain semantic path such as `helper` or the same precise `symbol_id` returned in `available_symbols`.
@@ -264,9 +282,13 @@ Python trace/index resolution also follows local import aliases and package re-e
 `replay_patch_evidence_against_trace` consumes a patch result plus a trace result and reports whether each patch evidence invariant is `matched`, `blocked`, `missing`, or `failed` against the trace graph keys.
 `validate_patch_commit_with_trace` builds on that replay check and returns a single `allowed/status/reason` decision, making it the first optional strong gate for trace-backed semantic writes. Blocked replay evidence is accepted only when the patch gate itself was explicitly allowed with a bypass reason.
 `validate_patch_with_trace_context` removes the manual orchestration step entirely: it runs patch validation, traces the patched symbol against the workspace with the updated file held in-memory after the patch gate accepts it, and returns the patch result plus the trace-backed validation decision in one call. If the optional `source` parameter is supplied, that buffer is used for both patch validation and the trace overlay, so clients can validate unsaved files before writing them to disk. If syntax validation or the patch gate rejects the patch first, tracing is skipped and `trace_error` explains why.
+`validate_patch_with_trace_context_at_position` is the cursor-driven entrypoint for that same repair loop. It starts from `file_path + position`, resolves the exact semantic target under the cursor, and then returns the same patch, trace, and replay-backed validation payload as the selector-based variant.
 `validate_patch_with_graph_context` pushes that workflow one step further for agents that need impact analysis immediately after a safe patch candidate is found: after the patch gate accepts the edit, Arborist returns the same patch result and trace-backed validation, plus a bounded `trace_symbol_neighborhood` expansion of the patched symbol using the in-memory post-patch source. Callers can tune `max_depth` and `max_nodes` to trade detail for speed, and the same optional `source` parameter lets the whole flow run against unsaved buffers before anything is written to disk.
+`validate_patch_with_graph_context_at_position` applies that same cursor-first resolution to the graph-context variant, so editors can jump from a caret location straight into patch validation plus bounded impact analysis.
 `validate_patch_with_neighborhood_context` pushes that same workflow into an immediately consumable agent context payload: after the patch gate accepts the edit, Arborist returns the patch result, trace-backed validation, and a `neighborhood_context` bundle whose `neighborhood` graph matches `trace_symbol_neighborhood` while `reads` carries aligned per-node source snippets. That lets callers inspect the patched symbol's reachable neighborhood without issuing follow-up `read_symbol` calls for each graph node. Like the graph-context endpoint, it supports `direction`, `max_depth`, `max_nodes`, and the optional unsaved-buffer `source` overlay.
+`validate_patch_with_neighborhood_context_at_position` brings that same thicker response shape to cursor-driven workflows by resolving the patch target from `position` before running validation and neighborhood expansion.
 `validate_patch_with_discovery_context` adds the remaining direct-read step to that repair workflow. After the patch gate accepts the edit, Arborist returns the patch result, trace-backed validation, the exact patched root read under `read`, and the full `neighborhood_context` bundle for the same root symbol. That lets agents evaluate a candidate patch, inspect the rewritten symbol body, and inspect bounded caller/callee context from one response without a follow-up `read_symbol` call. Like the graph and neighborhood-context endpoints, it supports `direction`, `max_depth`, `max_nodes`, and the optional unsaved-buffer `source` overlay.
+`validate_patch_with_discovery_context_at_position` completes that cursor-first family: given `file_path + position`, it resolves the enclosing symbol and then returns the same patch result, root read, trace, and bounded neighborhood context as the selector-based discovery flow.
 `execute_tree_query` now also returns optional `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a capture belongs to a semantic symbol. That lets a raw Tree-sitter query jump directly into later trace or patch calls without rediscovering the owning selector from source text alone.
 
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.

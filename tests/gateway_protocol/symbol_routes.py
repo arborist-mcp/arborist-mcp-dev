@@ -1210,6 +1210,88 @@ class GatewaySymbolRouteTests(unittest.TestCase):
             [(".", "graph_b.py", 0, 5, "callers", 2, 10, "symbols.db")],
         )
 
+    def test_patch_ast_node_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def patch_ast_node_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 96,
+                "method": "arborist/patch_ast_node_at_position",
+                "params": {
+                    "file_path": "sample.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def helper() -> int:\n    return 2\n",
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "bypass_reason": "known-safe",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 96)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                "sample.py",
+                3,
+                1,
+                "def helper() -> int:\n    return 2\n",
+                "def helper() -> int:\n    return 1\n",
+                "known-safe",
+            )],
+        )
+
+    def test_patch_virtual_ast_node_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def patch_virtual_ast_node_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 97,
+                "method": "arborist/patch_virtual_ast_node_at_position",
+                "params": {
+                    "file_path": "sample.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def helper() -> int:\n    return 2\n",
+                    "bypass_reason": "known-safe",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 97)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                "sample.py",
+                3,
+                1,
+                "def helper() -> int:\n    return 2\n",
+                "known-safe",
+            )],
+        )
+
     def test_graph_context_routes_params_to_core(self) -> None:
         class StubCore:
             def __init__(self) -> None:
@@ -1314,6 +1396,210 @@ class GatewaySymbolRouteTests(unittest.TestCase):
                 None,
                 None,
                 "both",
+                2,
+                10,
+            )],
+        )
+
+    def test_trace_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def validate_patch_with_trace_context_at_position_json(
+                self, *args: object
+            ) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 98,
+                "method": "arborist/validate_patch_with_trace_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                    "source": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 98)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                ".",
+                "caller.py",
+                3,
+                1,
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                "known-safe",
+                "callers",
+            )],
+        )
+
+    def test_graph_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def validate_patch_with_graph_context_at_position_json(
+                self, *args: object
+            ) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "arborist/validate_patch_with_graph_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                    "source": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 99)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                ".",
+                "caller.py",
+                3,
+                1,
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                "known-safe",
+                "callers",
+                2,
+                10,
+            )],
+        )
+
+    def test_neighborhood_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def validate_patch_with_neighborhood_context_at_position_json(
+                self, *args: object
+            ) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 100,
+                "method": "arborist/validate_patch_with_neighborhood_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                    "source": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 100)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                ".",
+                "caller.py",
+                3,
+                1,
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                "known-safe",
+                "callers",
+                2,
+                10,
+            )],
+        )
+
+    def test_discovery_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def validate_patch_with_discovery_context_at_position_json(
+                self, *args: object
+            ) -> str:
+                self.calls.append(args)
+                return "{}"
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 101,
+                "method": "arborist/validate_patch_with_discovery_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 3, "column": 1},
+                    "new_code": "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                    "source": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 101)
+        self.assertEqual(response["result"], {})
+        self.assertEqual(
+            gateway._core.calls,
+            [(
+                ".",
+                "caller.py",
+                3,
+                1,
+                "def orchestrate(value: int) -> int:\n    return helper(value)\n",
+                "def orchestrate(value: int) -> int:\n    return value + 1\n",
+                "known-safe",
+                "callers",
                 2,
                 10,
             )],

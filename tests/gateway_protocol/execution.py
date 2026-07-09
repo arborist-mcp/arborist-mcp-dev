@@ -293,6 +293,91 @@ class GatewayExecutionTests(unittest.TestCase):
             self.assertTrue(response["result"]["applied"])
             self.assertIn("return 2", response["result"]["updated_source"])
 
+    def test_patch_ast_node_at_position_accepts_unsaved_source_without_writing_disk(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir).joinpath("sample.py")
+            gateway = ArboristGateway()
+
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 102,
+                    "method": "arborist/patch_ast_node_at_position",
+                    "params": {
+                        "file_path": str(file_path),
+                        "source": (
+                            "def decorator(func):\n"
+                            "    return func\n\n"
+                            "@decorator\n"
+                            "def helper() -> int:\n"
+                            "    return 1\n"
+                        ),
+                        "position": {"row": 3, "column": 1},
+                        "new_code": "def helper() -> int:\n    return 2\n",
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 102)
+            self.assertNotIn("error", response)
+            self.assertFalse(file_path.exists())
+            self.assertTrue(response["result"]["applied"])
+            self.assertEqual(response["result"]["resolved_path"], "helper")
+            self.assertIn("return 2", response["result"]["updated_source"])
+
+    def test_trace_context_at_position_accepts_unsaved_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            helper = workspace.joinpath("helper.py")
+            caller = workspace.joinpath("caller.py")
+            helper.write_text(
+                "def helper(value: int) -> int:\n    return value + 1\n",
+                encoding="utf-8",
+            )
+
+            gateway = ArboristGateway()
+            response = gateway.handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 103,
+                    "method": "arborist/validate_patch_with_trace_context_at_position",
+                    "params": {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return value + 1\n"
+                        ),
+                        "position": {"row": 3, "column": 5},
+                        "new_code": (
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "direction": "both",
+                    },
+                }
+            )
+
+            self.assertEqual(response["jsonrpc"], "2.0")
+            self.assertEqual(response["id"], 103)
+            self.assertNotIn("error", response)
+            self.assertFalse(caller.exists())
+            self.assertTrue(response["result"]["patch"]["applied"])
+            self.assertEqual(response["result"]["patch"]["resolved_path"], "orchestrate")
+            self.assertEqual(response["result"]["trace_target"], "orchestrate")
+            self.assertIsNone(response["result"]["trace_error"])
+            self.assertTrue(response["result"]["trace_validation"]["allowed"])
+            self.assertTrue(
+                any(
+                    symbol["semantic_path"] == "helper"
+                    for symbol in response["result"]["trace"]["callees"]
+                )
+            )
+
     def test_rejects_blank_expand_node_selectors(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(self, *args: object) -> str:
