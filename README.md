@@ -151,6 +151,22 @@ The full gate also checks PowerShell script syntax, version consistency, builds
 and syncs the local gateway extension, and runs a real `initialize` smoke
 request.
 
+`check.ps1` now also supports focused profiles, so CI and local debugging can
+run the same named slices instead of maintaining separate ad hoc command sets:
+
+```powershell
+.\scripts\check.ps1 -ListProfiles
+.\scripts\check.ps1 -Profile sanity
+.\scripts\check.ps1 -Profile rust
+.\scripts\check.ps1 -Profile gateway-fast
+.\scripts\check.ps1 -Profile python-native
+.\scripts\check.ps1 -Profile sanity,rust
+```
+
+The GitHub Actions workflow now uses those same profiles in parallel on
+Windows, which makes failures easier to localize and lets quick pure-Python
+gateway regressions surface without waiting on the native-extension job.
+
 For the everyday inner loop, run the focused test entrypoint:
 
 ```powershell

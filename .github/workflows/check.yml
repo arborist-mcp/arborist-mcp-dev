@@ -16,26 +16,49 @@ concurrency:
 
 jobs:
   windows:
+    name: ${{ matrix.job_name }}
     runs-on: windows-latest
     timeout-minutes: 20
     env:
       CARGO_TERM_COLOR: always
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job_name: sanity
+            profile: sanity
+            needs_python: false
+            needs_rust: false
+          - job_name: rust
+            profile: rust
+            needs_python: false
+            needs_rust: true
+          - job_name: gateway-fast
+            profile: gateway-fast
+            needs_python: true
+            needs_rust: false
+          - job_name: python-native
+            profile: python-native
+            needs_python: true
+            needs_rust: true
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: ${{ matrix.needs_python }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
       - name: Install Rust toolchain
+        if: ${{ matrix.needs_rust }}
         shell: pwsh
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
-      - name: Run local check gate
+      - name: Run check profile
         shell: pwsh
-        run: .\scripts\check.ps1
+        run: .\scripts\check.ps1 -Profile ${{ matrix.profile }}
