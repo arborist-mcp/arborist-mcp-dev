@@ -5,6 +5,13 @@ import json
 from pathlib import Path
 import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from tests import GROUPS as TEST_GROUPS
+from tests import SUITES as TEST_SUITES
+
 
 def _load_manifest() -> dict[str, object]:
     manifest_path = Path(__file__).with_name("check_profiles.json")
@@ -14,6 +21,22 @@ def _load_manifest() -> dict[str, object]:
             "check profile manifest must define object keys 'profiles' and 'ci_profiles'"
         )
     return raw
+
+
+def _resolve_test_target(selection_name: str) -> dict[str, object]:
+    if selection_name in TEST_SUITES:
+        metadata = TEST_SUITES[selection_name]
+        return {
+            "target_type": "suite",
+            "requires_extension": bool(metadata["requires_extension"]),
+        }
+    if selection_name in TEST_GROUPS:
+        metadata = TEST_GROUPS[selection_name]
+        return {
+            "target_type": "group",
+            "requires_extension": bool(metadata["requires_extension"]),
+        }
+    raise RuntimeError(f"unknown test suite or group '{selection_name}' referenced by check profiles")
 
 
 def _load_profiles(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
@@ -41,44 +64,64 @@ def _load_profiles(manifest: dict[str, object]) -> dict[str, dict[str, object]]:
                 raise RuntimeError(
                     f"check profile '{profile_name}' must define a non-empty handler"
                 )
-            needs_python = metadata.get("needs_python")
-            needs_rust = metadata.get("needs_rust")
-            if not isinstance(needs_python, bool):
-                raise RuntimeError(
-                    f"check profile '{profile_name}' must define a boolean needs_python flag"
-                )
-            if not isinstance(needs_rust, bool):
-                raise RuntimeError(
-                    f"check profile '{profile_name}' must define a boolean needs_rust flag"
-                )
             profile: dict[str, object] = {
                 "description": description,
                 "entries": (),
                 "handler": handler,
-                "needs_python": needs_python,
-                "needs_rust": needs_rust,
             }
-            if "suite" in metadata:
-                suite = metadata.get("suite")
-                if not isinstance(suite, str) or not suite.strip():
-                    raise RuntimeError(
-                        f"check profile '{profile_name}' suite must be a non-empty string"
-                    )
-                profile["suite"] = suite
-            if "sync_extension" in metadata:
-                sync_extension = metadata.get("sync_extension")
-                if sync_extension not in {"auto", "always", "never"}:
-                    raise RuntimeError(
-                        f"check profile '{profile_name}' sync_extension must be one of auto, always, never"
-                    )
-                profile["sync_extension"] = sync_extension
-            if "prepare_extension" in metadata:
-                prepare_extension = metadata.get("prepare_extension")
+
+            if handler == "sanity":
+                profile["needs_python"] = False
+                profile["needs_rust"] = False
+            elif handler == "rust":
+                profile["needs_python"] = False
+                profile["needs_rust"] = True
+            elif handler == "gateway-smoke":
+                prepare_extension = metadata.get("prepare_extension", False)
                 if not isinstance(prepare_extension, bool):
                     raise RuntimeError(
                         f"check profile '{profile_name}' prepare_extension must be a boolean"
                     )
                 profile["prepare_extension"] = prepare_extension
+                profile["needs_python"] = True
+                profile["needs_rust"] = prepare_extension
+            elif handler == "suite":
+                suite = metadata.get("suite")
+                if not isinstance(suite, str) or not suite.strip():
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' suite must be a non-empty string"
+                    )
+                resolved_target = _resolve_test_target(suite)
+                prepare_extension = metadata.get("prepare_extension", False)
+                sync_extension = metadata.get("sync_extension")
+                if sync_extension is None:
+                    sync_extension = "auto"
+                if sync_extension not in {"auto", "always", "never"}:
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' sync_extension must be one of auto, always, never"
+                    )
+                if not isinstance(prepare_extension, bool):
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' prepare_extension must be a boolean"
+                    )
+                target_requires_extension = bool(resolved_target["requires_extension"])
+                if target_requires_extension and sync_extension == "never" and not prepare_extension:
+                    raise RuntimeError(
+                        f"check profile '{profile_name}' disables extension sync for test target '{suite}' without pre-building it"
+                    )
+                profile["suite"] = suite
+                profile["suite_target_type"] = resolved_target["target_type"]
+                profile["suite_requires_extension"] = target_requires_extension
+                profile["sync_extension"] = sync_extension
+                profile["prepare_extension"] = prepare_extension
+                profile["needs_python"] = True
+                profile["needs_rust"] = prepare_extension or (
+                    target_requires_extension and sync_extension != "never"
+                )
+            else:
+                raise RuntimeError(
+                    f"check profile '{profile_name}' uses unsupported handler '{handler}'"
+                )
             profiles[profile_name] = profile
             continue
 
@@ -173,6 +216,12 @@ def build_snapshot() -> dict[str, object]:
             snapshot_profiles[profile_name]["handler"] = metadata["handler"]
             if "suite" in metadata:
                 snapshot_profiles[profile_name]["suite"] = metadata["suite"]
+            if "suite_target_type" in metadata:
+                snapshot_profiles[profile_name]["suite_target_type"] = metadata["suite_target_type"]
+            if "suite_requires_extension" in metadata:
+                snapshot_profiles[profile_name]["suite_requires_extension"] = metadata[
+                    "suite_requires_extension"
+                ]
             if "sync_extension" in metadata:
                 snapshot_profiles[profile_name]["sync_extension"] = metadata["sync_extension"]
             if "prepare_extension" in metadata:

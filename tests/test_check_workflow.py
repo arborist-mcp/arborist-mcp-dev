@@ -47,13 +47,27 @@ class CheckWorkflowTests(unittest.TestCase):
         profiles = snapshot["profiles"]
 
         self.assertEqual(profiles["sanity"]["handler"], "sanity")
+        self.assertFalse(profiles["sanity"]["needs_python"])
+        self.assertFalse(profiles["sanity"]["needs_rust"])
+        self.assertEqual(profiles["rust"]["handler"], "rust")
+        self.assertFalse(profiles["rust"]["needs_python"])
+        self.assertTrue(profiles["rust"]["needs_rust"])
         self.assertEqual(profiles["python-fast"]["handler"], "suite")
         self.assertEqual(profiles["python-fast"]["suite"], "python-fast")
+        self.assertEqual(profiles["python-fast"]["suite_target_type"], "group")
+        self.assertFalse(profiles["python-fast"]["suite_requires_extension"])
         self.assertFalse(profiles["python-fast"]["prepare_extension"])
         self.assertEqual(profiles["gateway-native"]["handler"], "suite")
+        self.assertEqual(profiles["gateway-native"]["suite_target_type"], "group")
+        self.assertTrue(profiles["gateway-native"]["suite_requires_extension"])
         self.assertTrue(profiles["gateway-native"]["prepare_extension"])
         self.assertEqual(profiles["python-discovery"]["suite"], "python")
+        self.assertEqual(profiles["python-discovery"]["suite_target_type"], "group")
+        self.assertTrue(profiles["python-discovery"]["suite_requires_extension"])
         self.assertEqual(profiles["gateway-smoke"]["handler"], "gateway-smoke")
+        self.assertTrue(profiles["gateway-smoke"]["prepare_extension"])
+        self.assertTrue(profiles["gateway-smoke"]["needs_python"])
+        self.assertTrue(profiles["gateway-smoke"]["needs_rust"])
 
         self.assertEqual(
             profiles["python-native"]["leaf_profiles"],
