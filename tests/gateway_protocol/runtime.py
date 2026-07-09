@@ -7,6 +7,14 @@ from arborist_mcp import gateway as gateway_module
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
 
+SUITE_NAME = "gateway-runtime"
+REQUIRES_EXTENSION = True
+COVERED_TOOLS = (
+    "arborist/execute_tree_query",
+    "arborist/get_semantic_skeleton",
+    "arborist/list_symbol_indexes",
+)
+
 
 class GatewayRuntimeTests(GatewayProtocolTestCase):
     def test_initialize_still_reports_tools(self) -> None:

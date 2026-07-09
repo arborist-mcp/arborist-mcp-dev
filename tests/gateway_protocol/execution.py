@@ -2,6 +2,19 @@ from __future__ import annotations
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
 
+SUITE_NAME = "gateway-execution"
+REQUIRES_EXTENSION = True
+COVERED_TOOLS = (
+    "arborist/apply_buffer_edit",
+    "arborist/did_change",
+    "arborist/execute_tree_query",
+    "arborist/get_semantic_skeleton",
+    "arborist/patch_ast_node",
+    "arborist/patch_ast_node_at_position",
+    "arborist/replay_patch_evidence_against_trace",
+    "arborist/validate_patch_with_trace_context_at_position",
+)
+
 
 class GatewayExecutionTests(GatewayProtocolTestCase):
     def test_core_invalid_query_maps_to_invalid_params(self) -> None:

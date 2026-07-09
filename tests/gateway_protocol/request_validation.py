@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import io
 from unittest import mock
 
@@ -9,6 +10,42 @@ from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
+from tests.gateway_protocol import GROUP_SUITES, MANIFEST, SUITE_MODULES
+
+SUITE_NAME = "gateway-request-validation"
+REQUIRES_EXTENSION = False
+COVERED_TOOLS = (
+    "arborist/apply_buffer_edit",
+    "arborist/did_change",
+    "arborist/did_close",
+    "arborist/get_semantic_skeleton",
+    "arborist/list_symbol_indexes",
+    "arborist/list_symbols",
+    "arborist/list_symbols_discovery_context",
+    "arborist/list_symbols_neighborhood_context",
+    "arborist/list_virtual_files",
+    "arborist/patch_ast_node_at_position",
+    "arborist/patch_virtual_ast_node_at_position",
+    "arborist/read_symbol_at_position",
+    "arborist/read_symbol_context",
+    "arborist/read_symbol_context_at_position",
+    "arborist/read_symbol_discovery_context",
+    "arborist/read_symbol_discovery_context_at_position",
+    "arborist/read_symbol_neighborhood_context",
+    "arborist/read_symbol_neighborhood_context_at_position",
+    "arborist/search_symbols",
+    "arborist/search_symbols_discovery_context",
+    "arborist/trace_symbol_graph",
+    "arborist/trace_symbol_neighborhood",
+    "arborist/validate_patch_with_discovery_context",
+    "arborist/validate_patch_with_discovery_context_at_position",
+    "arborist/validate_patch_with_graph_context",
+    "arborist/validate_patch_with_graph_context_at_position",
+    "arborist/validate_patch_with_neighborhood_context",
+    "arborist/validate_patch_with_neighborhood_context_at_position",
+    "arborist/validate_patch_with_trace_context",
+    "arborist/validate_patch_with_trace_context_at_position",
+)
 
 
 class GatewayRequestValidationTests(GatewayProtocolTestCase):
@@ -72,6 +109,50 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             set(gateway_module.TOOL_HANDLERS),
             set(gateway_module.TOOL_PARAM_NAMES),
         )
+
+    def test_gateway_suite_metadata_covers_all_advertised_tools(self) -> None:
+        suite_manifest = MANIFEST["suites"]
+        assert isinstance(suite_manifest, dict)
+
+        expected_tools = set(gateway_module.TOOL_HANDLERS)
+        covered_tools: set[str] = set()
+
+        for suite_name in suite_manifest:
+            module = importlib.import_module(SUITE_MODULES[suite_name])
+            self.assertEqual(module.SUITE_NAME, suite_name)
+            self.assertEqual(
+                module.REQUIRES_EXTENSION,
+                suite_manifest[suite_name]["requires_extension"],
+            )
+
+            module_tools = set(module.COVERED_TOOLS)
+            self.assertTrue(module_tools, msg=f"{suite_name} must declare covered tools")
+            self.assertTrue(
+                module_tools <= expected_tools,
+                msg=f"{suite_name} declares unknown tools: {sorted(module_tools - expected_tools)}",
+            )
+            covered_tools.update(module_tools)
+
+        self.assertEqual(
+            covered_tools,
+            expected_tools,
+            msg=(
+                "gateway suite tool coverage drifted; missing="
+                f"{sorted(expected_tools - covered_tools)}, extra={sorted(covered_tools - expected_tools)}"
+            ),
+        )
+
+    def test_gateway_groups_match_extension_requirements(self) -> None:
+        suite_manifest = MANIFEST["suites"]
+        assert isinstance(suite_manifest, dict)
+
+        for suite_name in GROUP_SUITES["gateway-fast"]:
+            with self.subTest(group="gateway-fast", suite=suite_name):
+                self.assertFalse(suite_manifest[suite_name]["requires_extension"])
+
+        for suite_name in GROUP_SUITES["gateway-native"]:
+            with self.subTest(group="gateway-native", suite=suite_name):
+                self.assertTrue(suite_manifest[suite_name]["requires_extension"])
 
     def test_rejects_non_object_request_without_calling_core(self) -> None:
         self.assert_invalid_request(["initialize"], request_id=None, contains="expected object")

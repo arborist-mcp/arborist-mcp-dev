@@ -3,6 +3,13 @@ from __future__ import annotations
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase, deep_merge
 from tests.gateway_protocol.semantic_fixtures import GatewaySemanticFixtureMixin
 
+SUITE_NAME = "gateway-trace-payloads"
+REQUIRES_EXTENSION = False
+COVERED_TOOLS = (
+    "arborist/replay_patch_evidence_against_trace",
+    "arborist/validate_patch_commit_with_trace",
+)
+
 
 class GatewayTracePayloadTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCase):
     TRACE_METHODS = (

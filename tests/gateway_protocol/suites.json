@@ -20,6 +20,11 @@
       "description": "Run trace payload validation and replay-shape tests.",
       "requires_extension": false
     },
+    "gateway-management-routes": {
+      "module": "tests.gateway_protocol.management_routes",
+      "description": "Run gateway virtual-file and symbol-index routing tests with stub cores.",
+      "requires_extension": false
+    },
     "gateway-runtime": {
       "module": "tests.gateway_protocol.runtime",
       "description": "Run gateway runtime and transport tests against the synced native extension.",
@@ -32,7 +37,8 @@
       "entries": [
         "gateway-request-validation",
         "gateway-symbol-routes",
-        "gateway-trace-payloads"
+        "gateway-trace-payloads",
+        "gateway-management-routes"
       ]
     },
     "gateway-native": {
