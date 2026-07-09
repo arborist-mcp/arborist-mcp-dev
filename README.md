@@ -202,6 +202,11 @@ The generated wheel lands under `target/wheels/` and can be installed with
 server is not published yet; when that changes, this README should document the
 binary entrypoint separately from the Python package flow.
 
+GitHub Actions also provides a manual `wheels` workflow, and the same workflow
+runs for `v*` tags. It builds Windows and Linux wheels and uploads them as run
+artifacts so non-developer users can install the package without a local Rust
+toolchain on matching platforms.
+
 ## Quick check
 
 Run the full local gate:
