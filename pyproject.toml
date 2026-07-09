@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "arborist-mcp"
 version = "0.1.0"
-description = "Thin Python gateway over a Rust semantic parsing core."
+description = "MCP-compatible Python gateway over a Rust semantic parsing core."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
@@ -23,4 +23,3 @@ arborist-mcp = "arborist_mcp.gateway:main"
 python-source = "python"
 module-name = "arborist_mcp._arborist_core"
 manifest-path = "crates/arborist-py/Cargo.toml"
-

@@ -62,3 +62,30 @@ jobs:
       - name: Run check profile
         shell: pwsh
         run: .\scripts\check.ps1 -Profile ${{ matrix.profile }}
+
+  linux-basic:
+    name: linux-basic
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Run Rust tests
+        run: cargo test --locked
+
+      - name: Check gateway CLI help
+        run: python -m arborist_mcp.gateway --help

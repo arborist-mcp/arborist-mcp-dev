@@ -4,7 +4,11 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 
 - `crates/arborist-core`: Rust parsing core with Tree-sitter based semantic extraction.
 - `crates/arborist-py`: PyO3 bridge that exposes the Rust core to Python.
-- `python/arborist_mcp`: thin JSON-RPC gateway over stdio.
+- `python/arborist_mcp`: MCP-compatible JSON-RPC gateway over stdio.
+
+Arborist currently supports Python and C source files. Language routing is
+extension-based; Python files use `.py`, and C routing includes `.c`, `.h`,
+`.hpp`, and `.hh`.
 
 ## What is implemented
 
@@ -142,6 +146,62 @@ Or use the bootstrap script:
 `sync-extension.ps1` keeps the repo-local generated gateway extension in sync with the latest Rust build so `python -m arborist_mcp.gateway` works directly from the repository root.
 It now rebuilds the debug `arborist-py` extension before copying it into `python/arborist_mcp/`, so re-running the script after Rust changes is enough to refresh the repo-root gateway entrypoint.
 
+On Linux and macOS, the PowerShell helper scripts are optional. The equivalent
+manual setup is:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install "maturin>=1.7,<2.0"
+maturin develop --locked
+python -m arborist_mcp.gateway --help
+```
+
+For focused validation without the PowerShell wrappers:
+
+```bash
+cargo test --locked
+python -m unittest discover -s tests
+python -m arborist_mcp.gateway --help
+```
+
+Windows is the primary development environment today, and Linux has basic CI
+coverage. macOS is expected to work through the same `maturin develop` flow, but
+it is not yet part of CI.
+
+Common build failures:
+
+- Python: make sure the active interpreter is Python 3.10 or newer and that
+  `python -m pip --version` points inside the virtual environment you intended.
+- Rust: install a stable toolchain with `rustup`, then retry `cargo test
+  --locked` before rebuilding the Python extension.
+- maturin/native extension: rerun `maturin develop --locked` after Rust changes.
+  From a repo checkout, `python -m arborist_mcp.gateway --help` only works after
+  the native `_arborist_core` module has been built or synced.
+- Virtual, shared, or network drives: if file watching, locking, or path
+  normalization behaves oddly, retry from a local non-synced path and keep the
+  workspace, `.venv`, and Cargo target directory on the same filesystem.
+- Slow dependency downloads: prefetch with `cargo fetch --locked`, keep Cargo's
+  cache warm, or set your normal Cargo/PyPI mirror configuration before running
+  `maturin develop`.
+
+## Installation and release artifacts
+
+The current consumable artifact is a Python package with a PyO3 native extension
+and the `arborist-mcp` console script. Source checkouts can build it locally with
+`maturin develop --locked`; release builds should produce wheels with:
+
+```bash
+python -m pip install "maturin>=1.7,<2.0"
+maturin build --locked --release
+```
+
+The generated wheel lands under `target/wheels/` and can be installed with
+`python -m pip install target/wheels/arborist_mcp-*.whl`. A standalone binary
+server is not published yet; when that changes, this README should document the
+binary entrypoint separately from the Python package flow.
+
 ## Quick check
 
 Run the full local gate:
@@ -242,7 +302,71 @@ python -m arborist_mcp.gateway --help
 python -m arborist_mcp.gateway --version
 ```
 
-## Example JSON-RPC message
+## Standard MCP server
+
+The gateway speaks standard MCP over stdio while preserving the older direct
+`arborist/*` JSON-RPC methods. MCP clients should call `initialize`, then
+`tools/list`, then `tools/call`.
+
+Minimal Claude Desktop / Cursor-style server configuration:
+
+```json
+{
+  "mcpServers": {
+    "arborist": {
+      "command": "python",
+      "args": ["-m", "arborist_mcp.gateway"],
+      "cwd": "E:/workspace/arborist-mcp"
+    }
+  }
+}
+```
+
+If Arborist is installed as a package, the console script is equivalent:
+
+```json
+{
+  "mcpServers": {
+    "arborist": {
+      "command": "arborist-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Minimal MCP messages:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"example-client","version":"0.1.0"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"arborist/get_semantic_skeleton","arguments":{"file_path":"tests/fixtures/sample.py","depth_limit":2}}}
+```
+
+`tools/list` is generated from the gateway's tool catalog and is the source of
+truth for tool names, JSON input schemas, defaults, and categories. It currently
+returns 49 tools:
+
+- Read tools: 24, including semantic skeletons, raw Tree-sitter queries, symbol reads, symbol list/search, and graph-backed read bundles.
+- Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.
+- VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard, and virtual reads.
+- Index tools: 5, covering register, unregister, list, rebuild, and file refresh for symbol indexes.
+- Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
+
+Successful `tools/call` responses return the raw Arborist result as JSON text in
+`content[0].text` and as structured JSON under `structuredContent.result`.
+Unknown tool names and malformed `tools/call` envelopes are JSON-RPC `-32602`
+errors. Tool argument validation failures, core validation failures, and core
+runtime errors are returned as MCP tool results with `isError: true`, so clients
+can display the error without tearing down the MCP session.
+
+## Legacy JSON-RPC compatibility
+
+Existing custom callers can continue invoking `arborist/*` methods directly over
+the same newline-delimited stdio transport. The legacy `initialize` request with
+empty params still returns the historical `capabilities.tools` name list.
+
+## Example legacy JSON-RPC messages
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
@@ -378,7 +502,8 @@ When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the a
 
 `search_symbols_neighborhood_context` pushes that same discovery flow into immediate local graph inspection. It returns the same `search_symbols` payload under `search` plus an aligned `contexts` array whose entries line up positionally with `search.matches`; each entry is a full `read_symbol_neighborhood_context` bundle for the corresponding hit. That lets agents search, inspect the exact symbol body, and understand a bounded caller/callee neighborhood for each ranked candidate without issuing separate graph reads per match. Like the underlying neighborhood read, it supports `direction`, `max_depth`, `max_nodes`, optional `file_path_contains` and `node_kind` filters, and live VFS buffers whenever `index_db_path` is omitted.
 
-The stdio gateway currently accepts one JSON document per line. This keeps the environment lightweight while leaving room to swap in a full MCP transport adapter later.
+The stdio gateway accepts one JSON document per line. Both standard MCP methods
+and legacy direct `arborist/*` JSON-RPC methods use that transport.
 
 ## Current phase status
 

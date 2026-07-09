@@ -2075,7 +2075,7 @@ def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | N
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Thin stdio JSON-RPC gateway for the Arborist Rust core."
+        description="MCP-compatible stdio JSON-RPC gateway for the Arborist Rust core."
     )
     parser.add_argument(
         "--version",
