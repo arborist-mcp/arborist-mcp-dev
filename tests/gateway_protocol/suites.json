@@ -1,0 +1,7 @@
+{
+  "gateway-request-validation": "tests.gateway_protocol.request_validation",
+  "gateway-symbol-routes": "tests.gateway_protocol.symbol_routes",
+  "gateway-execution": "tests.gateway_protocol.execution",
+  "gateway-trace-payloads": "tests.gateway_protocol.trace_payloads",
+  "gateway-runtime": "tests.gateway_protocol.runtime"
+}

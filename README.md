@@ -152,8 +152,11 @@ For the everyday inner loop, run the focused test entrypoint:
 ```
 
 `test.ps1` defaults to the fast local loop of Rust tests plus the gateway
-protocol suite. It also supports narrower suites so protocol changes do not have
-to wait on unrelated Python coverage:
+protocol suite. It now reads the gateway suite registry from
+`tests/gateway_protocol/suites.json`, so adding or renaming a focused gateway
+suite only needs one manifest update instead of keeping Python and PowerShell
+registries in sync. It also supports narrower suites so protocol changes do not
+have to wait on unrelated Python coverage:
 
 ```powershell
 .\scripts\test.ps1 -Suite rust
@@ -165,11 +168,17 @@ to wait on unrelated Python coverage:
 .\scripts\test.ps1 -Suite gateway-runtime
 .\scripts\test.ps1 -Suite python
 .\scripts\test.ps1 -Suite all
+.\scripts\test.ps1 -ListSuites
+.\scripts\test.ps1 -Suite rust -RustFilter read_symbol_at_position
+.\scripts\test.ps1 -Suite rust,gateway-request-validation
 ```
 
 The gateway protocol tests now live under `tests/gateway_protocol/` and remain
 available through the legacy `tests.test_gateway_protocol` module, so old
 commands still work while targeted modules are easier to run in isolation.
+`-ListSuites` prints the current workflow matrix, `-RustFilter` forwards a
+focused filter to `cargo test --locked <filter>`, and `-Suite` now accepts
+multiple suite names when you want one command to cover a narrow mixed loop.
 
 Or run the underlying commands directly:
 
