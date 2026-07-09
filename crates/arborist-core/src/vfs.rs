@@ -39,7 +39,8 @@ use crate::symbols::{
     search_symbols_context_with_overrides_filtered,
     search_symbols_discovery_context_with_overrides_filtered,
     search_symbols_neighborhood_context_with_overrides_filtered,
-    search_symbols_with_overrides_filtered, trace_symbol_graph_with_overrides,
+    search_symbols_with_overrides_filtered, trace_symbol_graph_at_position_with_overrides,
+    trace_symbol_graph_with_overrides, trace_symbol_neighborhood_at_position_with_overrides,
     trace_symbol_neighborhood_with_overrides,
 };
 
@@ -469,6 +470,46 @@ impl VirtualFileSystem {
             &workspace_root,
             &overrides,
             symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
+    pub fn trace_symbol_graph_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+    ) -> Result<TraceSymbolGraphResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        trace_symbol_graph_at_position_with_overrides(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
+            direction,
+        )
+    }
+
+    pub fn trace_symbol_neighborhood_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<TraceSymbolNeighborhoodResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        trace_symbol_neighborhood_at_position_with_overrides(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
             direction,
             max_depth,
             max_nodes,

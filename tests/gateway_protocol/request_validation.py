@@ -47,7 +47,9 @@ COVERED_TOOLS = (
     "arborist/read_symbol_neighborhood_context_at_position",
     "arborist/search_symbols",
     "arborist/search_symbols_discovery_context",
+    "arborist/trace_symbol_graph_at_position",
     "arborist/trace_symbol_graph",
+    "arborist/trace_symbol_neighborhood_at_position",
     "arborist/trace_symbol_neighborhood",
     "arborist/validate_patch_with_discovery_context",
     "arborist/validate_patch_with_discovery_context_at_position",
@@ -946,6 +948,30 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("direction", response["error"]["message"])
 
+    def test_rejects_invalid_trace_symbol_graph_at_position_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = self.make_gateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 97,
+                "method": "arborist/trace_symbol_graph_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 97)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
     def test_rejects_negative_trace_symbol_neighborhood_limits(self) -> None:
         gateway = self.make_gateway()
 
@@ -985,6 +1011,52 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 67)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_trace_symbol_neighborhood_at_position_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = self.make_gateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 98,
+                "method": "arborist/trace_symbol_neighborhood_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 98)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_trace_symbol_neighborhood_at_position_max_nodes(self) -> None:
+        gateway = self.make_gateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 99,
+                "method": "arborist/trace_symbol_neighborhood_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 99)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 

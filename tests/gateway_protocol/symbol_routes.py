@@ -27,7 +27,10 @@ COVERED_TOOLS = (
     "arborist/search_symbols_context",
     "arborist/search_symbols_discovery_context",
     "arborist/search_symbols_neighborhood_context",
+    "arborist/trace_symbol_graph",
+    "arborist/trace_symbol_graph_at_position",
     "arborist/trace_symbol_neighborhood",
+    "arborist/trace_symbol_neighborhood_at_position",
     "arborist/validate_patch_with_discovery_context",
     "arborist/validate_patch_with_discovery_context_at_position",
     "arborist/validate_patch_with_graph_context",
@@ -683,6 +686,45 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 ),
             },
             {
+                "core_method": "trace_symbol_graph_json",
+                "rpc_method": "arborist/trace_symbol_graph",
+                "request_id": 60,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                },
+                "payload": helper_trace,
+                "expected_call": (".", "helper", "callers", "symbols.db"),
+                "check": lambda result: (
+                    self.assertEqual(result["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(
+                        result["callers"][0]["semantic_path"], "orchestrate"
+                    ),
+                ),
+            },
+            {
+                "core_method": "trace_symbol_graph_at_position_json",
+                "rpc_method": "arborist/trace_symbol_graph_at_position",
+                "request_id": 65,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                },
+                "payload": helper_trace_graph,
+                "expected_call": (".", "graph_b.py", 0, 5, "callers", "symbols.db"),
+                "check": lambda result: (
+                    self.assertEqual(result["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(
+                        result["callers"][0]["semantic_path"], "orchestrate"
+                    ),
+                ),
+            },
+            {
                 "core_method": "trace_symbol_neighborhood_json",
                 "rpc_method": "arborist/trace_symbol_neighborhood",
                 "request_id": 66,
@@ -696,6 +738,39 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 },
                 "payload": helper_context["neighborhood"],
                 "expected_call": (".", "helper", "callers", 2, 10, "symbols.db"),
+                "check": lambda result: (
+                    self.assertEqual(result["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(result["direction"], "callers"),
+                    self.assertEqual(
+                        result["nodes"][1]["symbol"]["semantic_path"], "orchestrate"
+                    ),
+                    self.assertEqual(result["edges"][0]["to_symbol_id"], "helper"),
+                ),
+            },
+            {
+                "core_method": "trace_symbol_neighborhood_at_position_json",
+                "rpc_method": "arborist/trace_symbol_neighborhood_at_position",
+                "request_id": 67,
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+                "payload": helper_context_graph["neighborhood"],
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(result["direction"], "callers"),

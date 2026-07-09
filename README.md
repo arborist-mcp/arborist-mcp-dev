@@ -27,6 +27,8 @@ Arborist MCP is a phase-1 foundation for the architecture described in the draft
 - `discard_virtual_file`
 - `rebuild_symbol_index`
 - `read_symbol`
+- `trace_symbol_graph_at_position`
+- `trace_symbol_neighborhood_at_position`
 - `read_symbol_at_position`
 - `read_symbol_context`
 - `read_symbol_context_at_position`
@@ -250,11 +252,13 @@ python -m arborist_mcp.gateway --version
 {"jsonrpc":"2.0","id":39,"method":"arborist/patch_virtual_ast_node_at_position","params":{"file_path":"tests/fixtures/sample.py","position":{"row":0,"column":4},"new_code":"def top_level(value: int) -> int:\n    return value + 3\n"}}
 {"jsonrpc":"2.0","id":12,"method":"arborist/commit_virtual_file","params":{"file_path":"tests/fixtures/sample.py"}}
 {"jsonrpc":"2.0","id":13,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":44,"method":"arborist/trace_symbol_graph_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_b.py","position":{"row":0,"column":5},"direction":"callers","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":14,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":15,"method":"arborist/read_symbol_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_b.py","position":{"row":0,"column":5},"index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":16,"method":"arborist/read_symbol_context","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","direction":"callers","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":17,"method":"arborist/read_symbol_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_b.py","position":{"row":0,"column":5},"direction":"callers","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":18,"method":"arborist/trace_symbol_neighborhood","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":45,"method":"arborist/trace_symbol_neighborhood_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_b.py","position":{"row":0,"column":5},"direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":19,"method":"arborist/read_symbol_neighborhood_context","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":20,"method":"arborist/read_symbol_neighborhood_context_at_position","params":{"workspace_root":"tests/fixtures","file_path":"tests/fixtures/graph_b.py","position":{"row":0,"column":5},"direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":21,"method":"arborist/read_symbol_discovery_context","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","direction":"callers","max_depth":2,"max_nodes":32,"index_db_path":"tests/fixtures/symbols.db"}}
@@ -328,7 +332,11 @@ Python trace/index resolution also follows local import aliases and package re-e
 
 When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the active VFS session first, so unsaved `did_open` / `did_change` / `patch_virtual_ast_node` edits are reflected immediately without touching disk.
 
+`trace_symbol_graph_at_position` brings that same raw caller/callee trace to cursor-first clients. Given `file_path + position`, it resolves the exact symbol under the cursor and then returns the same `trace_symbol_graph` payload, so editors can jump straight from a caret location into graph analysis without first reconstructing a `semantic_path` or `symbol_id`.
+
 `trace_symbol_neighborhood` expands that one-hop trace into a bounded multi-hop graph for agent planning. It returns the traced root symbol plus de-duplicated `nodes` and directed `edges`, following callers, callees, or both up to `max_depth` hops and capping expansion at `max_nodes`. When `truncated` is true, Arborist found more reachable symbols than it was allowed to materialize. Like the other symbol graph reads, it accepts either `semantic_path` or precise `symbol_id`, and it respects live VFS buffers whenever `index_db_path` is omitted.
+
+`trace_symbol_neighborhood_at_position` applies that same cursor-first resolution to the bounded graph variant. Given `file_path + position`, it resolves the exact symbol at the caret and then returns the same `trace_symbol_neighborhood` payload, including `truncated`, `nodes`, and `edges`.
 
 `read_symbol` bridges discovery and action directly: given a `semantic_path` or precise `symbol_id`, it returns the structured symbol summary plus the exact source snippet and start/end points for that symbol. Like the other discovery flows, it can read from the persisted index or the live VFS-backed workspace when `index_db_path` is omitted.
 

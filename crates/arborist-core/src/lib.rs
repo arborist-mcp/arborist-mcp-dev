@@ -59,7 +59,10 @@ pub use symbols::{
     search_symbols_neighborhood_context, search_symbols_neighborhood_context_filtered,
     search_symbols_neighborhood_context_from_index,
     search_symbols_neighborhood_context_from_index_filtered, trace_symbol_graph,
-    trace_symbol_graph_from_index, trace_symbol_neighborhood, trace_symbol_neighborhood_from_index,
+    trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
+    trace_symbol_graph_from_index, trace_symbol_neighborhood,
+    trace_symbol_neighborhood_at_position, trace_symbol_neighborhood_at_position_from_index,
+    trace_symbol_neighborhood_from_index,
 };
 pub use vfs::VirtualFileSystem;
 
@@ -1211,10 +1214,12 @@ mod tests {
         search_symbols_discovery_context, search_symbols_discovery_context_from_index,
         search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
         search_symbols_neighborhood_context, search_symbols_neighborhood_context_from_index,
-        trace_symbol_graph, trace_symbol_graph_from_index, trace_symbol_neighborhood,
-        trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
-        validate_patch_trace_validation_result, validate_patch_with_discovery_context,
-        validate_patch_with_discovery_context_at_position,
+        trace_symbol_graph, trace_symbol_graph_at_position,
+        trace_symbol_graph_at_position_from_index, trace_symbol_graph_from_index,
+        trace_symbol_neighborhood, trace_symbol_neighborhood_at_position,
+        trace_symbol_neighborhood_at_position_from_index, trace_symbol_neighborhood_from_index,
+        validate_patch_commit_with_trace, validate_patch_trace_validation_result,
+        validate_patch_with_discovery_context, validate_patch_with_discovery_context_at_position,
         validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
         validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
         validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
@@ -9110,6 +9115,107 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn traces_symbol_graph_at_position_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let position = Position { row: 0, column: 5 };
+        let live =
+            trace_symbol_graph_at_position(&dir, &helper, &position, TraceDirection::Callers)
+                .unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.semantic_path, "helper");
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].semantic_path, "orchestrate");
+        assert!(live.callees.is_empty());
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = trace_symbol_graph_at_position_from_index(
+            &db_path,
+            &helper,
+            &position,
+            TraceDirection::Callers,
+        )
+        .unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.symbol.symbol_id, "helper");
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].semantic_path, "orchestrate");
+    }
+
+    #[test]
+    fn traces_symbol_neighborhood_at_position_in_live_workspace_and_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let orchestrator = dir.join("graph_a.py");
+        let entry = dir.join("graph_c.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &orchestrator,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+        fs::write(
+            &entry,
+            "from graph_a import orchestrate\n\n\ndef entrypoint(value: int) -> int:\n    return orchestrate(value)\n",
+        )
+        .unwrap();
+
+        let position = Position { row: 0, column: 5 };
+        let live = trace_symbol_neighborhood_at_position(
+            &dir,
+            &helper,
+            &position,
+            TraceDirection::Callers,
+            2,
+            10,
+        )
+        .unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(live.symbol.semantic_path, "helper");
+        assert_eq!(live.nodes.len(), 3);
+        assert_eq!(live.nodes[1].symbol.semantic_path, "orchestrate");
+        assert_eq!(live.nodes[2].symbol.semantic_path, "entrypoint");
+        assert_eq!(live.edges.len(), 2);
+        assert!(!live.truncated);
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted = trace_symbol_neighborhood_at_position_from_index(
+            &db_path,
+            &helper,
+            &position,
+            TraceDirection::Callers,
+            2,
+            10,
+        )
+        .unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(persisted.symbol.symbol_id, "helper");
+        assert_eq!(persisted.nodes.len(), 3);
+        assert_eq!(persisted.edges.len(), 2);
+        assert!(!persisted.truncated);
+    }
+
+    #[test]
     fn read_symbol_at_position_resolves_decorator_lines() {
         let dir = temporary_dir();
         let helper = dir.join("helper.py");
@@ -9329,6 +9435,42 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(result.read.source, renamed_helper.trim_end_matches('\n'));
         assert_eq!(result.trace.callers.len(), 1);
         assert_eq!(result.trace.callers[0].semantic_path, "orchestrate");
+    }
+
+    #[test]
+    fn trace_symbol_graph_at_position_uses_dirty_vfs_overrides() {
+        let dir = temporary_dir();
+        let helper = dir.join("graph_b.py");
+        let caller = dir.join("graph_a.py");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "from graph_b import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+        )
+        .unwrap();
+
+        let mut vfs = VirtualFileSystem::new();
+        let renamed_helper = "def renamed_helper(value: int) -> int:\n    return value + 2\n";
+        let renamed_caller = "from graph_b import renamed_helper\n\n\ndef orchestrate(value: int) -> int:\n    return renamed_helper(value)\n";
+        vfs.open_file(&helper, Some(renamed_helper)).unwrap();
+        vfs.open_file(&caller, Some(renamed_caller)).unwrap();
+
+        let result = vfs
+            .trace_symbol_graph_at_position(
+                &dir,
+                &helper,
+                &Position { row: 0, column: 5 },
+                TraceDirection::Callers,
+            )
+            .unwrap();
+        assert_eq!(result.symbol.semantic_path, "renamed_helper");
+        assert_eq!(result.callers.len(), 1);
+        assert_eq!(result.callers[0].semantic_path, "orchestrate");
     }
 
     #[test]

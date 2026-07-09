@@ -32,6 +32,8 @@ TOOL_HANDLERS = {
     "arborist/rebuild_symbol_index": "_rebuild_symbol_index",
     "arborist/trace_symbol_graph": "_trace_symbol_graph",
     "arborist/trace_symbol_neighborhood": "_trace_symbol_neighborhood",
+    "arborist/trace_symbol_graph_at_position": "_trace_symbol_graph_at_position",
+    "arborist/trace_symbol_neighborhood_at_position": "_trace_symbol_neighborhood_at_position",
     "arborist/read_symbol": "_read_symbol",
     "arborist/read_symbol_at_position": "_read_symbol_at_position",
     "arborist/read_symbol_context": "_read_symbol_context",
@@ -125,6 +127,22 @@ TOOL_PARAM_NAMES = {
     "arborist/trace_symbol_neighborhood": (
         "workspace_root",
         "symbol_path",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+    ),
+    "arborist/trace_symbol_graph_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
+        "direction",
+        "index_db_path",
+    ),
+    "arborist/trace_symbol_neighborhood_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
         "direction",
         "max_depth",
         "max_nodes",
@@ -556,6 +574,56 @@ class ArboristGateway:
         payload = self._require_core().trace_symbol_neighborhood_json(
             workspace_root,
             symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _trace_symbol_graph_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().trace_symbol_graph_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _trace_symbol_neighborhood_at_position(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().trace_symbol_neighborhood_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
             direction,
             max_depth,
             max_nodes,
