@@ -5,7 +5,7 @@ from unittest import mock
 
 from arborist_mcp import gateway as gateway_module
 
-from tests.gateway_protocol.helpers import GatewayProtocolTestCase
+from tests.gateway_protocol.helpers import GatewayProtocolTestCase, make_recording_json_core
 
 SUITE_NAME = "gateway-runtime"
 REQUIRES_EXTENSION = True
@@ -39,6 +39,206 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             result["capabilities"]["tools"],
             list(gateway_module.TOOL_NAMES),
         )
+
+    def test_mcp_initialize_reports_standard_capabilities(self) -> None:
+        class StubCore:
+            def supported_languages(self) -> list[str]:
+                return ["python", "c"]
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(StubCore()),
+                "initialize",
+                {
+                    "protocolVersion": gateway_module.MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "unit-test", "version": "1.0"},
+                },
+                request_id=101,
+            ),
+            request_id=101,
+        )
+
+        assert isinstance(result, dict)
+        self.assertEqual(result["protocolVersion"], gateway_module.MCP_PROTOCOL_VERSION)
+        self.assertEqual(result["serverInfo"]["name"], "arborist-mcp")
+        self.assertEqual(result["serverInfo"]["version"], gateway_module.__version__)
+        self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(result["supportedLanguages"], ["python", "c"])
+
+    def test_tools_list_returns_complete_tool_schemas(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(self.make_gateway(), "tools/list", {}, request_id=102),
+            request_id=102,
+        )
+
+        assert isinstance(result, dict)
+        tools = result["tools"]
+        assert isinstance(tools, list)
+        self.assertEqual(len(tools), len(gateway_module.TOOL_NAMES))
+        by_name = {tool["name"]: tool for tool in tools}
+        self.assertEqual(set(by_name), set(gateway_module.TOOL_NAMES))
+        skeleton = by_name["arborist/get_semantic_skeleton"]
+        self.assertEqual(skeleton["metadata"]["category"], "read")
+        self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])
+        self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
+        patch = by_name["arborist/patch_ast_node"]
+        self.assertEqual(patch["metadata"]["category"], "write")
+        self.assertTrue(patch["annotations"]["destructiveHint"])
+
+    def test_tools_call_invokes_read_tool(self) -> None:
+        core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/get_semantic_skeleton",
+                    "arguments": {"file_path": "sample.py"},
+                },
+                request_id=103,
+            ),
+            request_id=103,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"kind": "module"})
+        self.assertEqual(core.calls_for("get_semantic_skeleton_json"), [("sample.py", None, 2, None)])
+
+    def test_tools_call_invokes_write_tool(self) -> None:
+        core = make_recording_json_core(patch_ast_node_json={"patched": True})
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/patch_ast_node",
+                    "arguments": {
+                        "file_path": "sample.py",
+                        "semantic_path": "top_level",
+                        "new_code": "def top_level():\n    return 1\n",
+                    },
+                },
+                request_id=104,
+            ),
+            request_id=104,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"patched": True})
+        self.assertEqual(
+            core.calls_for("patch_ast_node_json"),
+            [("sample.py", "top_level", "def top_level():\n    return 1\n", None, None)],
+        )
+
+    def test_tools_call_invokes_index_tool(self) -> None:
+        core = make_recording_json_core(register_symbol_index_json={"registered": True})
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/register_symbol_index",
+                    "arguments": {"workspace_root": ".", "db_path": "symbols.db"},
+                },
+                request_id=105,
+            ),
+            request_id=105,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"registered": True})
+        self.assertEqual(core.calls_for("register_symbol_index_json"), [(".", "symbols.db")])
+
+    def test_tools_call_invokes_trace_tool(self) -> None:
+        core = make_recording_json_core(trace_symbol_graph_json={"symbol": "top_level"})
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/trace_symbol_graph",
+                    "arguments": {"workspace_root": ".", "symbol_path": "top_level"},
+                },
+                request_id=106,
+            ),
+            request_id=106,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"symbol": "top_level"})
+        self.assertEqual(core.calls_for("trace_symbol_graph_json"), [(".", "top_level", "both", None)])
+
+    def test_tools_call_rejects_unknown_tool(self) -> None:
+        response = self.call_gateway(
+            self.make_gateway(),
+            "tools/call",
+            {"name": "arborist/missing", "arguments": {}},
+            request_id=107,
+        )
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=107,
+            code=-32602,
+            contains="unknown tool",
+        )
+
+    def test_tools_call_reports_missing_tool_argument_as_tool_error(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "tools/call",
+                {"name": "arborist/get_semantic_skeleton", "arguments": {}},
+                request_id=108,
+            ),
+            request_id=108,
+        )
+
+        assert isinstance(result, dict)
+        self.assertTrue(result["isError"])
+        self.assertIn("missing required string param: file_path", result["content"][0]["text"])
+
+    def test_tools_call_rejects_non_object_arguments(self) -> None:
+        response = self.call_gateway(
+            self.make_gateway(),
+            "tools/call",
+            {"name": "arborist/get_semantic_skeleton", "arguments": []},
+            request_id=109,
+        )
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=109,
+            code=-32602,
+            contains="arguments must be an object",
+        )
+
+    def test_tools_call_reports_argument_type_error_as_tool_error(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "tools/call",
+                {
+                    "name": "arborist/get_semantic_skeleton",
+                    "arguments": {"file_path": "sample.py", "depth_limit": "two"},
+                },
+                request_id=110,
+            ),
+            request_id=110,
+        )
+
+        assert isinstance(result, dict)
+        self.assertTrue(result["isError"])
+        self.assertIn("invalid int param: depth_limit", result["content"][0]["text"])
 
     def test_rejects_nonstandard_json_from_core(self) -> None:
         class StubCore:

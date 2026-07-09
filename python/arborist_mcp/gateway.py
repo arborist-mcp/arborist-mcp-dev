@@ -372,12 +372,323 @@ TOOL_PARAM_NAMES = {
     ),
     "arborist/execute_tree_query": ("file_path", "query", "source"),
 }
+MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_INITIALIZE_PARAM_NAMES = ("protocolVersion", "capabilities", "clientInfo", "_meta")
+MCP_TOOL_LIST_PARAM_NAMES = ("cursor", "_meta")
+MCP_TOOL_CALL_PARAM_NAMES = ("name", "arguments", "_meta")
+MCP_INITIALIZE_MARKERS = frozenset(("protocolVersion", "capabilities", "clientInfo"))
+OPTIONAL_TOOL_PARAMS = frozenset(
+    (
+        "bypass_reason",
+        "depth_limit",
+        "direction",
+        "dirty_only",
+        "expand_nodes",
+        "file_path_contains",
+        "index_db_path",
+        "limit",
+        "max_depth",
+        "max_nodes",
+        "node_kind",
+        "persist",
+        "source",
+        "workspace_root",
+    )
+)
+TOOL_CATEGORIES = {
+    "arborist/get_semantic_skeleton": "read",
+    "arborist/execute_tree_query": "read",
+    "arborist/patch_ast_node": "write",
+    "arborist/patch_ast_node_at_position": "write",
+    "arborist/patch_virtual_ast_node": "vfs",
+    "arborist/patch_virtual_ast_node_at_position": "vfs",
+    "arborist/register_symbol_index": "index",
+    "arborist/refresh_symbol_index_for_file": "index",
+    "arborist/unregister_symbol_index": "index",
+    "arborist/list_symbol_indexes": "index",
+    "arborist/rebuild_symbol_index": "index",
+    "arborist/did_open": "vfs",
+    "arborist/did_change": "vfs",
+    "arborist/did_close": "vfs",
+    "arborist/list_virtual_files": "vfs",
+    "arborist/read_virtual_file": "vfs",
+    "arborist/apply_buffer_edit": "vfs",
+    "arborist/commit_virtual_file": "vfs",
+    "arborist/discard_virtual_file": "vfs",
+}
+for _tool_name in TOOL_NAMES:
+    if _tool_name not in TOOL_CATEGORIES:
+        if "trace" in _tool_name:
+            TOOL_CATEGORIES[_tool_name] = "trace"
+        else:
+            TOOL_CATEGORIES[_tool_name] = "read"
+
+READ_ONLY_CATEGORIES = frozenset(("read", "trace"))
+WRITING_TOOLS = frozenset(
+    (
+        "arborist/patch_ast_node",
+        "arborist/patch_ast_node_at_position",
+        "arborist/commit_virtual_file",
+    )
+)
+NON_MUTATING_STATE_TOOLS = frozenset(
+    (
+        "arborist/list_virtual_files",
+        "arborist/read_virtual_file",
+        "arborist/list_symbol_indexes",
+    )
+)
+MUTATING_TOOLS = frozenset(
+    tool_name
+    for tool_name, category in TOOL_CATEGORIES.items()
+    if category in {"write", "vfs", "index"}
+) - NON_MUTATING_STATE_TOOLS
+
+
+def _schema(
+    schema_type: str,
+    description: str,
+    *,
+    default: Any = None,
+    enum: tuple[str, ...] | None = None,
+    minimum: int | None = None,
+    min_items: int | None = None,
+    allow_empty: bool = False,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"type": schema_type, "description": description}
+    if default is not None:
+        result["default"] = default
+    if enum is not None:
+        result["enum"] = list(enum)
+    if minimum is not None:
+        result["minimum"] = minimum
+    if min_items is not None:
+        result["minItems"] = min_items
+    if schema_type == "string" and not allow_empty:
+        result["minLength"] = 1
+    return result
+
+
+POSITION_SCHEMA = {
+    "type": "object",
+    "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+    "properties": {
+        "row": _schema("integer", "Zero-based row.", minimum=0),
+        "column": _schema("integer", "Zero-based column.", minimum=0),
+    },
+    "required": ["row", "column"],
+    "additionalProperties": False,
+}
+POSITION_EDIT_SCHEMA = {
+    "type": "object",
+    "description": "LSP-style text edit using zero-based start and end positions.",
+    "properties": {
+        "start": POSITION_SCHEMA,
+        "end": POSITION_SCHEMA,
+        "new_text": _schema(
+            "string",
+            "Replacement text for the range.",
+            allow_empty=True,
+        ),
+    },
+    "required": ["start", "end", "new_text"],
+    "additionalProperties": False,
+}
+JSON_OBJECT_SCHEMA = {
+    "type": "object",
+    "description": "JSON object returned by a prior Arborist patch or trace call.",
+    "additionalProperties": True,
+}
+TOOL_PARAM_SCHEMAS = {
+    "bypass_reason": _schema(
+        "string",
+        "Required explanation when intentionally bypassing trace-backed commit gates.",
+    ),
+    "db_path": _schema("string", "SQLite symbol-index database path."),
+    "depth_limit": _schema(
+        "integer",
+        "Maximum semantic skeleton expansion depth.",
+        default=2,
+        minimum=0,
+    ),
+    "direction": _schema(
+        "string",
+        "Graph direction to inspect.",
+        default="both",
+        enum=("callers", "callees", "both"),
+    ),
+    "dirty_only": _schema(
+        "boolean",
+        "When true, list only virtual files with unsaved changes.",
+        default=False,
+    ),
+    "edits": {
+        "type": "array",
+        "description": "Ordered LSP-style position edits to apply to an open virtual file.",
+        "items": POSITION_EDIT_SCHEMA,
+    },
+    "expand_nodes": {
+        "type": "array",
+        "description": "Semantic selectors to expand in the returned skeleton.",
+        "items": _schema("string", "Semantic selector."),
+    },
+    "file_path": _schema("string", "Source file path. Python and C extensions are supported."),
+    "file_path_contains": _schema(
+        "string",
+        "Optional substring filter applied to indexed file paths.",
+    ),
+    "index_db_path": _schema(
+        "string",
+        "Optional persisted symbol-index database path. Do not combine with source.",
+    ),
+    "limit": _schema("integer", "Maximum number of symbols to return.", minimum=0),
+    "max_depth": _schema(
+        "integer",
+        "Maximum graph expansion depth.",
+        default=2,
+        minimum=0,
+    ),
+    "max_nodes": _schema(
+        "integer",
+        "Maximum graph node count. Must be greater than zero.",
+        default=64,
+        minimum=1,
+    ),
+    "new_code": _schema("string", "Replacement source code for the selected AST node."),
+    "new_text": _schema(
+        "string",
+        "Replacement text for a byte-range edit.",
+        allow_empty=True,
+    ),
+    "node_kind": _schema("string", "Optional Tree-sitter node-kind filter."),
+    "old_end_byte": _schema(
+        "integer",
+        "Exclusive end byte of the old range.",
+        minimum=0,
+    ),
+    "patch": JSON_OBJECT_SCHEMA,
+    "persist": _schema(
+        "boolean",
+        "When closing a virtual file, commit changes to disk before closing.",
+        default=False,
+    ),
+    "position": POSITION_SCHEMA,
+    "query": _schema("string", "Tree-sitter query or symbol search text."),
+    "semantic_path": _schema("string", "Stable Arborist semantic selector."),
+    "source": _schema(
+        "string",
+        "Optional unsaved source buffer to analyze instead of reading from disk.",
+        allow_empty=True,
+    ),
+    "start_byte": _schema("integer", "Inclusive start byte for a buffer edit.", minimum=0),
+    "symbol_path": _schema("string", "Stable symbol path or symbol_id selector."),
+    "trace": JSON_OBJECT_SCHEMA,
+    "workspace_root": _schema(
+        "string",
+        "Workspace root for index, trace, and symbol operations.",
+        default=".",
+    ),
+}
+TOOL_PARAM_DEFAULTS = {
+    "depth_limit": 2,
+    "direction": "both",
+    "dirty_only": False,
+    "limit": {
+        "list": 100,
+        "search": 20,
+    },
+    "max_depth": 2,
+    "max_nodes": 64,
+    "persist": False,
+    "workspace_root": ".",
+}
 
 
 class JsonRpcError(ValueError):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def is_mcp_initialize(params: dict[str, Any]) -> bool:
+    return bool(MCP_INITIALIZE_MARKERS & set(params))
+
+
+def build_tool_catalog() -> list[dict[str, Any]]:
+    return [build_tool_descriptor(tool_name) for tool_name in TOOL_NAMES]
+
+
+def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
+    category = TOOL_CATEGORIES[tool_name]
+    tool: dict[str, Any] = {
+        "name": tool_name,
+        "title": _tool_title(tool_name),
+        "description": _tool_description(tool_name, category),
+        "inputSchema": build_tool_input_schema(tool_name),
+        "annotations": {
+            "readOnlyHint": category in READ_ONLY_CATEGORIES
+            or tool_name in NON_MUTATING_STATE_TOOLS,
+            "destructiveHint": tool_name in WRITING_TOOLS,
+        },
+        "metadata": {
+            "category": category,
+            "legacyMethod": tool_name,
+            "mutatesState": tool_name in MUTATING_TOOLS,
+        },
+    }
+    return tool
+
+
+def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
+    properties: dict[str, Any] = {}
+    for param_name in TOOL_PARAM_NAMES[tool_name]:
+        param_schema = dict(TOOL_PARAM_SCHEMAS[param_name])
+        default = tool_param_default(tool_name, param_name)
+        if default is not None:
+            param_schema["default"] = default
+        properties[param_name] = param_schema
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required_tool_params(tool_name)),
+        "additionalProperties": False,
+    }
+
+
+def required_tool_params(tool_name: str) -> tuple[str, ...]:
+    return tuple(
+        param_name
+        for param_name in TOOL_PARAM_NAMES[tool_name]
+        if param_name not in OPTIONAL_TOOL_PARAMS
+    )
+
+
+def tool_param_default(tool_name: str, param_name: str) -> Any:
+    default = TOOL_PARAM_DEFAULTS.get(param_name)
+    if isinstance(default, dict):
+        if tool_name.startswith("arborist/list_symbols"):
+            return default["list"]
+        if tool_name.startswith("arborist/search_symbols"):
+            return default["search"]
+        return None
+    return default
+
+
+def _tool_title(tool_name: str) -> str:
+    return tool_name.removeprefix("arborist/").replace("_", " ").title()
+
+
+def _tool_description(tool_name: str, category: str) -> str:
+    method_name = tool_name.removeprefix("arborist/")
+    category_descriptions = {
+        "read": "Read semantic source information without writing project files.",
+        "write": "Patch persisted source files through Arborist semantic targeting.",
+        "vfs": "Manage or inspect Arborist's session-scoped virtual-file state.",
+        "index": "Build, refresh, register, or inspect persisted symbol indexes.",
+        "trace": "Read trace, graph, or trace-backed validation context.",
+    }
+    return f"{category_descriptions[category]} Legacy JSON-RPC method: arborist/{method_name}."
 
 
 def _load_core_class() -> type[Any]:
@@ -428,15 +739,11 @@ class ArboristGateway:
 
         try:
             if method == "initialize":
-                self._reject_unexpected_params(params, ())
-                result = {
-                    "serverInfo": {
-                        "name": "arborist-mcp",
-                        "version": __version__,
-                    },
-                    "capabilities": {"tools": list(TOOL_NAMES)},
-                    "supportedLanguages": self._require_core().supported_languages(),
-                }
+                result = self._initialize(params)
+            elif method == "tools/list":
+                result = self._tools_list(params)
+            elif method == "tools/call":
+                result = self._tools_call(params)
             elif method in TOOL_HANDLERS:
                 self._reject_unexpected_params(params, TOOL_PARAM_NAMES[method])
                 handler = getattr(self, TOOL_HANDLERS[method])
@@ -477,6 +784,106 @@ class ArboristGateway:
                 -32602,
                 "invalid params: index_db_path is not supported when source is provided",
             )
+
+    def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
+        if not is_mcp_initialize(params):
+            self._reject_unexpected_params(params, ())
+            return {
+                "serverInfo": self._server_info(),
+                "capabilities": {"tools": list(TOOL_NAMES)},
+                "supportedLanguages": self._require_core().supported_languages(),
+            }
+
+        self._reject_unexpected_params(params, MCP_INITIALIZE_PARAM_NAMES)
+        protocol_version = self._optional_string(
+            params,
+            "protocolVersion",
+            default=MCP_PROTOCOL_VERSION,
+        )
+        capabilities = params.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            raise JsonRpcError(-32602, "invalid params: capabilities must be an object")
+        client_info = params.get("clientInfo", {})
+        if not isinstance(client_info, dict):
+            raise JsonRpcError(-32602, "invalid params: clientInfo must be an object")
+
+        return {
+            "protocolVersion": protocol_version,
+            "capabilities": {
+                "tools": {
+                    "listChanged": False,
+                },
+            },
+            "serverInfo": self._server_info(),
+            "instructions": (
+                "Use tools/list to discover Arborist tools and tools/call with "
+                "arguments matching each tool inputSchema."
+            ),
+            "supportedLanguages": self._require_core().supported_languages(),
+        }
+
+    def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._reject_unexpected_params(params, MCP_TOOL_LIST_PARAM_NAMES)
+        cursor = params.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            raise JsonRpcError(-32602, "invalid params: cursor must be a string")
+        return {"tools": build_tool_catalog()}
+
+    def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._reject_unexpected_params(params, MCP_TOOL_CALL_PARAM_NAMES)
+        tool_name = params.get("name")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            raise JsonRpcError(-32602, "missing required string param: name")
+        if tool_name not in TOOL_HANDLERS:
+            raise JsonRpcError(-32602, f"unknown tool: {tool_name}")
+        arguments = params.get("arguments", {})
+        if not isinstance(arguments, dict):
+            raise JsonRpcError(-32602, "invalid params: arguments must be an object")
+
+        try:
+            self._reject_unexpected_params(arguments, TOOL_PARAM_NAMES[tool_name])
+            handler = getattr(self, TOOL_HANDLERS[tool_name])
+            tool_result = handler(arguments)
+        except JsonRpcError as exc:
+            return self._mcp_tool_error(str(exc))
+        except ValueError as exc:
+            return self._mcp_tool_error(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            return self._mcp_tool_error(str(exc))
+
+        return self._mcp_tool_result(tool_result)
+
+    @staticmethod
+    def _server_info() -> dict[str, Any]:
+        return {
+            "name": "arborist-mcp",
+            "version": __version__,
+        }
+
+    @staticmethod
+    def _mcp_tool_result(tool_result: Any) -> dict[str, Any]:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(tool_result, ensure_ascii=False, allow_nan=False),
+                }
+            ],
+            "structuredContent": {"result": tool_result},
+            "isError": False,
+        }
+
+    @staticmethod
+    def _mcp_tool_error(message: str) -> dict[str, Any]:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": message,
+                }
+            ],
+            "isError": True,
+        }
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")

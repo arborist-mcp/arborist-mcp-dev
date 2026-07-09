@@ -204,16 +204,16 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             contains="invalid params",
         )
 
-    def test_rejects_unexpected_initialize_params_without_calling_core(self) -> None:
+    def test_rejects_unexpected_legacy_initialize_params_without_calling_core(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
                 raise AssertionError("core should not be called")
 
         self.assert_invalid_params(
             "initialize",
-            {"clientInfo": {"name": "codex"}},
+            {"unexpected": {"name": "codex"}},
             request_id=8,
-            contains="clientInfo",
+            contains="unexpected",
             gateway=self.make_gateway(StubCore()),
         )
 
