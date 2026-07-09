@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -44,6 +45,29 @@ def deep_merge(base: object, updates: object) -> object:
                 merged[key] = copy.deepcopy(value)
         return merged
     return copy.deepcopy(updates)
+
+
+class RecordingJsonCore:
+    def __init__(self, handlers: dict[str, object]) -> None:
+        self._calls: dict[str, list[tuple[object, ...]]] = {
+            name: [] for name in handlers
+        }
+        for method_name, payload in handlers.items():
+            setattr(self, method_name, self._make_handler(method_name, payload))
+
+    def _make_handler(self, method_name: str, payload: object):
+        def handler(*args: object) -> str:
+            self._calls[method_name].append(args)
+            return json.dumps(payload)
+
+        return handler
+
+    def calls_for(self, method_name: str) -> list[tuple[object, ...]]:
+        return self._calls[method_name]
+
+
+def make_recording_json_core(**handlers: object) -> RecordingJsonCore:
+    return RecordingJsonCore(handlers)
 
 
 @contextmanager
