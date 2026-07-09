@@ -2,13 +2,16 @@ use std::cell::RefCell;
 use std::path::Path;
 
 use arborist_core::{
-    PatchAstNodeResult, PositionEdit, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
-    execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
+    PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
+    VirtualFileSystem, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
     get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
     list_symbols_discovery_context_from_index_filtered, list_symbols_from_index_filtered,
     list_symbols_neighborhood_context_from_index_filtered, patch_ast_node,
-    read_symbol_context_from_index, read_symbol_discovery_context_from_index,
-    read_symbol_from_index, read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
+    read_symbol_at_position_from_index, read_symbol_context_at_position_from_index,
+    read_symbol_context_from_index, read_symbol_discovery_context_at_position_from_index,
+    read_symbol_discovery_context_from_index, read_symbol_from_index,
+    read_symbol_neighborhood_context_at_position_from_index,
+    read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
     refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
     search_symbols_context_from_index_filtered,
     search_symbols_discovery_context_from_index_filtered, search_symbols_from_index_filtered,
@@ -219,6 +222,33 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
+    #[pyo3(signature = (workspace_root, file_path, row, column, index_db_path=None))]
+    fn read_symbol_at_position_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let position = Position { row, column };
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_at_position_from_index(
+                Path::new(&index_db_path),
+                Path::new(file_path),
+                &position,
+            ),
+            None => self.vfs.borrow_mut().read_symbol_at_position(
+                Path::new(workspace_root),
+                Path::new(file_path),
+                &position,
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None))]
     fn read_symbol_context_json(
         &self,
@@ -235,6 +265,37 @@ impl ArboristCore {
             None => self.vfs.borrow_mut().read_symbol_context(
                 Path::new(workspace_root),
                 symbol_path,
+                direction,
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", index_db_path=None))]
+    fn read_symbol_context_at_position_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        direction: &str,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let position = Position { row, column };
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_context_at_position_from_index(
+                Path::new(&index_db_path),
+                Path::new(file_path),
+                &position,
+                direction,
+            ),
+            None => self.vfs.borrow_mut().read_symbol_context_at_position(
+                Path::new(workspace_root),
+                Path::new(file_path),
+                &position,
                 direction,
             ),
         }
@@ -275,6 +336,47 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
+    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn read_symbol_neighborhood_context_at_position_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let position = Position { row, column };
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_neighborhood_context_at_position_from_index(
+                Path::new(&index_db_path),
+                Path::new(file_path),
+                &position,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            None => self
+                .vfs
+                .borrow_mut()
+                .read_symbol_neighborhood_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
     fn read_symbol_discovery_context_json(
         &self,
@@ -301,6 +403,47 @@ impl ArboristCore {
                 max_depth,
                 max_nodes,
             ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn read_symbol_discovery_context_at_position_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        let direction = parse_direction(direction)?;
+        let position = Position { row, column };
+        let result = match index_db_path {
+            Some(index_db_path) => read_symbol_discovery_context_at_position_from_index(
+                Path::new(&index_db_path),
+                Path::new(file_path),
+                &position,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            None => self
+                .vfs
+                .borrow_mut()
+                .read_symbol_discovery_context_at_position(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                ),
         }
         .map_err(to_py_error)?;
 

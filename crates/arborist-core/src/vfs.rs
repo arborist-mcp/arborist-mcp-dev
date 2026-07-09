@@ -29,9 +29,13 @@ use crate::symbols::{
     list_symbols_context_with_overrides_filtered,
     list_symbols_discovery_context_with_overrides_filtered,
     list_symbols_neighborhood_context_with_overrides_filtered,
-    list_symbols_with_overrides_filtered, read_symbol_context_with_overrides,
-    read_symbol_discovery_context_with_overrides, read_symbol_neighborhood_context_with_overrides,
-    read_symbol_with_overrides, rebuild_symbol_index, refresh_symbol_index_for_file,
+    list_symbols_with_overrides_filtered, read_symbol_at_position_with_overrides,
+    read_symbol_context_at_position_with_overrides, read_symbol_context_with_overrides,
+    read_symbol_discovery_context_at_position_with_overrides,
+    read_symbol_discovery_context_with_overrides,
+    read_symbol_neighborhood_context_at_position_with_overrides,
+    read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
+    rebuild_symbol_index, refresh_symbol_index_for_file,
     search_symbols_context_with_overrides_filtered,
     search_symbols_discovery_context_with_overrides_filtered,
     search_symbols_neighborhood_context_with_overrides_filtered,
@@ -459,6 +463,17 @@ impl VirtualFileSystem {
         read_symbol_with_overrides(&workspace_root, &overrides, symbol_path)
     }
 
+    pub fn read_symbol_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+    ) -> Result<SymbolReadResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        read_symbol_at_position_with_overrides(&workspace_root, &overrides, file_path, position)
+    }
+
     pub fn read_symbol_context(
         &mut self,
         workspace_root: &Path,
@@ -468,6 +483,24 @@ impl VirtualFileSystem {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
         read_symbol_context_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+    }
+
+    pub fn read_symbol_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+    ) -> Result<SymbolContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        read_symbol_context_at_position_with_overrides(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
+            direction,
+        )
     }
 
     pub fn read_symbol_neighborhood_context(
@@ -490,6 +523,28 @@ impl VirtualFileSystem {
         )
     }
 
+    pub fn read_symbol_neighborhood_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<SymbolNeighborhoodContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        read_symbol_neighborhood_context_at_position_with_overrides(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
     pub fn read_symbol_discovery_context(
         &mut self,
         workspace_root: &Path,
@@ -504,6 +559,28 @@ impl VirtualFileSystem {
             &workspace_root,
             &overrides,
             symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+        )
+    }
+
+    pub fn read_symbol_discovery_context_at_position(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+    ) -> Result<SymbolReadDiscoveryContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        read_symbol_discovery_context_at_position_with_overrides(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
             direction,
             max_depth,
             max_nodes,

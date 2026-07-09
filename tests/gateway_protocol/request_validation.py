@@ -893,6 +893,93 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("direction", response["error"]["message"])
 
+    def test_rejects_invalid_read_symbol_at_position_position_as_invalid_params(self) -> None:
+        class StubCore:
+            def read_symbol_at_position_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        cases = [
+            (
+                "arborist/read_symbol_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": -1},
+                },
+                "position.column",
+            ),
+            (
+                "arborist/read_symbol_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "character": 2},
+                },
+                "position.character",
+            ),
+            (
+                "arborist/read_symbol_neighborhood_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": "1:2",
+                },
+                "position",
+            ),
+            (
+                "arborist/read_symbol_discovery_context_at_position",
+                {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": True, "column": 2},
+                },
+                "position.row",
+            ),
+        ]
+
+        for method, params, expected_key in cases:
+            with self.subTest(method=method):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 86,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 86)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_key, response["error"]["message"])
+
+    def test_rejects_invalid_read_symbol_context_at_position_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 87,
+                "method": "arborist/read_symbol_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 4},
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 87)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
     def test_rejects_invalid_read_symbol_neighborhood_context_direction_as_invalid_params(
         self,
     ) -> None:
@@ -937,6 +1024,54 @@ class GatewayRequestValidationTests(unittest.TestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 
+    def test_rejects_invalid_read_symbol_neighborhood_context_at_position_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 88,
+                "method": "arborist/read_symbol_neighborhood_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 4},
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 88)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_read_symbol_neighborhood_context_at_position_max_nodes(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 89,
+                "method": "arborist/read_symbol_neighborhood_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 4},
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 89)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
     def test_rejects_invalid_read_symbol_discovery_context_direction_as_invalid_params(
         self,
     ) -> None:
@@ -978,6 +1113,52 @@ class GatewayRequestValidationTests(unittest.TestCase):
 
         self.assertEqual(response["jsonrpc"], "2.0")
         self.assertEqual(response["id"], 73)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_nodes", response["error"]["message"])
+
+    def test_rejects_invalid_read_symbol_discovery_context_at_position_direction_as_invalid_params(
+        self,
+    ) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 90,
+                "method": "arborist/read_symbol_discovery_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 4},
+                    "direction": "sideways",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 90)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("direction", response["error"]["message"])
+
+    def test_rejects_zero_read_symbol_discovery_context_at_position_max_nodes(self) -> None:
+        gateway = ArboristGateway.__new__(ArboristGateway)
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 91,
+                "method": "arborist/read_symbol_discovery_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_a.py",
+                    "position": {"row": 1, "column": 4},
+                    "max_nodes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 91)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 

@@ -256,6 +256,15 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
     let mut current = Some(node);
 
     while let Some(candidate) = current {
+        if matches!(language_id, LanguageId::Python) && candidate.kind() == "decorated_definition" {
+            let mut cursor = candidate.walk();
+            for child in candidate.named_children(&mut cursor) {
+                if matches!(child.kind(), "class_definition" | "function_definition") {
+                    return Some(child);
+                }
+            }
+        }
+
         let is_symbol = match language_id {
             LanguageId::Python => {
                 matches!(candidate.kind(), "class_definition" | "function_definition")

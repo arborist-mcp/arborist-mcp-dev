@@ -11,10 +11,10 @@ use tree_sitter::Node;
 use crate::language::{
     c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
     detect_language, is_c_header_path, node_text, normalize_absolute_path, normalize_path,
-    parse_document, point_for_offset, position_from, read_source, resolve_local_c_include,
-    visit_tree,
+    offset_for_position, parse_document, point_for_offset, position_from, read_source,
+    resolve_local_c_include, visit_tree,
 };
-use crate::model::LanguageId;
+use crate::model::{LanguageId, Position};
 use crate::model::{
     SymbolContextResult, SymbolIndexStats, SymbolListContextResult,
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
@@ -29,9 +29,9 @@ use crate::patching::{
     resolve_local_python_module_path,
 };
 use crate::semantic::{
-    c_function_header, c_parameters, c_return_type, c_semantic_path, python_display_byte_range,
-    python_display_header, python_docstring, python_parameters, python_return_type,
-    semantic_parent_path, semantic_path,
+    ascend_to_symbol, c_function_header, c_parameters, c_return_type, c_semantic_path,
+    c_symbol_id_for_node, python_display_byte_range, python_display_header, python_docstring,
+    python_parameters, python_return_type, semantic_parent_path, semantic_path,
 };
 
 #[derive(Debug, Clone)]
@@ -181,6 +181,116 @@ pub fn read_symbol_discovery_context(
         &resolved_symbols,
         indexed_files,
         symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
+pub fn read_symbol_at_position(
+    workspace_root: &Path,
+    file_path: &Path,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        None,
+    )
+}
+
+pub fn read_symbol_context_at_position(
+    workspace_root: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        None,
+    )
+}
+
+pub fn read_symbol_neighborhood_context_at_position(
+    workspace_root: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_neighborhood_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
+pub fn read_symbol_discovery_context_at_position(
+    workspace_root: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    read_symbol_discovery_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
         direction,
         max_depth,
         max_nodes,
@@ -574,6 +684,124 @@ pub fn read_symbol_discovery_context_with_overrides(
     )
 }
 
+pub fn read_symbol_at_position_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    read_symbol_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_context_at_position_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    read_symbol_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_neighborhood_context_at_position_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    read_symbol_neighborhood_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_discovery_context_at_position_with_overrides(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err(anyhow!(
+            "file {} is outside workspace {}",
+            file_path.display(),
+            workspace_root.display()
+        ));
+    }
+    let (resolved_symbols, indexed_files) =
+        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    read_symbol_discovery_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
 pub fn search_symbols_with_overrides_filtered(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -869,6 +1097,88 @@ pub fn read_symbol_discovery_context_from_index(
         &resolved_symbols,
         indexed_files,
         symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
+pub fn read_symbol_at_position_from_index(
+    db_path: &Path,
+    file_path: &Path,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        None,
+    )
+}
+
+pub fn read_symbol_context_at_position_from_index(
+    db_path: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        None,
+    )
+}
+
+pub fn read_symbol_neighborhood_context_at_position_from_index(
+    db_path: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_neighborhood_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
+pub fn read_symbol_discovery_context_at_position_from_index(
+    db_path: &Path,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    read_symbol_discovery_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
         direction,
         max_depth,
         max_nodes,
@@ -2239,9 +2549,46 @@ fn trace_from_symbols(
     validate_trace_symbol_path(symbol_path)?;
 
     let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .cloned()
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?
-        .with_origin_type("trace_root");
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)
+}
+
+fn trace_neighborhood_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    validate_trace_symbol_path(symbol_path)?;
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    trace_neighborhood_from_symbol(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+fn read_symbol_from_meta(
+    symbol: &SymbolMeta,
+    indexed_files: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadResult> {
+    read_symbol_result_from_meta(symbol, indexed_files, file_overrides)
+}
+
+fn trace_from_symbol(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol: &SymbolMeta,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let symbol = symbol.clone().with_origin_type("trace_root");
 
     let callers = if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
         summarize_symbols(resolved_symbols, &symbol.references, None)
@@ -2270,23 +2617,19 @@ fn trace_from_symbols(
     Ok(result)
 }
 
-fn trace_neighborhood_from_symbols(
+fn trace_neighborhood_from_symbol(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
-    symbol_path: &str,
+    symbol: &SymbolMeta,
     direction: TraceDirection,
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    validate_trace_symbol_path(symbol_path)?;
     if max_nodes == 0 {
         return Err(anyhow!("max_nodes must be greater than zero"));
     }
 
-    let root = choose_trace_symbol(resolved_symbols, symbol_path)
-        .cloned()
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?
-        .with_origin_type("trace_root");
+    let root = symbol.clone().with_origin_type("trace_root");
     let resolved_map = resolved_symbol_map(resolved_symbols);
 
     let mut nodes = vec![TraceSymbolNeighborhoodNode {
@@ -2357,47 +2700,33 @@ fn trace_neighborhood_from_symbols(
     Ok(result)
 }
 
-fn read_symbol_from_symbols(
+fn read_symbol_context_from_meta(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
-    symbol_path: &str,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadResult> {
-    validate_trace_symbol_path(symbol_path)?;
-
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_result_from_meta(symbol, indexed_files, file_overrides)
-}
-
-fn read_symbol_context_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
+    symbol: &SymbolMeta,
     direction: TraceDirection,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolContextResult> {
-    let read =
-        read_symbol_from_symbols(resolved_symbols, indexed_files, symbol_path, file_overrides)?;
-    let trace = trace_from_symbols(resolved_symbols, indexed_files, symbol_path, direction)?;
+    let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
+    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)?;
     let result = SymbolContextResult { read, trace };
     result.validate_public_output()?;
     Ok(result)
 }
 
-fn read_symbol_neighborhood_context_from_symbols(
+fn read_symbol_neighborhood_context_from_meta(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
-    symbol_path: &str,
+    symbol: &SymbolMeta,
     direction: TraceDirection,
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let neighborhood = trace_neighborhood_from_symbols(
+    let neighborhood = trace_neighborhood_from_symbol(
         resolved_symbols,
         indexed_files,
-        symbol_path,
+        symbol,
         direction,
         max_depth,
         max_nodes,
@@ -2427,27 +2756,21 @@ fn read_symbol_neighborhood_context_from_symbols(
     Ok(result)
 }
 
-fn read_symbol_discovery_context_from_symbols(
+fn read_symbol_discovery_context_from_meta(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
-    symbol_path: &str,
+    symbol: &SymbolMeta,
     direction: TraceDirection,
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let read =
-        read_symbol_from_symbols(resolved_symbols, indexed_files, symbol_path, file_overrides)?;
-    let trace = trace_from_symbols(
+    let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
+    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction.clone())?;
+    let neighborhood_context = read_symbol_neighborhood_context_from_meta(
         resolved_symbols,
         indexed_files,
-        symbol_path,
-        direction.clone(),
-    )?;
-    let neighborhood_context = read_symbol_neighborhood_context_from_symbols(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
+        symbol,
         direction,
         max_depth,
         max_nodes,
@@ -2460,6 +2783,274 @@ fn read_symbol_discovery_context_from_symbols(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+fn node_at_byte_offset<'tree>(
+    root: Node<'tree>,
+    source: &str,
+    byte_offset: usize,
+) -> Option<Node<'tree>> {
+    let (start, end) = if source.is_empty() {
+        (0, 0)
+    } else if byte_offset < source.len() {
+        (byte_offset, byte_offset + 1)
+    } else {
+        (byte_offset.saturating_sub(1), byte_offset)
+    };
+
+    root.named_descendant_for_byte_range(start, end)
+        .or_else(|| root.descendant_for_byte_range(start, end))
+        .or_else(|| root.named_descendant_for_byte_range(start, start))
+        .or_else(|| root.descendant_for_byte_range(start, start))
+}
+
+fn choose_symbol_at_location<'a>(
+    resolved_symbols: &'a [SymbolMeta],
+    file_path: &str,
+    symbol_id: &str,
+    semantic_path: &str,
+    byte_range: (usize, usize),
+) -> Option<&'a SymbolMeta> {
+    resolved_symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.file_path == file_path
+                && symbol.byte_range == byte_range
+                && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
+        })
+        .max_by_key(|symbol| resolved_symbol_rank(symbol))
+        .or_else(|| {
+            resolved_symbols
+                .iter()
+                .filter(|symbol| {
+                    symbol.file_path == file_path
+                        && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
+                })
+                .max_by_key(|symbol| resolved_symbol_rank(symbol))
+        })
+}
+
+fn resolve_symbol_at_position<'a>(
+    resolved_symbols: &'a [SymbolMeta],
+    file_path: &Path,
+    position: &Position,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<&'a SymbolMeta> {
+    let normalized_file_path = normalize_path(file_path);
+    let source = match file_overrides.and_then(|overrides| overrides.get(&normalized_file_path)) {
+        Some(source) => source.clone(),
+        None => read_source(file_path)?,
+    };
+    let document = parse_document(file_path, &source)?;
+    let byte_offset = offset_for_position(&source, position)?;
+    let node =
+        node_at_byte_offset(document.tree.root_node(), &source, byte_offset).ok_or_else(|| {
+            anyhow!(
+                "position {}:{} does not resolve to a syntax node in {}",
+                position.row,
+                position.column,
+                file_path.display()
+            )
+        })?;
+    let symbol_node = ascend_to_symbol(document.language_id, node).ok_or_else(|| {
+        anyhow!(
+            "position {}:{} does not resolve to a semantic symbol in {}",
+            position.row,
+            position.column,
+            file_path.display()
+        )
+    })?;
+
+    let (symbol_id, semantic_path, byte_range) = match document.language_id {
+        LanguageId::Python => {
+            let semantic_path = semantic_path(symbol_node, &source)?;
+            let byte_range = python_display_byte_range(symbol_node);
+            (semantic_path.clone(), semantic_path, byte_range)
+        }
+        LanguageId::C => {
+            let semantic_path = c_semantic_path(file_path, symbol_node, &source)?
+                .ok_or_else(|| anyhow!("position does not resolve to a C semantic symbol"))?;
+            let symbol_id = c_symbol_id_for_node(file_path, symbol_node, &source)?
+                .ok_or_else(|| anyhow!("position does not resolve to a C symbol id"))?;
+            (
+                symbol_id,
+                semantic_path,
+                (symbol_node.start_byte(), symbol_node.end_byte()),
+            )
+        }
+    };
+
+    choose_symbol_at_location(
+        resolved_symbols,
+        &normalized_file_path,
+        &symbol_id,
+        &semantic_path,
+        byte_range,
+    )
+    .ok_or_else(|| {
+        anyhow!(
+            "symbol at {}:{} not found in workspace index: {}",
+            position.row,
+            position.column,
+            normalized_file_path
+        )
+    })
+}
+
+fn read_symbol_at_position_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    file_path: &Path,
+    position: &Position,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadResult> {
+    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    read_symbol_from_meta(symbol, indexed_files, file_overrides)
+}
+
+fn read_symbol_context_at_position_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolContextResult> {
+    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    read_symbol_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        file_overrides,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_symbol_neighborhood_context_at_position_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    read_symbol_neighborhood_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn read_symbol_discovery_context_at_position_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    read_symbol_discovery_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+    )
+}
+
+fn read_symbol_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    read_symbol_from_meta(symbol, indexed_files, file_overrides)
+}
+
+fn read_symbol_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolContextResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    read_symbol_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        file_overrides,
+    )
+}
+
+fn read_symbol_neighborhood_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    read_symbol_neighborhood_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+    )
+}
+
+fn read_symbol_discovery_context_from_symbols(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    validate_trace_symbol_path(symbol_path)?;
+
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    read_symbol_discovery_context_from_meta(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+    )
 }
 
 fn search_from_symbols(

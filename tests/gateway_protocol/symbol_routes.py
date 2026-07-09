@@ -646,6 +646,49 @@ class GatewaySymbolRouteTests(unittest.TestCase):
         self.assertIn("def helper()", response["result"]["source"])
         self.assertEqual(gateway._core.calls, [(".", "helper", "symbols.db")])
 
+    def test_read_symbol_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"indexed_files":2,"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 62,
+                "method": "arborist/read_symbol_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 62)
+        self.assertEqual(response["result"]["symbol"]["semantic_path"], "helper")
+        self.assertIn("def helper()", response["result"]["source"])
+        self.assertEqual(gateway._core.calls, [(".", "graph_b.py", 0, 5, "symbols.db")])
+
     def test_trace_symbol_neighborhood_routes_params_to_core(self) -> None:
         class StubCore:
             def __init__(self) -> None:
@@ -774,6 +817,69 @@ class GatewaySymbolRouteTests(unittest.TestCase):
             [(".", "helper", "callers", "symbols.db")],
         )
 
+    def test_read_symbol_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_context_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"read":{"indexed_files":2,"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}},'
+                    '"trace":{"symbol":{'
+                    '"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|trace_root|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":[],"references":["orchestrate"]},'
+                    '"callers":[{"symbol_id":"orchestrate","semantic_path":"orchestrate","scope_path":null,'
+                    '"file_path":"graph_a.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null}],"callees":[],"evidence_keys":{'
+                    '"symbol":"helper|graph_b.py|function_definition|trace_root|0..10|",'
+                    '"callers":["orchestrate|graph_a.py|function_definition|trace_caller|0..20|"],'
+                    '"callees":[]},"indexed_files":2}}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 64,
+                "method": "arborist/read_symbol_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 64)
+        self.assertEqual(response["result"]["read"]["symbol"]["semantic_path"], "helper")
+        self.assertEqual(response["result"]["trace"]["callers"][0]["semantic_path"], "orchestrate")
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "graph_b.py", 0, 5, "callers", "symbols.db")],
+        )
+
     def test_read_symbol_neighborhood_context_routes_params_to_core(self) -> None:
         class StubCore:
             def __init__(self) -> None:
@@ -851,6 +957,84 @@ class GatewaySymbolRouteTests(unittest.TestCase):
         self.assertEqual(
             gateway._core.calls,
             [(".", "helper", "callers", 2, 10, "symbols.db")],
+        )
+
+    def test_read_symbol_neighborhood_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_neighborhood_context_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"neighborhood":{"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|trace_root|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null,"dependencies":[],"references":["orchestrate"]},'
+                    '"direction":"callers","max_depth":2,"max_nodes":10,"truncated":false,'
+                    '"indexed_files":2,"nodes":['
+                    '{"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"depth":0},'
+                    '{"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate","scope_path":null,'
+                    '"file_path":"graph_a.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"depth":1}],'
+                    '"edges":[{"from_symbol_id":"orchestrate","to_symbol_id":"helper"}]},'
+                    '"reads":['
+                    '{"indexed_files":2,"symbol":{"symbol_id":"helper","semantic_path":"helper",'
+                    '"scope_path":null,"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def helper() -> int:\\n    return 1\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":12}},'
+                    '{"indexed_files":2,"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate",'
+                    '"scope_path":null,"file_path":"graph_a.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,'
+                    '"docstring":null},"source":"def orchestrate() -> int:\\n    return helper()\\n",'
+                    '"start_point":{"row":0,"column":0},"end_point":{"row":1,"column":18}}]}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 73,
+                "method": "arborist/read_symbol_neighborhood_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 73)
+        self.assertEqual(
+            response["result"]["neighborhood"]["symbol"]["semantic_path"],
+            "helper",
+        )
+        self.assertEqual(response["result"]["reads"][1]["symbol"]["semantic_path"], "orchestrate")
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "graph_b.py", 0, 5, "callers", 2, 10, "symbols.db")],
         )
 
     def test_read_symbol_discovery_context_routes_params_to_core(self) -> None:
@@ -939,6 +1123,91 @@ class GatewaySymbolRouteTests(unittest.TestCase):
         self.assertEqual(
             gateway._core.calls,
             [(".", "helper", "callers", 2, 10, "symbols.db")],
+        )
+
+    def test_read_symbol_discovery_context_at_position_routes_params_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.calls: list[tuple[object, ...]] = []
+
+            def read_symbol_discovery_context_at_position_json(self, *args: object) -> str:
+                self.calls.append(args)
+                return (
+                    '{"read":{"indexed_files":2,"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition","origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|","byte_range":[0,10],'
+                    '"signature":null,"parameters":[],"return_type":null,"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n","start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}},'
+                    '"trace":{"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition","origin_type":"trace_root",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|trace_root|0..10|","byte_range":[0,10],'
+                    '"signature":null,"parameters":[],"return_type":null,"docstring":null,'
+                    '"dependencies":[],"references":["orchestrate"]},"callers":[{"symbol_id":"orchestrate",'
+                    '"semantic_path":"orchestrate","scope_path":null,"file_path":"graph_a.py",'
+                    '"node_kind":"function_definition","origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|","byte_range":[0,20],'
+                    '"signature":null,"parameters":[],"return_type":null,"docstring":null}],"callees":[],'
+                    '"evidence_keys":{"symbol":"helper|graph_b.py|function_definition|trace_root|0..10|",'
+                    '"callers":["orchestrate|graph_a.py|function_definition|trace_caller|0..20|"],"callees":[]},'
+                    '"indexed_files":2},"neighborhood_context":{"neighborhood":{"symbol":{"symbol_id":"helper",'
+                    '"semantic_path":"helper","scope_path":null,"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_root","evidence_key":"helper|graph_b.py|function_definition|trace_root|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,"docstring":null,'
+                    '"dependencies":[],"references":["orchestrate"]},"direction":"callers","max_depth":2,'
+                    '"max_nodes":10,"truncated":false,"indexed_files":2,"nodes":[{"symbol":{"symbol_id":"helper",'
+                    '"semantic_path":"helper","scope_path":null,"file_path":"graph_b.py","node_kind":"function_definition",'
+                    '"origin_type":"workspace_symbol","evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|",'
+                    '"byte_range":[0,10],"signature":null,"parameters":[],"return_type":null,"docstring":null},"depth":0},'
+                    '{"symbol":{"symbol_id":"orchestrate","semantic_path":"orchestrate","scope_path":null,'
+                    '"file_path":"graph_a.py","node_kind":"function_definition","origin_type":"trace_caller",'
+                    '"evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|","byte_range":[0,20],'
+                    '"signature":null,"parameters":[],"return_type":null,"docstring":null},"depth":1}],'
+                    '"edges":[{"from_symbol_id":"orchestrate","to_symbol_id":"helper"}]},'
+                    '"reads":[{"indexed_files":2,"symbol":{"symbol_id":"helper","semantic_path":"helper","scope_path":null,'
+                    '"file_path":"graph_b.py","node_kind":"function_definition","origin_type":"workspace_symbol",'
+                    '"evidence_key":"helper|graph_b.py|function_definition|workspace_symbol|0..10|","byte_range":[0,10],'
+                    '"signature":null,"parameters":[],"return_type":null,"docstring":null},'
+                    '"source":"def helper() -> int:\\n    return 1\\n","start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":12}},{"indexed_files":2,"symbol":{"symbol_id":"orchestrate",'
+                    '"semantic_path":"orchestrate","scope_path":null,"file_path":"graph_a.py","node_kind":"function_definition",'
+                    '"origin_type":"trace_caller","evidence_key":"orchestrate|graph_a.py|function_definition|trace_caller|0..20|",'
+                    '"byte_range":[0,20],"signature":null,"parameters":[],"return_type":null,"docstring":null},'
+                    '"source":"def orchestrate() -> int:\\n    return helper()\\n","start_point":{"row":0,"column":0},'
+                    '"end_point":{"row":1,"column":18}}]}}'
+                )
+
+        gateway = ArboristGateway.__new__(ArboristGateway)
+        gateway._core = StubCore()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 75,
+                "method": "arborist/read_symbol_discovery_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 75)
+        self.assertEqual(response["result"]["read"]["symbol"]["semantic_path"], "helper")
+        self.assertEqual(response["result"]["trace"]["symbol"]["semantic_path"], "helper")
+        self.assertEqual(
+            response["result"]["neighborhood_context"]["reads"][1]["symbol"]["semantic_path"],
+            "orchestrate",
+        )
+        self.assertEqual(
+            gateway._core.calls,
+            [(".", "graph_b.py", 0, 5, "callers", 2, 10, "symbols.db")],
         )
 
     def test_graph_context_routes_params_to_core(self) -> None:

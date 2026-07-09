@@ -31,9 +31,13 @@ TOOL_HANDLERS = {
     "arborist/trace_symbol_graph": "_trace_symbol_graph",
     "arborist/trace_symbol_neighborhood": "_trace_symbol_neighborhood",
     "arborist/read_symbol": "_read_symbol",
+    "arborist/read_symbol_at_position": "_read_symbol_at_position",
     "arborist/read_symbol_context": "_read_symbol_context",
+    "arborist/read_symbol_context_at_position": "_read_symbol_context_at_position",
     "arborist/read_symbol_neighborhood_context": "_read_symbol_neighborhood_context",
+    "arborist/read_symbol_neighborhood_context_at_position": "_read_symbol_neighborhood_context_at_position",
     "arborist/read_symbol_discovery_context": "_read_symbol_discovery_context",
+    "arborist/read_symbol_discovery_context_at_position": "_read_symbol_discovery_context_at_position",
     "arborist/list_symbols": "_list_symbols",
     "arborist/list_symbols_context": "_list_symbols_context",
     "arborist/list_symbols_neighborhood_context": "_list_symbols_neighborhood_context",
@@ -112,9 +116,22 @@ TOOL_PARAM_NAMES = {
         "symbol_path",
         "index_db_path",
     ),
+    "arborist/read_symbol_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
+        "index_db_path",
+    ),
     "arborist/read_symbol_context": (
         "workspace_root",
         "symbol_path",
+        "direction",
+        "index_db_path",
+    ),
+    "arborist/read_symbol_context_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
         "direction",
         "index_db_path",
     ),
@@ -126,9 +143,27 @@ TOOL_PARAM_NAMES = {
         "max_nodes",
         "index_db_path",
     ),
+    "arborist/read_symbol_neighborhood_context_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+    ),
     "arborist/read_symbol_discovery_context": (
         "workspace_root",
         "symbol_path",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "index_db_path",
+    ),
+    "arborist/read_symbol_discovery_context_at_position": (
+        "workspace_root",
+        "file_path",
+        "position",
         "direction",
         "max_depth",
         "max_nodes",
@@ -448,6 +483,20 @@ class ArboristGateway:
         )
         return self._decode_core_object(payload)
 
+    def _read_symbol_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
     def _read_symbol_context(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         symbol_path = self._require_string(params, "symbol_path")
@@ -461,6 +510,27 @@ class ArboristGateway:
         payload = self._require_core().read_symbol_context_json(
             workspace_root,
             symbol_path,
+            direction,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _read_symbol_context_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_context_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
             direction,
             index_db_path,
         )
@@ -490,6 +560,35 @@ class ArboristGateway:
         )
         return self._decode_core_object(payload)
 
+    def _read_symbol_neighborhood_context_at_position(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_neighborhood_context_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
     def _read_symbol_discovery_context(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         symbol_path = self._require_string(params, "symbol_path")
@@ -507,6 +606,35 @@ class ArboristGateway:
         payload = self._require_core().read_symbol_discovery_context_json(
             workspace_root,
             symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
+        return self._decode_core_object(payload)
+
+    def _read_symbol_discovery_context_at_position(
+        self, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        workspace_root = self._optional_string(params, "workspace_root", default=".")
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        direction = self._optional_choice(
+            params,
+            "direction",
+            default="both",
+            allowed=("callers", "callees", "both"),
+        )
+        max_depth = self._optional_int(params, "max_depth", default=2)
+        max_nodes = self._optional_int(params, "max_nodes", default=64)
+        if max_nodes == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        index_db_path = self._optional_string(params, "index_db_path")
+        payload = self._require_core().read_symbol_discovery_context_at_position_json(
+            workspace_root,
+            file_path,
+            row,
+            column,
             direction,
             max_depth,
             max_nodes,
@@ -1095,6 +1223,13 @@ class ArboristGateway:
 
     @staticmethod
     def _position_tuple(value: dict[str, Any]) -> tuple[int, int]:
+        return (value["row"], value["column"])
+
+    @staticmethod
+    def _require_position(params: dict[str, Any], key: str) -> tuple[int, int]:
+        value = params.get(key)
+        ArboristGateway._validate_position(value, key)
+        assert isinstance(value, dict)
         return (value["row"], value["column"])
 
     @staticmethod
