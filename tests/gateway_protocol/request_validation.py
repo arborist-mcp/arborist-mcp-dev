@@ -170,6 +170,26 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     expected_result_schema,
                 )
 
+    def test_tool_catalog_script_and_snapshot_match_generated_catalog(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        script_path = repo_root / "scripts" / "tool_catalog.py"
+        snapshot_path = repo_root / "docs" / "tool-catalog.json"
+
+        completed = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        generated = gateway_module.build_tool_catalog()
+        self.assertEqual(json.loads(completed.stdout), generated)
+        self.assertEqual(
+            json.loads(snapshot_path.read_text(encoding="utf-8")),
+            generated,
+        )
+
     def test_readme_tool_counts_match_generated_catalog(self) -> None:
         readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text(
             encoding="utf-8"

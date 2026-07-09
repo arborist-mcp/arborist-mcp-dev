@@ -1,0 +1,3512 @@
+[
+  {
+    "name": "arborist/get_semantic_skeleton",
+    "title": "Get Semantic Skeleton",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/get_semantic_skeleton.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "depth_limit": {
+          "type": "integer",
+          "description": "Maximum semantic skeleton expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "expand_nodes": {
+          "type": "array",
+          "description": "Semantic selectors to expand in the returned skeleton.",
+          "items": {
+            "type": "string",
+            "description": "Semantic selector.",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/get_semantic_skeleton",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/patch_ast_node",
+    "title": "Patch Ast Node",
+    "description": "Patch persisted source files through Arborist semantic targeting. Legacy JSON-RPC method: arborist/patch_ast_node.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    },
+    "metadata": {
+      "category": "write",
+      "legacyMethod": "arborist/patch_ast_node",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/patch_ast_node_at_position",
+    "title": "Patch Ast Node At Position",
+    "description": "Patch persisted source files through Arborist semantic targeting. Legacy JSON-RPC method: arborist/patch_ast_node_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    },
+    "metadata": {
+      "category": "write",
+      "legacyMethod": "arborist/patch_ast_node_at_position",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/patch_virtual_ast_node",
+    "title": "Patch Virtual Ast Node",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/patch_virtual_ast_node.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/patch_virtual_ast_node",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/patch_virtual_ast_node_at_position",
+    "title": "Patch Virtual Ast Node At Position",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/patch_virtual_ast_node_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/patch_virtual_ast_node_at_position",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/register_symbol_index",
+    "title": "Register Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/register_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "db_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/register_symbol_index",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/refresh_symbol_index_for_file",
+    "title": "Refresh Symbol Index For File",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/refresh_symbol_index_for_file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "db_path",
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/refresh_symbol_index_for_file",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/unregister_symbol_index",
+    "title": "Unregister Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/unregister_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "boolean",
+          "description": "Boolean success result returned by Arborist for this tool."
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/unregister_symbol_index",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/list_symbol_indexes",
+    "title": "List Symbol Indexes",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/list_symbol_indexes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "description": "JSON array of object results returned by Arborist for this tool.",
+          "items": {
+            "type": "object",
+            "description": "JSON object result returned by Arborist for this tool.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/list_symbol_indexes",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/did_open",
+    "title": "Did Open",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_open.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/did_open",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/did_change",
+    "title": "Did Change",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "edits": {
+          "type": "array",
+          "description": "Ordered LSP-style position edits to apply to an open virtual file.",
+          "items": {
+            "type": "object",
+            "description": "LSP-style text edit using zero-based start and end positions.",
+            "properties": {
+              "start": {
+                "type": "object",
+                "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+                "properties": {
+                  "row": {
+                    "type": "integer",
+                    "description": "Zero-based row.",
+                    "minimum": 0
+                  },
+                  "column": {
+                    "type": "integer",
+                    "description": "Zero-based column.",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "row",
+                  "column"
+                ],
+                "additionalProperties": false
+              },
+              "end": {
+                "type": "object",
+                "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+                "properties": {
+                  "row": {
+                    "type": "integer",
+                    "description": "Zero-based row.",
+                    "minimum": 0
+                  },
+                  "column": {
+                    "type": "integer",
+                    "description": "Zero-based column.",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "row",
+                  "column"
+                ],
+                "additionalProperties": false
+              },
+              "new_text": {
+                "type": "string",
+                "description": "Replacement text for the range."
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "new_text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "file_path",
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/did_change",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/did_close",
+    "title": "Did Close",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_close.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "persist": {
+          "type": "boolean",
+          "description": "When closing a virtual file, commit changes to disk before closing.",
+          "default": false
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/did_close",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/list_virtual_files",
+    "title": "List Virtual Files",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/list_virtual_files.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "dirty_only": {
+          "type": "boolean",
+          "description": "When true, list only virtual files with unsaved changes.",
+          "default": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "description": "JSON array of object results returned by Arborist for this tool.",
+          "items": {
+            "type": "object",
+            "description": "JSON object result returned by Arborist for this tool.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/list_virtual_files",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_virtual_file",
+    "title": "Read Virtual File",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/read_virtual_file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/read_virtual_file",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/apply_buffer_edit",
+    "title": "Apply Buffer Edit",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/apply_buffer_edit.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "start_byte": {
+          "type": "integer",
+          "description": "Inclusive start byte for a buffer edit.",
+          "minimum": 0
+        },
+        "old_end_byte": {
+          "type": "integer",
+          "description": "Exclusive end byte of the old range.",
+          "minimum": 0
+        },
+        "new_text": {
+          "type": "string",
+          "description": "Replacement text for a byte-range edit."
+        }
+      },
+      "required": [
+        "file_path",
+        "start_byte",
+        "old_end_byte",
+        "new_text"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/apply_buffer_edit",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/commit_virtual_file",
+    "title": "Commit Virtual File",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/commit_virtual_file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/commit_virtual_file",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/discard_virtual_file",
+    "title": "Discard Virtual File",
+    "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/discard_virtual_file.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "vfs",
+      "legacyMethod": "arborist/discard_virtual_file",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/rebuild_symbol_index",
+    "title": "Rebuild Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/rebuild_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "db_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/rebuild_symbol_index",
+      "mutatesState": true
+    }
+  },
+  {
+    "name": "arborist/trace_symbol_graph",
+    "title": "Trace Symbol Graph",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/trace_symbol_graph.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/trace_symbol_graph",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/trace_symbol_neighborhood",
+    "title": "Trace Symbol Neighborhood",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/trace_symbol_neighborhood.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/trace_symbol_neighborhood",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/trace_symbol_graph_at_position",
+    "title": "Trace Symbol Graph At Position",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/trace_symbol_graph_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/trace_symbol_graph_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/trace_symbol_neighborhood_at_position",
+    "title": "Trace Symbol Neighborhood At Position",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/trace_symbol_neighborhood_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/trace_symbol_neighborhood_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol",
+    "title": "Read Symbol",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_at_position",
+    "title": "Read Symbol At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_context",
+    "title": "Read Symbol Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_context_at_position",
+    "title": "Read Symbol Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_neighborhood_context",
+    "title": "Read Symbol Neighborhood Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_neighborhood_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_neighborhood_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_neighborhood_context_at_position",
+    "title": "Read Symbol Neighborhood Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_neighborhood_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_neighborhood_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_discovery_context",
+    "title": "Read Symbol Discovery Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_discovery_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "symbol_path": {
+          "type": "string",
+          "description": "Stable symbol path or symbol_id selector.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_discovery_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/read_symbol_discovery_context_at_position",
+    "title": "Read Symbol Discovery Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/read_symbol_discovery_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/read_symbol_discovery_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/list_symbols",
+    "title": "List Symbols",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/list_symbols.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 100
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/list_symbols",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/list_symbols_context",
+    "title": "List Symbols Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/list_symbols_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 100
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/list_symbols_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/list_symbols_neighborhood_context",
+    "title": "List Symbols Neighborhood Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/list_symbols_neighborhood_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 100
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/list_symbols_neighborhood_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/list_symbols_discovery_context",
+    "title": "List Symbols Discovery Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/list_symbols_discovery_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 100
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/list_symbols_discovery_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/search_symbols",
+    "title": "Search Symbols",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/search_symbols.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "description": "Tree-sitter query or symbol search text.",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 20
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/search_symbols",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/search_symbols_context",
+    "title": "Search Symbols Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/search_symbols_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "description": "Tree-sitter query or symbol search text.",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 20
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/search_symbols_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/search_symbols_neighborhood_context",
+    "title": "Search Symbols Neighborhood Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/search_symbols_neighborhood_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "description": "Tree-sitter query or symbol search text.",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 20
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/search_symbols_neighborhood_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/search_symbols_discovery_context",
+    "title": "Search Symbols Discovery Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/search_symbols_discovery_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "description": "Tree-sitter query or symbol search text.",
+          "minLength": 1
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Maximum number of symbols to return.",
+          "minimum": 0,
+          "default": 20
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        },
+        "index_db_path": {
+          "type": "string",
+          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "minLength": 1
+        },
+        "file_path_contains": {
+          "type": "string",
+          "description": "Optional substring filter applied to indexed file paths.",
+          "minLength": 1
+        },
+        "node_kind": {
+          "type": "string",
+          "description": "Optional Tree-sitter node-kind filter.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/search_symbols_discovery_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/replay_patch_evidence_against_trace",
+    "title": "Replay Patch Evidence Against Trace",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/replay_patch_evidence_against_trace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "patch": {
+          "type": "object",
+          "description": "JSON object returned by a prior Arborist patch or trace call.",
+          "additionalProperties": true
+        },
+        "trace": {
+          "type": "object",
+          "description": "JSON object returned by a prior Arborist patch or trace call.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "patch",
+        "trace"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/replay_patch_evidence_against_trace",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_commit_with_trace",
+    "title": "Validate Patch Commit With Trace",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/validate_patch_commit_with_trace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "patch": {
+          "type": "object",
+          "description": "JSON object returned by a prior Arborist patch or trace call.",
+          "additionalProperties": true
+        },
+        "trace": {
+          "type": "object",
+          "description": "JSON object returned by a prior Arborist patch or trace call.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "patch",
+        "trace"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/validate_patch_commit_with_trace",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_trace_context",
+    "title": "Validate Patch With Trace Context",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/validate_patch_with_trace_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/validate_patch_with_trace_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_trace_context_at_position",
+    "title": "Validate Patch With Trace Context At Position",
+    "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/validate_patch_with_trace_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "trace",
+      "legacyMethod": "arborist/validate_patch_with_trace_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_graph_context",
+    "title": "Validate Patch With Graph Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_graph_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_graph_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_graph_context_at_position",
+    "title": "Validate Patch With Graph Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_graph_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_graph_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_neighborhood_context",
+    "title": "Validate Patch With Neighborhood Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_neighborhood_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_neighborhood_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_neighborhood_context_at_position",
+    "title": "Validate Patch With Neighborhood Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_neighborhood_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_neighborhood_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_discovery_context",
+    "title": "Validate Patch With Discovery Context",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_discovery_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_discovery_context",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/validate_patch_with_discovery_context_at_position",
+    "title": "Validate Patch With Discovery Context At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/validate_patch_with_discovery_context_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        },
+        "direction": {
+          "type": "string",
+          "description": "Graph direction to inspect.",
+          "default": "both",
+          "enum": [
+            "callers",
+            "callees",
+            "both"
+          ],
+          "minLength": 1
+        },
+        "max_depth": {
+          "type": "integer",
+          "description": "Maximum graph expansion depth.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_nodes": {
+          "type": "integer",
+          "description": "Maximum graph node count. Must be greater than zero.",
+          "default": 64,
+          "minimum": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/validate_patch_with_discovery_context_at_position",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/execute_tree_query",
+    "title": "Execute Tree Query",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/execute_tree_query.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "description": "Tree-sitter query or symbol search text.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        }
+      },
+      "required": [
+        "file_path",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "description": "JSON array of object results returned by Arborist for this tool.",
+          "items": {
+            "type": "object",
+            "description": "JSON object result returned by Arborist for this tool.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/execute_tree_query",
+      "mutatesState": false
+    }
+  }
+]

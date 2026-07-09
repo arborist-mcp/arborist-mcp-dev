@@ -368,7 +368,8 @@ can display the error without tearing down the MCP session.
 
 For debugging or documentation generation, `python -m arborist_mcp.gateway
 --dump-tool-catalog` prints the exact generated MCP tool catalog as formatted
-JSON.
+JSON. The repository also checks in the current generated snapshot at
+[`docs/tool-catalog.json`](docs/tool-catalog.json).
 
 ## Legacy JSON-RPC compatibility
 
