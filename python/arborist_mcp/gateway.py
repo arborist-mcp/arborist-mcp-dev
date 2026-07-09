@@ -123,6 +123,8 @@ TOOL_PARAM_NAMES = {
         "symbol_path",
         "direction",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/trace_symbol_neighborhood": (
         "workspace_root",
@@ -131,6 +133,8 @@ TOOL_PARAM_NAMES = {
         "max_depth",
         "max_nodes",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/trace_symbol_graph_at_position": (
         "workspace_root",
@@ -154,6 +158,8 @@ TOOL_PARAM_NAMES = {
         "workspace_root",
         "symbol_path",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/read_symbol_at_position": (
         "workspace_root",
@@ -167,6 +173,8 @@ TOOL_PARAM_NAMES = {
         "symbol_path",
         "direction",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/read_symbol_context_at_position": (
         "workspace_root",
@@ -183,6 +191,8 @@ TOOL_PARAM_NAMES = {
         "max_depth",
         "max_nodes",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/read_symbol_neighborhood_context_at_position": (
         "workspace_root",
@@ -201,6 +211,8 @@ TOOL_PARAM_NAMES = {
         "max_depth",
         "max_nodes",
         "index_db_path",
+        "file_path",
+        "source",
     ),
     "arborist/read_symbol_discovery_context_at_position": (
         "workspace_root",
@@ -218,6 +230,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/list_symbols_context": (
         "workspace_root",
@@ -225,6 +239,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/list_symbols_neighborhood_context": (
         "workspace_root",
@@ -235,6 +251,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/list_symbols_discovery_context": (
         "workspace_root",
@@ -245,6 +263,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/search_symbols": (
         "workspace_root",
@@ -253,6 +273,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/search_symbols_context": (
         "workspace_root",
@@ -261,6 +283,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/search_symbols_neighborhood_context": (
         "workspace_root",
@@ -272,6 +296,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/search_symbols_discovery_context": (
         "workspace_root",
@@ -283,6 +309,8 @@ TOOL_PARAM_NAMES = {
         "index_db_path",
         "file_path_contains",
         "node_kind",
+        "file_path",
+        "source",
     ),
     "arborist/replay_patch_evidence_against_trace": ("patch", "trace"),
     "arborist/validate_patch_commit_with_trace": ("patch", "trace"),
@@ -394,6 +422,24 @@ OPTIONAL_TOOL_PARAMS = frozenset(
         "persist",
         "source",
         "workspace_root",
+    )
+)
+SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
+    (
+        "arborist/trace_symbol_graph",
+        "arborist/trace_symbol_neighborhood",
+        "arborist/read_symbol",
+        "arborist/read_symbol_context",
+        "arborist/read_symbol_neighborhood_context",
+        "arborist/read_symbol_discovery_context",
+        "arborist/list_symbols",
+        "arborist/list_symbols_context",
+        "arborist/list_symbols_neighborhood_context",
+        "arborist/list_symbols_discovery_context",
+        "arborist/search_symbols",
+        "arborist/search_symbols_context",
+        "arborist/search_symbols_neighborhood_context",
+        "arborist/search_symbols_discovery_context",
     )
 )
 TOOL_CATEGORIES = {
@@ -706,6 +752,10 @@ def required_tool_params(tool_name: str) -> tuple[str, ...]:
         param_name
         for param_name in TOOL_PARAM_NAMES[tool_name]
         if param_name not in OPTIONAL_TOOL_PARAMS
+        and not (
+            param_name == "file_path"
+            and tool_name in SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS
+        )
     )
 
 
@@ -830,6 +880,17 @@ class ArboristGateway:
             raise JsonRpcError(
                 -32602,
                 "invalid params: index_db_path is not supported when source is provided",
+            )
+
+    @staticmethod
+    def _require_file_path_for_source(
+        source: str | None,
+        file_path: str | None,
+    ) -> None:
+        if source is not None and file_path is None:
+            raise JsonRpcError(
+                -32602,
+                "invalid params: file_path is required when source is provided",
             )
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1024,12 +1085,27 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().trace_symbol_graph_json(
-            workspace_root,
-            symbol_path,
-            direction,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.trace_symbol_graph_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.trace_symbol_graph_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _trace_symbol_neighborhood(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1046,14 +1122,31 @@ class ArboristGateway:
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().trace_symbol_neighborhood_json(
-            workspace_root,
-            symbol_path,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.trace_symbol_neighborhood_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.trace_symbol_neighborhood_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _trace_symbol_graph_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1116,11 +1209,25 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         symbol_path = self._require_string(params, "symbol_path")
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_json(
-            workspace_root,
-            symbol_path,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.read_symbol_json(
+                workspace_root,
+                symbol_path,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.read_symbol_json(
+                workspace_root,
+                symbol_path,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _read_symbol_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1150,12 +1257,27 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_context_json(
-            workspace_root,
-            symbol_path,
-            direction,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.read_symbol_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.read_symbol_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _read_symbol_context_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1196,14 +1318,31 @@ class ArboristGateway:
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_neighborhood_context_json(
-            workspace_root,
-            symbol_path,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.read_symbol_neighborhood_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.read_symbol_neighborhood_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _read_symbol_neighborhood_context_at_position(
@@ -1252,14 +1391,31 @@ class ArboristGateway:
         if max_nodes == 0:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_discovery_context_json(
-            workspace_root,
-            symbol_path,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.read_symbol_discovery_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.read_symbol_discovery_context_json(
+                workspace_root,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            )
         return self._decode_core_object(payload)
 
     def _read_symbol_discovery_context_at_position(
@@ -1301,14 +1457,31 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().search_symbols_json(
-            workspace_root,
-            query,
-            limit,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.search_symbols_json(
+                workspace_root,
+                query,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.search_symbols_json(
+                workspace_root,
+                query,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _search_symbols_context(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1318,14 +1491,31 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().search_symbols_context_json(
-            workspace_root,
-            query,
-            limit,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.search_symbols_context_json(
+                workspace_root,
+                query,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.search_symbols_context_json(
+                workspace_root,
+                query,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _search_symbols_neighborhood_context(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1345,17 +1535,37 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().search_symbols_neighborhood_context_json(
-            workspace_root,
-            query,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.search_symbols_neighborhood_context_json(
+                workspace_root,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.search_symbols_neighborhood_context_json(
+                workspace_root,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _search_symbols_discovery_context(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1375,17 +1585,37 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().search_symbols_discovery_context_json(
-            workspace_root,
-            query,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.search_symbols_discovery_context_json(
+                workspace_root,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.search_symbols_discovery_context_json(
+                workspace_root,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _list_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1394,13 +1624,29 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().list_symbols_json(
-            workspace_root,
-            limit,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.list_symbols_json(
+                workspace_root,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.list_symbols_json(
+                workspace_root,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _list_symbols_context(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1409,13 +1655,29 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().list_symbols_context_json(
-            workspace_root,
-            limit,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.list_symbols_context_json(
+                workspace_root,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.list_symbols_context_json(
+                workspace_root,
+                limit,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _list_symbols_neighborhood_context(
@@ -1436,16 +1698,35 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().list_symbols_neighborhood_context_json(
-            workspace_root,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.list_symbols_neighborhood_context_json(
+                workspace_root,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.list_symbols_neighborhood_context_json(
+                workspace_root,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _list_symbols_discovery_context(
@@ -1466,16 +1747,35 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
-        payload = self._require_core().list_symbols_discovery_context_json(
-            workspace_root,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
-            file_path_contains,
-            node_kind,
-        )
+        file_path = self._optional_string(params, "file_path")
+        source = self._optional_string(params, "source", allow_empty=True)
+        self._reject_source_with_index_db_path(source, index_db_path)
+        self._require_file_path_for_source(source, file_path)
+        core = self._require_core()
+        if source is not None:
+            payload = core.list_symbols_discovery_context_json(
+                workspace_root,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+                file_path,
+                source,
+            )
+        else:
+            payload = core.list_symbols_discovery_context_json(
+                workspace_root,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+                file_path_contains,
+                node_kind,
+            )
         return self._decode_core_object(payload)
 
     def _replay_patch_evidence_against_trace(

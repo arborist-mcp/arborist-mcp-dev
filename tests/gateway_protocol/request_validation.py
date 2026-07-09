@@ -1436,10 +1436,246 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     }
                 )
 
-                self.assertEqual(response["jsonrpc"], "2.0")
-                self.assertEqual(response["id"], 88)
-                self.assertEqual(response["error"]["code"], -32602)
-                self.assertIn(expected_key, response["error"]["message"])
+    def test_rejects_source_with_index_db_path_for_path_and_workspace_entrypoints(self) -> None:
+        class StubCore:
+            def __getattr__(self, name: str):
+                if name.endswith("_json"):
+                    def _unexpected(*args: object) -> str:
+                        raise AssertionError(f"core should not be called: {name}")
+
+                    return _unexpected
+                raise AttributeError(name)
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        shared = {
+            "workspace_root": ".",
+            "file_path": "graph_a.py",
+            "source": "def helper() -> int:\n    return 1\n",
+            "index_db_path": "symbols.db",
+        }
+        cases = [
+            ("arborist/read_symbol", {**shared, "symbol_path": "helper"}),
+            (
+                "arborist/read_symbol_context",
+                {**shared, "symbol_path": "helper", "direction": "callers"},
+            ),
+            (
+                "arborist/read_symbol_neighborhood_context",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/read_symbol_discovery_context",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/trace_symbol_graph",
+                {**shared, "symbol_path": "helper", "direction": "callers"},
+            ),
+            (
+                "arborist/trace_symbol_neighborhood",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/search_symbols",
+                {**shared, "query": "helper", "limit": 5},
+            ),
+            (
+                "arborist/search_symbols_context",
+                {**shared, "query": "helper", "limit": 5},
+            ),
+            (
+                "arborist/search_symbols_neighborhood_context",
+                {
+                    **shared,
+                    "query": "helper",
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/search_symbols_discovery_context",
+                {
+                    **shared,
+                    "query": "helper",
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            ("arborist/list_symbols", {**shared, "limit": 5}),
+            ("arborist/list_symbols_context", {**shared, "limit": 5}),
+            (
+                "arborist/list_symbols_neighborhood_context",
+                {
+                    **shared,
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/list_symbols_discovery_context",
+                {
+                    **shared,
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+        ]
+
+        for method, params in cases:
+            with self.subTest(method=method):
+                self.assert_invalid_params(
+                    method,
+                    params,
+                    request_id=112,
+                    contains="index_db_path is not supported when source is provided",
+                    gateway=gateway,
+                )
+
+    def test_rejects_missing_file_path_for_source_backed_path_and_workspace_entrypoints(self) -> None:
+        class StubCore:
+            def __getattr__(self, name: str):
+                if name.endswith("_json"):
+                    def _unexpected(*args: object) -> str:
+                        raise AssertionError(f"core should not be called: {name}")
+
+                    return _unexpected
+                raise AttributeError(name)
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        shared = {
+            "workspace_root": ".",
+            "source": "def helper() -> int:\n    return 1\n",
+        }
+        cases = [
+            ("arborist/read_symbol", {**shared, "symbol_path": "helper"}),
+            (
+                "arborist/read_symbol_context",
+                {**shared, "symbol_path": "helper", "direction": "callers"},
+            ),
+            (
+                "arborist/read_symbol_neighborhood_context",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/read_symbol_discovery_context",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/trace_symbol_graph",
+                {**shared, "symbol_path": "helper", "direction": "callers"},
+            ),
+            (
+                "arborist/trace_symbol_neighborhood",
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            ("arborist/search_symbols", {**shared, "query": "helper", "limit": 5}),
+            (
+                "arborist/search_symbols_context",
+                {**shared, "query": "helper", "limit": 5},
+            ),
+            (
+                "arborist/search_symbols_neighborhood_context",
+                {
+                    **shared,
+                    "query": "helper",
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/search_symbols_discovery_context",
+                {
+                    **shared,
+                    "query": "helper",
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            ("arborist/list_symbols", {**shared, "limit": 5}),
+            ("arborist/list_symbols_context", {**shared, "limit": 5}),
+            (
+                "arborist/list_symbols_neighborhood_context",
+                {
+                    **shared,
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+            (
+                "arborist/list_symbols_discovery_context",
+                {
+                    **shared,
+                    "limit": 5,
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                },
+            ),
+        ]
+
+        for method, params in cases:
+            with self.subTest(method=method):
+                self.assert_invalid_params(
+                    method,
+                    params,
+                    request_id=113,
+                    contains="file_path is required when source is provided",
+                    gateway=gateway,
+                )
 
     def test_rejects_invalid_read_symbol_context_at_position_direction_as_invalid_params(
         self,

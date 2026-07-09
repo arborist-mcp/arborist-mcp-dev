@@ -137,6 +137,18 @@ pub fn trace_symbol_graph_at_position_with_source(
     )
 }
 
+pub fn trace_symbol_graph_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::trace_symbol_graph_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+}
+
 pub fn trace_symbol_neighborhood_at_position_with_source(
     workspace_root: &Path,
     path: &Path,
@@ -159,6 +171,27 @@ pub fn trace_symbol_neighborhood_at_position_with_source(
     )
 }
 
+pub fn trace_symbol_neighborhood_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::trace_symbol_neighborhood_with_overrides(
+        &workspace_root,
+        &overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
 pub fn read_symbol_at_position_with_source(
     workspace_root: &Path,
     path: &Path,
@@ -168,6 +201,17 @@ pub fn read_symbol_at_position_with_source(
     let (workspace_root, path, overrides) =
         source_overrides_for_workspace_path(workspace_root, path, source)?;
     symbols::read_symbol_at_position_with_overrides(&workspace_root, &overrides, &path, position)
+}
+
+pub fn read_symbol_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+) -> Result<SymbolReadResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_with_overrides(&workspace_root, &overrides, symbol_path)
 }
 
 pub fn read_symbol_context_at_position_with_source(
@@ -188,6 +232,18 @@ pub fn read_symbol_context_at_position_with_source(
     )
 }
 
+pub fn read_symbol_context_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_context_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+}
+
 pub fn read_symbol_neighborhood_context_at_position_with_source(
     workspace_root: &Path,
     path: &Path,
@@ -204,6 +260,27 @@ pub fn read_symbol_neighborhood_context_at_position_with_source(
         &overrides,
         &path,
         position,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn read_symbol_neighborhood_context_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_neighborhood_context_with_overrides(
+        &workspace_root,
+        &overrides,
+        symbol_path,
         direction,
         max_depth,
         max_nodes,
@@ -229,6 +306,215 @@ pub fn read_symbol_discovery_context_at_position_with_source(
         direction,
         max_depth,
         max_nodes,
+    )
+}
+
+pub fn read_symbol_discovery_context_with_source(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::read_symbol_discovery_context_with_overrides(
+        &workspace_root,
+        &overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn search_symbols_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::search_symbols_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn search_symbols_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::search_symbols_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::search_symbols_neighborhood_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_discovery_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchDiscoveryContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::search_symbols_discovery_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::list_symbols_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::list_symbols_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::list_symbols_neighborhood_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_discovery_context_with_source_filtered(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListDiscoveryContextResult> {
+    let (workspace_root, _path, overrides) =
+        source_overrides_for_workspace_path(workspace_root, path, source)?;
+    symbols::list_symbols_discovery_context_with_overrides_filtered(
+        &workspace_root,
+        &overrides,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
     )
 }
 

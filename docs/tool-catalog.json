@@ -1024,6 +1024,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1100,6 +1109,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1345,6 +1363,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1488,6 +1515,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1654,6 +1690,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1832,6 +1877,15 @@
           "type": "string",
           "description": "Optional persisted symbol-index database path. Do not combine with source.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -1998,6 +2052,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [],
@@ -2060,6 +2123,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [],
@@ -2145,6 +2217,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [],
@@ -2230,6 +2311,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [],
@@ -2297,6 +2387,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -2366,6 +2465,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -2458,6 +2566,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [
@@ -2550,6 +2667,15 @@
           "type": "string",
           "description": "Optional Tree-sitter node-kind filter.",
           "minLength": 1
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
         }
       },
       "required": [

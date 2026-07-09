@@ -330,6 +330,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
     def test_search_routes_params_to_core(self) -> None:
         helper_read = self.helper_read()
         helper_context = self.helper_neighborhood_context()
+        source = "def helper(value: int) -> int:\n    return value + 2\n"
         cases = [
             {
                 "core_method": "search_symbols_json",
@@ -358,6 +359,35 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     self.assertFalse(result["truncated"]),
                     self.assertEqual(result["matches"][0]["semantic_path"], "helper"),
                     self.assertEqual(result["match_details"][0]["score"], 1000),
+                ),
+            },
+            {
+                "core_method": "search_symbols_json",
+                "rpc_method": "arborist/search_symbols",
+                "request_id": 174,
+                "params": {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "limit": 5,
+                    "file_path": "graph_b.py",
+                    "source": source,
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+                "payload": self.make_search_result(),
+                "expected_call": (
+                    ".",
+                    "helper",
+                    5,
+                    None,
+                    "graph",
+                    "function_definition",
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["query"], "helper"),
+                    self.assertEqual(result["matches"][0]["semantic_path"], "helper"),
                 ),
             },
             {
@@ -494,6 +524,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
     def test_list_routes_params_to_core(self) -> None:
         helper_read = self.helper_read()
         helper_context = self.helper_neighborhood_context()
+        source = "def helper(value: int) -> int:\n    return value + 2\n"
         cases = [
             {
                 "core_method": "list_symbols_json",
@@ -517,6 +548,33 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "check": lambda result: (
                     self.assertEqual(result["total_symbols"], 1),
                     self.assertFalse(result["truncated"]),
+                    self.assertEqual(result["symbols"][0]["semantic_path"], "helper"),
+                ),
+            },
+            {
+                "core_method": "list_symbols_json",
+                "rpc_method": "arborist/list_symbols",
+                "request_id": 175,
+                "params": {
+                    "workspace_root": ".",
+                    "limit": 25,
+                    "file_path": "graph_b.py",
+                    "source": source,
+                    "file_path_contains": "graph",
+                    "node_kind": "function_definition",
+                },
+                "payload": self.make_list_result(),
+                "expected_call": (
+                    ".",
+                    25,
+                    None,
+                    "graph",
+                    "function_definition",
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["total_symbols"], 1),
                     self.assertEqual(result["symbols"][0]["semantic_path"], "helper"),
                 ),
             },
@@ -651,7 +709,25 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
         helper_read_graph = self.helper_read(file_path="graph_b.py")
         helper_trace_graph = self.helper_trace_context(file_path="graph_b.py")
         helper_context_graph = self.helper_neighborhood_context(file_path="graph_b.py")
+        source = "def helper(value: int) -> int:\n    return value + 2\n"
         cases = [
+            {
+                "core_method": "read_symbol_json",
+                "rpc_method": "arborist/read_symbol",
+                "request_id": 176,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "file_path": "graph_b.py",
+                    "source": source,
+                },
+                "payload": helper_read,
+                "expected_call": (".", "helper", None, "graph_b.py", source),
+                "check": lambda result: (
+                    self.assertEqual(result["symbol"]["semantic_path"], "helper"),
+                    self.assertIn("def helper()", result["source"]),
+                ),
+            },
             {
                 "core_method": "read_symbol_json",
                 "rpc_method": "arborist/read_symbol",
@@ -683,6 +759,33 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertIn("def helper()", result["source"]),
+                ),
+            },
+            {
+                "core_method": "trace_symbol_graph_json",
+                "rpc_method": "arborist/trace_symbol_graph",
+                "request_id": 177,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "file_path": "graph_b.py",
+                    "source": source,
+                },
+                "payload": helper_trace,
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    None,
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(
+                        result["callers"][0]["semantic_path"], "orchestrate"
+                    ),
                 ),
             },
             {
@@ -792,6 +895,33 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
             {
                 "core_method": "read_symbol_context_json",
                 "rpc_method": "arborist/read_symbol_context",
+                "request_id": 178,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "file_path": "graph_b.py",
+                    "source": source,
+                },
+                "payload": {"read": helper_read, "trace": helper_trace},
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    None,
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["read"]["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(
+                        result["trace"]["callers"][0]["semantic_path"], "orchestrate"
+                    ),
+                ),
+            },
+            {
+                "core_method": "read_symbol_context_json",
+                "rpc_method": "arborist/read_symbol_context",
                 "request_id": 63,
                 "params": {
                     "workspace_root": ".",
@@ -833,6 +963,39 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     self.assertEqual(result["read"]["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(
                         result["trace"]["callers"][0]["semantic_path"], "orchestrate"
+                    ),
+                ),
+            },
+            {
+                "core_method": "read_symbol_neighborhood_context_json",
+                "rpc_method": "arborist/read_symbol_neighborhood_context",
+                "request_id": 179,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "file_path": "graph_b.py",
+                    "source": source,
+                },
+                "payload": helper_context,
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    None,
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(
+                        result["neighborhood"]["symbol"]["semantic_path"], "helper"
+                    ),
+                    self.assertEqual(
+                        result["reads"][1]["symbol"]["semantic_path"], "orchestrate"
                     ),
                 ),
             },
@@ -891,6 +1054,45 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     ),
                     self.assertEqual(
                         result["reads"][1]["symbol"]["semantic_path"], "orchestrate"
+                    ),
+                ),
+            },
+            {
+                "core_method": "read_symbol_discovery_context_json",
+                "rpc_method": "arborist/read_symbol_discovery_context",
+                "request_id": 180,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "file_path": "graph_b.py",
+                    "source": source,
+                },
+                "payload": {
+                    "read": helper_read,
+                    "trace": helper_trace,
+                    "neighborhood_context": helper_context,
+                },
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    None,
+                    "graph_b.py",
+                    source,
+                ),
+                "check": lambda result: (
+                    self.assertEqual(result["read"]["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(result["trace"]["symbol"]["semantic_path"], "helper"),
+                    self.assertEqual(
+                        result["neighborhood_context"]["reads"][1]["symbol"][
+                            "semantic_path"
+                        ],
+                        "orchestrate",
                     ),
                 ),
             },
@@ -1768,3 +1970,121 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     for read in result["neighborhood_context"]["reads"]
                 )
             )
+
+    def test_read_symbol_accepts_unsaved_source_with_file_anchor(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/read_symbol",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "symbol_path": "orchestrate",
+                    },
+                    request_id=84,
+                ),
+                request_id=84,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["symbol"]["semantic_path"], "orchestrate")
+            self.assertEqual(result["symbol"]["file_path"], expected_file)
+            self.assertEqual(
+                result["source"],
+                "def orchestrate(value: int) -> int:\n    return helper(value)",
+            )
+
+    def test_trace_symbol_graph_accepts_unsaved_source_with_file_anchor(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/trace_symbol_graph",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "symbol_path": "orchestrate",
+                        "direction": "both",
+                    },
+                    request_id=85,
+                ),
+                request_id=85,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["symbol"]["semantic_path"], "orchestrate")
+            self.assertEqual(result["symbol"]["file_path"], expected_file)
+            self.assertTrue(
+                any(symbol["semantic_path"] == "helper" for symbol in result["callees"])
+            )
+
+    def test_list_symbols_accepts_unsaved_source_with_file_anchor(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            nested = workspace.joinpath("child")
+            caller = workspace.joinpath("caller.py")
+            nested.mkdir()
+            caller_alias = nested.joinpath("..", "caller.py")
+            expected_file = str(caller).replace("\\", "/")
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/list_symbols",
+                    {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller_alias),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "limit": 10,
+                        "file_path_contains": "caller",
+                    },
+                    request_id=86,
+                ),
+                request_id=86,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(caller.exists())
+            self.assertEqual(result["total_symbols"], 1)
+            self.assertEqual(result["symbols"][0]["semantic_path"], "orchestrate")
+            self.assertEqual(result["symbols"][0]["file_path"], expected_file)

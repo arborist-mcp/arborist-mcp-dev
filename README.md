@@ -104,9 +104,11 @@ extension-based; Python files use `.py`, and C routing includes `.c`, `.h`,
 - LSP-style buffer session primitives for open/change/close event ingestion
 - Session-aware `trace_symbol_graph` for unsaved virtual buffers
 - Semantic patching routed through the VFS session before commit
-- One-shot skeleton, query, patch, trace-context, and position-based
-  read/trace requests can analyze an optional `source` buffer without first
-  writing it to disk
+- One-shot skeleton, query, patch, trace-context, position-based read/trace,
+  and symbol/list/search analysis requests can analyze an optional `source`
+  buffer without first writing it to disk; symbol/list/search overlays use a
+  `file_path` anchor to identify which workspace file the unsaved buffer
+  should replace
 - Session-managed symbol index registrations with commit-time auto-refresh
 - File-scoped persisted index refresh for tighter post-commit sync
 - Partial SQLite persistence updates for changed or deleted file refreshes
@@ -474,6 +476,8 @@ Python trace/index resolution also follows local import aliases and package re-e
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate` or a precise `symbol_id` such as `E:/repo/include/zeta.h::helper` when duplicate C globals need exact targeting.
 
 When `index_db_path` is omitted, `trace_symbol_graph` now resolves against the active VFS session first, so unsaved `did_open` / `did_change` / `patch_virtual_ast_node` edits are reflected immediately without touching disk.
+
+The selector-based symbol reads (`trace_symbol_graph`, `trace_symbol_neighborhood`, `read_symbol`, `read_symbol_context`, `read_symbol_neighborhood_context`, and `read_symbol_discovery_context`) plus the workspace-wide `list_symbols*` and `search_symbols*` families also accept one-shot unsaved `source` overlays when callers provide the workspace `file_path` that buffer should stand in for. Those overlay requests reject `index_db_path`, since Arborist cannot safely combine a persisted index snapshot with an in-memory replacement buffer for the same workspace read.
 
 `trace_symbol_graph_at_position` brings that same raw caller/callee trace to cursor-first clients. Given `file_path + position`, it resolves the exact symbol under the cursor and then returns the same `trace_symbol_graph` payload, so editors can jump straight from a caret location into graph analysis without first reconstructing a `semantic_path` or `symbol_id`.
 

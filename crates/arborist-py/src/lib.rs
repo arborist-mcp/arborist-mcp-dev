@@ -5,26 +5,32 @@ use arborist_core::{
     PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
     VirtualFileSystem, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
     get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
-    list_symbols_discovery_context_from_index_filtered, list_symbols_from_index_filtered,
-    list_symbols_neighborhood_context_from_index_filtered, patch_ast_node,
-    patch_ast_node_at_position, read_symbol_at_position_from_index,
+    list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
+    list_symbols_discovery_context_with_source_filtered, list_symbols_from_index_filtered,
+    list_symbols_neighborhood_context_from_index_filtered,
+    list_symbols_neighborhood_context_with_source_filtered, list_symbols_with_source_filtered,
+    patch_ast_node, patch_ast_node_at_position, read_symbol_at_position_from_index,
     read_symbol_at_position_with_source, read_symbol_context_at_position_from_index,
     read_symbol_context_at_position_with_source, read_symbol_context_from_index,
-    read_symbol_discovery_context_at_position_from_index,
+    read_symbol_context_with_source, read_symbol_discovery_context_at_position_from_index,
     read_symbol_discovery_context_at_position_with_source,
-    read_symbol_discovery_context_from_index, read_symbol_from_index,
-    read_symbol_neighborhood_context_at_position_from_index,
+    read_symbol_discovery_context_from_index, read_symbol_discovery_context_with_source,
+    read_symbol_from_index, read_symbol_neighborhood_context_at_position_from_index,
     read_symbol_neighborhood_context_at_position_with_source,
-    read_symbol_neighborhood_context_from_index, rebuild_symbol_index,
-    refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
-    search_symbols_context_from_index_filtered,
-    search_symbols_discovery_context_from_index_filtered, search_symbols_from_index_filtered,
-    search_symbols_neighborhood_context_from_index_filtered, supported_languages,
-    trace_symbol_graph_at_position_from_index, trace_symbol_graph_at_position_with_source,
-    trace_symbol_graph_from_index, trace_symbol_neighborhood_at_position_from_index,
+    read_symbol_neighborhood_context_from_index, read_symbol_neighborhood_context_with_source,
+    read_symbol_with_source, rebuild_symbol_index, refresh_symbol_index_for_file,
+    replay_patch_evidence_against_trace, search_symbols_context_from_index_filtered,
+    search_symbols_context_with_source_filtered,
+    search_symbols_discovery_context_from_index_filtered,
+    search_symbols_discovery_context_with_source_filtered, search_symbols_from_index_filtered,
+    search_symbols_neighborhood_context_from_index_filtered,
+    search_symbols_neighborhood_context_with_source_filtered, search_symbols_with_source_filtered,
+    supported_languages, trace_symbol_graph_at_position_from_index,
+    trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
+    trace_symbol_graph_with_source, trace_symbol_neighborhood_at_position_from_index,
     trace_symbol_neighborhood_at_position_with_source, trace_symbol_neighborhood_from_index,
-    validate_patch_commit_with_trace, validate_patch_with_discovery_context,
-    validate_patch_with_discovery_context_at_position,
+    trace_symbol_neighborhood_with_source, validate_patch_commit_with_trace,
+    validate_patch_with_discovery_context, validate_patch_with_discovery_context_at_position,
     validate_patch_with_discovery_context_at_position_from_path,
     validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
     validate_patch_with_graph_context_at_position,
@@ -225,31 +231,52 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
     fn trace_symbol_graph_json(
         &self,
         workspace_root: &str,
         symbol_path: &str,
         direction: &str,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => {
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => trace_symbol_graph_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+                direction,
+            ),
+            (None, Some(index_db_path)) => {
                 trace_symbol_graph_from_index(Path::new(&index_db_path), symbol_path, direction)
             }
-            None => self.vfs.borrow_mut().trace_symbol_graph(
+            (None, None) => self.vfs.borrow_mut().trace_symbol_graph(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn trace_symbol_neighborhood_json(
         &self,
         workspace_root: &str,
@@ -258,42 +285,85 @@ impl ArboristCore {
         max_depth: usize,
         max_nodes: usize,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => trace_symbol_neighborhood_from_index(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => trace_symbol_neighborhood_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            (None, Some(index_db_path)) => trace_symbol_neighborhood_from_index(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
-            None => self.vfs.borrow_mut().trace_symbol_neighborhood(
+            (None, None) => self.vfs.borrow_mut().trace_symbol_neighborhood(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None, file_path=None, source=None))]
     fn read_symbol_json(
         &self,
         workspace_root: &str,
         symbol_path: &str,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
-        let result = match index_db_path {
-            Some(index_db_path) => read_symbol_from_index(Path::new(&index_db_path), symbol_path),
-            None => self
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => read_symbol_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+            ),
+            (None, Some(index_db_path)) => {
+                read_symbol_from_index(Path::new(&index_db_path), symbol_path)
+            }
+            (None, None) => self
                 .vfs
                 .borrow_mut()
                 .read_symbol(Path::new(workspace_root), symbol_path),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -340,24 +410,44 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
     fn read_symbol_context_json(
         &self,
         workspace_root: &str,
         symbol_path: &str,
         direction: &str,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => {
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => read_symbol_context_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+                direction,
+            ),
+            (None, Some(index_db_path)) => {
                 read_symbol_context_from_index(Path::new(&index_db_path), symbol_path, direction)
             }
-            None => self.vfs.borrow_mut().read_symbol_context(
+            (None, None) => self.vfs.borrow_mut().read_symbol_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -510,7 +600,8 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn read_symbol_neighborhood_context_json(
         &self,
         workspace_root: &str,
@@ -519,23 +610,45 @@ impl ArboristCore {
         max_depth: usize,
         max_nodes: usize,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => read_symbol_neighborhood_context_from_index(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => read_symbol_neighborhood_context_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            (None, Some(index_db_path)) => read_symbol_neighborhood_context_from_index(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
-            None => self.vfs.borrow_mut().read_symbol_neighborhood_context(
+            (None, None) => self.vfs.borrow_mut().read_symbol_neighborhood_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -599,7 +712,8 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn read_symbol_discovery_context_json(
         &self,
         workspace_root: &str,
@@ -608,23 +722,45 @@ impl ArboristCore {
         max_depth: usize,
         max_nodes: usize,
         index_db_path: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => read_symbol_discovery_context_from_index(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => read_symbol_discovery_context_with_source(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                symbol_path,
+                direction,
+                max_depth,
+                max_nodes,
+            ),
+            (None, Some(index_db_path)) => read_symbol_discovery_context_from_index(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
-            None => self.vfs.borrow_mut().read_symbol_discovery_context(
+            (None, None) => self.vfs.borrow_mut().read_symbol_discovery_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -688,7 +824,8 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn search_symbols_json(
         &self,
         workspace_root: &str,
@@ -697,29 +834,52 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
-        let result = match index_db_path {
-            Some(index_db_path) => search_symbols_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => search_symbols_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                query,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => search_symbols_from_index_filtered(
                 Path::new(&index_db_path),
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self.vfs.borrow_mut().search_symbols_filtered(
+            (None, None) => self.vfs.borrow_mut().search_symbols_filtered(
                 Path::new(workspace_root),
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn search_symbols_context_json(
         &self,
         workspace_root: &str,
@@ -728,22 +888,44 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
-        let result = match index_db_path {
-            Some(index_db_path) => search_symbols_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => search_symbols_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                query,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => search_symbols_context_from_index_filtered(
                 Path::new(&index_db_path),
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self.vfs.borrow_mut().search_symbols_context_filtered(
+            (None, None) => self.vfs.borrow_mut().search_symbols_context_filtered(
                 Path::new(workspace_root),
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -751,7 +933,7 @@ impl ArboristCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
     fn search_symbols_neighborhood_context_json(
         &self,
         workspace_root: &str,
@@ -763,10 +945,34 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => search_symbols_neighborhood_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => search_symbols_neighborhood_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => search_symbols_neighborhood_context_from_index_filtered(
                 Path::new(&index_db_path),
                 query,
                 limit,
@@ -776,7 +982,7 @@ impl ArboristCore {
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self
+            (None, None) => self
                 .vfs
                 .borrow_mut()
                 .search_symbols_neighborhood_context_filtered(
@@ -789,6 +995,7 @@ impl ArboristCore {
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
                 ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -796,7 +1003,7 @@ impl ArboristCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
     fn search_symbols_discovery_context_json(
         &self,
         workspace_root: &str,
@@ -808,10 +1015,34 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => search_symbols_discovery_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => search_symbols_discovery_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => search_symbols_discovery_context_from_index_filtered(
                 Path::new(&index_db_path),
                 query,
                 limit,
@@ -821,7 +1052,7 @@ impl ArboristCore {
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self
+            (None, None) => self
                 .vfs
                 .borrow_mut()
                 .search_symbols_discovery_context_filtered(
@@ -834,13 +1065,15 @@ impl ArboristCore {
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
                 ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn list_symbols_json(
         &self,
         workspace_root: &str,
@@ -848,27 +1081,49 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
-        let result = match index_db_path {
-            Some(index_db_path) => list_symbols_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => list_symbols_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => list_symbols_from_index_filtered(
                 Path::new(&index_db_path),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self.vfs.borrow_mut().list_symbols_filtered(
+            (None, None) => self.vfs.borrow_mut().list_symbols_filtered(
                 Path::new(workspace_root),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn list_symbols_context_json(
         &self,
         workspace_root: &str,
@@ -876,20 +1131,41 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
-        let result = match index_db_path {
-            Some(index_db_path) => list_symbols_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => list_symbols_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                limit,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => list_symbols_context_from_index_filtered(
                 Path::new(&index_db_path),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self.vfs.borrow_mut().list_symbols_context_filtered(
+            (None, None) => self.vfs.borrow_mut().list_symbols_context_filtered(
                 Path::new(workspace_root),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -897,7 +1173,7 @@ impl ArboristCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
     fn list_symbols_neighborhood_context_json(
         &self,
         workspace_root: &str,
@@ -908,10 +1184,33 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => list_symbols_neighborhood_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => list_symbols_neighborhood_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => list_symbols_neighborhood_context_from_index_filtered(
                 Path::new(&index_db_path),
                 limit,
                 direction,
@@ -920,7 +1219,7 @@ impl ArboristCore {
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self
+            (None, None) => self
                 .vfs
                 .borrow_mut()
                 .list_symbols_neighborhood_context_filtered(
@@ -932,6 +1231,7 @@ impl ArboristCore {
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
                 ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
@@ -939,7 +1239,7 @@ impl ArboristCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None))]
+    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
     fn list_symbols_discovery_context_json(
         &self,
         workspace_root: &str,
@@ -950,10 +1250,33 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path_contains: Option<String>,
         node_kind: Option<String>,
+        file_path: Option<String>,
+        source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match index_db_path {
-            Some(index_db_path) => list_symbols_discovery_context_from_index_filtered(
+        if source.is_some() && index_db_path.is_some() {
+            return Err(PyValueError::new_err(
+                "index_db_path is not supported when source is provided",
+            ));
+        }
+        if source.is_some() && file_path.is_none() {
+            return Err(PyValueError::new_err(
+                "file_path is required when source is provided",
+            ));
+        }
+        let result = match (source, index_db_path) {
+            (Some(source), None) => list_symbols_discovery_context_with_source_filtered(
+                Path::new(workspace_root),
+                Path::new(file_path.as_deref().expect("checked above")),
+                &source,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains.as_deref(),
+                node_kind.as_deref(),
+            ),
+            (None, Some(index_db_path)) => list_symbols_discovery_context_from_index_filtered(
                 Path::new(&index_db_path),
                 limit,
                 direction,
@@ -962,7 +1285,7 @@ impl ArboristCore {
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
-            None => self
+            (None, None) => self
                 .vfs
                 .borrow_mut()
                 .list_symbols_discovery_context_filtered(
@@ -974,6 +1297,7 @@ impl ArboristCore {
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
                 ),
+            (Some(_), Some(_)) => unreachable!("checked above"),
         }
         .map_err(to_py_error)?;
 
