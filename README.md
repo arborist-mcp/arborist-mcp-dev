@@ -157,16 +157,20 @@ For the everyday inner loop, run the focused test entrypoint:
 .\scripts\test.ps1
 ```
 
-`test.ps1` defaults to the fast local loop of Rust tests plus the gateway
-protocol suite. It now reads the gateway suite registry from
-`tests/gateway_protocol/suites.json`, so adding or renaming a focused gateway
-suite only needs one manifest update instead of keeping Python and PowerShell
-registries in sync. It also supports narrower suites so protocol changes do not
-have to wait on unrelated Python coverage:
+`test.ps1` now reads a richer gateway suite manifest from
+`tests/gateway_protocol/suites.json`, so suite metadata, grouping, and legacy
+Python discovery all stay in sync from one file. The default `inner-loop`
+selection now runs Rust plus the `gateway-fast` group, which keeps the local
+loop on the pure-Python protocol suites until you explicitly ask for
+native-extension integration coverage. When a selected suite needs the synced
+PyO3 extension, `test.ps1` now builds and syncs it automatically unless you
+override that behavior with `-SyncExtension never`.
 
 ```powershell
 .\scripts\test.ps1 -Suite rust
 .\scripts\test.ps1 -Suite gateway
+.\scripts\test.ps1 -Suite gateway-fast
+.\scripts\test.ps1 -Suite gateway-native
 .\scripts\test.ps1 -Suite gateway-request-validation
 .\scripts\test.ps1 -Suite gateway-symbol-routes
 .\scripts\test.ps1 -Suite gateway-execution
@@ -176,15 +180,19 @@ have to wait on unrelated Python coverage:
 .\scripts\test.ps1 -Suite all
 .\scripts\test.ps1 -ListSuites
 .\scripts\test.ps1 -Suite rust -RustFilter read_symbol_at_position
-.\scripts\test.ps1 -Suite rust,gateway-request-validation
+.\scripts\test.ps1 -Suite rust,gateway-fast
+.\scripts\test.ps1 -Suite gateway-native -SyncExtension always
 ```
 
 The gateway protocol tests now live under `tests/gateway_protocol/` and remain
 available through the legacy `tests.test_gateway_protocol` module, so old
 commands still work while targeted modules are easier to run in isolation.
 `-ListSuites` prints the current workflow matrix, `-RustFilter` forwards a
-focused filter to `cargo test --locked <filter>`, and `-Suite` now accepts
-multiple suite names when you want one command to cover a narrow mixed loop.
+focused filter to `cargo test --locked <filter>`, `-Suite` accepts multiple
+suite names when you want one command to cover a narrow mixed loop, and
+`-SyncExtension auto|always|never` lets you trade correctness checks against
+native-extension rebuild cost when you already know whether the local binary is
+fresh.
 
 Or run the underlying commands directly:
 

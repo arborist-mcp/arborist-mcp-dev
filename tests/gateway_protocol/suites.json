@@ -1,7 +1,53 @@
 {
-  "gateway-request-validation": "tests.gateway_protocol.request_validation",
-  "gateway-symbol-routes": "tests.gateway_protocol.symbol_routes",
-  "gateway-execution": "tests.gateway_protocol.execution",
-  "gateway-trace-payloads": "tests.gateway_protocol.trace_payloads",
-  "gateway-runtime": "tests.gateway_protocol.runtime"
+  "suites": {
+    "gateway-request-validation": {
+      "module": "tests.gateway_protocol.request_validation",
+      "description": "Run gateway request and parameter validation tests.",
+      "requires_extension": false
+    },
+    "gateway-symbol-routes": {
+      "module": "tests.gateway_protocol.symbol_routes",
+      "description": "Run gateway routing and JSON decoding tests with stub cores.",
+      "requires_extension": false
+    },
+    "gateway-execution": {
+      "module": "tests.gateway_protocol.execution",
+      "description": "Run gateway execution tests against the synced native extension.",
+      "requires_extension": true
+    },
+    "gateway-trace-payloads": {
+      "module": "tests.gateway_protocol.trace_payloads",
+      "description": "Run trace payload validation and replay-shape tests.",
+      "requires_extension": false
+    },
+    "gateway-runtime": {
+      "module": "tests.gateway_protocol.runtime",
+      "description": "Run gateway runtime and transport tests against the synced native extension.",
+      "requires_extension": true
+    }
+  },
+  "groups": {
+    "gateway-fast": {
+      "description": "Run the pure-Python gateway protocol suites that do not require syncing the native extension.",
+      "entries": [
+        "gateway-request-validation",
+        "gateway-symbol-routes",
+        "gateway-trace-payloads"
+      ]
+    },
+    "gateway-native": {
+      "description": "Run the gateway suites that execute against the synced native extension.",
+      "entries": [
+        "gateway-execution",
+        "gateway-runtime"
+      ]
+    },
+    "gateway": {
+      "description": "Run all gateway protocol suites.",
+      "entries": [
+        "gateway-fast",
+        "gateway-native"
+      ]
+    }
+  }
 }

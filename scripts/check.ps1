@@ -161,7 +161,7 @@ try {
     Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
     Invoke-NativeOrThrow "Building gateway extension..." "cargo" @("build", "--locked", "-p", "arborist-py")
     Invoke-ScriptOrThrow "Syncing gateway extension..." { & (Join-Path $PSScriptRoot "sync-extension.ps1") -SkipBuild }
-    Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -Quiet }
+    Invoke-ScriptOrThrow "Running full Python test suite..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite python -SyncExtension never -Quiet }
     Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
     Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
     Invoke-GatewayInitializeSmoke $Python
