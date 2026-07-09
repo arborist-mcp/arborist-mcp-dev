@@ -167,10 +167,12 @@ run the same named slices instead of maintaining separate ad hoc command sets:
 ```
 
 The GitHub Actions workflow now uses those same profiles in parallel on
-Windows, which makes failures easier to localize and lets quick pure-Python
-gateway regressions surface without waiting on the native-extension jobs. The
-legacy `python-native` profile remains as a local aggregate over the
-finer-grained native checks.
+Windows, and its matrix is now derived from the same shared profile helper that
+drives `check.ps1 -ListProfiles`, which makes failures easier to localize and
+keeps CI job definitions aligned with the local script surface. Quick
+pure-Python gateway regressions now surface without waiting on the
+native-extension jobs, while the legacy `python-native` profile remains as a
+local aggregate over the finer-grained native checks.
 
 For the everyday inner loop, run the focused test entrypoint:
 

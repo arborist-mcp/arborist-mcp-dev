@@ -15,7 +15,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  define-check-matrix:
+    name: define-check-matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build check matrix
+        id: matrix
+        shell: bash
+        run: |
+          matrix="$(python3 scripts/check_profile_manifest.py --github-matrix)"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: define-check-matrix
     name: ${{ matrix.job_name }}
     runs-on: windows-latest
     timeout-minutes: 20
@@ -23,32 +40,7 @@ jobs:
       CARGO_TERM_COLOR: always
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - job_name: sanity
-            profile: sanity
-            needs_python: false
-            needs_rust: false
-          - job_name: rust
-            profile: rust
-            needs_python: false
-            needs_rust: true
-          - job_name: gateway-fast
-            profile: gateway-fast
-            needs_python: true
-            needs_rust: false
-          - job_name: gateway-native
-            profile: gateway-native
-            needs_python: true
-            needs_rust: true
-          - job_name: python-discovery
-            profile: python-discovery
-            needs_python: true
-            needs_rust: true
-          - job_name: gateway-smoke
-            profile: gateway-smoke
-            needs_python: true
-            needs_rust: true
+      matrix: ${{ fromJson(needs.define-check-matrix.outputs.matrix) }}
 
     steps:
       - name: Check out repository

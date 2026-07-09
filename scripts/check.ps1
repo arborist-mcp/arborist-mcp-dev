@@ -7,6 +7,44 @@ param(
 $ErrorActionPreference = "Stop"
 $script:GatewayExtensionPrepared = $false
 
+function Get-CheckProfileSnapshot {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $manifestEmitter = Join-Path $RepoRoot "scripts\check_profile_manifest.py"
+    $rawOutput = & $Python $manifestEmitter 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Check profile manifest helper failed with exit code $LASTEXITCODE.`n$($rawOutput | Out-String)"
+    }
+
+    $snapshot = $rawOutput | Out-String | ConvertFrom-Json
+    if ($null -eq $snapshot -or $null -eq $snapshot.profiles -or $null -eq $snapshot.profile_order) {
+        throw "Check profile manifest helper must define 'profiles' and 'profile_order'."
+    }
+
+    return $snapshot
+}
+
+function Get-CheckProfileMetadata {
+    param(
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ProfileSnapshot,
+        [Parameter(Mandatory = $true)]
+        [string]$ProfileName
+    )
+
+    $property = $ProfileSnapshot.profiles.PSObject.Properties[$ProfileName]
+    if ($null -eq $property) {
+        throw "Unknown check profile: $ProfileName"
+    }
+
+    return $property.Value
+}
+
 function Invoke-NativeOrThrow {
     param(
         [Parameter(Mandatory = $true)]
@@ -207,8 +245,19 @@ function Invoke-CheckProfile {
         [Parameter(Mandatory = $true)]
         [string]$Python,
         [Parameter(Mandatory = $true)]
-        [string]$RepoRoot
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$ProfileSnapshot
     )
+
+    $profileMetadata = Get-CheckProfileMetadata $ProfileSnapshot $ProfileName
+    $entries = @($profileMetadata.entries)
+    if ($entries.Count -gt 0) {
+        foreach ($entry in $entries) {
+            Invoke-CheckProfile $entry $Python $RepoRoot $ProfileSnapshot
+        }
+        return
+    }
 
     switch ($ProfileName) {
         "sanity" {
@@ -238,50 +287,27 @@ function Invoke-CheckProfile {
             Invoke-GatewaySmokeCheck $Python
             return
         }
-        "python-native" {
-            Invoke-CheckProfile "gateway-native" $Python $RepoRoot
-            Invoke-CheckProfile "python-discovery" $Python $RepoRoot
-            Invoke-CheckProfile "gateway-smoke" $Python $RepoRoot
-            return
-        }
-        "full" {
-            Invoke-CheckProfile "sanity" $Python $RepoRoot
-            Invoke-CheckProfile "rust" $Python $RepoRoot
-            Invoke-CheckProfile "python-native" $Python $RepoRoot
-            return
-        }
         default {
-            throw "Unknown check profile: $ProfileName"
+            throw "Leaf check profile '$ProfileName' is missing a script implementation."
         }
-    }
-}
-
-function Get-ProfileDescriptions {
-    return [ordered]@{
-        "sanity" = "Run PowerShell syntax and cross-file version consistency checks."
-        "rust" = "Run cargo fmt --check, cargo test --locked, and cargo clippy --locked --all-targets -D warnings."
-        "gateway-fast" = "Run the pure-Python gateway protocol suites that do not require the synced native extension."
-        "gateway-native" = "Build and sync the native gateway extension, then run the gateway-native protocol suites."
-        "python-discovery" = "Build and sync the native gateway extension, then run full Python unittest discovery."
-        "gateway-smoke" = "Build and sync the native gateway extension, then exercise gateway CLI/version/initialize smoke checks."
-        "python-native" = "Run the aggregate native Python gate: gateway-native, python-discovery, and gateway-smoke."
-        "full" = "Run the complete local check gate: sanity, rust, and the aggregate python-native profile."
     }
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$profileDescriptions = Get-ProfileDescriptions
+$profileSnapshot = Get-CheckProfileSnapshot $Python $repoRoot
 
 if ($ListProfiles) {
-    foreach ($profileName in $profileDescriptions.Keys) {
-        Write-Host ("{0,-16} {1}" -f $profileName, $profileDescriptions[$profileName])
+    foreach ($profileName in @($profileSnapshot.profile_order)) {
+        $profileMetadata = Get-CheckProfileMetadata $profileSnapshot $profileName
+        Write-Host ("{0,-16} {1}" -f $profileName, $profileMetadata.description)
     }
     return
 }
 
+$knownProfiles = @($profileSnapshot.profile_order)
 $unknownProfiles = @(
     $Profile |
-        Where-Object { -not $profileDescriptions.Contains($_) } |
+        Where-Object { $knownProfiles -notcontains $_ } |
         Select-Object -Unique
 )
 if ($unknownProfiles.Count -gt 0) {
@@ -291,7 +317,7 @@ if ($unknownProfiles.Count -gt 0) {
 Push-Location $repoRoot
 try {
     foreach ($profileName in $Profile) {
-        Invoke-CheckProfile $profileName $Python $repoRoot
+        Invoke-CheckProfile $profileName $Python $repoRoot $profileSnapshot
     }
 } finally {
     Pop-Location
