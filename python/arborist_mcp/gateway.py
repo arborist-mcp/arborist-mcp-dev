@@ -603,6 +603,26 @@ TOOL_PARAM_DEFAULTS = {
     "persist": False,
     "workspace_root": ".",
 }
+OBJECT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "JSON object result returned by Arborist for this tool.",
+    "additionalProperties": True,
+}
+OBJECT_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "JSON array of object results returned by Arborist for this tool.",
+    "items": OBJECT_RESULT_SCHEMA,
+}
+BOOLEAN_RESULT_SCHEMA = {
+    "type": "boolean",
+    "description": "Boolean success result returned by Arborist for this tool.",
+}
+TOOL_RESULT_SCHEMAS = {
+    "arborist/list_symbol_indexes": OBJECT_ARRAY_RESULT_SCHEMA,
+    "arborist/list_virtual_files": OBJECT_ARRAY_RESULT_SCHEMA,
+    "arborist/execute_tree_query": OBJECT_ARRAY_RESULT_SCHEMA,
+    "arborist/unregister_symbol_index": BOOLEAN_RESULT_SCHEMA,
+}
 
 
 class JsonRpcError(ValueError):
@@ -626,7 +646,7 @@ def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
         "title": _tool_title(tool_name),
         "description": _tool_description(tool_name, category),
         "inputSchema": build_tool_input_schema(tool_name),
-        "outputSchema": build_tool_output_schema(),
+        "outputSchema": build_tool_output_schema_for_tool(tool_name),
         "annotations": {
             "readOnlyHint": category in READ_ONLY_CATEGORIES
             or tool_name in NON_MUTATING_STATE_TOOLS,
@@ -645,9 +665,19 @@ def build_tool_output_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "result": {
-                "description": "Raw Arborist JSON result for this tool.",
-            },
+            "result": OBJECT_RESULT_SCHEMA,
+        },
+        "required": ["result"],
+        "additionalProperties": False,
+    }
+
+
+def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
+    result_schema = TOOL_RESULT_SCHEMAS.get(tool_name, OBJECT_RESULT_SCHEMA)
+    return {
+        "type": "object",
+        "properties": {
+            "result": result_schema,
         },
         "required": ["result"],
         "additionalProperties": False,
@@ -2108,6 +2138,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Read one request from a JSON file and print the response.",
     )
+    parser.add_argument(
+        "--dump-tool-catalog",
+        action="store_true",
+        help="Print the generated MCP tool catalog as JSON and exit.",
+    )
     return parser
 
 
@@ -2135,6 +2170,13 @@ def run_stdio() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.dump_tool_catalog:
+        if not _print_response(
+            json.dumps(build_tool_catalog(), ensure_ascii=False, allow_nan=False, indent=2)
+        ):
+            return 0
+        return 0
 
     if args.once:
         try:

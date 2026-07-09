@@ -366,6 +366,10 @@ errors. Tool argument validation failures, core validation failures, and core
 runtime errors are returned as MCP tool results with `isError: true`, so clients
 can display the error without tearing down the MCP session.
 
+For debugging or documentation generation, `python -m arborist_mcp.gateway
+--dump-tool-catalog` prints the exact generated MCP tool catalog as formatted
+JSON.
+
 ## Legacy JSON-RPC compatibility
 
 Existing custom callers can continue invoking `arborist/*` methods directly over

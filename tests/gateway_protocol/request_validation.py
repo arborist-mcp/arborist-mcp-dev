@@ -161,6 +161,14 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 )
                 self.assertEqual(tool["inputSchema"]["additionalProperties"], False)
                 self.assertEqual(tool["outputSchema"]["required"], ["result"])
+                expected_result_schema = gateway_module.TOOL_RESULT_SCHEMAS.get(
+                    tool_name,
+                    gateway_module.OBJECT_RESULT_SCHEMA,
+                )
+                self.assertEqual(
+                    tool["outputSchema"]["properties"]["result"],
+                    expected_result_schema,
+                )
 
     def test_readme_tool_counts_match_generated_catalog(self) -> None:
         readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text(

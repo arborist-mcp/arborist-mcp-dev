@@ -117,7 +117,12 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(skeleton["metadata"]["category"], "read")
         self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])
         self.assertEqual(skeleton["outputSchema"]["required"], ["result"])
+        self.assertEqual(skeleton["outputSchema"]["properties"]["result"]["type"], "object")
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
+        list_indexes = by_name["arborist/list_symbol_indexes"]
+        self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
+        unregister = by_name["arborist/unregister_symbol_index"]
+        self.assertEqual(unregister["outputSchema"]["properties"]["result"]["type"], "boolean")
         patch = by_name["arborist/patch_ast_node"]
         self.assertEqual(patch["metadata"]["category"], "write")
         self.assertTrue(patch["annotations"]["destructiveHint"])
@@ -728,6 +733,21 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("failed to read request file", stderr.getvalue())
         self.assertIn("dummy.json", stderr.getvalue())
+
+    def test_dump_tool_catalog_prints_generated_catalog(self) -> None:
+        with mock.patch("builtins.print") as mock_print:
+            exit_code = gateway_module.main(["--dump-tool-catalog"])
+
+        self.assertEqual(exit_code, 0)
+        mock_print.assert_called_once()
+        payload = gateway_module.json.loads(mock_print.call_args.args[0])
+        self.assertEqual(len(payload), len(gateway_module.TOOL_NAMES))
+        by_name = {tool["name"]: tool for tool in payload}
+        self.assertIn("arborist/get_semantic_skeleton", by_name)
+        self.assertEqual(
+            by_name["arborist/list_symbol_indexes"]["outputSchema"]["properties"]["result"]["type"],
+            "array",
+        )
 
     def test_stdio_broken_pipe_exits_cleanly(self) -> None:
         class StubGateway:
