@@ -374,6 +374,7 @@ TOOL_PARAM_NAMES = {
 }
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_INITIALIZE_PARAM_NAMES = ("protocolVersion", "capabilities", "clientInfo", "_meta")
+MCP_INITIALIZED_PARAM_NAMES = ("_meta",)
 MCP_TOOL_LIST_PARAM_NAMES = ("cursor", "_meta")
 MCP_TOOL_CALL_PARAM_NAMES = ("name", "arguments", "_meta")
 MCP_INITIALIZE_MARKERS = frozenset(("protocolVersion", "capabilities", "clientInfo"))
@@ -625,6 +626,7 @@ def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
         "title": _tool_title(tool_name),
         "description": _tool_description(tool_name, category),
         "inputSchema": build_tool_input_schema(tool_name),
+        "outputSchema": build_tool_output_schema(),
         "annotations": {
             "readOnlyHint": category in READ_ONLY_CATEGORIES
             or tool_name in NON_MUTATING_STATE_TOOLS,
@@ -637,6 +639,19 @@ def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
         },
     }
     return tool
+
+
+def build_tool_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "result": {
+                "description": "Raw Arborist JSON result for this tool.",
+            },
+        },
+        "required": ["result"],
+        "additionalProperties": False,
+    }
 
 
 def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
@@ -740,6 +755,8 @@ class ArboristGateway:
         try:
             if method == "initialize":
                 result = self._initialize(params)
+            elif method == "notifications/initialized":
+                result = self._initialized(params)
             elif method == "tools/list":
                 result = self._tools_list(params)
             elif method == "tools/call":
@@ -795,7 +812,7 @@ class ArboristGateway:
             }
 
         self._reject_unexpected_params(params, MCP_INITIALIZE_PARAM_NAMES)
-        protocol_version = self._optional_string(
+        self._optional_string(
             params,
             "protocolVersion",
             default=MCP_PROTOCOL_VERSION,
@@ -808,7 +825,7 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "invalid params: clientInfo must be an object")
 
         return {
-            "protocolVersion": protocol_version,
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {
                 "tools": {
                     "listChanged": False,
@@ -821,6 +838,10 @@ class ArboristGateway:
             ),
             "supportedLanguages": self._require_core().supported_languages(),
         }
+
+    def _initialized(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._reject_unexpected_params(params, MCP_INITIALIZED_PARAM_NAMES)
+        return {}
 
     def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         self._reject_unexpected_params(params, MCP_TOOL_LIST_PARAM_NAMES)

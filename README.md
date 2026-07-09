@@ -305,8 +305,9 @@ python -m arborist_mcp.gateway --version
 ## Standard MCP server
 
 The gateway speaks standard MCP over stdio while preserving the older direct
-`arborist/*` JSON-RPC methods. MCP clients should call `initialize`, then
-`tools/list`, then `tools/call`.
+`arborist/*` JSON-RPC methods. MCP clients should call `initialize`, may send
+the standard `notifications/initialized` notification, then call `tools/list`
+and `tools/call`.
 
 Minimal Claude Desktop / Cursor-style server configuration:
 
@@ -344,8 +345,8 @@ Minimal MCP messages:
 ```
 
 `tools/list` is generated from the gateway's tool catalog and is the source of
-truth for tool names, JSON input schemas, defaults, and categories. It currently
-returns 49 tools:
+truth for tool names, JSON input schemas, output schemas, defaults, and
+categories. It currently returns 49 tools:
 
 - Read tools: 24, including semantic skeletons, raw Tree-sitter queries, symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.

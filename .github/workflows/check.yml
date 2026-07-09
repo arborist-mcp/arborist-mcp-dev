@@ -89,3 +89,18 @@ jobs:
 
       - name: Check gateway CLI help
         run: python -m arborist_mcp.gateway --help
+
+      - name: Check MCP tools/list
+        shell: bash
+        run: |
+          response="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m arborist_mcp.gateway)"
+          python - "$response" <<'PY'
+          import json
+          import sys
+
+          response = json.loads(sys.argv[1])
+          assert "error" not in response, response
+          names = {tool["name"] for tool in response["result"]["tools"]}
+          assert "arborist/get_semantic_skeleton" in names, names
+          assert len(names) >= 49, len(names)
+          PY

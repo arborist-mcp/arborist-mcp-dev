@@ -66,6 +66,41 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
         self.assertEqual(result["supportedLanguages"], ["python", "c"])
 
+    def test_mcp_initialize_returns_supported_protocol_version(self) -> None:
+        class StubCore:
+            def supported_languages(self) -> list[str]:
+                return ["python", "c"]
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(StubCore()),
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "unit-test"},
+                },
+                request_id=111,
+            ),
+            request_id=111,
+        )
+
+        assert isinstance(result, dict)
+        self.assertEqual(result["protocolVersion"], gateway_module.MCP_PROTOCOL_VERSION)
+
+    def test_mcp_initialized_notification_is_noop(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "notifications/initialized",
+                {},
+                request_id=112,
+            ),
+            request_id=112,
+        )
+
+        self.assertEqual(result, {})
+
     def test_tools_list_returns_complete_tool_schemas(self) -> None:
         result = self.assert_jsonrpc_ok(
             self.call_gateway(self.make_gateway(), "tools/list", {}, request_id=102),
@@ -81,6 +116,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         skeleton = by_name["arborist/get_semantic_skeleton"]
         self.assertEqual(skeleton["metadata"]["category"], "read")
         self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])
+        self.assertEqual(skeleton["outputSchema"]["required"], ["result"])
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
         patch = by_name["arborist/patch_ast_node"]
         self.assertEqual(patch["metadata"]["category"], "write")

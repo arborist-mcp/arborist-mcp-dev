@@ -4,6 +4,7 @@ import importlib
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from unittest import mock
@@ -123,6 +124,69 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             set(gateway_module.TOOL_HANDLERS),
             set(gateway_module.TOOL_PARAM_NAMES),
         )
+
+    def test_advertised_tool_params_have_schema_specs(self) -> None:
+        expected_params = {
+            param_name
+            for param_names in gateway_module.TOOL_PARAM_NAMES.values()
+            for param_name in param_names
+        }
+
+        self.assertEqual(expected_params, set(gateway_module.TOOL_PARAM_SCHEMAS))
+
+    def test_generated_tool_catalog_matches_gateway_specs(self) -> None:
+        catalog = gateway_module.build_tool_catalog()
+
+        self.assertEqual(len(catalog), len(gateway_module.TOOL_NAMES))
+        for tool in catalog:
+            with self.subTest(tool=tool["name"]):
+                tool_name = tool["name"]
+                self.assertIn(tool_name, gateway_module.TOOL_HANDLERS)
+                self.assertEqual(
+                    tool["metadata"]["category"],
+                    gateway_module.TOOL_CATEGORIES[tool_name],
+                )
+                self.assertEqual(tool["metadata"]["legacyMethod"], tool_name)
+                self.assertEqual(
+                    tool["metadata"]["mutatesState"],
+                    tool_name in gateway_module.MUTATING_TOOLS,
+                )
+                self.assertEqual(
+                    set(tool["inputSchema"]["properties"]),
+                    set(gateway_module.TOOL_PARAM_NAMES[tool_name]),
+                )
+                self.assertEqual(
+                    tool["inputSchema"]["required"],
+                    list(gateway_module.required_tool_params(tool_name)),
+                )
+                self.assertEqual(tool["inputSchema"]["additionalProperties"], False)
+                self.assertEqual(tool["outputSchema"]["required"], ["result"])
+
+    def test_readme_tool_counts_match_generated_catalog(self) -> None:
+        readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text(
+            encoding="utf-8"
+        )
+
+        total_match = re.search(r"returns (\d+) tools", readme)
+        self.assertIsNotNone(total_match)
+        assert total_match is not None
+        self.assertEqual(int(total_match.group(1)), len(gateway_module.TOOL_NAMES))
+
+        expected_counts = {
+            "Read": 0,
+            "Write": 0,
+            "VFS": 0,
+            "Index": 0,
+            "Trace": 0,
+        }
+        for category in gateway_module.TOOL_CATEGORIES.values():
+            expected_counts[category.upper() if category == "vfs" else category.title()] += 1
+
+        for label, expected_count in expected_counts.items():
+            count_match = re.search(rf"{label} tools: (\d+)", readme)
+            self.assertIsNotNone(count_match, msg=f"README missing {label} tool count")
+            assert count_match is not None
+            self.assertEqual(int(count_match.group(1)), expected_count)
 
     def test_gateway_suite_metadata_covers_all_advertised_tools(self) -> None:
         suite_manifest = MANIFEST["suites"]
