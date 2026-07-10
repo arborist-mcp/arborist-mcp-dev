@@ -1022,7 +1022,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1107,7 +1107,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1205,7 +1205,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -1307,7 +1307,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -1361,7 +1361,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1448,7 +1448,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -1513,7 +1513,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1611,7 +1611,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -1688,7 +1688,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1798,7 +1798,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -1875,7 +1875,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path": {
@@ -1985,7 +1985,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -2040,7 +2040,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2111,7 +2111,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2205,7 +2205,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2299,7 +2299,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2375,7 +2375,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2453,7 +2453,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2554,7 +2554,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2655,7 +2655,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         },
         "file_path_contains": {
@@ -2853,7 +2853,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -2954,7 +2954,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3051,7 +3051,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3164,7 +3164,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3261,7 +3261,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3374,7 +3374,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3471,7 +3471,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },
@@ -3584,7 +3584,7 @@
         },
         "index_db_path": {
           "type": "string",
-          "description": "Optional persisted symbol-index database path. Do not combine with source.",
+          "description": "Optional persisted symbol-index database path.",
           "minLength": 1
         }
       },

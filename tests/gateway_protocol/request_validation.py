@@ -123,6 +123,26 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             with self.subTest(handler_name=handler_name):
                 self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
 
+    def test_tool_specs_are_the_catalog_source_of_truth(self) -> None:
+        specs = gateway_module.TOOL_SPECS
+        self.assertEqual(len({spec.name for spec in specs}), len(specs))
+        self.assertEqual(gateway_module.TOOL_NAMES, tuple(spec.name for spec in specs))
+        self.assertEqual(
+            gateway_module.TOOL_HANDLERS,
+            {spec.name: spec.handler for spec in specs},
+        )
+        self.assertEqual(
+            gateway_module.TOOL_PARAM_NAMES,
+            {spec.name: spec.params for spec in specs},
+        )
+        self.assertEqual(
+            gateway_module.TOOL_CATEGORIES,
+            {spec.name: spec.category for spec in specs},
+        )
+        self.assertTrue(
+            {spec.category for spec in specs} <= {"read", "write", "vfs", "index", "trace"}
+        )
+
     def test_advertised_tools_have_param_specs(self) -> None:
         self.assertEqual(
             set(gateway_module.TOOL_HANDLERS),
@@ -2692,4 +2712,3 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["id"], 95)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
-
