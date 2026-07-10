@@ -141,6 +141,22 @@ python scripts\gateway_smoke.py
 python scripts\gateway_smoke.py --require-core
 ```
 
+## Lightweight Benchmarks
+
+Use the benchmark helper after building the native extension with
+`maturin develop --locked`. It generates a small Python workspace and measures
+the core index and lookup workflows through the same gateway path used by MCP:
+
+```powershell
+python scripts\benchmark_core.py --iterations 10 --warmup 2 --modules 50
+python scripts\benchmark_core.py --iterations 10 --json
+```
+
+The benchmark currently covers `rebuild_symbol_index`,
+`refresh_symbol_index_for_file`, `trace_symbol_graph`, and `search_symbols`.
+It is intended for local regression checks and comparative profiling rather
+than CI pass/fail gating.
+
 ## Build And Release Artifacts
 
 The current consumable artifact is a Python package with a PyO3 native
