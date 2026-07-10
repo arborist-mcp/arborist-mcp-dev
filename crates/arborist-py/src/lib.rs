@@ -69,7 +69,7 @@ use arborist_core::{
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 #[pyclass(unsendable)]
@@ -112,7 +112,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, query, source=None, max_captures=10_000))]
@@ -133,7 +133,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
@@ -171,7 +171,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
@@ -211,7 +211,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
@@ -240,7 +240,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
@@ -271,7 +271,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn patch_virtual_ast_node_json(
@@ -292,7 +292,7 @@ impl ArboristCore {
             )
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, row, column, new_code, bypass_reason=None))]
@@ -316,7 +316,7 @@ impl ArboristCore {
             )
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
@@ -361,7 +361,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -421,7 +421,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None, file_path=None, source=None))]
@@ -461,7 +461,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, source=None, index_db_path=None))]
@@ -501,7 +501,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
@@ -546,7 +546,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None))]
@@ -595,7 +595,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None))]
@@ -644,7 +644,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -703,7 +703,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -763,7 +763,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -825,7 +825,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -885,7 +885,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -947,7 +947,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1004,7 +1004,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1063,7 +1063,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1141,7 +1141,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1219,7 +1219,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1271,7 +1271,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1325,7 +1325,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1398,7 +1398,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1471,7 +1471,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn replay_patch_evidence_against_trace_json(
@@ -1482,7 +1482,7 @@ impl ArboristCore {
         let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
         let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
         let result = replay_patch_evidence_against_trace(&patch, &trace).map_err(to_py_error)?;
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn validate_patch_commit_with_trace_json(
@@ -1493,7 +1493,7 @@ impl ArboristCore {
         let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
         let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
         let result = validate_patch_commit_with_trace(&patch, &trace).map_err(to_py_error)?;
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
@@ -1554,7 +1554,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
@@ -1621,7 +1621,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1691,7 +1691,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1768,7 +1768,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1843,7 +1843,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1920,7 +1920,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1992,7 +1992,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -2069,7 +2069,7 @@ impl ArboristCore {
         }
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, db_path, max_files=20_000))]
@@ -2086,13 +2086,13 @@ impl ArboristCore {
         )
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn inspect_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
         let result = inspect_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000))]
@@ -2111,7 +2111,7 @@ impl ArboristCore {
         )
         .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn register_symbol_index_json(&self, workspace_root: &str, db_path: &str) -> PyResult<String> {
@@ -2121,7 +2121,7 @@ impl ArboristCore {
             .register_symbol_index(Path::new(workspace_root), Path::new(db_path))
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn unregister_symbol_index_json(&self, workspace_root: &str) -> PyResult<bool> {
@@ -2137,7 +2137,7 @@ impl ArboristCore {
             .borrow()
             .registered_symbol_indexes_checked()
             .map_err(to_py_error)?;
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn open_virtual_file_json(&self, file_path: &str, source: Option<String>) -> PyResult<String> {
@@ -2147,7 +2147,7 @@ impl ArboristCore {
             .open_file(Path::new(file_path), source.as_deref())
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn read_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
@@ -2157,7 +2157,7 @@ impl ArboristCore {
             .read_file(Path::new(file_path))
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn list_virtual_files_json(&self, dirty_only: bool) -> PyResult<String> {
@@ -2166,7 +2166,7 @@ impl ArboristCore {
             .borrow_mut()
             .virtual_file_statuses(dirty_only)
             .map_err(to_py_error)?;
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn apply_buffer_edit_json(
@@ -2182,7 +2182,7 @@ impl ArboristCore {
             .apply_edit(Path::new(file_path), start_byte, old_end_byte, new_text)
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn apply_position_edits_json(&self, file_path: &str, edits_json: &str) -> PyResult<String> {
@@ -2193,7 +2193,7 @@ impl ArboristCore {
             .apply_position_edits(Path::new(file_path), &edits)
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn commit_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
@@ -2203,7 +2203,7 @@ impl ArboristCore {
             .commit_file(Path::new(file_path))
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     fn discard_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
@@ -2213,7 +2213,7 @@ impl ArboristCore {
             .discard_file(Path::new(file_path))
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 
     #[pyo3(signature = (file_path, persist=false))]
@@ -2224,7 +2224,7 @@ impl ArboristCore {
             .close_file(Path::new(file_path), persist)
             .map_err(to_py_error)?;
 
-        serde_json::to_string(&result).map_err(to_runtime_error)
+        to_json_result(&result)
     }
 }
 
@@ -2234,6 +2234,10 @@ fn to_py_error(error: anyhow::Error) -> PyErr {
 
 fn to_runtime_error(error: serde_json::Error) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
+}
+
+fn to_json_result<T: Serialize>(result: &T) -> PyResult<String> {
+    serde_json::to_string(result).map_err(to_runtime_error)
 }
 
 fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
