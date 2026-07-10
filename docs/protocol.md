@@ -2,7 +2,8 @@
 
 Arborist exposes two compatible stdio protocols:
 
-- Standard MCP methods: `initialize`, `tools/list`, and `tools/call`.
+- Standard MCP methods: `initialize`, `tools/list`, `tools/call`,
+  `resources/list`, and `resources/read`.
 - Legacy direct JSON-RPC methods named `arborist/*`.
 
 The gateway accepts one JSON document per line on stdin and writes one JSON-RPC
@@ -11,7 +12,8 @@ response per line on stdout.
 ## Standard MCP
 
 MCP clients should call `initialize`, may send
-`notifications/initialized`, then call `tools/list` and `tools/call`.
+`notifications/initialized`, then call `tools/list` / `tools/call` and optional
+resource methods.
 
 Minimal Claude Desktop / Cursor-style server configuration:
 
@@ -46,6 +48,7 @@ Minimal MCP messages:
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"example-client","version":"0.1.0"}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"arborist/get_semantic_skeleton","arguments":{"file_path":"tests/fixtures/sample.py","depth_limit":2}}}
+{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"arborist://tool-catalog"}}
 ```
 
 Successful `tools/call` responses return the raw Arborist result as JSON text in
@@ -60,6 +63,13 @@ runtime errors are returned as MCP tool results with `isError: true`.
 truth for tool names, JSON input schemas, output schemas, defaults, and
 categories. The generated snapshot is checked in at
 [`docs/tool-catalog.json`](tool-catalog.json).
+
+The same generated catalog is also exposed as a read-only MCP resource:
+
+```json
+{"jsonrpc":"2.0","id":5,"method":"resources/list","params":{}}
+{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"arborist://tool-catalog"}}
+```
 
 For debugging or documentation generation:
 

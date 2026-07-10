@@ -39,6 +39,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             result["capabilities"]["tools"],
             list(gateway_module.TOOL_NAMES),
         )
+        self.assertEqual(
+            result["capabilities"]["resources"],
+            gateway_module.build_resource_catalog(),
+        )
 
     def test_mcp_initialize_reports_standard_capabilities(self) -> None:
         class StubCore:
@@ -63,7 +67,13 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(result["protocolVersion"], gateway_module.MCP_PROTOCOL_VERSION)
         self.assertEqual(result["serverInfo"]["name"], "arborist-mcp")
         self.assertEqual(result["serverInfo"]["version"], gateway_module.__version__)
-        self.assertEqual(result["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(
+            result["capabilities"],
+            {
+                "tools": {"listChanged": False},
+                "resources": {"subscribe": False, "listChanged": False},
+            },
+        )
         self.assertEqual(result["supportedLanguages"], ["python", "c"])
 
     def test_mcp_initialize_returns_supported_protocol_version(self) -> None:
@@ -147,6 +157,44 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(query_items["properties"]["start_point"]["properties"]["row"]["type"], "integer")
         self.assertEqual(
             query_items["properties"]["owner_symbol_id"]["anyOf"][1]["type"], "null"
+        )
+
+    def test_resources_list_exposes_tool_catalog(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(self.make_gateway(), "resources/list", {}, request_id=57),
+            request_id=57,
+        )
+
+        self.assertEqual(result, {"resources": gateway_module.build_resource_catalog()})
+
+    def test_resources_read_returns_tool_catalog_snapshot(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "resources/read",
+                {"uri": gateway_module.TOOL_CATALOG_RESOURCE_URI},
+                request_id=58,
+            ),
+            request_id=58,
+        )
+
+        contents = result["contents"]
+        self.assertEqual(len(contents), 1)
+        self.assertEqual(contents[0]["uri"], gateway_module.TOOL_CATALOG_RESOURCE_URI)
+        self.assertEqual(contents[0]["mimeType"], "application/json")
+        catalog = gateway_module.json.loads(contents[0]["text"])
+        self.assertEqual(catalog, gateway_module.build_tool_catalog())
+
+    def test_resources_read_rejects_unknown_resource(self) -> None:
+        response = self.call_gateway(
+            self.make_gateway(),
+            "resources/read",
+            {"uri": "arborist://missing"},
+            request_id=59,
+        )
+
+        self.assert_jsonrpc_error(
+            response, request_id=59, code=-32602, contains="unknown resource"
         )
 
     def test_tools_call_invokes_read_tool(self) -> None:

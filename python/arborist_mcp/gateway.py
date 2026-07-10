@@ -89,6 +89,10 @@ MCP_INITIALIZE_PARAM_NAMES = ("protocolVersion", "capabilities", "clientInfo", "
 MCP_INITIALIZED_PARAM_NAMES = ("_meta",)
 MCP_TOOL_LIST_PARAM_NAMES = ("cursor", "_meta")
 MCP_TOOL_CALL_PARAM_NAMES = ("name", "arguments", "_meta")
+MCP_RESOURCE_LIST_PARAM_NAMES = ("cursor", "_meta")
+MCP_RESOURCE_READ_PARAM_NAMES = ("uri", "_meta")
+TOOL_CATALOG_RESOURCE_URI = "arborist://tool-catalog"
+TOOL_CATALOG_RESOURCE_MIME_TYPE = "application/json"
 MCP_INITIALIZE_MARKERS = frozenset(("protocolVersion", "capabilities", "clientInfo"))
 OPTIONAL_TOOL_PARAMS = frozenset(
     (
@@ -489,6 +493,17 @@ def build_tool_catalog() -> list[dict[str, Any]]:
     return [build_tool_descriptor(tool_name) for tool_name in TOOL_NAMES]
 
 
+def build_resource_catalog() -> list[dict[str, Any]]:
+    return [
+        {
+            "uri": TOOL_CATALOG_RESOURCE_URI,
+            "name": "Arborist tool catalog",
+            "description": "Generated MCP tools/list snapshot for this Arborist gateway.",
+            "mimeType": TOOL_CATALOG_RESOURCE_MIME_TYPE,
+        }
+    ]
+
+
 def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
     category = TOOL_CATEGORIES[tool_name]
     tool: dict[str, Any] = {
@@ -645,6 +660,10 @@ class ArboristGateway:
                 result = self._tools_list(params)
             elif method == "tools/call":
                 result = self._tools_call(params)
+            elif method == "resources/list":
+                result = self._resources_list(params)
+            elif method == "resources/read":
+                result = self._resources_read(params)
             elif method in TOOL_HANDLERS:
                 self._reject_unexpected_params(params, TOOL_PARAM_NAMES[method])
                 handler = getattr(self, TOOL_HANDLERS[method])
@@ -691,7 +710,10 @@ class ArboristGateway:
             self._reject_unexpected_params(params, ())
             return {
                 "serverInfo": self._server_info(),
-                "capabilities": {"tools": list(TOOL_NAMES)},
+                "capabilities": {
+                    "tools": list(TOOL_NAMES),
+                    "resources": build_resource_catalog(),
+                },
                 "supportedLanguages": self._require_core().supported_languages(),
             }
 
@@ -714,6 +736,10 @@ class ArboristGateway:
                 "tools": {
                     "listChanged": False,
                 },
+                "resources": {
+                    "subscribe": False,
+                    "listChanged": False,
+                },
             },
             "serverInfo": self._server_info(),
             "instructions": (
@@ -733,6 +759,30 @@ class ArboristGateway:
         if cursor is not None and not isinstance(cursor, str):
             raise JsonRpcError(-32602, "invalid params: cursor must be a string")
         return {"tools": build_tool_catalog()}
+
+    def _resources_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._reject_unexpected_params(params, MCP_RESOURCE_LIST_PARAM_NAMES)
+        cursor = params.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            raise JsonRpcError(-32602, "invalid params: cursor must be a string")
+        return {"resources": build_resource_catalog()}
+
+    def _resources_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        self._reject_unexpected_params(params, MCP_RESOURCE_READ_PARAM_NAMES)
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri.strip():
+            raise JsonRpcError(-32602, "missing required string param: uri")
+        if uri != TOOL_CATALOG_RESOURCE_URI:
+            raise JsonRpcError(-32602, f"unknown resource: {uri}")
+        return {
+            "contents": [
+                {
+                    "uri": TOOL_CATALOG_RESOURCE_URI,
+                    "mimeType": TOOL_CATALOG_RESOURCE_MIME_TYPE,
+                    "text": json.dumps(build_tool_catalog(), ensure_ascii=False, indent=2),
+                }
+            ]
+        }
 
     def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
         self._reject_unexpected_params(params, MCP_TOOL_CALL_PARAM_NAMES)

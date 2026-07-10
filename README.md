@@ -182,6 +182,8 @@ for response shapes, error behavior, and examples.
   read/trace/list/search overlays when `index_db_path` is supplied.
 - Patch preview tools that return validation plus unified diff without writing
   to disk.
+- MCP resources expose the generated tool catalog snapshot for clients that
+  prefer resource reads over `tools/list`.
 - Semantic patching with structured binding decisions, commit gates, bypass
   auditing, and trace-backed replay validation.
 - Session-scoped VFS with open/change/close, virtual patching, commit/discard,
