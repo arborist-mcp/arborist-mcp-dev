@@ -410,6 +410,53 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         )
         self.assertIn("expected object item", response["error"]["message"])
 
+    def test_execute_tree_query_passes_capture_limit_to_core(self) -> None:
+        class StubCore:
+            def __init__(self) -> None:
+                self.args: tuple[object, ...] | None = None
+
+            def execute_tree_query_json(self, *args: object) -> str:
+                self.args = args
+                return "[]"
+
+        core = StubCore()
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "arborist/execute_tree_query",
+                {
+                    "file_path": "sample.py",
+                    "query": "(module) @module",
+                    "max_captures": 7,
+                },
+                request_id=55,
+            ),
+            request_id=55,
+        )
+
+        self.assertEqual(result, [])
+        self.assertEqual(core.args, ("sample.py", "(module) @module", None, 7))
+
+    def test_execute_tree_query_rejects_zero_capture_limit(self) -> None:
+        class StubCore:
+            def execute_tree_query_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/execute_tree_query",
+            {
+                "file_path": "sample.py",
+                "query": "(module) @module",
+                "max_captures": 0,
+            },
+            request_id=56,
+        )
+
+        self.assert_jsonrpc_error(
+            response, request_id=56, code=-32602, contains="max_captures"
+        )
+
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         result = self.assert_jsonrpc_ok(
             self.call_gateway(

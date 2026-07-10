@@ -11,10 +11,20 @@ use crate::model::LanguageId;
 use crate::model::QueryCaptureResult;
 use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_path, semantic_path};
 
+pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
+
 pub fn execute_tree_query_from_path(path: &Path, query: &str) -> Result<Vec<QueryCaptureResult>> {
+    execute_tree_query_from_path_with_limit(path, query, DEFAULT_TREE_QUERY_MAX_CAPTURES)
+}
+
+pub fn execute_tree_query_from_path_with_limit(
+    path: &Path,
+    query: &str,
+    max_captures: usize,
+) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     let source = read_source(&path)?;
-    execute_tree_query(&path, &source, query)
+    execute_tree_query_with_limit(&path, &source, query, max_captures)
 }
 
 pub fn execute_tree_query(
@@ -22,8 +32,18 @@ pub fn execute_tree_query(
     source: &str,
     query: &str,
 ) -> Result<Vec<QueryCaptureResult>> {
+    execute_tree_query_with_limit(path, source, query, DEFAULT_TREE_QUERY_MAX_CAPTURES)
+}
+
+pub fn execute_tree_query_with_limit(
+    path: &Path,
+    source: &str,
+    query: &str,
+    max_captures: usize,
+) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     validate_tree_query(query)?;
+    validate_max_captures(max_captures)?;
     let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
@@ -35,6 +55,13 @@ pub fn execute_tree_query(
 
     let mut query_captures = cursor.captures(&compiled, root, source.as_bytes());
     while let Some((query_match, capture_index)) = query_captures.next() {
+        if captures.len() >= max_captures {
+            bail!(
+                "Tree-sitter query capture limit exceeded for {}: max_captures={}",
+                normalize_path(&path),
+                max_captures
+            );
+        }
         let capture = query_match.captures[*capture_index];
         let node = capture.node;
         let (owner_symbol_id, owner_semantic_path, owner_scope_path) =
@@ -63,6 +90,14 @@ pub fn execute_tree_query(
 fn validate_tree_query(query: &str) -> Result<()> {
     if query.trim().is_empty() {
         bail!("invalid Tree-sitter query: query must not be blank");
+    }
+
+    Ok(())
+}
+
+fn validate_max_captures(max_captures: usize) -> Result<()> {
+    if max_captures == 0 {
+        bail!("invalid Tree-sitter query max_captures: value must be greater than zero");
     }
 
     Ok(())

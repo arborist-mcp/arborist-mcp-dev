@@ -39,7 +39,9 @@ optional `return_type`, and optional `signature` / `docstring`.
 
 `execute_tree_query` runs raw Tree-sitter queries and returns optional
 `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a
-capture belongs to a semantic symbol.
+capture belongs to a semantic symbol. Results are bounded by `max_captures`
+(default `10000`) so broad arbitrary queries fail closed instead of returning
+unbounded capture sets.
 
 `read_symbol` and `read_symbol_at_position` bridge discovery and action by
 returning structured symbol metadata plus the exact source snippet and start/end

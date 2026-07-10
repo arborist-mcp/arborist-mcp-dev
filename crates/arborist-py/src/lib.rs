@@ -3,8 +3,8 @@ use std::path::Path;
 
 use arborist_core::{
     PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
-    VirtualFileSystem, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, inspect_symbol_index,
+    VirtualFileSystem, execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
+    get_semantic_skeleton, get_semantic_skeleton_from_path, inspect_symbol_index,
     list_symbols_context_from_index_filtered, list_symbols_context_from_index_with_source_filtered,
     list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
     list_symbols_discovery_context_from_index_with_source_filtered,
@@ -114,16 +114,21 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    #[pyo3(signature = (file_path, query, source=None))]
+    #[pyo3(signature = (file_path, query, source=None, max_captures=10_000))]
     fn execute_tree_query_json(
         &self,
         file_path: &str,
         query: &str,
         source: Option<String>,
+        max_captures: usize,
     ) -> PyResult<String> {
         let result = match source {
-            Some(source) => execute_tree_query(Path::new(file_path), &source, query),
-            None => execute_tree_query_from_path(Path::new(file_path), query),
+            Some(source) => {
+                execute_tree_query_with_limit(Path::new(file_path), &source, query, max_captures)
+            }
+            None => {
+                execute_tree_query_from_path_with_limit(Path::new(file_path), query, max_captures)
+            }
         }
         .map_err(to_py_error)?;
 

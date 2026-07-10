@@ -36,7 +36,10 @@ pub use patching::{
     patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
     preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
 };
-pub use query::{execute_tree_query, execute_tree_query_from_path};
+pub use query::{
+    DEFAULT_TREE_QUERY_MAX_CAPTURES, execute_tree_query, execute_tree_query_from_path,
+    execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
+};
 pub use symbols::{
     inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_filtered,
     list_symbols_context_from_index, list_symbols_context_from_index_filtered,
@@ -2346,16 +2349,17 @@ mod tests {
 
     use super::{
         Position, TraceDirection, VirtualFileSystem, execute_tree_query,
-        execute_tree_query_from_path, get_semantic_skeleton, get_semantic_skeleton_from_path,
-        inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_from_index,
-        list_symbols_discovery_context, list_symbols_discovery_context_from_index,
-        list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-        list_symbols_from_index_with_source_filtered, list_symbols_neighborhood_context,
-        list_symbols_neighborhood_context_from_index, patch_ast_node, patch_ast_node_at_position,
-        patch_ast_node_from_path, preview_patch_ast_node_from_path, read_symbol,
-        read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
-        read_symbol_context_from_index, read_symbol_context_from_index_with_source,
-        read_symbol_discovery_context, read_symbol_discovery_context_at_position,
+        execute_tree_query_from_path, execute_tree_query_with_limit, get_semantic_skeleton,
+        get_semantic_skeleton_from_path, inspect_symbol_index, list_symbols, list_symbols_context,
+        list_symbols_context_from_index, list_symbols_discovery_context,
+        list_symbols_discovery_context_from_index, list_symbols_filtered, list_symbols_from_index,
+        list_symbols_from_index_filtered, list_symbols_from_index_with_source_filtered,
+        list_symbols_neighborhood_context, list_symbols_neighborhood_context_from_index,
+        patch_ast_node, patch_ast_node_at_position, patch_ast_node_from_path,
+        preview_patch_ast_node_from_path, read_symbol, read_symbol_at_position,
+        read_symbol_at_position_from_index, read_symbol_context, read_symbol_context_from_index,
+        read_symbol_context_from_index_with_source, read_symbol_discovery_context,
+        read_symbol_discovery_context_at_position,
         read_symbol_discovery_context_at_position_from_index,
         read_symbol_discovery_context_at_position_with_source,
         read_symbol_discovery_context_from_index, read_symbol_from_index,
@@ -5277,6 +5281,18 @@ int helper(int value) {
 
         assert!(error.to_string().contains("query"));
         assert!(error.to_string().contains("blank"));
+    }
+
+    #[test]
+    fn execute_tree_query_rejects_capture_limit_overflow() {
+        let source = "def add(left, right):\n    total = left + right\n    return total\n";
+        let query = "(identifier) @name";
+
+        let error = execute_tree_query_with_limit(Path::new("sample.py"), source, query, 2)
+            .expect_err("queries should fail once max_captures is exceeded");
+
+        assert!(error.to_string().contains("capture limit exceeded"));
+        assert!(error.to_string().contains("max_captures=2"));
     }
 
     #[test]

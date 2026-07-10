@@ -71,7 +71,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
     ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
     ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source"), "read", "object_array"),
+    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "object_array"),
 )
 TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
 TOOL_HANDLERS = {spec.name: spec.handler for spec in TOOL_SPECS}
@@ -257,6 +257,12 @@ TOOL_PARAM_SCHEMAS = {
         default=64,
         minimum=1,
     ),
+    "max_captures": _schema(
+        "integer",
+        "Maximum Tree-sitter query captures to return. Must be greater than zero.",
+        default=10000,
+        minimum=1,
+    ),
     "new_code": _schema("string", "Replacement source code for the selected AST node."),
     "new_text": _schema(
         "string",
@@ -302,6 +308,7 @@ TOOL_PARAM_DEFAULTS = {
     },
     "max_depth": 2,
     "max_nodes": 64,
+    "max_captures": 10000,
     "persist": False,
     "workspace_root": ".",
 }
@@ -754,7 +761,12 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         query = self._require_string(params, "query")
         source = self._optional_string(params, "source", allow_empty=True)
-        payload = self._require_core().execute_tree_query_json(file_path, query, source)
+        max_captures = self._optional_int(params, "max_captures", default=10000)
+        if max_captures == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_captures")
+        payload = self._require_core().execute_tree_query_json(
+            file_path, query, source, max_captures
+        )
         return self._decode_core_object_array(payload)
 
     def _preview_patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:

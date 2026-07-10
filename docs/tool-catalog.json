@@ -4073,11 +4073,18 @@
         "source": {
           "type": "string",
           "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "max_captures": {
+          "type": "integer",
+          "description": "Maximum Tree-sitter query captures to return. Must be greater than zero.",
+          "default": 10000,
+          "minimum": 1
         }
       },
       "required": [
         "file_path",
-        "query"
+        "query",
+        "max_captures"
       ],
       "additionalProperties": false
     },
