@@ -9,6 +9,7 @@ mod source_overlay;
 mod symbol_dependency;
 mod symbol_extractor;
 mod symbol_index_model;
+mod symbol_position;
 mod symbol_query;
 mod symbol_search;
 mod symbol_summary;
