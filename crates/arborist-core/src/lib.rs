@@ -9,6 +9,7 @@ mod source_overlay;
 mod symbol_query;
 mod symbols;
 mod vfs;
+mod workspace_scan;
 
 pub use model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,
@@ -45,13 +46,13 @@ pub use query::{
 };
 pub use symbol_query::SymbolQueryContext;
 pub use symbols::{
-    WorkspaceScanLimits, inspect_symbol_index, list_symbols, list_symbols_context,
-    list_symbols_context_filtered, list_symbols_context_from_index,
-    list_symbols_context_from_index_filtered, list_symbols_discovery_context,
-    list_symbols_discovery_context_filtered, list_symbols_discovery_context_from_index,
-    list_symbols_discovery_context_from_index_filtered, list_symbols_filtered,
-    list_symbols_from_index, list_symbols_from_index_filtered, list_symbols_neighborhood_context,
-    list_symbols_neighborhood_context_filtered, list_symbols_neighborhood_context_from_index,
+    inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_filtered,
+    list_symbols_context_from_index, list_symbols_context_from_index_filtered,
+    list_symbols_discovery_context, list_symbols_discovery_context_filtered,
+    list_symbols_discovery_context_from_index, list_symbols_discovery_context_from_index_filtered,
+    list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
+    list_symbols_neighborhood_context, list_symbols_neighborhood_context_filtered,
+    list_symbols_neighborhood_context_from_index,
     list_symbols_neighborhood_context_from_index_filtered, read_symbol, read_symbol_at_position,
     read_symbol_at_position_from_index, read_symbol_context, read_symbol_context_at_position,
     read_symbol_context_at_position_from_index, read_symbol_context_from_index,
@@ -77,6 +78,7 @@ pub use symbols::{
     trace_symbol_neighborhood_from_index,
 };
 pub use vfs::VirtualFileSystem;
+pub use workspace_scan::{DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanLimits};
 
 #[cfg(test)]
 mod tests;
