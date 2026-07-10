@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
-use crate::language::detect_language;
+use crate::language::{detect_language, path_is_inside_workspace};
 
 const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
     ".git",
@@ -45,7 +45,7 @@ pub(crate) fn collect_source_files_with_limits(
 ) -> Result<Vec<PathBuf>> {
     validate_workspace_scan_limits(limits)?;
     let mut files = Vec::new();
-    walk_workspace(workspace_root, &mut files, limits)?;
+    walk_workspace(workspace_root, workspace_root, &mut files, limits)?;
     files.sort();
     Ok(files)
 }
@@ -71,18 +71,34 @@ fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {
 }
 
 fn walk_workspace(
+    workspace_root: &Path,
     path: &Path,
     files: &mut Vec<PathBuf>,
     limits: WorkspaceScanLimits,
 ) -> Result<()> {
-    if path.is_dir() {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect workspace path {}", path.display()))?;
+
+    if metadata.file_type().is_symlink()
+        && fs::metadata(path)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    if !path_is_inside_workspace(workspace_root, path)? {
+        return Ok(());
+    }
+
+    if metadata.is_dir() {
         if should_skip_dir(path) {
             return Ok(());
         }
 
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            walk_workspace(&entry.path(), files, limits)?;
+            walk_workspace(workspace_root, &entry.path(), files, limits)?;
         }
         return Ok(());
     }
@@ -115,7 +131,7 @@ fn should_skip_dir_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -195,6 +211,29 @@ mod tests {
         assert_eq!(files, vec![workspace.join("kept.py")]);
     }
 
+    #[test]
+    fn collect_source_files_skips_symlink_directory_escape() {
+        let root = temporary_dir();
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(workspace.join("kept.py"), "def kept():\n    return 1\n").unwrap();
+        fs::write(outside.join("secret.py"), "def secret():\n    return 2\n").unwrap();
+
+        if !try_symlink_dir(&outside, &workspace.join("linked")) {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        let files =
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 2 })
+                .unwrap();
+
+        assert_eq!(files, vec![workspace.join("kept.py")]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn temporary_dir() -> PathBuf {
         let suffix = format!(
             "{}-{}-{}",
@@ -208,5 +247,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("arborist-workspace-scan-{suffix}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    fn try_symlink_dir(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn try_symlink_dir(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
     }
 }

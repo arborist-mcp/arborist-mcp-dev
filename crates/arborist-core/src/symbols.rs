@@ -2248,7 +2248,7 @@ fn reverse_local_c_include_index(
             else {
                 continue;
             };
-            if !include_path.starts_with(workspace_root) {
+            if !path_is_inside_workspace(workspace_root, &include_path)? {
                 continue;
             }
 
@@ -3184,13 +3184,14 @@ fn source_fingerprint(source: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::Connection;
 
-    use super::{SymbolMeta, ensure_symbol_tables};
+    use super::{SymbolMeta, ensure_symbol_tables, transitive_c_include_dependents};
     use crate::index_store::{
         SymbolRefreshPersistence, persist_symbol_index, persist_symbol_refresh,
         persisted_byte_range,
@@ -3276,6 +3277,32 @@ mod tests {
         assert_eq!(indexed_files_metadata(&db_path), "7");
     }
 
+    #[test]
+    fn transitive_c_include_dependents_skips_symlink_header_escape() {
+        let root = temporary_dir();
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            workspace.join("source.c"),
+            "#include \"linked.h\"\n\nint value(void) {\n    return 1;\n}\n",
+        )
+        .unwrap();
+        fs::write(outside.join("linked.h"), "int secret(void);\n").unwrap();
+
+        let linked_header = workspace.join("linked.h");
+        if !try_symlink_file(&outside.join("linked.h"), &linked_header) {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        let dependents = transitive_c_include_dependents(&workspace, &linked_header).unwrap();
+
+        assert!(dependents.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn seed_indexed_files_metadata(db_path: &Path, value: &str) {
         let connection = Connection::open(db_path).unwrap();
         ensure_symbol_tables(&connection).unwrap();
@@ -3339,5 +3366,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("arborist-symbols-{suffix}"));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    fn try_symlink_file(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn try_symlink_file(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
     }
 }
