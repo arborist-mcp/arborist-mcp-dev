@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from unittest import mock
 
 import arborist_mcp
@@ -188,10 +189,42 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
 
         generated = gateway_module.build_tool_catalog()
         self.assertEqual(json.loads(completed.stdout), generated)
+        check_completed = subprocess.run(
+            [sys.executable, str(script_path), "--check"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(check_completed.stdout, "")
         self.assertEqual(
             json.loads(snapshot_path.read_text(encoding="utf-8")),
             generated,
         )
+
+    def test_tool_catalog_script_reports_outdated_snapshot(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        script_path = repo_root / "scripts" / "tool_catalog.py"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot_path = Path(temp_dir) / "tool-catalog.json"
+            snapshot_path.write_text("[]\n", encoding="utf-8", newline="\n")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(script_path),
+                    "--check",
+                    "--snapshot",
+                    str(snapshot_path),
+                ],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("out of date", completed.stderr)
 
     def test_readme_tool_counts_match_generated_catalog(self) -> None:
         readme = Path(__file__).resolve().parents[2].joinpath("README.md").read_text(

@@ -18,9 +18,9 @@ use crate::model::{
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
     SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult, SymbolReadResult,
     SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
-    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
-    TraceBackedPatchResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceBackedPatchResult,
+    TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{
     build_patch_result, collect_syntax_errors, semantic_target_at_position, semantic_target_range,
@@ -2159,25 +2159,36 @@ mod tests {
         assert_eq!(result.trace_target, result.patch.resolved_symbol_id);
         assert!(result.trace_error.is_none());
         assert_eq!(
-            result.trace_validation.as_ref().map(|validation| validation.allowed),
+            result
+                .trace_validation
+                .as_ref()
+                .map(|validation| validation.allowed),
             Some(true)
         );
 
         let trace = result.trace.expect("trace result should be present");
-        assert!(trace
-            .callees
-            .iter()
-            .find(|symbol| symbol.semantic_path == "helper")
-            .is_some());
-        assert!(trace
-            .callers
-            .iter()
-            .find(|symbol| symbol.semantic_path == "consume")
-            .is_some());
+        assert!(
+            trace
+                .callees
+                .iter()
+                .find(|symbol| symbol.semantic_path == "helper")
+                .is_some()
+        );
+        assert!(
+            trace
+                .callers
+                .iter()
+                .find(|symbol| symbol.semantic_path == "consume")
+                .is_some()
+        );
 
         let consumer_snapshot = vfs.read_file(&consumer_path).unwrap();
         assert!(consumer_snapshot.dirty);
-        assert!(consumer_snapshot.source.contains("return orchestrate(value)"));
+        assert!(
+            consumer_snapshot
+                .source
+                .contains("return orchestrate(value)")
+        );
         let consumer_disk = fs::read_to_string(&consumer_path).unwrap();
         assert!(consumer_disk.contains("return value"));
         assert!(!consumer_disk.contains("return orchestrate(value)"));
