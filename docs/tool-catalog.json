@@ -365,8 +365,24 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Registered workspace-to-symbol-index mapping.",
+          "properties": {
+            "workspace_root": {
+              "type": "string",
+              "description": "Normalized workspace root path.",
+              "minLength": 1
+            },
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "workspace_root",
+            "db_path"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -419,8 +435,42 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Persisted symbol-index rebuild or refresh statistics.",
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            },
+            "indexed_files": {
+              "type": "integer",
+              "description": "Number of indexed files.",
+              "minimum": 0
+            },
+            "indexed_symbols": {
+              "type": "integer",
+              "description": "Number of indexed symbols.",
+              "minimum": 0
+            },
+            "rebuilt_files": {
+              "type": "integer",
+              "description": "Number of files rebuilt during this operation.",
+              "minimum": 0
+            },
+            "reused_files": {
+              "type": "integer",
+              "description": "Number of indexed files reused from prior state.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "db_path",
+            "indexed_files",
+            "indexed_symbols",
+            "rebuilt_files",
+            "reused_files"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -493,11 +543,27 @@
       "properties": {
         "result": {
           "type": "array",
-          "description": "JSON array of object results returned by Arborist for this tool.",
+          "description": "Registered workspace-to-symbol-index mappings.",
           "items": {
             "type": "object",
-            "description": "JSON object result returned by Arborist for this tool.",
-            "additionalProperties": true
+            "description": "Registered workspace-to-symbol-index mapping.",
+            "properties": {
+              "workspace_root": {
+                "type": "string",
+                "description": "Normalized workspace root path.",
+                "minLength": 1
+              },
+              "db_path": {
+                "type": "string",
+                "description": "Normalized SQLite symbol-index database path.",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "workspace_root",
+              "db_path"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -539,8 +605,109 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Read-only diagnostic summary for a persisted symbol index.",
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            },
+            "exists": {
+              "type": "boolean",
+              "description": "Whether the database file exists."
+            },
+            "ok": {
+              "type": "boolean",
+              "description": "Whether the index passed all inspected health checks."
+            },
+            "schema_version": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "String value.",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected_schema_version": {
+              "type": "string",
+              "description": "Schema version supported by this Arborist build.",
+              "minLength": 1
+            },
+            "workspace_root": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "String value.",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "indexed_files": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "indexed_symbols": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "file_state_entries": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "issues": {
+              "type": "array",
+              "description": "Human-readable health issues. Empty when ok is true.",
+              "items": {
+                "type": "string",
+                "description": "Health issue.",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "db_path",
+            "exists",
+            "ok",
+            "schema_version",
+            "expected_schema_version",
+            "workspace_root",
+            "indexed_files",
+            "indexed_symbols",
+            "file_state_entries",
+            "issues"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1014,8 +1181,42 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Persisted symbol-index rebuild or refresh statistics.",
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            },
+            "indexed_files": {
+              "type": "integer",
+              "description": "Number of indexed files.",
+              "minimum": 0
+            },
+            "indexed_symbols": {
+              "type": "integer",
+              "description": "Number of indexed symbols.",
+              "minimum": 0
+            },
+            "rebuilt_files": {
+              "type": "integer",
+              "description": "Number of files rebuilt during this operation.",
+              "minimum": 0
+            },
+            "reused_files": {
+              "type": "integer",
+              "description": "Number of indexed files reused from prior state.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "db_path",
+            "indexed_files",
+            "indexed_symbols",
+            "rebuilt_files",
+            "reused_files"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

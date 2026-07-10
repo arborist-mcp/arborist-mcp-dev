@@ -25,11 +25,11 @@ TOOL_SPECS = (
     ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "write"),
     ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs"),
     ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs"),
-    ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path"), "index"),
-    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path"), "index"),
+    ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path"), "index", "registered_symbol_index"),
+    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
-    ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "object_array"),
-    ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index"),
+    ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
+    ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
     ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs"),
     ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs"),
     ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist"), "vfs"),
@@ -38,7 +38,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs"),
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs"),
-    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path"), "index"),
+    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path"), "index", "symbol_index_stats"),
     ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace"),
     ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace"),
     ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "trace"),
@@ -317,10 +317,80 @@ BOOLEAN_RESULT_SCHEMA = {
     "type": "boolean",
     "description": "Boolean success result returned by Arborist for this tool.",
 }
+NULL_RESULT_SCHEMA = {"type": "null"}
+NULLABLE_STRING_RESULT_SCHEMA = {"anyOf": [_schema("string", "String value."), NULL_RESULT_SCHEMA]}
+NULLABLE_INTEGER_RESULT_SCHEMA = {
+    "anyOf": [_schema("integer", "Integer value.", minimum=0), NULL_RESULT_SCHEMA]
+}
+SYMBOL_INDEX_STATS_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Persisted symbol-index rebuild or refresh statistics.",
+    "properties": {
+        "db_path": _schema("string", "Normalized SQLite symbol-index database path."),
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+        "indexed_symbols": _schema("integer", "Number of indexed symbols.", minimum=0),
+        "rebuilt_files": _schema("integer", "Number of files rebuilt during this operation.", minimum=0),
+        "reused_files": _schema("integer", "Number of indexed files reused from prior state.", minimum=0),
+    },
+    "required": ["db_path", "indexed_files", "indexed_symbols", "rebuilt_files", "reused_files"],
+    "additionalProperties": False,
+}
+REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Registered workspace-to-symbol-index mapping.",
+    "properties": {
+        "workspace_root": _schema("string", "Normalized workspace root path."),
+        "db_path": _schema("string", "Normalized SQLite symbol-index database path."),
+    },
+    "required": ["workspace_root", "db_path"],
+    "additionalProperties": False,
+}
+REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Registered workspace-to-symbol-index mappings.",
+    "items": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
+}
+SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Read-only diagnostic summary for a persisted symbol index.",
+    "properties": {
+        "db_path": _schema("string", "Normalized SQLite symbol-index database path."),
+        "exists": _schema("boolean", "Whether the database file exists."),
+        "ok": _schema("boolean", "Whether the index passed all inspected health checks."),
+        "schema_version": NULLABLE_STRING_RESULT_SCHEMA,
+        "expected_schema_version": _schema("string", "Schema version supported by this Arborist build."),
+        "workspace_root": NULLABLE_STRING_RESULT_SCHEMA,
+        "indexed_files": NULLABLE_INTEGER_RESULT_SCHEMA,
+        "indexed_symbols": NULLABLE_INTEGER_RESULT_SCHEMA,
+        "file_state_entries": NULLABLE_INTEGER_RESULT_SCHEMA,
+        "issues": {
+            "type": "array",
+            "description": "Human-readable health issues. Empty when ok is true.",
+            "items": _schema("string", "Health issue."),
+        },
+    },
+    "required": [
+        "db_path",
+        "exists",
+        "ok",
+        "schema_version",
+        "expected_schema_version",
+        "workspace_root",
+        "indexed_files",
+        "indexed_symbols",
+        "file_state_entries",
+        "issues",
+    ],
+    "additionalProperties": False,
+}
 TOOL_RESULT_SCHEMAS = {
     tool_name: {
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
+        "symbol_index_stats": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
+        "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
+        "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,
+        "symbol_index_health": SYMBOL_INDEX_HEALTH_RESULT_SCHEMA,
     }[schema_key]
     for tool_name, schema_key in TOOL_RESULT_SCHEMA_KEYS.items()
 }

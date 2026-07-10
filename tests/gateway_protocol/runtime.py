@@ -121,6 +121,11 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
         list_indexes = by_name["arborist/list_symbol_indexes"]
         self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
+        inspect_index = by_name["arborist/inspect_symbol_index"]
+        inspect_result = inspect_index["outputSchema"]["properties"]["result"]
+        self.assertEqual(inspect_result["type"], "object")
+        self.assertIn("ok", inspect_result["required"])
+        self.assertEqual(inspect_result["properties"]["issues"]["type"], "array")
         unregister = by_name["arborist/unregister_symbol_index"]
         self.assertEqual(unregister["outputSchema"]["properties"]["result"]["type"], "boolean")
         patch = by_name["arborist/patch_ast_node"]
