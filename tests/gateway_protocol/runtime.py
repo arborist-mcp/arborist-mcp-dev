@@ -136,6 +136,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(
             rebuild_index["inputSchema"]["properties"]["max_files"]["default"], 20000
         )
+        self.assertEqual(rebuild_index["inputSchema"]["properties"]["max_files"]["minimum"], 1)
         virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
             "result"
         ]
@@ -168,6 +169,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(
             query["inputSchema"]["properties"]["max_captures"]["default"], 10000
         )
+        self.assertEqual(query["inputSchema"]["properties"]["max_captures"]["minimum"], 1)
         query_items = query["outputSchema"]["properties"]["result"]["items"]
         self.assertEqual(query_items["additionalProperties"], False)
         self.assertIn("capture_name", query_items["required"])
@@ -189,6 +191,12 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         trace_neighborhood = by_name["arborist/trace_symbol_neighborhood"]["outputSchema"][
             "properties"
         ]["result"]
+        self.assertEqual(
+            by_name["arborist/trace_symbol_neighborhood"]["inputSchema"]["properties"][
+                "max_nodes"
+            ]["minimum"],
+            1,
+        )
         self.assertIn("nodes", trace_neighborhood["required"])
         self.assertEqual(
             trace_neighborhood["properties"]["nodes"]["items"]["properties"]["depth"]["type"],
