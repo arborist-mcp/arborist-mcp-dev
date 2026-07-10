@@ -29586,7 +29586,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "expand_nodes": {
           "type": "array",
@@ -29778,15 +29779,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -30817,15 +30821,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -31840,15 +31847,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -32859,15 +32869,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -33862,11 +33875,13 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -34877,11 +34892,13 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         }
       },
@@ -36314,7 +36331,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -36446,7 +36464,8 @@
               },
               "new_text": {
                 "type": "string",
-                "description": "Replacement text for the range."
+                "description": "Replacement text for the range.",
+                "maxLength": 4194304
               }
             },
             "required": [
@@ -37674,7 +37693,8 @@
         },
         "new_text": {
           "type": "string",
-          "description": "Replacement text for a byte-range edit."
+          "description": "Replacement text for a byte-range edit.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -38924,7 +38944,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -39443,7 +39464,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -39871,7 +39893,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -40407,7 +40430,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -40819,7 +40843,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -41071,7 +41096,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -41329,7 +41355,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -42042,7 +42069,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -42762,7 +42790,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -43401,7 +43430,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -44035,7 +44065,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -45309,7 +45340,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "index_db_path": {
           "type": "string",
@@ -46566,7 +46598,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [],
@@ -46782,7 +46815,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [],
@@ -47220,7 +47254,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [],
@@ -48022,7 +48057,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [],
@@ -48996,7 +49032,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -49262,7 +49299,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -49750,7 +49788,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -50602,7 +50641,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         }
       },
       "required": [
@@ -51896,15 +51936,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -53546,15 +53589,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -55180,15 +55226,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -57199,15 +57248,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -59202,15 +59254,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -61420,15 +61475,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -63622,15 +63680,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -66032,15 +66093,18 @@
         "new_code": {
           "type": "string",
           "description": "Replacement source code for the selected AST node.",
+          "maxLength": 4194304,
           "minLength": 1
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "bypass_reason": {
           "type": "string",
           "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "maxLength": 4096,
           "minLength": 1
         },
         "direction": {
@@ -68420,7 +68484,8 @@
         },
         "source": {
           "type": "string",
-          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk.",
+          "maxLength": 4194304
         },
         "max_captures": {
           "type": "integer",

@@ -166,6 +166,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             ["file", "skeleton", "available_paths", "available_symbols"],
         )
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
+        self.assertEqual(
+            skeleton["inputSchema"]["properties"]["source"]["maxLength"],
+            gateway_module.TEXT_PARAM_MAX_LENGTH,
+        )
         self.assertIn(
             "not full C++ parsing",
             skeleton["inputSchema"]["properties"]["file_path"]["description"],
@@ -200,6 +204,18 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             by_name["arborist/apply_buffer_edit"]["outputSchema"]["properties"]["result"],
             virtual_edit,
         )
+        self.assertEqual(
+            by_name["arborist/apply_buffer_edit"]["inputSchema"]["properties"]["new_text"][
+                "maxLength"
+            ],
+            gateway_module.TEXT_PARAM_MAX_LENGTH,
+        )
+        self.assertEqual(
+            by_name["arborist/did_change"]["inputSchema"]["properties"]["edits"]["items"][
+                "properties"
+            ]["new_text"]["maxLength"],
+            gateway_module.TEXT_PARAM_MAX_LENGTH,
+        )
         inspect_index = by_name["arborist/inspect_symbol_index"]
         self.assertTrue(inspect_index["annotations"]["readOnlyHint"])
         self.assertFalse(inspect_index["metadata"]["mutatesState"])
@@ -217,6 +233,14 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         patch = by_name["arborist/patch_ast_node"]
         self.assertEqual(patch["metadata"]["category"], "write")
         self.assertTrue(patch["annotations"]["destructiveHint"])
+        self.assertEqual(
+            patch["inputSchema"]["properties"]["new_code"]["maxLength"],
+            gateway_module.TEXT_PARAM_MAX_LENGTH,
+        )
+        self.assertEqual(
+            patch["inputSchema"]["properties"]["bypass_reason"]["maxLength"],
+            gateway_module.BYPASS_REASON_MAX_LENGTH,
+        )
         patch_result = patch["outputSchema"]["properties"]["result"]
         self.assertEqual(patch_result["additionalProperties"], False)
         self.assertIn("validation", patch_result["required"])

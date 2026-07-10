@@ -135,6 +135,8 @@ SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
 )
 READ_ONLY_CATEGORIES = frozenset(("read", "trace"))
 TREE_QUERY_MAX_LENGTH = 64 * 1024
+TEXT_PARAM_MAX_LENGTH = 4 * 1024 * 1024
+BYPASS_REASON_MAX_LENGTH = 4 * 1024
 MAX_BATCH_CALLS = 32
 WRITING_TOOLS = frozenset(
     (
@@ -213,6 +215,7 @@ POSITION_EDIT_SCHEMA = {
             "string",
             "Replacement text for the range.",
             allow_empty=True,
+            max_length=TEXT_PARAM_MAX_LENGTH,
         ),
     },
     "required": ["start", "end", "new_text"],
@@ -241,6 +244,7 @@ TOOL_PARAM_SCHEMAS = {
     "bypass_reason": _schema(
         "string",
         "Required explanation when intentionally bypassing trace-backed commit gates.",
+        max_length=BYPASS_REASON_MAX_LENGTH,
     ),
     "calls": {
         "type": "array",
@@ -314,11 +318,16 @@ TOOL_PARAM_SCHEMAS = {
         default=20000,
         minimum=1,
     ),
-    "new_code": _schema("string", "Replacement source code for the selected AST node."),
+    "new_code": _schema(
+        "string",
+        "Replacement source code for the selected AST node.",
+        max_length=TEXT_PARAM_MAX_LENGTH,
+    ),
     "new_text": _schema(
         "string",
         "Replacement text for a byte-range edit.",
         allow_empty=True,
+        max_length=TEXT_PARAM_MAX_LENGTH,
     ),
     "node_kind": _schema("string", "Optional Tree-sitter node-kind filter."),
     "old_end_byte": _schema(
@@ -343,6 +352,7 @@ TOOL_PARAM_SCHEMAS = {
         "string",
         "Optional unsaved source buffer to analyze instead of reading from disk.",
         allow_empty=True,
+        max_length=TEXT_PARAM_MAX_LENGTH,
     ),
     "start_byte": _schema("integer", "Inclusive start byte for a buffer edit.", minimum=0),
     "symbol_path": _schema("string", "Stable symbol path or symbol_id selector."),
@@ -367,6 +377,12 @@ TOOL_PARAM_DEFAULTS = {
     "max_files": 20000,
     "persist": False,
     "workspace_root": ".",
+}
+STRING_PARAM_MAX_LENGTHS = {
+    "bypass_reason": BYPASS_REASON_MAX_LENGTH,
+    "new_code": TEXT_PARAM_MAX_LENGTH,
+    "new_text": TEXT_PARAM_MAX_LENGTH,
+    "source": TEXT_PARAM_MAX_LENGTH,
 }
 OBJECT_RESULT_SCHEMA = {
     "type": "object",
@@ -3003,11 +3019,8 @@ class ArboristGateway:
         value = params.get(key)
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"missing required string param: {key}")
-        if max_length is not None and len(value) > max_length:
-            raise JsonRpcError(
-                -32602,
-                f"invalid string param: {key} exceeds max length {max_length}",
-            )
+        effective_max_length = max_length or STRING_PARAM_MAX_LENGTHS.get(key)
+        ArboristGateway._validate_string_length(value, key, effective_max_length)
         return value
 
     @staticmethod
@@ -3042,12 +3055,21 @@ class ArboristGateway:
             return None
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"invalid string param: {key}")
+        effective_max_length = max_length or STRING_PARAM_MAX_LENGTHS.get(key)
+        ArboristGateway._validate_string_length(value, key, effective_max_length)
+        return value
+
+    @staticmethod
+    def _validate_string_length(
+        value: str,
+        key: str,
+        max_length: int | None,
+    ) -> None:
         if max_length is not None and len(value) > max_length:
             raise JsonRpcError(
                 -32602,
                 f"invalid string param: {key} exceeds max length {max_length}",
             )
-        return value
 
     @staticmethod
     def _optional_int(params: dict[str, Any], key: str, default: int) -> int:
@@ -3120,6 +3142,11 @@ class ArboristGateway:
                 )
             if not isinstance(edit.get("new_text"), str):
                 raise JsonRpcError(-32602, f"invalid string param: edits[{index}].new_text")
+            ArboristGateway._validate_string_length(
+                edit["new_text"],
+                f"edits[{index}].new_text",
+                TEXT_PARAM_MAX_LENGTH,
+            )
 
     @staticmethod
     def _position_tuple(value: dict[str, Any]) -> tuple[int, int]:

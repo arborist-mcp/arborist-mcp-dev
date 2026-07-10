@@ -942,6 +942,91 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_files", response["error"]["message"])
 
+    def test_rejects_oversized_text_params_before_core_call(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def patch_ast_node_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def apply_buffer_edit_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway(StubCore())
+        oversized_text = "x" * (gateway_module.TEXT_PARAM_MAX_LENGTH + 1)
+        oversized_reason = "x" * (gateway_module.BYPASS_REASON_MAX_LENGTH + 1)
+        cases = [
+            (
+                "arborist/get_semantic_skeleton",
+                {"file_path": "sample.py", "source": oversized_text},
+                "source",
+            ),
+            (
+                "arborist/patch_ast_node",
+                {
+                    "file_path": "sample.py",
+                    "semantic_path": "top_level",
+                    "new_code": oversized_text,
+                },
+                "new_code",
+            ),
+            (
+                "arborist/patch_ast_node",
+                {
+                    "file_path": "sample.py",
+                    "semantic_path": "top_level",
+                    "new_code": "def top_level():\n    return 1\n",
+                    "bypass_reason": oversized_reason,
+                },
+                "bypass_reason",
+            ),
+            (
+                "arborist/apply_buffer_edit",
+                {
+                    "file_path": "sample.py",
+                    "start_byte": 0,
+                    "old_end_byte": 0,
+                    "new_text": oversized_text,
+                },
+                "new_text",
+            ),
+            (
+                "arborist/did_change",
+                {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": oversized_text,
+                        }
+                    ],
+                },
+                "edits[0].new_text",
+            ),
+        ]
+
+        for method, params, expected_message in cases:
+            with self.subTest(method=method, expected_message=expected_message):
+                response = gateway.handle_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 58,
+                        "method": method,
+                        "params": params,
+                    }
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 58)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_message, response["error"]["message"])
+                self.assertIn("max length", response["error"]["message"])
+
     def test_rejects_non_string_optional_params(self) -> None:
         gateway = self.make_gateway()
 

@@ -211,6 +211,5 @@ Remaining larger work includes:
 - Adding a durable migration strategy beyond the current schema-version gate.
 - Adding full C++ support via a dedicated grammar instead of routing `.hpp` and
   `.hh` through the C grammar.
-- Adding batch operations, watch mode, benchmarks, fuzz/property tests, and
-  stronger resource limits for large workspaces or arbitrary Tree-sitter
-  queries.
+- Adding watch mode, benchmarks, fuzz/property tests, and deeper runtime
+  controls such as operation timeouts/cancellation for very large workspaces.
