@@ -330,18 +330,17 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => trace_symbol_graph_from_index_with_source(
                 Path::new(&index_db_path),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
             ),
             (Some(source), None) => trace_symbol_graph_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
@@ -374,12 +373,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_from_index_with_source(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     symbol_path,
                     direction,
@@ -389,7 +387,7 @@ impl ArboristCore {
             }
             (Some(source), None) => trace_symbol_neighborhood_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
@@ -425,17 +423,16 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => read_symbol_from_index_with_source(
                 Path::new(&index_db_path),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
             ),
             (Some(source), None) => read_symbol_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
             ),
@@ -503,18 +500,17 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => read_symbol_context_from_index_with_source(
                 Path::new(&index_db_path),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
             ),
             (Some(source), None) => read_symbol_context_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
@@ -704,12 +700,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_from_index_with_source(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     symbol_path,
                     direction,
@@ -719,7 +714,7 @@ impl ArboristCore {
             }
             (Some(source), None) => read_symbol_neighborhood_context_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
@@ -822,12 +817,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_from_index_with_source(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     symbol_path,
                     direction,
@@ -837,7 +831,7 @@ impl ArboristCore {
             }
             (Some(source), None) => read_symbol_discovery_context_with_source(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 symbol_path,
                 direction,
@@ -939,11 +933,10 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => search_symbols_from_index_with_source_filtered(
                 Path::new(&index_db_path),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 query,
                 limit,
@@ -952,7 +945,7 @@ impl ArboristCore {
             ),
             (Some(source), None) => search_symbols_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 query,
                 limit,
@@ -992,12 +985,11 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     query,
                     limit,
@@ -1007,7 +999,7 @@ impl ArboristCore {
             }
             (Some(source), None) => search_symbols_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 query,
                 limit,
@@ -1051,12 +1043,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_neighborhood_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     query,
                     limit,
@@ -1069,7 +1060,7 @@ impl ArboristCore {
             }
             (Some(source), None) => search_symbols_neighborhood_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 query,
                 limit,
@@ -1125,12 +1116,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_discovery_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     query,
                     limit,
@@ -1143,7 +1133,7 @@ impl ArboristCore {
             }
             (Some(source), None) => search_symbols_discovery_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 query,
                 limit,
@@ -1194,11 +1184,10 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => list_symbols_from_index_with_source_filtered(
                 Path::new(&index_db_path),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 limit,
                 file_path_contains.as_deref(),
@@ -1206,7 +1195,7 @@ impl ArboristCore {
             ),
             (Some(source), None) => list_symbols_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 limit,
                 file_path_contains.as_deref(),
@@ -1242,12 +1231,11 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     limit,
                     file_path_contains.as_deref(),
@@ -1256,7 +1244,7 @@ impl ArboristCore {
             }
             (Some(source), None) => list_symbols_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 limit,
                 file_path_contains.as_deref(),
@@ -1296,12 +1284,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_neighborhood_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     limit,
                     direction,
@@ -1313,7 +1300,7 @@ impl ArboristCore {
             }
             (Some(source), None) => list_symbols_neighborhood_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 limit,
                 direction,
@@ -1365,12 +1352,11 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_discovery_context_from_index_with_source_filtered(
                     Path::new(&index_db_path),
-                    Path::new(file_path.as_deref().expect("checked above")),
+                    require_source_file_path(file_path.as_deref())?,
                     &source,
                     limit,
                     direction,
@@ -1382,7 +1368,7 @@ impl ArboristCore {
             }
             (Some(source), None) => list_symbols_discovery_context_with_source_filtered(
                 Path::new(workspace_root),
-                Path::new(file_path.as_deref().expect("checked above")),
+                require_source_file_path(file_path.as_deref())?,
                 &source,
                 limit,
                 direction,
@@ -2184,13 +2170,10 @@ fn to_json_result<T: Serialize>(result: &T) -> PyResult<String> {
     serde_json::to_string(result).map_err(to_runtime_error)
 }
 
-fn require_file_path_for_source(source: Option<&str>, file_path: Option<&str>) -> PyResult<()> {
-    if source.is_some() && file_path.is_none() {
-        return Err(PyValueError::new_err(
-            "file_path is required when source is provided",
-        ));
-    }
-    Ok(())
+fn require_source_file_path(file_path: Option<&str>) -> PyResult<&Path> {
+    file_path
+        .map(Path::new)
+        .ok_or_else(|| PyValueError::new_err("file_path is required when source is provided"))
 }
 
 fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
