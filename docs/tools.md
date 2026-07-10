@@ -69,6 +69,8 @@ active VFS buffers.
 Use the VFS methods (`did_open`, `did_change`, `patch_virtual_ast_node`,
 `patch_virtual_ast_node_at_position`, `commit_virtual_file`, and
 `discard_virtual_file`) when the caller wants a longer-lived editor session.
+Snapshot and list-status outputs have precise MCP schemas for file path, source,
+dirty state, version, and syntax error counts.
 
 ## Patch And Preview Tools
 

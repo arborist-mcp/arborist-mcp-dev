@@ -32,14 +32,14 @@ TOOL_SPECS = (
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
-    ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs"),
+    ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs"),
-    ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist"), "vfs"),
-    ToolSpec("arborist/list_virtual_files", "_list_virtual_files", ("dirty_only",), "vfs", "object_array"),
-    ToolSpec("arborist/read_virtual_file", "_read_virtual_file", ("file_path",), "vfs"),
+    ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist"), "vfs", "virtual_file_snapshot"),
+    ToolSpec("arborist/list_virtual_files", "_list_virtual_files", ("dirty_only",), "vfs", "virtual_file_status_array"),
+    ToolSpec("arborist/read_virtual_file", "_read_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs"),
-    ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs"),
-    ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs"),
+    ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
+    ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path"), "index", "symbol_index_stats"),
     ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace"),
     ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace"),
@@ -380,6 +380,48 @@ QUERY_CAPTURE_ARRAY_RESULT_SCHEMA = {
     "description": "Tree-sitter query captures.",
     "items": QUERY_CAPTURE_RESULT_SCHEMA,
 }
+VIRTUAL_FILE_SNAPSHOT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Session-scoped virtual file snapshot.",
+    "properties": {
+        "file": _schema("string", "Normalized virtual file path."),
+        "source": _schema("string", "Current virtual buffer source.", allow_empty=True),
+        "disk_source": _schema("string", "Current on-disk source baseline.", allow_empty=True),
+        "dirty": _schema("boolean", "Whether the virtual buffer differs from disk."),
+        "version": _schema("integer", "Virtual buffer version.", minimum=0),
+        "syntax_error_count": _schema(
+            "integer", "Current Tree-sitter syntax error count.", minimum=0
+        ),
+    },
+    "required": [
+        "file",
+        "source",
+        "disk_source",
+        "dirty",
+        "version",
+        "syntax_error_count",
+    ],
+    "additionalProperties": False,
+}
+VIRTUAL_FILE_STATUS_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Virtual file list entry.",
+    "properties": {
+        "file": _schema("string", "Normalized virtual file path."),
+        "dirty": _schema("boolean", "Whether the virtual buffer differs from disk."),
+        "version": _schema("integer", "Virtual buffer version.", minimum=0),
+        "syntax_error_count": _schema(
+            "integer", "Current Tree-sitter syntax error count.", minimum=0
+        ),
+    },
+    "required": ["file", "dirty", "version", "syntax_error_count"],
+    "additionalProperties": False,
+}
+VIRTUAL_FILE_STATUS_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Virtual file status entries.",
+    "items": VIRTUAL_FILE_STATUS_RESULT_SCHEMA,
+}
 SYMBOL_INDEX_STATS_RESULT_SCHEMA = {
     "type": "object",
     "description": "Persisted symbol-index rebuild or refresh statistics.",
@@ -470,6 +512,8 @@ TOOL_RESULT_SCHEMAS = {
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
         "query_capture_array": QUERY_CAPTURE_ARRAY_RESULT_SCHEMA,
+        "virtual_file_snapshot": VIRTUAL_FILE_SNAPSHOT_RESULT_SCHEMA,
+        "virtual_file_status_array": VIRTUAL_FILE_STATUS_ARRAY_RESULT_SCHEMA,
         "symbol_index_stats": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
         "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
         "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,

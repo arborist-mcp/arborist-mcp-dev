@@ -943,8 +943,45 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Session-scoped virtual file snapshot.",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Normalized virtual file path.",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "description": "Current virtual buffer source."
+            },
+            "disk_source": {
+              "type": "string",
+              "description": "Current on-disk source baseline."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "Whether the virtual buffer differs from disk."
+            },
+            "version": {
+              "type": "integer",
+              "description": "Virtual buffer version.",
+              "minimum": 0
+            },
+            "syntax_error_count": {
+              "type": "integer",
+              "description": "Current Tree-sitter syntax error count.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "file",
+            "source",
+            "disk_source",
+            "dirty",
+            "version",
+            "syntax_error_count"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1095,8 +1132,45 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Session-scoped virtual file snapshot.",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Normalized virtual file path.",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "description": "Current virtual buffer source."
+            },
+            "disk_source": {
+              "type": "string",
+              "description": "Current on-disk source baseline."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "Whether the virtual buffer differs from disk."
+            },
+            "version": {
+              "type": "integer",
+              "description": "Virtual buffer version.",
+              "minimum": 0
+            },
+            "syntax_error_count": {
+              "type": "integer",
+              "description": "Current Tree-sitter syntax error count.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "file",
+            "source",
+            "disk_source",
+            "dirty",
+            "version",
+            "syntax_error_count"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1135,11 +1209,38 @@
       "properties": {
         "result": {
           "type": "array",
-          "description": "JSON array of object results returned by Arborist for this tool.",
+          "description": "Virtual file status entries.",
           "items": {
             "type": "object",
-            "description": "JSON object result returned by Arborist for this tool.",
-            "additionalProperties": true
+            "description": "Virtual file list entry.",
+            "properties": {
+              "file": {
+                "type": "string",
+                "description": "Normalized virtual file path.",
+                "minLength": 1
+              },
+              "dirty": {
+                "type": "boolean",
+                "description": "Whether the virtual buffer differs from disk."
+              },
+              "version": {
+                "type": "integer",
+                "description": "Virtual buffer version.",
+                "minimum": 0
+              },
+              "syntax_error_count": {
+                "type": "integer",
+                "description": "Current Tree-sitter syntax error count.",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "file",
+              "dirty",
+              "version",
+              "syntax_error_count"
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -1181,8 +1282,45 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Session-scoped virtual file snapshot.",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Normalized virtual file path.",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "description": "Current virtual buffer source."
+            },
+            "disk_source": {
+              "type": "string",
+              "description": "Current on-disk source baseline."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "Whether the virtual buffer differs from disk."
+            },
+            "version": {
+              "type": "integer",
+              "description": "Virtual buffer version.",
+              "minimum": 0
+            },
+            "syntax_error_count": {
+              "type": "integer",
+              "description": "Current Tree-sitter syntax error count.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "file",
+            "source",
+            "disk_source",
+            "dirty",
+            "version",
+            "syntax_error_count"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1282,8 +1420,45 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Session-scoped virtual file snapshot.",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Normalized virtual file path.",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "description": "Current virtual buffer source."
+            },
+            "disk_source": {
+              "type": "string",
+              "description": "Current on-disk source baseline."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "Whether the virtual buffer differs from disk."
+            },
+            "version": {
+              "type": "integer",
+              "description": "Virtual buffer version.",
+              "minimum": 0
+            },
+            "syntax_error_count": {
+              "type": "integer",
+              "description": "Current Tree-sitter syntax error count.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "file",
+            "source",
+            "disk_source",
+            "dirty",
+            "version",
+            "syntax_error_count"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1324,8 +1499,45 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "JSON object result returned by Arborist for this tool.",
-          "additionalProperties": true
+          "description": "Session-scoped virtual file snapshot.",
+          "properties": {
+            "file": {
+              "type": "string",
+              "description": "Normalized virtual file path.",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "description": "Current virtual buffer source."
+            },
+            "disk_source": {
+              "type": "string",
+              "description": "Current on-disk source baseline."
+            },
+            "dirty": {
+              "type": "boolean",
+              "description": "Whether the virtual buffer differs from disk."
+            },
+            "version": {
+              "type": "integer",
+              "description": "Virtual buffer version.",
+              "minimum": 0
+            },
+            "syntax_error_count": {
+              "type": "integer",
+              "description": "Current Tree-sitter syntax error count.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "file",
+            "source",
+            "disk_source",
+            "dirty",
+            "version",
+            "syntax_error_count"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

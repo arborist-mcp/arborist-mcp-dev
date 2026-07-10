@@ -131,6 +131,18 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
         list_indexes = by_name["arborist/list_symbol_indexes"]
         self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
+        virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
+            "result"
+        ]
+        self.assertEqual(virtual_snapshot["additionalProperties"], False)
+        self.assertIn("syntax_error_count", virtual_snapshot["required"])
+        virtual_status = by_name["arborist/list_virtual_files"]["outputSchema"]["properties"][
+            "result"
+        ]["items"]
+        self.assertEqual(virtual_status["additionalProperties"], False)
+        self.assertEqual(
+            virtual_status["required"], ["file", "dirty", "version", "syntax_error_count"]
+        )
         inspect_index = by_name["arborist/inspect_symbol_index"]
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
