@@ -3,13 +3,17 @@ mod model;
 mod patching;
 mod query;
 mod semantic;
+mod source_overlay;
 mod symbols;
 mod vfs;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Result, bail};
+use source_overlay::{
+    ensure_path_inside_workspace, source_override_for_path, source_overrides_for_workspace_path,
+};
 
 pub use model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,
@@ -103,27 +107,6 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
         bail!("invalid expand_nodes selector at index {index}: selector must not be blank");
     }
     Ok(())
-}
-
-fn source_override_for_path(
-    path: &Path,
-    source: &str,
-) -> Result<(PathBuf, BTreeMap<String, String>)> {
-    let path = language::normalize_absolute_path(path)?;
-    let mut overrides = BTreeMap::new();
-    overrides.insert(language::normalize_path(&path), source.to_string());
-    Ok((path, overrides))
-}
-
-fn source_overrides_for_workspace_path(
-    workspace_root: &Path,
-    path: &Path,
-    source: &str,
-) -> Result<(PathBuf, PathBuf, BTreeMap<String, String>)> {
-    let workspace_root = language::normalize_absolute_path(workspace_root)?;
-    let (path, overrides) = source_override_for_path(path, source)?;
-    ensure_path_inside_workspace(&workspace_root, &path)?;
-    Ok((workspace_root, path, overrides))
 }
 
 pub fn trace_symbol_graph_at_position_with_source(
@@ -2116,18 +2099,6 @@ pub fn validate_patch_with_discovery_context_at_position(
         max_depth,
         max_nodes,
     )
-}
-
-fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
-    if path.starts_with(workspace_root) {
-        return Ok(());
-    }
-
-    bail!(
-        "file {} is outside workspace {}",
-        path.display(),
-        workspace_root.display()
-    );
 }
 
 fn summarize_replay_status(replay: &TracePatchEvidenceReplayResult) -> String {
