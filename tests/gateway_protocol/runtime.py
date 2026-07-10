@@ -137,6 +137,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(patch["metadata"]["category"], "write")
         self.assertTrue(patch["annotations"]["destructiveHint"])
         query = by_name["arborist/execute_tree_query"]
+        self.assertNotIn("max_captures", query["inputSchema"]["required"])
+        self.assertEqual(
+            query["inputSchema"]["properties"]["max_captures"]["default"], 10000
+        )
         query_items = query["outputSchema"]["properties"]["result"]["items"]
         self.assertEqual(query_items["additionalProperties"], False)
         self.assertIn("capture_name", query_items["required"])
@@ -951,4 +955,3 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertIsNone(response["id"])
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("non-standard JSON constant", response["error"]["message"])
-

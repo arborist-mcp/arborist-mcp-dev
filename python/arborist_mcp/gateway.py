@@ -100,6 +100,7 @@ OPTIONAL_TOOL_PARAMS = frozenset(
         "file_path_contains",
         "index_db_path",
         "limit",
+        "max_captures",
         "max_depth",
         "max_nodes",
         "node_kind",

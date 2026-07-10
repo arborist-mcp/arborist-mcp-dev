@@ -4083,8 +4083,7 @@
       },
       "required": [
         "file_path",
-        "query",
-        "max_captures"
+        "query"
       ],
       "additionalProperties": false
     },
