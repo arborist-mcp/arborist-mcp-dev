@@ -14,11 +14,10 @@ use crate::index_store::{
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::language::{
-    c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
-    detect_language, ensure_path_inside_workspace, is_c_header_path, node_text,
-    normalize_absolute_path, normalize_path, offset_for_position, parse_document,
-    path_is_inside_workspace, point_for_offset, position_from, read_source,
-    resolve_local_c_include, visit_tree,
+    c_companion_source_path, c_include_targets, c_local_include_targets, detect_language,
+    ensure_path_inside_workspace, is_c_header_path, normalize_absolute_path, normalize_path,
+    offset_for_position, parse_document, path_is_inside_workspace, point_for_offset, position_from,
+    read_source, resolve_local_c_include,
 };
 use crate::model::{LanguageId, Position, SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION};
 use crate::model::{
@@ -30,15 +29,12 @@ use crate::model::{
     SymbolSummary, SymbolSummaryInit, TraceDirection, TraceEvidenceKeys, TraceSymbolGraphResult,
     TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
 };
-use crate::patching::{
-    collect_c_references, collect_python_references, resolve_local_python_imported_symbol,
-    resolve_local_python_module_path,
-};
+use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
 use crate::semantic::{
-    ascend_to_symbol, c_function_header, c_parameters, c_return_type, c_semantic_path,
-    c_symbol_id_for_node, python_display_byte_range, python_display_header, python_docstring,
-    python_parameters, python_return_type, semantic_parent_path, semantic_path,
+    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, python_display_byte_range,
+    semantic_path,
 };
+use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_base_name};
 use crate::workspace_scan::{
     WorkspaceScanLimits, collect_source_files, collect_source_files_with_limits,
@@ -2290,137 +2286,6 @@ fn build_workspace_index(
     }
 
     assign_symbol_ids(&mut symbols)?;
-    Ok(symbols)
-}
-
-fn index_symbols_from_document(
-    path: &Path,
-    source: &str,
-    document: &crate::language::ParsedDocument,
-) -> Result<Vec<IndexedSymbol>> {
-    match document.language_id {
-        LanguageId::Python => index_python_symbols(path, source, document.tree.root_node()),
-        LanguageId::C => index_c_symbols(path, source, document.tree.root_node()),
-    }
-}
-
-fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
-    let mut symbols = Vec::new();
-    let normalized_path = normalize_path(path);
-
-    let mut callback = |node: Node<'_>| {
-        if !matches!(node.kind(), "class_definition" | "function_definition") {
-            return;
-        }
-
-        let mut references = BTreeSet::new();
-        let reference_node = python_reference_node(node);
-        let _ = collect_python_references(path, reference_node, source, &mut references);
-        let signature = python_display_header(node, source).ok();
-        let path = match semantic_path(node, source) {
-            Ok(path) => path,
-            Err(_) => return,
-        };
-        let scope_path = semantic_parent_path(&path);
-        let parameters = python_parameters(node, source).unwrap_or_default();
-        let return_type = python_return_type(node, source).ok().flatten();
-        let docstring = python_docstring(node, source).ok().flatten();
-
-        symbols.push(IndexedSymbol {
-            symbol_id: String::new(),
-            base_name: path.rsplit('.').next().unwrap_or(&path).to_string(),
-            semantic_path: path,
-            scope_path,
-            file_path: normalized_path.clone(),
-            node_kind: node.kind().to_string(),
-            byte_range: python_display_byte_range(node),
-            signature,
-            parameters,
-            return_type,
-            docstring,
-            references_by_name: references,
-        });
-    };
-
-    visit_tree(root, &mut callback);
-    Ok(symbols)
-}
-
-fn python_reference_node(node: Node<'_>) -> Node<'_> {
-    node.parent()
-        .filter(|parent| parent.kind() == "decorated_definition")
-        .unwrap_or(node)
-}
-
-fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
-    let normalized_path = normalize_path(path);
-    let mut symbols = Vec::new();
-    let mut cursor = root.walk();
-
-    for child in root.named_children(&mut cursor) {
-        match child.kind() {
-            "type_definition" => {
-                if let Some(name) = c_semantic_path(path, child, source)? {
-                    symbols.push(IndexedSymbol {
-                        symbol_id: String::new(),
-                        base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
-                        semantic_path: name,
-                        scope_path: None,
-                        file_path: normalized_path.clone(),
-                        node_kind: child.kind().to_string(),
-                        byte_range: (child.start_byte(), child.end_byte()),
-                        signature: Some(node_text(child, source)?.trim().to_string()),
-                        parameters: Vec::new(),
-                        return_type: None,
-                        docstring: None,
-                        references_by_name: BTreeSet::new(),
-                    });
-                }
-            }
-            "declaration" if contains_kind(child, "function_declarator") => {
-                if let Some(name) = c_semantic_path(path, child, source)? {
-                    let scope_path = semantic_parent_path(&name);
-                    symbols.push(IndexedSymbol {
-                        symbol_id: String::new(),
-                        base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
-                        semantic_path: name,
-                        scope_path,
-                        file_path: normalized_path.clone(),
-                        node_kind: child.kind().to_string(),
-                        byte_range: (child.start_byte(), child.end_byte()),
-                        signature: Some(node_text(child, source)?.trim().to_string()),
-                        parameters: c_parameters(child, source)?,
-                        return_type: c_return_type(child, source)?,
-                        docstring: None,
-                        references_by_name: BTreeSet::new(),
-                    });
-                }
-            }
-            "function_definition" => {
-                if let Some(name) = c_semantic_path(path, child, source)? {
-                    let mut references = BTreeSet::new();
-                    collect_c_references(child, source, &mut references)?;
-                    let scope_path = semantic_parent_path(&name);
-                    symbols.push(IndexedSymbol {
-                        symbol_id: String::new(),
-                        base_name: name.rsplit("::").next().unwrap_or(&name).to_string(),
-                        semantic_path: name,
-                        scope_path,
-                        file_path: normalized_path.clone(),
-                        node_kind: child.kind().to_string(),
-                        byte_range: (child.start_byte(), child.end_byte()),
-                        signature: Some(c_function_header(child, source)?),
-                        parameters: c_parameters(child, source)?,
-                        return_type: c_return_type(child, source)?,
-                        docstring: None,
-                        references_by_name: references,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
     Ok(symbols)
 }
 
