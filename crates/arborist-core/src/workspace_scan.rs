@@ -79,7 +79,8 @@ fn walk_workspace(
     let metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect workspace path {}", path.display()))?;
 
-    if metadata.file_type().is_symlink()
+    if path != workspace_root
+        && metadata.file_type().is_symlink()
         && fs::metadata(path)
             .map(|metadata| metadata.is_dir())
             .unwrap_or(false)
@@ -231,6 +232,27 @@ mod tests {
                 .unwrap();
 
         assert_eq!(files, vec![workspace.join("kept.py")]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collect_source_files_accepts_symlink_workspace_root() {
+        let root = temporary_dir();
+        let workspace = root.join("workspace");
+        let workspace_link = root.join("workspace-link");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::write(workspace.join("kept.py"), "def kept():\n    return 1\n").unwrap();
+
+        if !try_symlink_dir(&workspace, &workspace_link) {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        let files =
+            collect_source_files_with_limits(&workspace_link, WorkspaceScanLimits { max_files: 1 })
+                .unwrap();
+
+        assert_eq!(files, vec![workspace_link.join("kept.py")]);
         fs::remove_dir_all(root).unwrap();
     }
 
