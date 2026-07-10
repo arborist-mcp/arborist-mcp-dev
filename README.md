@@ -219,8 +219,8 @@ Run the full local gate:
 ```
 
 The full gate also checks PowerShell script syntax, version consistency, builds
-and syncs the local gateway extension, and runs a real `initialize` smoke
-request.
+and syncs the local gateway extension, and runs the shared gateway smoke helper
+with a real `initialize` request.
 
 `check.ps1` now also supports focused profiles, so CI and local debugging can
 run the same named slices instead of maintaining separate ad hoc command sets:
@@ -249,6 +249,17 @@ legacy `python-native` profile remains as a local aggregate over the
 finer-grained native checks. `-ShowPlan` now prints the deduplicated leaf check
 plan before anything runs, so overlapping profile selections can be inspected
 without manually expanding aggregates.
+
+The gateway smoke checks are also available directly and are reused by the
+Linux CI smoke job. Without `--require-core`, the helper verifies CLI metadata,
+the generated tool catalog, and the MCP `tools/list` transport without loading
+the native extension. With `--require-core`, it also verifies legacy and MCP
+`initialize` responses against the synced Rust extension:
+
+```powershell
+python scripts/gateway_smoke.py
+python scripts/gateway_smoke.py --require-core
+```
 
 For the everyday inner loop, run the focused test entrypoint:
 

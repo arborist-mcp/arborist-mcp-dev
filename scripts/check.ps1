@@ -119,86 +119,6 @@ function Expand-SelectionArguments {
     return $expanded
 }
 
-function Invoke-GatewayInitializeSmoke {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Python
-    )
-
-    Write-Host "Checking legacy gateway initialize..."
-    $request = New-TemporaryFile
-    try {
-        Set-Content -LiteralPath $request -Encoding UTF8 -Value '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
-        $output = & $Python @("-m", "arborist_mcp.gateway", "--once", $request) 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Checking legacy gateway initialize failed with exit code $LASTEXITCODE.`n$output"
-        }
-
-        $response = $output | Out-String | ConvertFrom-Json
-        if ($response.PSObject.Properties.Name -contains "error") {
-            $message = $response.error.message
-            throw "Checking legacy gateway initialize returned JSON-RPC error: $message"
-        }
-        if (-not ($response.result.supportedLanguages -contains "python")) {
-            throw "Checking legacy gateway initialize did not report Python support."
-        }
-        if (-not ($response.result.supportedLanguages -contains "c")) {
-            throw "Checking legacy gateway initialize did not report C support."
-        }
-    } finally {
-        Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
-    }
-
-    Write-Host "Checking MCP initialize..."
-    $request = New-TemporaryFile
-    try {
-        Set-Content -LiteralPath $request -Encoding UTF8 -Value '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check.ps1","version":"0.1.0"}}}'
-        $output = & $Python @("-m", "arborist_mcp.gateway", "--once", $request) 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Checking MCP initialize failed with exit code $LASTEXITCODE.`n$output"
-        }
-
-        $response = $output | Out-String | ConvertFrom-Json
-        if ($response.PSObject.Properties.Name -contains "error") {
-            $message = $response.error.message
-            throw "Checking MCP initialize returned JSON-RPC error: $message"
-        }
-        if ($response.result.protocolVersion -ne "2025-06-18") {
-            throw "Checking MCP initialize returned unexpected protocolVersion '$($response.result.protocolVersion)'."
-        }
-        if ($null -eq $response.result.capabilities.tools) {
-            throw "Checking MCP initialize did not report tools capability."
-        }
-    } finally {
-        Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
-    }
-
-    Write-Host "Checking MCP tools/list..."
-    $request = New-TemporaryFile
-    try {
-        Set-Content -LiteralPath $request -Encoding UTF8 -Value '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}'
-        $output = & $Python @("-m", "arborist_mcp.gateway", "--once", $request) 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Checking MCP tools/list failed with exit code $LASTEXITCODE.`n$output"
-        }
-
-        $response = $output | Out-String | ConvertFrom-Json
-        if ($response.PSObject.Properties.Name -contains "error") {
-            $message = $response.error.message
-            throw "Checking MCP tools/list returned JSON-RPC error: $message"
-        }
-        if ($response.result.tools.Count -lt 1) {
-            throw "Checking MCP tools/list returned no tools."
-        }
-        $toolNames = @($response.result.tools | ForEach-Object { $_.name })
-        if (-not ($toolNames -contains "arborist/get_semantic_skeleton")) {
-            throw "Checking MCP tools/list did not include arborist/get_semantic_skeleton."
-        }
-    } finally {
-        Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue
-    }
-}
-
 function Invoke-PowerShellSyntaxCheck {
     Write-Host "Checking PowerShell script syntax..."
     Get-ChildItem -LiteralPath $PSScriptRoot -Filter "*.ps1" | ForEach-Object {
@@ -336,9 +256,10 @@ function Invoke-GatewaySmokeCheck {
     )
 
     Ensure-GatewayExtension $Python
-    Invoke-NativeOrThrow "Checking gateway CLI..." $Python @("-m", "arborist_mcp.gateway", "--help")
-    Invoke-NativeOrThrow "Checking gateway version..." $Python @("-m", "arborist_mcp.gateway", "--version")
-    Invoke-GatewayInitializeSmoke $Python
+    Invoke-NativeOrThrow `
+        "Checking gateway smoke path..." `
+        $Python `
+        @((Join-Path $PSScriptRoot "gateway_smoke.py"), "--python", $Python, "--require-core")
 }
 
 function Invoke-CheckProfile {

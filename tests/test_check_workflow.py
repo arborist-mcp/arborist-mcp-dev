@@ -169,6 +169,28 @@ class CheckWorkflowTests(unittest.TestCase):
             ],
         )
 
+    def test_gateway_smoke_helper_runs_catalog_checks_without_native_core(self) -> None:
+        script_path = self.repo_root / "scripts" / "gateway_smoke.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("Gateway smoke checks passed.", completed.stdout)
+
+    def test_check_script_and_linux_ci_share_gateway_smoke_helper(self) -> None:
+        check_script = (self.repo_root / "scripts" / "check.ps1").read_text(encoding="utf-8")
+        workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("gateway_smoke.py", check_script)
+        self.assertIn("--require-core", check_script)
+        self.assertIn("python scripts/gateway_smoke.py", workflow)
+        self.assertNotIn("printf '%s\\n'", workflow)
+
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
             encoding="utf-8"

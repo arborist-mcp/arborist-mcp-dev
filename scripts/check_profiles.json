@@ -37,7 +37,7 @@
       "prepare_extension": true
     },
     "gateway-smoke": {
-      "description": "Build and sync the native gateway extension, then exercise gateway CLI/version/initialize smoke checks.",
+      "description": "Build and sync the native gateway extension, then exercise gateway CLI/catalog/tools/initialize smoke checks.",
       "handler": "gateway-smoke",
       "prepare_extension": true
     },
