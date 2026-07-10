@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, params, types::Type};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, params, types::Type};
 use serde::de::DeserializeOwned;
 use tree_sitter::Node;
 
@@ -96,6 +96,8 @@ const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
     "target",
     "venv",
 ];
+
+const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub fn trace_symbol_graph(
     workspace_root: &Path,
@@ -2065,6 +2067,7 @@ pub fn refresh_symbol_index_for_file(
     require_symbol_index_tables(&connection, &db_path)?;
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
     load_indexed_files_metadata(&connection)?;
+    validate_symbol_index_schema_version(&connection, &db_path)?;
     ensure_symbol_tables(&connection)?;
 
     let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
@@ -4322,16 +4325,7 @@ fn persist_symbol_index(
     ensure_symbol_tables(&connection)?;
 
     let tx = connection.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [normalize_path(workspace_root)],
-    )?;
-    tx.execute(
-        "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [indexed_files.to_string()],
-    )?;
+    persist_symbol_index_metadata(&tx, workspace_root, indexed_files)?;
     tx.execute("DELETE FROM symbols", [])?;
     tx.execute("DELETE FROM file_state", [])?;
     let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
@@ -4412,16 +4406,7 @@ fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
         .collect();
 
     let tx = connection.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [normalize_path(context.workspace_root)],
-    )?;
-    tx.execute(
-        "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [context.indexed_files.to_string()],
-    )?;
+    persist_symbol_index_metadata(&tx, context.workspace_root, context.indexed_files)?;
     {
         let mut delete_statement = tx.prepare("DELETE FROM symbols WHERE file_path = ?1")?;
         for changed_file_path in context.changed_file_paths {
@@ -4509,6 +4494,7 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     let connection = Connection::open(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
     load_indexed_files_metadata(&connection)?;
+    validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
     load_symbols_from_connection(&connection)
 }
@@ -4524,6 +4510,7 @@ fn load_symbol_index_with_overrides(
     let connection = Connection::open(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
 
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
@@ -4578,6 +4565,29 @@ fn load_symbol_index_with_overrides(
     ))
 }
 
+fn persist_symbol_index_metadata(
+    tx: &Transaction<'_>,
+    workspace_root: &Path,
+    indexed_files: usize,
+) -> Result<()> {
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES('schema_version', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [SYMBOL_INDEX_SCHEMA_VERSION],
+    )?;
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [normalize_path(workspace_root)],
+    )?;
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES('indexed_files', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [indexed_files.to_string()],
+    )?;
+    Ok(())
+}
+
 fn load_symbol_index_workspace_root(connection: &Connection, db_path: &Path) -> Result<PathBuf> {
     let Some(stored_workspace) = connection
         .query_row(
@@ -4594,6 +4604,33 @@ fn load_symbol_index_workspace_root(connection: &Connection, db_path: &Path) -> 
     };
 
     normalize_absolute_path(Path::new(&stored_workspace))
+}
+
+fn validate_symbol_index_schema_version(connection: &Connection, db_path: &Path) -> Result<()> {
+    let Some(value) = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Err(anyhow!(
+            "missing schema_version metadata in symbol index {}",
+            db_path.display()
+        ));
+    };
+
+    if value != SYMBOL_INDEX_SCHEMA_VERSION {
+        return Err(anyhow!(
+            "unsupported symbol index schema_version `{}` in {}; expected `{}`",
+            value,
+            db_path.display(),
+            SYMBOL_INDEX_SCHEMA_VERSION
+        ));
+    }
+
+    Ok(())
 }
 
 fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Result<()> {
