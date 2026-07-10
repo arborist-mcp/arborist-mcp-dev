@@ -517,6 +517,48 @@
     }
   },
   {
+    "name": "arborist/inspect_symbol_index",
+    "title": "Inspect Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/inspect_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "db_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/inspect_symbol_index",
+      "mutatesState": true
+    }
+  },
+  {
     "name": "arborist/did_open",
     "title": "Did Open",
     "description": "Manage or inspect Arborist's session-scoped virtual-file state. Legacy JSON-RPC method: arborist/did_open.",

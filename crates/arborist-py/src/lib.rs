@@ -4,8 +4,8 @@ use std::path::Path;
 use arborist_core::{
     PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
     VirtualFileSystem, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, list_symbols_context_from_index_filtered,
-    list_symbols_context_from_index_with_source_filtered,
+    get_semantic_skeleton_from_path, inspect_symbol_index,
+    list_symbols_context_from_index_filtered, list_symbols_context_from_index_with_source_filtered,
     list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
     list_symbols_discovery_context_from_index_with_source_filtered,
     list_symbols_discovery_context_with_source_filtered, list_symbols_from_index_filtered,
@@ -2007,6 +2007,12 @@ impl ArboristCore {
     fn rebuild_symbol_index_json(&self, workspace_root: &str, db_path: &str) -> PyResult<String> {
         let result = rebuild_symbol_index(Path::new(workspace_root), Path::new(db_path))
             .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    fn inspect_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
+        let result = inspect_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }

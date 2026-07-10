@@ -19,11 +19,11 @@ pub use model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,
     NeighborhoodContextPatchResult, PatchAstNodeResult, PatchTraceValidationResult,
     PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-    SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexStats,
-    SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
-    SymbolListResult, SymbolMeta, SymbolNeighborhoodContextResult,
-    SymbolReadDiscoveryContextResult, SymbolReadResult, SymbolSearchContextResult,
-    SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
+    SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexHealth,
+    SymbolIndexStats, SymbolListContextResult, SymbolListDiscoveryContextResult,
+    SymbolListNeighborhoodContextResult, SymbolListResult, SymbolMeta,
+    SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult, SymbolReadResult,
+    SymbolSearchContextResult, SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, SymbolSummary,
     TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
     TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
@@ -38,7 +38,7 @@ pub use patching::{
 };
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
-    list_symbols, list_symbols_context, list_symbols_context_filtered,
+    inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_filtered,
     list_symbols_context_from_index, list_symbols_context_from_index_filtered,
     list_symbols_discovery_context, list_symbols_discovery_context_filtered,
     list_symbols_discovery_context_from_index, list_symbols_discovery_context_from_index_filtered,
@@ -2347,7 +2347,7 @@ mod tests {
     use super::{
         Position, TraceDirection, VirtualFileSystem, execute_tree_query,
         execute_tree_query_from_path, get_semantic_skeleton, get_semantic_skeleton_from_path,
-        list_symbols, list_symbols_context, list_symbols_context_from_index,
+        inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_from_index,
         list_symbols_discovery_context, list_symbols_discovery_context_from_index,
         list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
         list_symbols_from_index_with_source_filtered, list_symbols_neighborhood_context,
@@ -12125,6 +12125,43 @@ def orchestrate(value: int) -> int:\n    return value\n",
     }
 
     #[test]
+    fn inspect_symbol_index_reports_healthy_persisted_index() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(health.exists);
+        assert!(health.ok);
+        assert_eq!(health.schema_version.as_deref(), Some("1"));
+        assert_eq!(health.expected_schema_version, "1");
+        assert_eq!(
+            health.workspace_root.as_deref(),
+            Some(normalize_path(&dir).as_str())
+        );
+        assert_eq!(health.indexed_files, Some(1));
+        assert_eq!(health.indexed_symbols, Some(1));
+        assert_eq!(health.file_state_entries, Some(1));
+        assert!(health.issues.is_empty());
+    }
+
+    #[test]
+    fn inspect_symbol_index_reports_missing_database_without_creating_it() {
+        let dir = temporary_dir();
+        let db_path = dir.join("missing.db");
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(!health.exists);
+        assert!(!health.ok);
+        assert!(health.issues[0].contains("does not exist"));
+        assert!(!db_path.exists());
+    }
+
+    #[test]
     fn trace_rejects_missing_schema_version_before_legacy_migration() {
         let dir = temporary_dir();
         let db_path = dir.join("symbols.db");
@@ -12171,6 +12208,74 @@ def orchestrate(value: int) -> int:\n    return value\n",
                 .contains("unsupported symbol index schema_version")
         );
         assert!(error.to_string().contains("expected `1`"));
+    }
+
+    #[test]
+    fn inspect_symbol_index_reports_schema_version_issues_without_migration() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_legacy_symbol_index_schema_without_reference_names(
+            &connection,
+            Some(&normalize_path(&dir)),
+            Some("0"),
+        );
+        drop(connection);
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(health.exists);
+        assert!(!health.ok);
+        assert!(health.schema_version.is_none());
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("missing schema_version metadata"))
+        );
+        let connection = Connection::open(&db_path).unwrap();
+        assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+    }
+
+    #[test]
+    fn inspect_symbol_index_reports_unsupported_schema_version_without_rewrite() {
+        let dir = temporary_dir();
+        let db_path = dir.join("symbols.db");
+        let connection = Connection::open(&db_path).unwrap();
+        create_minimal_symbol_index_schema(&connection);
+        connection
+            .execute(
+                "INSERT INTO metadata(key, value) VALUES('workspace_root', ?1)",
+                [normalize_path(&dir)],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE metadata SET value = '99' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(!health.ok);
+        assert_eq!(health.schema_version.as_deref(), Some("99"));
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("unsupported symbol index schema_version"))
+        );
+        let connection = Connection::open(&db_path).unwrap();
+        let schema_version: String = connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(schema_version, "99");
     }
 
     #[test]

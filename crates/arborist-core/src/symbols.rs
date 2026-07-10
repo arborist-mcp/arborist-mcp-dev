@@ -16,7 +16,7 @@ use crate::language::{
 };
 use crate::model::{LanguageId, Position};
 use crate::model::{
-    SymbolContextResult, SymbolIndexStats, SymbolListContextResult,
+    SymbolContextResult, SymbolIndexHealth, SymbolIndexStats, SymbolListContextResult,
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
     SymbolMeta, SymbolMetaInit, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
     SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
@@ -2155,6 +2155,97 @@ pub fn refresh_symbol_index_for_file(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let db_path_display = normalize_path(&db_path);
+    let mut health = SymbolIndexHealth {
+        db_path: db_path_display,
+        exists: db_path.exists(),
+        ok: false,
+        schema_version: None,
+        expected_schema_version: SYMBOL_INDEX_SCHEMA_VERSION.to_string(),
+        workspace_root: None,
+        indexed_files: None,
+        indexed_symbols: None,
+        file_state_entries: None,
+        issues: Vec::new(),
+    };
+
+    if !health.exists {
+        health
+            .issues
+            .push(format!("symbol index {} does not exist", db_path.display()));
+        health.validate_public_output()?;
+        return Ok(health);
+    }
+
+    let connection = match Connection::open(&db_path) {
+        Ok(connection) => connection,
+        Err(error) => {
+            health
+                .issues
+                .push(format!("failed to open symbol index: {error}"));
+            health.validate_public_output()?;
+            return Ok(health);
+        }
+    };
+
+    if let Err(error) = require_symbol_index_tables(&connection, &db_path) {
+        health.issues.push(error.to_string());
+        health.validate_public_output()?;
+        return Ok(health);
+    }
+
+    health.schema_version =
+        load_optional_metadata_value(&connection, "schema_version").map_err(|error| {
+            anyhow!(
+                "failed to inspect schema_version metadata in {}: {}",
+                db_path.display(),
+                error
+            )
+        })?;
+    if health.schema_version.is_none() {
+        health.issues.push(format!(
+            "missing schema_version metadata in symbol index {}",
+            db_path.display()
+        ));
+    } else if health.schema_version.as_deref() != Some(SYMBOL_INDEX_SCHEMA_VERSION) {
+        health.issues.push(format!(
+            "unsupported symbol index schema_version `{}` in {}; expected `{}`",
+            health.schema_version.as_deref().unwrap_or_default(),
+            db_path.display(),
+            SYMBOL_INDEX_SCHEMA_VERSION
+        ));
+    }
+
+    match load_symbol_index_workspace_root(&connection, &db_path) {
+        Ok(workspace_root) => health.workspace_root = Some(normalize_path(&workspace_root)),
+        Err(error) => health.issues.push(error.to_string()),
+    }
+
+    match load_indexed_files_metadata(&connection) {
+        Ok(indexed_files) => health.indexed_files = Some(indexed_files),
+        Err(error) => health.issues.push(error.to_string()),
+    }
+
+    match count_table_rows(&connection, "symbols") {
+        Ok(count) => health.indexed_symbols = Some(count),
+        Err(error) => health
+            .issues
+            .push(format!("failed to count persisted symbols: {error}")),
+    }
+    match count_table_rows(&connection, "file_state") {
+        Ok(count) => health.file_state_entries = Some(count),
+        Err(error) => health
+            .issues
+            .push(format!("failed to count persisted file states: {error}")),
+    }
+
+    health.ok = health.issues.is_empty();
+    health.validate_public_output()?;
+    Ok(health)
 }
 
 fn expanded_refresh_file_paths(workspace_root: &Path, file_path: &Path) -> Result<Vec<PathBuf>> {
@@ -4633,6 +4724,15 @@ fn validate_symbol_index_schema_version(connection: &Connection, db_path: &Path)
     Ok(())
 }
 
+fn load_optional_metadata_value(connection: &Connection, key: &str) -> Result<Option<String>> {
+    connection
+        .query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .map_err(Into::into)
+}
+
 fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Result<()> {
     for table_name in ["metadata", "symbols", "file_state"] {
         if !table_exists(connection, table_name)? {
@@ -4777,6 +4877,12 @@ fn table_column_types(
         types.insert(name, column_type);
     }
     Ok(types)
+}
+
+fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
+    let sql = format!("SELECT COUNT(*) FROM {table_name}");
+    let count = connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?;
+    usize::try_from(count).map_err(|error| anyhow!("invalid row count in `{table_name}`: {error}"))
 }
 
 fn ensure_symbol_tables(connection: &Connection) -> Result<()> {

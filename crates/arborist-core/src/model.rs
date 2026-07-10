@@ -300,6 +300,37 @@ impl RegisteredSymbolIndex {
     }
 }
 
+impl SymbolIndexHealth {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.db_path, "symbol_index_health.db_path")?;
+        ensure_nonblank(
+            &self.expected_schema_version,
+            "symbol_index_health.expected_schema_version",
+        )?;
+        if self.ok && !self.issues.is_empty() {
+            bail!("invalid symbol_index_health.ok: expected healthy indexes to have no issues");
+        }
+        if !self.ok && self.issues.is_empty() {
+            bail!(
+                "invalid symbol_index_health.issues: expected unhealthy indexes to report issues"
+            );
+        }
+        if !self.exists
+            && (self.schema_version.is_some()
+                || self.workspace_root.is_some()
+                || self.indexed_files.is_some()
+                || self.indexed_symbols.is_some()
+                || self.file_state_entries.is_some())
+        {
+            bail!("invalid symbol_index_health: missing indexes must not report loaded metadata");
+        }
+        for (index, issue) in self.issues.iter().enumerate() {
+            ensure_nonblank(issue, &format!("symbol_index_health.issues[{index}]"))?;
+        }
+        Ok(())
+    }
+}
+
 impl SymbolReadResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         if self.source.is_empty() {
@@ -2532,6 +2563,21 @@ pub struct VirtualEditResult {
 pub struct RegisteredSymbolIndex {
     pub workspace_root: String,
     pub db_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolIndexHealth {
+    pub db_path: String,
+    pub exists: bool,
+    pub ok: bool,
+    pub schema_version: Option<String>,
+    pub expected_schema_version: String,
+    pub workspace_root: Option<String>,
+    pub indexed_files: Option<usize>,
+    pub indexed_symbols: Option<usize>,
+    pub file_state_entries: Option<usize>,
+    pub issues: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

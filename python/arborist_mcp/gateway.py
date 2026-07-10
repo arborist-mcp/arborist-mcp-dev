@@ -29,6 +29,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path"), "index"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "object_array"),
+    ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index"),
     ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs"),
     ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs"),
     ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist"), "vfs"),
@@ -1703,6 +1704,11 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         payload = self._require_core().rebuild_symbol_index_json(workspace_root, db_path)
+        return self._decode_core_object(payload)
+
+    def _inspect_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        db_path = self._require_string(params, "db_path")
+        payload = self._require_core().inspect_symbol_index_json(db_path)
         return self._decode_core_object(payload)
 
     def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:

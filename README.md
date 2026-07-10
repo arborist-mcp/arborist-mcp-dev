@@ -21,6 +21,7 @@ extension-based; Python files use `.py`, and C routing includes `.c`, `.h`,
 - `refresh_symbol_index_for_file`
 - `unregister_symbol_index`
 - `list_symbol_indexes`
+- `inspect_symbol_index`
 - `did_open`
 - `did_change`
 - `did_close`
@@ -371,12 +372,12 @@ Minimal MCP messages:
 
 `tools/list` is generated from the gateway's tool catalog and is the source of
 truth for tool names, JSON input schemas, output schemas, defaults, and
-categories. It currently returns 49 tools:
+categories. It currently returns 50 tools:
 
 - Read tools: 24, including semantic skeletons, raw Tree-sitter queries, symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard, and virtual reads.
-- Index tools: 5, covering register, unregister, list, rebuild, and file refresh for symbol indexes.
+- Index tools: 6, covering register, unregister, list, inspect, rebuild, and file refresh for symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
 Successful `tools/call` responses return the raw Arborist result as JSON text in
