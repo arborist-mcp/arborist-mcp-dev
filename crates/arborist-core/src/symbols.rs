@@ -25,9 +25,9 @@ use crate::model::{
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
     SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
     SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
-    SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
-    TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
-    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
+    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
+    TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
+    TraceSymbolNeighborhoodResult,
 };
 use crate::semantic::{
     ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, python_display_byte_range,
@@ -38,8 +38,9 @@ use crate::symbol_dependency::{
     resolve_symbol_dependencies,
 };
 use crate::symbol_extractor::index_symbols_from_document;
-use crate::symbol_index_model::{
-    IndexedSymbol, PersistedFileState, symbol_base_name, symbol_kind_rank,
+use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_kind_rank};
+use crate::symbol_search::{
+    normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
 use crate::symbol_summary::{summarize_symbols, symbol_summary_from_meta, trace_evidence_keys};
 use crate::workspace_scan::{
@@ -3360,40 +3361,6 @@ fn list_neighborhood_context_from_symbols(
     Ok(result)
 }
 
-fn normalize_optional_search_filter(value: Option<&str>, field: &str) -> Result<Option<String>> {
-    match value {
-        Some(value) => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(anyhow!("{field} must not be blank"));
-            }
-            Ok(Some(trimmed.to_ascii_lowercase()))
-        }
-        None => Ok(None),
-    }
-}
-
-fn symbol_matches_search_filters(
-    symbol: &SymbolMeta,
-    file_path_contains: Option<&str>,
-    node_kind: Option<&str>,
-) -> bool {
-    if let Some(file_path_contains) = file_path_contains
-        && !symbol
-            .file_path
-            .to_ascii_lowercase()
-            .contains(file_path_contains)
-    {
-        return false;
-    }
-    if let Some(node_kind) = node_kind
-        && symbol.node_kind.to_ascii_lowercase() != node_kind
-    {
-        return false;
-    }
-    true
-}
-
 fn neighborhood_edges_for_symbol(
     symbol: &SymbolMeta,
     direction: &TraceDirection,
@@ -3420,111 +3387,6 @@ fn neighborhood_edges_for_symbol(
     }
 
     edges
-}
-
-fn search_match_detail(
-    symbol: &SymbolMeta,
-    query: &str,
-    normalized_query: &str,
-) -> Option<SymbolSearchMatchDetail> {
-    let base_name = symbol_base_name(&symbol.semantic_path);
-    let normalized_base_name = base_name.to_ascii_lowercase();
-    let normalized_symbol_id = symbol.symbol_id.to_ascii_lowercase();
-    let normalized_semantic_path = symbol.semantic_path.to_ascii_lowercase();
-    let normalized_scope_path = symbol
-        .scope_path
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_file_path = symbol.file_path.to_ascii_lowercase();
-    let normalized_node_kind = symbol.node_kind.to_ascii_lowercase();
-    let normalized_signature = symbol
-        .signature
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_parameters = symbol.parameters.join(" ").to_ascii_lowercase();
-    let normalized_return_type = symbol
-        .return_type
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_docstring = symbol
-        .docstring
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-
-    let mut matched_fields = Vec::new();
-    if normalized_base_name.contains(normalized_query) {
-        matched_fields.push("base_name".to_string());
-    }
-    if normalized_symbol_id.contains(normalized_query) {
-        matched_fields.push("symbol_id".to_string());
-    }
-    if normalized_semantic_path.contains(normalized_query) {
-        matched_fields.push("semantic_path".to_string());
-    }
-    if normalized_scope_path.contains(normalized_query) {
-        matched_fields.push("scope_path".to_string());
-    }
-    if normalized_file_path.contains(normalized_query) {
-        matched_fields.push("file_path".to_string());
-    }
-    if normalized_node_kind.contains(normalized_query) {
-        matched_fields.push("node_kind".to_string());
-    }
-    if normalized_signature.contains(normalized_query) {
-        matched_fields.push("signature".to_string());
-    }
-    if normalized_parameters.contains(normalized_query) {
-        matched_fields.push("parameters".to_string());
-    }
-    if normalized_return_type.contains(normalized_query) {
-        matched_fields.push("return_type".to_string());
-    }
-    if normalized_docstring.contains(normalized_query) {
-        matched_fields.push("docstring".to_string());
-    }
-
-    if matched_fields.is_empty() {
-        return None;
-    }
-
-    let exact_query =
-        query == symbol.semantic_path || query == symbol.symbol_id || query == base_name;
-    let score = if exact_query {
-        1000
-    } else if normalized_base_name == normalized_query {
-        950
-    } else if normalized_symbol_id == normalized_query {
-        925
-    } else if normalized_semantic_path == normalized_query {
-        900
-    } else if normalized_base_name.starts_with(normalized_query) {
-        850
-    } else if normalized_semantic_path.starts_with(normalized_query) {
-        825
-    } else if normalized_symbol_id.starts_with(normalized_query) {
-        800
-    } else if normalized_file_path.contains(normalized_query) {
-        300
-    } else if normalized_signature.contains(normalized_query)
-        || normalized_parameters.contains(normalized_query)
-        || normalized_return_type.contains(normalized_query)
-    {
-        200
-    } else if normalized_docstring.contains(normalized_query) {
-        100
-    } else {
-        400
-    };
-
-    Some(SymbolSearchMatchDetail {
-        symbol_id: symbol.symbol_id.clone(),
-        score,
-        matched_fields,
-    })
 }
 
 fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
