@@ -8,10 +8,11 @@ use tree_sitter::Node;
 
 use crate::index_store::{
     SYMBOL_INDEX_SCHEMA_VERSION, byte_range_from_row, count_table_rows, ensure_symbol_tables,
-    json_from_column, load_indexed_files_metadata, load_optional_metadata_value,
-    load_symbol_index_workspace_root, nonempty_string_from_row, persist_symbol_index_metadata,
-    persisted_byte_range, require_symbol_index_tables, string_list_from_json_column,
-    validate_symbol_index_schema_version, validate_symbol_index_workspace,
+    json_from_column, load_file_states, load_indexed_files_metadata, load_optional_metadata_value,
+    load_resolved_symbols, load_symbol_index_workspace_root, nonempty_string_from_row,
+    persist_symbol_index_metadata, persisted_byte_range, require_symbol_index_tables,
+    string_list_from_json_column, validate_symbol_index_schema_version,
+    validate_symbol_index_workspace,
 };
 use crate::language::{
     c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
@@ -1993,7 +1994,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     validate_symbol_index_schema_version(&connection, &db_path)?;
     ensure_symbol_tables(&connection)?;
 
-    let old_resolved_symbols = load_symbols_from_connection(&connection)?.0;
+    let old_resolved_symbols = load_resolved_symbols(&connection)?.0;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
@@ -4495,7 +4496,7 @@ fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
-    load_symbols_from_connection(&connection)
+    load_resolved_symbols(&connection)
 }
 
 fn load_symbol_index_with_overrides(
@@ -4538,7 +4539,7 @@ fn load_symbol_index_with_overrides(
         .collect::<Vec<_>>();
     assign_symbol_ids(&mut raw_symbols)?;
 
-    let (resolved_symbols, indexed_files) = load_symbols_from_connection(&connection)?;
+    let (resolved_symbols, indexed_files) = load_resolved_symbols(&connection)?;
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);
     let old_changed_symbols = original_grouped_symbols
         .iter()
@@ -4562,24 +4563,6 @@ fn load_symbol_index_with_overrides(
         materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),
         indexed_files,
     ))
-}
-
-fn load_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
-    let mut statement =
-        connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            nonempty_string_from_row(row, 0, "file_state.file_path")?,
-            row.get::<_, i64>(1)? as u64,
-        ))
-    })?;
-
-    let mut states = BTreeMap::new();
-    for row in rows {
-        let (file_path, fingerprint) = row?;
-        states.insert(file_path, fingerprint);
-    }
-    Ok(states)
 }
 
 fn load_indexed_symbols_grouped_by_file(
@@ -4624,48 +4607,6 @@ fn load_indexed_symbols_grouped_by_file(
             .push(symbol);
     }
     Ok(grouped)
-}
-
-fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMeta>, usize)> {
-    let indexed_files = load_indexed_files_metadata(connection)?;
-
-    let mut statement = connection.prepare(
-        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-                signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json
-         FROM symbols",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let parameters_json: String = row.get(8)?;
-        let dependencies_json: String = row.get(11)?;
-        let references_json: String = row.get(12)?;
-        Ok(SymbolMeta::new(SymbolMetaInit {
-            symbol_id: nonempty_string_from_row(row, 0, "symbol_id")?,
-            semantic_path: nonempty_string_from_row(row, 1, "semantic_path")?,
-            scope_path: row.get(2)?,
-            file_path: nonempty_string_from_row(row, 3, "file_path")?,
-            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
-            origin_type: "workspace_symbol".to_string(),
-            byte_range: byte_range_from_row(row, 5, 6)?,
-            signature: row.get(7)?,
-            parameters: json_from_column(&parameters_json, 8)?,
-            return_type: row.get(9)?,
-            docstring: row.get(10)?,
-            dependencies: string_list_from_json_column(
-                &dependencies_json,
-                11,
-                "dependencies_json",
-            )?,
-            references: string_list_from_json_column(&references_json, 12, "references_json")?,
-        }))
-    })?;
-
-    let mut symbols = Vec::new();
-    for row in rows {
-        symbols.push(row?);
-    }
-
-    Ok((symbols, indexed_files))
 }
 
 fn raw_symbol_map(symbols: &[IndexedSymbol]) -> BTreeMap<String, IndexedSymbol> {

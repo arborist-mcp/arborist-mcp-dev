@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, types::Type};
 use serde::de::DeserializeOwned;
 
 use crate::language::{normalize_absolute_path, normalize_path};
-use crate::model::SymbolMeta;
+use crate::model::{SymbolMeta, SymbolMetaInit};
 
 pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
@@ -247,6 +247,66 @@ pub(crate) fn load_indexed_files_metadata(connection: &Connection) -> Result<usi
     value
         .parse::<usize>()
         .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
+}
+
+pub(crate) fn load_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
+    let mut statement =
+        connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            nonempty_string_from_row(row, 0, "file_state.file_path")?,
+            row.get::<_, i64>(1)? as u64,
+        ))
+    })?;
+
+    let mut states = BTreeMap::new();
+    for row in rows {
+        let (file_path, fingerprint) = row?;
+        states.insert(file_path, fingerprint);
+    }
+    Ok(states)
+}
+
+pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<SymbolMeta>, usize)> {
+    let indexed_files = load_indexed_files_metadata(connection)?;
+
+    let mut statement = connection.prepare(
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, dependencies_json,
+                references_json
+         FROM symbols",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let parameters_json: String = row.get(8)?;
+        let dependencies_json: String = row.get(11)?;
+        let references_json: String = row.get(12)?;
+        Ok(SymbolMeta::new(SymbolMetaInit {
+            symbol_id: nonempty_string_from_row(row, 0, "symbol_id")?,
+            semantic_path: nonempty_string_from_row(row, 1, "semantic_path")?,
+            scope_path: row.get(2)?,
+            file_path: nonempty_string_from_row(row, 3, "file_path")?,
+            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: byte_range_from_row(row, 5, 6)?,
+            signature: row.get(7)?,
+            parameters: json_from_column(&parameters_json, 8)?,
+            return_type: row.get(9)?,
+            docstring: row.get(10)?,
+            dependencies: string_list_from_json_column(
+                &dependencies_json,
+                11,
+                "dependencies_json",
+            )?,
+            references: string_list_from_json_column(&references_json, 12, "references_json")?,
+        }))
+    })?;
+
+    let mut symbols = Vec::new();
+    for row in rows {
+        symbols.push(row?);
+    }
+
+    Ok((symbols, indexed_files))
 }
 
 pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
