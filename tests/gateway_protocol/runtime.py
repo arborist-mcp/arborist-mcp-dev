@@ -168,6 +168,43 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         patch = by_name["arborist/patch_ast_node"]
         self.assertEqual(patch["metadata"]["category"], "write")
         self.assertTrue(patch["annotations"]["destructiveHint"])
+        patch_result = patch["outputSchema"]["properties"]["result"]
+        self.assertEqual(patch_result["additionalProperties"], False)
+        self.assertIn("validation", patch_result["required"])
+        self.assertEqual(
+            patch_result["properties"]["validation"]["properties"]["commit_gate"][
+                "additionalProperties"
+            ],
+            False,
+        )
+        preview = by_name["arborist/preview_patch_ast_node"]
+        preview_result = preview["outputSchema"]["properties"]["result"]
+        self.assertEqual(preview_result["required"], ["patch", "unified_diff", "changed"])
+        self.assertEqual(preview_result["properties"]["patch"], patch_result)
+        replay = by_name["arborist/replay_patch_evidence_against_trace"]["outputSchema"][
+            "properties"
+        ]["result"]
+        self.assertEqual(replay["required"], ["consistent", "matched_items", "blocked_items", "items"])
+        self.assertEqual(replay["properties"]["items"]["items"]["additionalProperties"], False)
+        trace_validation = by_name["arborist/validate_patch_commit_with_trace"][
+            "outputSchema"
+        ]["properties"]["result"]
+        self.assertIn("replay", trace_validation["required"])
+        trace_backed = by_name["arborist/validate_patch_with_trace_context"]["outputSchema"][
+            "properties"
+        ]["result"]
+        self.assertEqual(
+            trace_backed["required"],
+            ["patch", "trace_target", "trace", "trace_validation", "trace_error"],
+        )
+        graph_backed = by_name["arborist/validate_patch_with_graph_context"]["outputSchema"][
+            "properties"
+        ]["result"]
+        self.assertIn("neighborhood", graph_backed["required"])
+        discovery_backed = by_name["arborist/validate_patch_with_discovery_context"][
+            "outputSchema"
+        ]["properties"]["result"]
+        self.assertIn("read", discovery_backed["required"])
         query = by_name["arborist/execute_tree_query"]
         self.assertNotIn("max_captures", query["inputSchema"]["required"])
         self.assertEqual(

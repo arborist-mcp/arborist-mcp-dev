@@ -21,12 +21,12 @@ class ToolSpec(NamedTuple):
 
 TOOL_SPECS = (
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read"),
-    ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "read"),
-    ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "read"),
-    ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "write"),
-    ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "write"),
-    ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs"),
-    ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs"),
+    ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
+    ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
+    ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "write", "patch_ast_node"),
+    ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "write", "patch_ast_node"),
+    ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
+    ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
     ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path"), "index", "registered_symbol_index"),
     ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
@@ -61,16 +61,16 @@ TOOL_SPECS = (
     ToolSpec("arborist/search_symbols_context", "_search_symbols_context", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_context"),
     ToolSpec("arborist/search_symbols_neighborhood_context", "_search_symbols_neighborhood_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_neighborhood_context"),
     ToolSpec("arborist/search_symbols_discovery_context", "_search_symbols_discovery_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_discovery_context"),
-    ToolSpec("arborist/replay_patch_evidence_against_trace", "_replay_patch_evidence_against_trace", ("patch", "trace"), "trace"),
-    ToolSpec("arborist/validate_patch_commit_with_trace", "_validate_patch_commit_with_trace", ("patch", "trace"), "trace"),
-    ToolSpec("arborist/validate_patch_with_trace_context", "_validate_patch_with_trace_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace"),
-    ToolSpec("arborist/validate_patch_with_trace_context_at_position", "_validate_patch_with_trace_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace"),
-    ToolSpec("arborist/validate_patch_with_graph_context", "_validate_patch_with_graph_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/validate_patch_with_graph_context_at_position", "_validate_patch_with_graph_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/validate_patch_with_neighborhood_context", "_validate_patch_with_neighborhood_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
+    ToolSpec("arborist/replay_patch_evidence_against_trace", "_replay_patch_evidence_against_trace", ("patch", "trace"), "trace", "trace_patch_evidence_replay"),
+    ToolSpec("arborist/validate_patch_commit_with_trace", "_validate_patch_commit_with_trace", ("patch", "trace"), "trace", "patch_trace_validation"),
+    ToolSpec("arborist/validate_patch_with_trace_context", "_validate_patch_with_trace_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace", "trace_backed_patch"),
+    ToolSpec("arborist/validate_patch_with_trace_context_at_position", "_validate_patch_with_trace_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace", "trace_backed_patch"),
+    ToolSpec("arborist/validate_patch_with_graph_context", "_validate_patch_with_graph_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "graph_backed_patch"),
+    ToolSpec("arborist/validate_patch_with_graph_context_at_position", "_validate_patch_with_graph_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "graph_backed_patch"),
+    ToolSpec("arborist/validate_patch_with_neighborhood_context", "_validate_patch_with_neighborhood_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "neighborhood_context_patch"),
+    ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "neighborhood_context_patch"),
+    ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "discovery_context_patch"),
+    ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "discovery_context_patch"),
     ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "query_capture_array"),
 )
 TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
@@ -704,6 +704,354 @@ SYMBOL_SEARCH_DISCOVERY_CONTEXT_RESULT_SCHEMA = {
     "required": ["search", "reads", "contexts"],
     "additionalProperties": False,
 }
+VALIDATION_ISSUE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Tree-sitter validation issue with byte and point ranges.",
+    "properties": {
+        "kind": _schema("string", "Validation issue kind."),
+        "message": _schema("string", "Validation issue message."),
+        "start_byte": _schema("integer", "Inclusive start byte.", minimum=0),
+        "end_byte": _schema("integer", "Exclusive end byte.", minimum=0),
+        "start_point": POSITION_RESULT_SCHEMA,
+        "end_point": POSITION_RESULT_SCHEMA,
+    },
+    "required": ["kind", "message", "start_byte", "end_byte", "start_point", "end_point"],
+    "additionalProperties": False,
+}
+VALIDATION_BINDING_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Resolved validation binding.",
+    "properties": {
+        "name": _schema("string", "Identifier name."),
+        "symbol": SYMBOL_SUMMARY_RESULT_SCHEMA,
+    },
+    "required": ["name", "symbol"],
+    "additionalProperties": False,
+}
+DISAMBIGUATION_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "C include-family disambiguation context.",
+    "properties": {
+        "active_include_family": NULLABLE_STRING_RESULT_SCHEMA,
+        "preferred_family": NULLABLE_STRING_RESULT_SCHEMA,
+        "visible_include_families": STRING_ARRAY_RESULT_SCHEMA,
+        "candidate_include_families": STRING_ARRAY_RESULT_SCHEMA,
+        "candidate_symbol_ids": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": [
+        "active_include_family",
+        "preferred_family",
+        "visible_include_families",
+        "candidate_include_families",
+        "candidate_symbol_ids",
+    ],
+    "additionalProperties": False,
+}
+VALIDATION_AMBIGUITY_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Ambiguous identifier validation result.",
+    "properties": {
+        "name": _schema("string", "Identifier name."),
+        "candidates": {
+            "type": "array",
+            "description": "Candidate symbols for the identifier.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+        "reason": _schema("string", "Why the identifier is ambiguous."),
+        "disambiguation_context": DISAMBIGUATION_CONTEXT_RESULT_SCHEMA,
+    },
+    "required": ["name", "candidates", "reason", "disambiguation_context"],
+    "additionalProperties": False,
+}
+VALIDATION_BINDING_DECISION_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch validation binding decision.",
+    "properties": {
+        "name": _schema("string", "Identifier name."),
+        "status": _schema("string", "Decision status."),
+        "reason": _schema("string", "Decision reason."),
+        "selected_symbol_id": NULLABLE_STRING_RESULT_SCHEMA,
+        "candidates": {
+            "type": "array",
+            "description": "Candidate symbols considered by the decision.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+    },
+    "required": ["name", "status", "reason", "selected_symbol_id", "candidates"],
+    "additionalProperties": False,
+}
+PATCH_EVIDENCE_INVARIANT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Trace evidence invariant checked by the commit gate.",
+    "properties": {
+        "name": _schema("string", "Invariant name."),
+        "status": _schema("string", "Invariant status."),
+        "reason": _schema("string", "Invariant reason."),
+        "selected_evidence_key": NULLABLE_STRING_RESULT_SCHEMA,
+        "candidate_evidence_keys": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": [
+        "name",
+        "status",
+        "reason",
+        "selected_evidence_key",
+        "candidate_evidence_keys",
+    ],
+    "additionalProperties": False,
+}
+PATCH_COMMIT_GATE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Commit gate decision for a patch result.",
+    "properties": {
+        "status": _schema("string", "Commit gate status."),
+        "allowed": _schema("boolean", "Whether the patch may be committed."),
+        "reason": _schema("string", "Commit gate reason."),
+        "bypass_reason": NULLABLE_STRING_RESULT_SCHEMA,
+        "blocking_decisions": {
+            "type": "array",
+            "description": "Binding decisions that block a normal commit.",
+            "items": VALIDATION_BINDING_DECISION_RESULT_SCHEMA,
+        },
+        "evidence_invariants": {
+            "type": "array",
+            "description": "Trace evidence invariants evaluated by the gate.",
+            "items": PATCH_EVIDENCE_INVARIANT_RESULT_SCHEMA,
+        },
+        "syntax_error_count": _schema("integer", "Number of syntax errors.", minimum=0),
+    },
+    "required": [
+        "status",
+        "allowed",
+        "reason",
+        "bypass_reason",
+        "blocking_decisions",
+        "evidence_invariants",
+        "syntax_error_count",
+    ],
+    "additionalProperties": False,
+}
+PATCH_VALIDATION_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch validation audit report.",
+    "properties": {
+        "syntax_errors": {
+            "type": "array",
+            "description": "Syntax errors detected after patching.",
+            "items": VALIDATION_ISSUE_RESULT_SCHEMA,
+        },
+        "unresolved_identifiers": STRING_ARRAY_RESULT_SCHEMA,
+        "resolved_identifiers": {
+            "type": "array",
+            "description": "Identifiers resolved during validation.",
+            "items": VALIDATION_BINDING_RESULT_SCHEMA,
+        },
+        "ambiguous_identifiers": {
+            "type": "array",
+            "description": "Identifiers that matched multiple candidate symbols.",
+            "items": VALIDATION_AMBIGUITY_RESULT_SCHEMA,
+        },
+        "binding_decisions": {
+            "type": "array",
+            "description": "Binding decisions made by validation.",
+            "items": VALIDATION_BINDING_DECISION_RESULT_SCHEMA,
+        },
+        "commit_gate": PATCH_COMMIT_GATE_RESULT_SCHEMA,
+    },
+    "required": [
+        "syntax_errors",
+        "unresolved_identifiers",
+        "resolved_identifiers",
+        "ambiguous_identifiers",
+        "binding_decisions",
+        "commit_gate",
+    ],
+    "additionalProperties": False,
+}
+PATCH_AST_NODE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Semantic patch result.",
+    "properties": {
+        "file": _schema("string", "Normalized patched file path."),
+        "target_path": _schema("string", "Requested semantic target path."),
+        "resolved_path": _schema("string", "Resolved semantic target path."),
+        "resolved_symbol_id": _schema("string", "Resolved target symbol identifier."),
+        "applied": _schema("boolean", "Whether the patch was applied."),
+        "bypass_applied": _schema("boolean", "Whether a bypass reason was used."),
+        "updated_source": _schema("string", "Updated source text.", allow_empty=True),
+        "validation": PATCH_VALIDATION_RESULT_SCHEMA,
+    },
+    "required": [
+        "file",
+        "target_path",
+        "resolved_path",
+        "resolved_symbol_id",
+        "applied",
+        "bypass_applied",
+        "updated_source",
+        "validation",
+    ],
+    "additionalProperties": False,
+}
+PATCH_PREVIEW_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Dry-run semantic patch preview.",
+    "properties": {
+        "patch": PATCH_AST_NODE_RESULT_SCHEMA,
+        "unified_diff": _schema("string", "Unified diff for the preview.", allow_empty=True),
+        "changed": _schema("boolean", "Whether the preview changes source text."),
+    },
+    "required": ["patch", "unified_diff", "changed"],
+    "additionalProperties": False,
+}
+TRACE_PATCH_EVIDENCE_REPLAY_ITEM_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Single trace evidence replay check.",
+    "properties": {
+        "name": _schema("string", "Replay item name."),
+        "status": _schema("string", "Replay item status."),
+        "selected_evidence_key": NULLABLE_STRING_RESULT_SCHEMA,
+        "matched_in_trace": _schema("boolean", "Whether selected evidence was found in trace."),
+        "trace_match_scope": _schema("string", "Where the evidence matched."),
+        "candidate_evidence_keys": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": [
+        "name",
+        "status",
+        "selected_evidence_key",
+        "matched_in_trace",
+        "trace_match_scope",
+        "candidate_evidence_keys",
+    ],
+    "additionalProperties": False,
+}
+TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Trace evidence replay result.",
+    "properties": {
+        "consistent": _schema("boolean", "Whether replay is consistent with the trace."),
+        "matched_items": _schema("integer", "Number of matched replay items.", minimum=0),
+        "blocked_items": _schema("integer", "Number of blocked replay items.", minimum=0),
+        "items": {
+            "type": "array",
+            "description": "Replay item details.",
+            "items": TRACE_PATCH_EVIDENCE_REPLAY_ITEM_RESULT_SCHEMA,
+        },
+    },
+    "required": ["consistent", "matched_items", "blocked_items", "items"],
+    "additionalProperties": False,
+}
+PATCH_TRACE_VALIDATION_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch commit decision against trace evidence.",
+    "properties": {
+        "allowed": _schema("boolean", "Whether trace validation allows commit."),
+        "status": _schema("string", "Trace validation status."),
+        "reason": _schema("string", "Trace validation reason."),
+        "patch_gate_status": _schema("string", "Underlying patch commit gate status."),
+        "replay_status": _schema("string", "Trace replay status."),
+        "replay": TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA,
+    },
+    "required": [
+        "allowed",
+        "status",
+        "reason",
+        "patch_gate_status",
+        "replay_status",
+        "replay",
+    ],
+    "additionalProperties": False,
+}
+NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA = {
+    "anyOf": [TRACE_SYMBOL_GRAPH_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
+}
+NULLABLE_TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA = {
+    "anyOf": [TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
+}
+NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA = {
+    "anyOf": [PATCH_TRACE_VALIDATION_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
+}
+NULLABLE_SYMBOL_READ_RESULT_SCHEMA = {"anyOf": [SYMBOL_READ_RESULT_SCHEMA, NULL_RESULT_SCHEMA]}
+NULLABLE_SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA = {
+    "anyOf": [SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
+}
+TRACE_BACKED_PATCH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch result with optional one-hop trace validation context.",
+    "properties": {
+        "patch": PATCH_AST_NODE_RESULT_SCHEMA,
+        "trace_target": _schema("string", "Trace target symbol selector."),
+        "trace": NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "trace_validation": NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "trace_error": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": ["patch", "trace_target", "trace", "trace_validation", "trace_error"],
+    "additionalProperties": False,
+}
+GRAPH_BACKED_PATCH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch result with optional trace graph and neighborhood context.",
+    "properties": {
+        "patch": PATCH_AST_NODE_RESULT_SCHEMA,
+        "trace_target": _schema("string", "Trace target symbol selector."),
+        "trace": NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "neighborhood": NULLABLE_TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA,
+        "trace_validation": NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "trace_error": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": [
+        "patch",
+        "trace_target",
+        "trace",
+        "neighborhood",
+        "trace_validation",
+        "trace_error",
+    ],
+    "additionalProperties": False,
+}
+NEIGHBORHOOD_CONTEXT_PATCH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch result with optional symbol neighborhood context.",
+    "properties": {
+        "patch": PATCH_AST_NODE_RESULT_SCHEMA,
+        "trace_target": _schema("string", "Trace target symbol selector."),
+        "trace": NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "neighborhood_context": NULLABLE_SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        "trace_validation": NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "trace_error": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": [
+        "patch",
+        "trace_target",
+        "trace",
+        "neighborhood_context",
+        "trace_validation",
+        "trace_error",
+    ],
+    "additionalProperties": False,
+}
+DISCOVERY_CONTEXT_PATCH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Patch result with optional read and neighborhood discovery context.",
+    "properties": {
+        "patch": PATCH_AST_NODE_RESULT_SCHEMA,
+        "trace_target": _schema("string", "Trace target symbol selector."),
+        "trace": NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "read": NULLABLE_SYMBOL_READ_RESULT_SCHEMA,
+        "neighborhood_context": NULLABLE_SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        "trace_validation": NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "trace_error": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": [
+        "patch",
+        "trace_target",
+        "trace",
+        "read",
+        "neighborhood_context",
+        "trace_validation",
+        "trace_error",
+    ],
+    "additionalProperties": False,
+}
 QUERY_CAPTURE_RESULT_SCHEMA = {
     "type": "object",
     "description": "Tree-sitter query capture with optional Arborist owner metadata.",
@@ -890,6 +1238,14 @@ TOOL_RESULT_SCHEMAS = {
         "symbol_search_context": SYMBOL_SEARCH_CONTEXT_RESULT_SCHEMA,
         "symbol_search_neighborhood_context": SYMBOL_SEARCH_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
         "symbol_search_discovery_context": SYMBOL_SEARCH_DISCOVERY_CONTEXT_RESULT_SCHEMA,
+        "patch_ast_node": PATCH_AST_NODE_RESULT_SCHEMA,
+        "patch_preview": PATCH_PREVIEW_RESULT_SCHEMA,
+        "trace_patch_evidence_replay": TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA,
+        "patch_trace_validation": PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "trace_backed_patch": TRACE_BACKED_PATCH_RESULT_SCHEMA,
+        "graph_backed_patch": GRAPH_BACKED_PATCH_RESULT_SCHEMA,
+        "neighborhood_context_patch": NEIGHBORHOOD_CONTEXT_PATCH_RESULT_SCHEMA,
+        "discovery_context_patch": DISCOVERY_CONTEXT_PATCH_RESULT_SCHEMA,
     }[schema_key]
     for tool_name, schema_key in TOOL_RESULT_SCHEMA_KEYS.items()
 }
