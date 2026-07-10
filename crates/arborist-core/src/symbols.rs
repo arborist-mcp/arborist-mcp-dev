@@ -14,8 +14,8 @@ use crate::index_store::{
 };
 use crate::language::{
     c_include_targets, c_local_include_targets, detect_language, ensure_path_inside_workspace,
-    normalize_absolute_path, normalize_path, parse_document, path_is_inside_workspace,
-    point_for_offset, position_from, read_source, resolve_local_c_include,
+    normalize_absolute_path, normalize_path, parse_document, path_is_inside_workspace, read_source,
+    resolve_local_c_include,
 };
 use crate::model::{LanguageId, Position, SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION};
 use crate::model::{
@@ -34,6 +34,7 @@ use crate::symbol_dependency::{
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_kind_rank};
 use crate::symbol_position::resolve_symbol_at_position;
+use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
@@ -3023,53 +3024,6 @@ fn search_neighborhood_context_from_symbols(
     let result = SymbolSearchNeighborhoodContextResult { search, contexts };
     result.validate_public_output()?;
     Ok(result)
-}
-
-fn symbol_source_text(
-    symbol: &SymbolMeta,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<String> {
-    if let Some(file_overrides) = file_overrides
-        && let Some(source) = file_overrides.get(&symbol.file_path)
-    {
-        return Ok(source.clone());
-    }
-
-    read_source(Path::new(&symbol.file_path))
-}
-
-fn read_symbol_result_from_meta(
-    symbol: &SymbolMeta,
-    indexed_files: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadResult> {
-    let source = symbol_source_text(symbol, file_overrides)?;
-    let snippet = symbol_source_slice(symbol, &source)?.to_string();
-    let start_point = position_from(point_for_offset(&source, symbol.byte_range.0)?);
-    let end_point = position_from(point_for_offset(&source, symbol.byte_range.1)?);
-
-    let result = SymbolReadResult {
-        indexed_files,
-        symbol: symbol_summary_from_meta(symbol),
-        source: snippet,
-        start_point,
-        end_point,
-    };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
-fn symbol_source_slice<'a>(symbol: &SymbolMeta, source: &'a str) -> Result<&'a str> {
-    if symbol.byte_range.0 > symbol.byte_range.1 {
-        return Err(anyhow!(
-            "invalid symbol byte range for {}: start byte is after end byte",
-            symbol.symbol_id
-        ));
-    }
-
-    source
-        .get(symbol.byte_range.0..symbol.byte_range.1)
-        .ok_or_else(|| anyhow!("symbol source range is invalid for {}", symbol.symbol_id))
 }
 
 fn list_from_symbols(
