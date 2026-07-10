@@ -564,6 +564,12 @@
           "type": "string",
           "description": "Source file path. Python and C extensions are supported.",
           "minLength": 1
+        },
+        "max_files": {
+          "type": "integer",
+          "description": "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+          "default": 20000,
+          "minimum": 1
         }
       },
       "required": [
@@ -1572,6 +1578,12 @@
           "type": "string",
           "description": "SQLite symbol-index database path.",
           "minLength": 1
+        },
+        "max_files": {
+          "type": "integer",
+          "description": "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+          "default": 20000,
+          "minimum": 1
         }
       },
       "required": [

@@ -28,7 +28,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs"),
     ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs"),
     ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path"), "index", "registered_symbol_index"),
-    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path"), "index", "symbol_index_stats"),
+    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
@@ -40,7 +40,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs"),
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path"), "index", "symbol_index_stats"),
+    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files"), "index", "symbol_index_stats"),
     ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace"),
     ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace"),
     ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "trace"),
@@ -106,6 +106,7 @@ OPTIONAL_TOOL_PARAMS = frozenset(
         "limit",
         "max_captures",
         "max_depth",
+        "max_files",
         "max_nodes",
         "node_kind",
         "persist",
@@ -268,6 +269,12 @@ TOOL_PARAM_SCHEMAS = {
         default=10000,
         minimum=1,
     ),
+    "max_files": _schema(
+        "integer",
+        "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+        default=20000,
+        minimum=1,
+    ),
     "new_code": _schema("string", "Replacement source code for the selected AST node."),
     "new_text": _schema(
         "string",
@@ -314,6 +321,7 @@ TOOL_PARAM_DEFAULTS = {
     "max_depth": 2,
     "max_nodes": 64,
     "max_captures": 10000,
+    "max_files": 20000,
     "persist": False,
     "workspace_root": ".",
 }
@@ -1982,7 +1990,12 @@ class ArboristGateway:
     def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
-        payload = self._require_core().rebuild_symbol_index_json(workspace_root, db_path)
+        max_files = self._optional_int(params, "max_files", default=20000)
+        if max_files == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_files")
+        payload = self._require_core().rebuild_symbol_index_json(
+            workspace_root, db_path, max_files
+        )
         return self._decode_core_object(payload)
 
     def _inspect_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -2000,10 +2013,14 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         file_path = self._require_string(params, "file_path")
+        max_files = self._optional_int(params, "max_files", default=20000)
+        if max_files == 0:
+            raise JsonRpcError(-32602, "invalid positive int param: max_files")
         payload = self._require_core().refresh_symbol_index_for_file_json(
             workspace_root,
             db_path,
             file_path,
+            max_files,
         )
         return self._decode_core_object(payload)
 

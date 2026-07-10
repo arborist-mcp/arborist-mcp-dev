@@ -899,6 +899,49 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("limit", response["error"]["message"])
 
+    def test_rejects_negative_index_max_files(self) -> None:
+        gateway = self.make_gateway()
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 56,
+                "method": "arborist/rebuild_symbol_index",
+                "params": {"workspace_root": ".", "db_path": "symbols.db", "max_files": -1},
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 56)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_files", response["error"]["message"])
+
+    def test_rejects_zero_index_max_files(self) -> None:
+        class StubCore:
+            def refresh_symbol_index_for_file_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway(StubCore())
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 57,
+                "method": "arborist/refresh_symbol_index_for_file",
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "file_path": "helper.py",
+                    "max_files": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 57)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_files", response["error"]["message"])
+
     def test_rejects_non_string_optional_params(self) -> None:
         gateway = self.make_gateway()
 

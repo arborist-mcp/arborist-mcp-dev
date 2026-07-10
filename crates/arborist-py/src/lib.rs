@@ -3,9 +3,10 @@ use std::path::Path;
 
 use arborist_core::{
     PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
-    VirtualFileSystem, execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
-    get_semantic_skeleton, get_semantic_skeleton_from_path, inspect_symbol_index,
-    list_symbols_context_from_index_filtered, list_symbols_context_from_index_with_source_filtered,
+    VirtualFileSystem, WorkspaceScanLimits, execute_tree_query_from_path_with_limit,
+    execute_tree_query_with_limit, get_semantic_skeleton, get_semantic_skeleton_from_path,
+    inspect_symbol_index, list_symbols_context_from_index_filtered,
+    list_symbols_context_from_index_with_source_filtered,
     list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
     list_symbols_discovery_context_from_index_with_source_filtered,
     list_symbols_discovery_context_with_source_filtered, list_symbols_from_index_filtered,
@@ -31,9 +32,9 @@ use arborist_core::{
     read_symbol_neighborhood_context_at_position_with_source,
     read_symbol_neighborhood_context_from_index,
     read_symbol_neighborhood_context_from_index_with_source,
-    read_symbol_neighborhood_context_with_source, read_symbol_with_source, rebuild_symbol_index,
-    refresh_symbol_index_for_file, replay_patch_evidence_against_trace,
-    search_symbols_context_from_index_filtered,
+    read_symbol_neighborhood_context_with_source, read_symbol_with_source,
+    rebuild_symbol_index_with_limits, refresh_symbol_index_for_file_with_limits,
+    replay_patch_evidence_against_trace, search_symbols_context_from_index_filtered,
     search_symbols_context_from_index_with_source_filtered,
     search_symbols_context_with_source_filtered,
     search_symbols_discovery_context_from_index_filtered,
@@ -2071,9 +2072,19 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
-    fn rebuild_symbol_index_json(&self, workspace_root: &str, db_path: &str) -> PyResult<String> {
-        let result = rebuild_symbol_index(Path::new(workspace_root), Path::new(db_path))
-            .map_err(to_py_error)?;
+    #[pyo3(signature = (workspace_root, db_path, max_files=20_000))]
+    fn rebuild_symbol_index_json(
+        &self,
+        workspace_root: &str,
+        db_path: &str,
+        max_files: usize,
+    ) -> PyResult<String> {
+        let result = rebuild_symbol_index_with_limits(
+            Path::new(workspace_root),
+            Path::new(db_path),
+            WorkspaceScanLimits { max_files },
+        )
+        .map_err(to_py_error)?;
 
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
@@ -2084,16 +2095,19 @@ impl ArboristCore {
         serde_json::to_string(&result).map_err(to_runtime_error)
     }
 
+    #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000))]
     fn refresh_symbol_index_for_file_json(
         &self,
         workspace_root: &str,
         db_path: &str,
         file_path: &str,
+        max_files: usize,
     ) -> PyResult<String> {
-        let result = refresh_symbol_index_for_file(
+        let result = refresh_symbol_index_for_file_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
             Path::new(file_path),
+            WorkspaceScanLimits { max_files },
         )
         .map_err(to_py_error)?;
 

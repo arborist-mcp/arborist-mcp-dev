@@ -135,7 +135,10 @@ a single allowed/status/reason decision.
 `rebuild_symbol_index` creates or replaces a persisted SQLite symbol index.
 `refresh_symbol_index_for_file` reparses one changed file, removes deleted file
 state when needed, reuses stored symbols for unchanged files, and persists a
-partial SQLite update.
+partial SQLite update. Workspace scans are bounded by `max_files` (default
+`20000`) on rebuilds and missing-index refresh fallbacks so unexpectedly large
+workspaces fail with an actionable limit error instead of scanning without
+bound.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when

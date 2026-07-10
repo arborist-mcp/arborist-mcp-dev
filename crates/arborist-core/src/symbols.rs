@@ -3,7 +3,7 @@ use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params, types::Type};
 use serde::de::DeserializeOwned;
 use tree_sitter::Node;
@@ -99,6 +99,20 @@ const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
 ];
 
 const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
+
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceScanLimits {
+    pub max_files: usize,
+}
+
+impl Default for WorkspaceScanLimits {
+    fn default() -> Self {
+        Self {
+            max_files: DEFAULT_WORKSPACE_MAX_FILES,
+        }
+    }
+}
 
 pub fn trace_symbol_graph(
     workspace_root: &Path,
@@ -1477,10 +1491,18 @@ pub fn list_symbols_discovery_context_from_index_with_overrides_filtered(
 }
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
+    rebuild_symbol_index_with_limits(workspace_root, db_path, WorkspaceScanLimits::default())
+}
+
+pub fn rebuild_symbol_index_with_limits(
+    workspace_root: &Path,
+    db_path: &Path,
+    limits: WorkspaceScanLimits,
+) -> Result<SymbolIndexStats> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
-        resolve_workspace_symbols_incremental(&workspace_root, &db_path)?;
+        resolve_workspace_symbols_incremental_with_limits(&workspace_root, &db_path, limits)?;
     persist_symbol_index(
         &db_path,
         &workspace_root,
@@ -1976,6 +1998,20 @@ pub fn refresh_symbol_index_for_file(
     db_path: &Path,
     file_path: &Path,
 ) -> Result<SymbolIndexStats> {
+    refresh_symbol_index_for_file_with_limits(
+        workspace_root,
+        db_path,
+        file_path,
+        WorkspaceScanLimits::default(),
+    )
+}
+
+pub fn refresh_symbol_index_for_file_with_limits(
+    workspace_root: &Path,
+    db_path: &Path,
+    file_path: &Path,
+    limits: WorkspaceScanLimits,
+) -> Result<SymbolIndexStats> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
@@ -1983,7 +2019,7 @@ pub fn refresh_symbol_index_for_file(
     ensure_path_inside_workspace(&workspace_root, &file_path)?;
 
     if !db_path.exists() {
-        return rebuild_symbol_index(&workspace_root, &db_path);
+        return rebuild_symbol_index_with_limits(&workspace_root, &db_path, limits);
     }
 
     let connection = Connection::open(&db_path)?;
@@ -2305,13 +2341,32 @@ fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) ->
 }
 
 fn collect_source_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
+    collect_source_files_with_limits(workspace_root, WorkspaceScanLimits::default())
+}
+
+fn collect_source_files_with_limits(
+    workspace_root: &Path,
+    limits: WorkspaceScanLimits,
+) -> Result<Vec<PathBuf>> {
+    validate_workspace_scan_limits(limits)?;
     let mut files = Vec::new();
-    walk_workspace(workspace_root, &mut files)?;
+    walk_workspace(workspace_root, &mut files, limits)?;
     files.sort();
     Ok(files)
 }
 
-fn walk_workspace(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {
+    if limits.max_files == 0 {
+        bail!("invalid workspace scan max_files: value must be greater than zero");
+    }
+    Ok(())
+}
+
+fn walk_workspace(
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+    limits: WorkspaceScanLimits,
+) -> Result<()> {
     if path.is_dir() {
         if should_skip_dir(path) {
             return Ok(());
@@ -2319,12 +2374,18 @@ fn walk_workspace(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            walk_workspace(&entry.path(), files)?;
+            walk_workspace(&entry.path(), files, limits)?;
         }
         return Ok(());
     }
 
     if detect_language(path).is_ok() {
+        if files.len() >= limits.max_files {
+            bail!(
+                "workspace scan file limit exceeded: max_files={}",
+                limits.max_files
+            );
+        }
         files.push(path.to_path_buf());
     }
 
@@ -2777,11 +2838,12 @@ fn resolve_workspace_symbols_with_overrides(
     Ok((resolved_symbols, indexed_files))
 }
 
-fn resolve_workspace_symbols_incremental(
+fn resolve_workspace_symbols_incremental_with_limits(
     workspace_root: &Path,
     db_path: &Path,
+    limits: WorkspaceScanLimits,
 ) -> Result<IncrementalWorkspaceSymbols> {
-    let indexed_paths = collect_source_files(workspace_root)?;
+    let indexed_paths = collect_source_files_with_limits(workspace_root, limits)?;
     let indexed_files = indexed_paths.len();
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
@@ -5456,8 +5518,9 @@ mod tests {
 
     use super::{
         IndexedSymbol, PersistedFileState, SKIPPED_WORKSPACE_DIR_NAMES, SymbolMeta,
-        SymbolRefreshPersistence, ensure_symbol_tables, persist_symbol_index,
-        persist_symbol_refresh, persisted_byte_range, should_skip_dir_name, should_skip_index_path,
+        SymbolRefreshPersistence, WorkspaceScanLimits, collect_source_files_with_limits,
+        ensure_symbol_tables, persist_symbol_index, persist_symbol_refresh, persisted_byte_range,
+        should_skip_dir_name, should_skip_index_path,
     };
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -5500,6 +5563,35 @@ mod tests {
         assert!(should_skip_index_path(&workspace, &venv_path));
         assert!(!should_skip_index_path(&workspace, &similarly_named_path));
         assert!(!should_skip_index_path(&workspace, &sibling_workspace_path));
+    }
+
+    #[test]
+    fn collect_source_files_rejects_workspace_file_limit_overflow() {
+        let workspace = temporary_dir();
+        std::fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();
+        std::fs::write(workspace.join("b.py"), "def b():\n    return 2\n").unwrap();
+
+        let error =
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+                .expect_err("workspace scans should reject more files than max_files");
+
+        assert!(error.to_string().contains("file limit exceeded"));
+        assert!(error.to_string().contains("max_files=1"));
+    }
+
+    #[test]
+    fn collect_source_files_skips_ignored_dirs_before_file_limit() {
+        let workspace = temporary_dir();
+        let skipped = workspace.join(".venv");
+        std::fs::create_dir_all(&skipped).unwrap();
+        std::fs::write(skipped.join("ignored.py"), "def ignored():\n    return 1\n").unwrap();
+        std::fs::write(workspace.join("kept.py"), "def kept():\n    return 2\n").unwrap();
+
+        let files =
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+                .unwrap();
+
+        assert_eq!(files, vec![workspace.join("kept.py")]);
     }
 
     #[test]

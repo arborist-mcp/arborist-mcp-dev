@@ -192,8 +192,8 @@ for response shapes, error behavior, and examples.
   tracing, and bounded neighborhood context.
 - SQLite-backed persisted symbol indexes with schema-version checks, health
   inspection, response schema versioning, stale/missing/unreadable file
-  diagnostics, partial refresh, and fail-closed handling for damaged or
-  unrelated databases.
+  diagnostics, bounded workspace scans, partial refresh, and fail-closed
+  handling for damaged or unrelated databases.
 - C include-family tracing and patch disambiguation for header/source projects,
   including duplicate globals and file-local `static` symbols.
 

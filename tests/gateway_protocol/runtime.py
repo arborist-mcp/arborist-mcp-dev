@@ -131,6 +131,11 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
         list_indexes = by_name["arborist/list_symbol_indexes"]
         self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
+        rebuild_index = by_name["arborist/rebuild_symbol_index"]
+        self.assertNotIn("max_files", rebuild_index["inputSchema"]["required"])
+        self.assertEqual(
+            rebuild_index["inputSchema"]["properties"]["max_files"]["default"], 20000
+        )
         virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
             "result"
         ]
