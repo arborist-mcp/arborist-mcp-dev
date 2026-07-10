@@ -6,6 +6,7 @@ mod patching;
 mod query;
 mod semantic;
 mod source_overlay;
+mod symbol_query;
 mod symbols;
 mod vfs;
 
@@ -42,6 +43,7 @@ pub use query::{
     DEFAULT_TREE_QUERY_MAX_CAPTURES, execute_tree_query, execute_tree_query_from_path,
     execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
 };
+pub use symbol_query::SymbolQueryContext;
 pub use symbols::{
     WorkspaceScanLimits, inspect_symbol_index, list_symbols, list_symbols_context,
     list_symbols_context_filtered, list_symbols_context_from_index,

@@ -3524,7 +3524,7 @@ fn read_symbol_discovery_context_from_meta(
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
     let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
-    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction.clone())?;
+    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)?;
     let neighborhood_context = read_symbol_neighborhood_context_from_meta(
         resolved_symbols,
         indexed_files,
@@ -3959,7 +3959,7 @@ fn search_discovery_context_from_symbols(
             resolved_symbols,
             indexed_files,
             &symbol.symbol_id,
-            direction.clone(),
+            direction,
             max_depth,
             max_nodes,
             file_overrides,
@@ -4003,7 +4003,7 @@ fn search_neighborhood_context_from_symbols(
             resolved_symbols,
             indexed_files,
             &symbol.symbol_id,
-            direction.clone(),
+            direction,
             max_depth,
             max_nodes,
             file_overrides,
@@ -4180,7 +4180,7 @@ fn list_discovery_context_from_symbols(
             resolved_symbols,
             indexed_files,
             &symbol.symbol_id,
-            direction.clone(),
+            direction,
             max_depth,
             max_nodes,
             file_overrides,
@@ -4222,7 +4222,7 @@ fn list_neighborhood_context_from_symbols(
             resolved_symbols,
             indexed_files,
             &symbol.symbol_id,
-            direction.clone(),
+            direction,
             max_depth,
             max_nodes,
             file_overrides,

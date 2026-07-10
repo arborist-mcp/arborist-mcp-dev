@@ -1342,7 +1342,7 @@ impl VirtualFileSystem {
             workspace_root,
             &overrides,
             &trace_target,
-            direction.clone(),
+            direction,
         )?;
         let neighborhood = trace_symbol_neighborhood_with_overrides(
             workspace_root,
@@ -1412,7 +1412,7 @@ impl VirtualFileSystem {
             workspace_root,
             &overrides,
             &trace_target,
-            direction.clone(),
+            direction,
         )?;
         let neighborhood_context = read_symbol_neighborhood_context_with_overrides(
             workspace_root,
@@ -1484,7 +1484,7 @@ impl VirtualFileSystem {
             workspace_root,
             &overrides,
             &trace_target,
-            direction.clone(),
+            direction,
         )?;
         let read = read_symbol_with_overrides(workspace_root, &overrides, &trace_target)?;
         let neighborhood_context = read_symbol_neighborhood_context_with_overrides(

@@ -6,17 +6,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 
 use super::{
-    Position, TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
-    execute_tree_query_with_limit, get_semantic_skeleton, get_semantic_skeleton_from_path,
-    inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_from_index,
-    list_symbols_discovery_context, list_symbols_discovery_context_from_index,
-    list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-    list_symbols_from_index_with_source_filtered, list_symbols_neighborhood_context,
-    list_symbols_neighborhood_context_from_index, patch_ast_node, patch_ast_node_at_position,
-    patch_ast_node_from_path, preview_patch_ast_node_from_path, read_symbol,
-    read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
-    read_symbol_context_from_index, read_symbol_context_from_index_with_source,
-    read_symbol_discovery_context, read_symbol_discovery_context_at_position,
+    Position, SymbolQueryContext, TraceDirection, VirtualFileSystem, execute_tree_query,
+    execute_tree_query_from_path, execute_tree_query_with_limit, get_semantic_skeleton,
+    get_semantic_skeleton_from_path, inspect_symbol_index, list_symbols, list_symbols_context,
+    list_symbols_context_from_index, list_symbols_discovery_context,
+    list_symbols_discovery_context_from_index, list_symbols_filtered, list_symbols_from_index,
+    list_symbols_from_index_filtered, list_symbols_from_index_with_source_filtered,
+    list_symbols_neighborhood_context, list_symbols_neighborhood_context_from_index,
+    patch_ast_node, patch_ast_node_at_position, patch_ast_node_from_path,
+    preview_patch_ast_node_from_path, read_symbol, read_symbol_at_position,
+    read_symbol_at_position_from_index, read_symbol_context, read_symbol_context_from_index,
+    read_symbol_context_from_index_with_source, read_symbol_discovery_context,
+    read_symbol_discovery_context_at_position,
     read_symbol_discovery_context_at_position_from_index,
     read_symbol_discovery_context_at_position_with_source,
     read_symbol_discovery_context_from_index, read_symbol_from_index,
@@ -2886,6 +2887,121 @@ fn lists_symbols_from_index_with_unsaved_source_overlay() {
             .iter()
             .any(|symbol| symbol.semantic_path == "helper_alias")
     );
+}
+
+#[test]
+fn symbol_query_context_applies_multiple_workspace_overlays_without_writing_disk() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let caller = dir.join("caller.py");
+
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&caller, "def orchestrate() -> int:\n    return 0\n").unwrap();
+
+    let helper_source =
+        "def helper() -> int:\n    return 1\n\n\ndef helper_alias() -> int:\n    return helper()\n";
+    let caller_source = "from helper import helper_alias\n\n\ndef orchestrate() -> int:\n    return helper_alias()\n";
+    let context = SymbolQueryContext::workspace(&dir)
+        .unwrap()
+        .with_source_overlay(&helper, helper_source)
+        .unwrap()
+        .with_source_overlay(&caller, caller_source)
+        .unwrap();
+
+    let search = context
+        .search_symbols("helper_alias", 10, None, None)
+        .unwrap();
+    assert_eq!(search.total_matches, 1);
+
+    let trace = context
+        .trace_symbol_graph("orchestrate", TraceDirection::Callees)
+        .unwrap();
+    assert!(
+        trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper_alias")
+    );
+
+    let listed = context.list_symbols(10, None, None).unwrap();
+    assert!(
+        listed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper_alias")
+    );
+    assert!(
+        !fs::read_to_string(&helper)
+            .unwrap()
+            .contains("helper_alias")
+    );
+    assert!(
+        !fs::read_to_string(&caller)
+            .unwrap()
+            .contains("helper_alias")
+    );
+}
+
+#[test]
+fn symbol_query_context_applies_multiple_index_overlays() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let caller = dir.join("caller.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&caller, "def orchestrate() -> int:\n    return 0\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let helper_source =
+        "def helper() -> int:\n    return 1\n\n\ndef helper_alias() -> int:\n    return helper()\n";
+    let caller_source = "from helper import helper_alias\n\n\ndef orchestrate() -> int:\n    return helper_alias()\n";
+    let context = SymbolQueryContext::index(&db_path)
+        .unwrap()
+        .with_source_overlay(&helper, helper_source)
+        .unwrap()
+        .with_source_overlay(&caller, caller_source)
+        .unwrap();
+
+    let search = context
+        .search_symbols("helper_alias", 10, None, None)
+        .unwrap();
+    assert_eq!(search.total_matches, 1);
+
+    let trace = context
+        .trace_symbol_graph("orchestrate", TraceDirection::Callees)
+        .unwrap();
+    assert!(
+        trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper_alias")
+    );
+
+    let listed = context.list_symbols(10, None, None).unwrap();
+    assert!(
+        listed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper_alias")
+    );
+}
+
+#[test]
+fn symbol_query_context_rejects_workspace_overlay_outside_workspace() {
+    let dir = temporary_dir();
+    let workspace = dir.join("workspace");
+    let outside = dir.join("outside.py");
+
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(&outside, "def outside() -> int:\n    return 1\n").unwrap();
+
+    let error = SymbolQueryContext::workspace(&workspace)
+        .unwrap()
+        .with_source_overlay(&outside, "def outside() -> int:\n    return 2\n")
+        .expect_err("workspace contexts should reject overlays outside the workspace");
+
+    assert!(error.to_string().contains("outside workspace"));
 }
 
 #[test]
