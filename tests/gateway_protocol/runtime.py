@@ -123,11 +123,21 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(len(tools), len(gateway_module.TOOL_NAMES))
         by_name = {tool["name"]: tool for tool in tools}
         self.assertEqual(set(by_name), set(gateway_module.TOOL_NAMES))
+        self.assertEqual(
+            [spec.name for spec in gateway_module.TOOL_SPECS if spec.result_schema == "object"],
+            [],
+        )
         skeleton = by_name["arborist/get_semantic_skeleton"]
         self.assertEqual(skeleton["metadata"]["category"], "read")
         self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])
         self.assertEqual(skeleton["outputSchema"]["required"], ["result"])
-        self.assertEqual(skeleton["outputSchema"]["properties"]["result"]["type"], "object")
+        skeleton_result = skeleton["outputSchema"]["properties"]["result"]
+        self.assertEqual(skeleton_result["type"], "object")
+        self.assertEqual(skeleton_result["additionalProperties"], False)
+        self.assertEqual(
+            skeleton_result["required"],
+            ["file", "skeleton", "available_paths", "available_symbols"],
+        )
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
         self.assertIn(
             "not full C++ parsing",
@@ -152,6 +162,16 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(virtual_status["additionalProperties"], False)
         self.assertEqual(
             virtual_status["required"], ["file", "dirty", "version", "syntax_error_count"]
+        )
+        virtual_edit = by_name["arborist/did_change"]["outputSchema"]["properties"]["result"]
+        self.assertEqual(virtual_edit["additionalProperties"], False)
+        self.assertEqual(
+            virtual_edit["required"],
+            ["file", "source", "dirty", "version", "incremental_parse", "validation"],
+        )
+        self.assertEqual(
+            by_name["arborist/apply_buffer_edit"]["outputSchema"]["properties"]["result"],
+            virtual_edit,
         )
         inspect_index = by_name["arborist/inspect_symbol_index"]
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]

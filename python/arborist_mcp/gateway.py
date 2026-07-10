@@ -20,7 +20,7 @@ class ToolSpec(NamedTuple):
 
 
 TOOL_SPECS = (
-    ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read"),
+    ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read", "semantic_skeleton"),
     ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
     ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
     ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "write", "patch_ast_node"),
@@ -33,11 +33,11 @@ TOOL_SPECS = (
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
     ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs"),
+    ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs", "virtual_edit"),
     ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist"), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/list_virtual_files", "_list_virtual_files", ("dirty_only",), "vfs", "virtual_file_status_array"),
     ToolSpec("arborist/read_virtual_file", "_read_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs"),
+    ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs", "virtual_edit"),
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files"), "index", "symbol_index_stats"),
@@ -368,6 +368,53 @@ STRING_ARRAY_RESULT_SCHEMA = {
     "type": "array",
     "description": "String values.",
     "items": _schema("string", "String value."),
+}
+SEMANTIC_SKELETON_SYMBOL_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol metadata available from a semantic skeleton.",
+    "properties": {
+        "symbol_id": _schema("string", "Stable symbol identifier."),
+        "semantic_path": _schema("string", "Stable Arborist semantic selector."),
+        "scope_path": NULLABLE_STRING_RESULT_SCHEMA,
+        "node_kind": _schema("string", "Tree-sitter node kind."),
+        "byte_range": BYTE_RANGE_RESULT_SCHEMA,
+        "signature": NULLABLE_STRING_RESULT_SCHEMA,
+        "parameters": STRING_ARRAY_RESULT_SCHEMA,
+        "return_type": NULLABLE_STRING_RESULT_SCHEMA,
+        "docstring": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": [
+        "symbol_id",
+        "semantic_path",
+        "scope_path",
+        "node_kind",
+        "byte_range",
+        "signature",
+        "parameters",
+        "return_type",
+        "docstring",
+    ],
+    "additionalProperties": False,
+}
+SEMANTIC_SKELETON_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Semantic skeleton and available semantic selectors for a source file.",
+    "properties": {
+        "file": _schema("string", "Normalized source file path."),
+        "skeleton": _schema("string", "Semantic skeleton text.", allow_empty=True),
+        "available_paths": {
+            "type": "array",
+            "description": "Semantic selectors available for expansion or patching.",
+            "items": _schema("string", "Semantic selector."),
+        },
+        "available_symbols": {
+            "type": "array",
+            "description": "Symbol metadata aligned with available_paths.",
+            "items": SEMANTIC_SKELETON_SYMBOL_RESULT_SCHEMA,
+        },
+    },
+    "required": ["file", "skeleton", "available_paths", "available_symbols"],
+    "additionalProperties": False,
 }
 SYMBOL_SUMMARY_RESULT_SCHEMA = {
     "type": "object",
@@ -903,6 +950,20 @@ PATCH_PREVIEW_RESULT_SCHEMA = {
     "required": ["patch", "unified_diff", "changed"],
     "additionalProperties": False,
 }
+VIRTUAL_EDIT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Virtual file edit result.",
+    "properties": {
+        "file": _schema("string", "Normalized virtual file path."),
+        "source": _schema("string", "Current virtual buffer source.", allow_empty=True),
+        "dirty": _schema("boolean", "Whether the virtual buffer differs from disk."),
+        "version": _schema("integer", "Virtual buffer version.", minimum=0),
+        "incremental_parse": _schema("boolean", "Whether Tree-sitter reused incremental parsing."),
+        "validation": PATCH_VALIDATION_RESULT_SCHEMA,
+    },
+    "required": ["file", "source", "dirty", "version", "incremental_parse", "validation"],
+    "additionalProperties": False,
+}
 TRACE_PATCH_EVIDENCE_REPLAY_ITEM_RESULT_SCHEMA = {
     "type": "object",
     "description": "Single trace evidence replay check.",
@@ -1217,9 +1278,11 @@ TOOL_RESULT_SCHEMAS = {
     tool_name: {
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
+        "semantic_skeleton": SEMANTIC_SKELETON_RESULT_SCHEMA,
         "query_capture_array": QUERY_CAPTURE_ARRAY_RESULT_SCHEMA,
         "virtual_file_snapshot": VIRTUAL_FILE_SNAPSHOT_RESULT_SCHEMA,
         "virtual_file_status_array": VIRTUAL_FILE_STATUS_ARRAY_RESULT_SCHEMA,
+        "virtual_edit": VIRTUAL_EDIT_RESULT_SCHEMA,
         "symbol_index_stats": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
         "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
         "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,
