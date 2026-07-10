@@ -175,6 +175,42 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(
             query_items["properties"]["owner_symbol_id"]["anyOf"][1]["type"], "null"
         )
+        trace_graph = by_name["arborist/trace_symbol_graph"]["outputSchema"]["properties"][
+            "result"
+        ]
+        self.assertEqual(trace_graph["additionalProperties"], False)
+        self.assertEqual(
+            trace_graph["properties"]["symbol"]["properties"]["dependencies"]["type"], "array"
+        )
+        self.assertEqual(
+            trace_graph["properties"]["evidence_keys"]["required"],
+            ["symbol", "callers", "callees"],
+        )
+        trace_neighborhood = by_name["arborist/trace_symbol_neighborhood"]["outputSchema"][
+            "properties"
+        ]["result"]
+        self.assertIn("nodes", trace_neighborhood["required"])
+        self.assertEqual(
+            trace_neighborhood["properties"]["nodes"]["items"]["properties"]["depth"]["type"],
+            "integer",
+        )
+        read_symbol = by_name["arborist/read_symbol"]["outputSchema"]["properties"]["result"]
+        self.assertEqual(
+            read_symbol["required"], ["indexed_files", "symbol", "source", "start_point", "end_point"]
+        )
+        self.assertEqual(read_symbol["properties"]["symbol"]["additionalProperties"], False)
+        list_symbols = by_name["arborist/list_symbols"]["outputSchema"]["properties"]["result"]
+        self.assertEqual(
+            list_symbols["required"], ["indexed_files", "total_symbols", "truncated", "symbols"]
+        )
+        search_symbols = by_name["arborist/search_symbols"]["outputSchema"]["properties"][
+            "result"
+        ]
+        self.assertEqual(search_symbols["properties"]["match_details"]["type"], "array")
+        search_context = by_name["arborist/search_symbols_discovery_context"]["outputSchema"][
+            "properties"
+        ]["result"]
+        self.assertEqual(search_context["required"], ["search", "reads", "contexts"])
 
     def test_resources_list_exposes_tool_catalog(self) -> None:
         result = self.assert_jsonrpc_ok(

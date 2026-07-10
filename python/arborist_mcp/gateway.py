@@ -41,26 +41,26 @@ TOOL_SPECS = (
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files"), "index", "symbol_index_stats"),
-    ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace"),
-    ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace"),
-    ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "trace"),
-    ToolSpec("arborist/trace_symbol_neighborhood_at_position", "_trace_symbol_neighborhood_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "trace"),
-    ToolSpec("arborist/read_symbol", "_read_symbol", ("workspace_root", "symbol_path", "index_db_path", "file_path", "source"), "read"),
-    ToolSpec("arborist/read_symbol_at_position", "_read_symbol_at_position", ("workspace_root", "file_path", "position", "source", "index_db_path"), "read"),
-    ToolSpec("arborist/read_symbol_context", "_read_symbol_context", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "read"),
-    ToolSpec("arborist/read_symbol_context_at_position", "_read_symbol_context_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "read"),
-    ToolSpec("arborist/read_symbol_neighborhood_context", "_read_symbol_neighborhood_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read"),
-    ToolSpec("arborist/read_symbol_neighborhood_context_at_position", "_read_symbol_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read"),
-    ToolSpec("arborist/read_symbol_discovery_context", "_read_symbol_discovery_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read"),
-    ToolSpec("arborist/read_symbol_discovery_context_at_position", "_read_symbol_discovery_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read"),
-    ToolSpec("arborist/list_symbols", "_list_symbols", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/list_symbols_context", "_list_symbols_context", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/list_symbols_neighborhood_context", "_list_symbols_neighborhood_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/list_symbols_discovery_context", "_list_symbols_discovery_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/search_symbols", "_search_symbols", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/search_symbols_context", "_search_symbols_context", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/search_symbols_neighborhood_context", "_search_symbols_neighborhood_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
-    ToolSpec("arborist/search_symbols_discovery_context", "_search_symbols_discovery_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read"),
+    ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace", "trace_symbol_graph"),
+    ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace", "trace_symbol_neighborhood"),
+    ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "trace", "trace_symbol_graph"),
+    ToolSpec("arborist/trace_symbol_neighborhood_at_position", "_trace_symbol_neighborhood_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "trace", "trace_symbol_neighborhood"),
+    ToolSpec("arborist/read_symbol", "_read_symbol", ("workspace_root", "symbol_path", "index_db_path", "file_path", "source"), "read", "symbol_read"),
+    ToolSpec("arborist/read_symbol_at_position", "_read_symbol_at_position", ("workspace_root", "file_path", "position", "source", "index_db_path"), "read", "symbol_read"),
+    ToolSpec("arborist/read_symbol_context", "_read_symbol_context", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "read", "symbol_context"),
+    ToolSpec("arborist/read_symbol_context_at_position", "_read_symbol_context_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "read", "symbol_context"),
+    ToolSpec("arborist/read_symbol_neighborhood_context", "_read_symbol_neighborhood_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read", "symbol_neighborhood_context"),
+    ToolSpec("arborist/read_symbol_neighborhood_context_at_position", "_read_symbol_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read", "symbol_neighborhood_context"),
+    ToolSpec("arborist/read_symbol_discovery_context", "_read_symbol_discovery_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read", "symbol_discovery_context"),
+    ToolSpec("arborist/read_symbol_discovery_context_at_position", "_read_symbol_discovery_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read", "symbol_discovery_context"),
+    ToolSpec("arborist/list_symbols", "_list_symbols", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_list"),
+    ToolSpec("arborist/list_symbols_context", "_list_symbols_context", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_list_context"),
+    ToolSpec("arborist/list_symbols_neighborhood_context", "_list_symbols_neighborhood_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_list_neighborhood_context"),
+    ToolSpec("arborist/list_symbols_discovery_context", "_list_symbols_discovery_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_list_discovery_context"),
+    ToolSpec("arborist/search_symbols", "_search_symbols", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search"),
+    ToolSpec("arborist/search_symbols_context", "_search_symbols_context", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_context"),
+    ToolSpec("arborist/search_symbols_neighborhood_context", "_search_symbols_neighborhood_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_neighborhood_context"),
+    ToolSpec("arborist/search_symbols_discovery_context", "_search_symbols_discovery_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_discovery_context"),
     ToolSpec("arborist/replay_patch_evidence_against_trace", "_replay_patch_evidence_against_trace", ("patch", "trace"), "trace"),
     ToolSpec("arborist/validate_patch_commit_with_trace", "_validate_patch_commit_with_trace", ("patch", "trace"), "trace"),
     ToolSpec("arborist/validate_patch_with_trace_context", "_validate_patch_with_trace_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace"),
@@ -354,6 +354,353 @@ POSITION_RESULT_SCHEMA = {
     "required": ["row", "column"],
     "additionalProperties": False,
 }
+BYTE_RANGE_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Inclusive start and exclusive end byte offsets.",
+    "items": _schema("integer", "Byte offset.", minimum=0),
+    "minItems": 2,
+    "maxItems": 2,
+}
+STRING_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "String values.",
+    "items": _schema("string", "String value."),
+}
+SYMBOL_SUMMARY_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Compact symbol metadata.",
+    "properties": {
+        "symbol_id": _schema("string", "Stable symbol identifier."),
+        "semantic_path": _schema("string", "Stable Arborist semantic selector."),
+        "scope_path": NULLABLE_STRING_RESULT_SCHEMA,
+        "file_path": _schema("string", "Normalized source file path."),
+        "node_kind": _schema("string", "Tree-sitter node kind."),
+        "origin_type": _schema("string", "Symbol origin classification."),
+        "evidence_key": _schema("string", "Trace evidence identity key."),
+        "byte_range": BYTE_RANGE_RESULT_SCHEMA,
+        "signature": NULLABLE_STRING_RESULT_SCHEMA,
+        "parameters": STRING_ARRAY_RESULT_SCHEMA,
+        "return_type": NULLABLE_STRING_RESULT_SCHEMA,
+        "docstring": NULLABLE_STRING_RESULT_SCHEMA,
+    },
+    "required": [
+        "symbol_id",
+        "semantic_path",
+        "scope_path",
+        "file_path",
+        "node_kind",
+        "origin_type",
+        "evidence_key",
+        "byte_range",
+        "signature",
+        "parameters",
+        "return_type",
+        "docstring",
+    ],
+    "additionalProperties": False,
+}
+SYMBOL_META_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Resolved symbol metadata including graph relationships.",
+    "properties": {
+        **SYMBOL_SUMMARY_RESULT_SCHEMA["properties"],
+        "dependencies": STRING_ARRAY_RESULT_SCHEMA,
+        "references": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": [
+        *SYMBOL_SUMMARY_RESULT_SCHEMA["required"],
+        "dependencies",
+        "references",
+    ],
+    "additionalProperties": False,
+}
+TRACE_EVIDENCE_KEYS_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Trace evidence keys for the root symbol and adjacent symbols.",
+    "properties": {
+        "symbol": _schema("string", "Root symbol evidence key."),
+        "callers": STRING_ARRAY_RESULT_SCHEMA,
+        "callees": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": ["symbol", "callers", "callees"],
+    "additionalProperties": False,
+}
+TRACE_SYMBOL_GRAPH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "One-hop caller/callee symbol graph.",
+    "properties": {
+        "symbol": SYMBOL_META_RESULT_SCHEMA,
+        "callers": {
+            "type": "array",
+            "description": "Direct caller symbols.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+        "callees": {
+            "type": "array",
+            "description": "Direct callee symbols.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+        "evidence_keys": TRACE_EVIDENCE_KEYS_RESULT_SCHEMA,
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+    },
+    "required": ["symbol", "callers", "callees", "evidence_keys", "indexed_files"],
+    "additionalProperties": False,
+}
+TRACE_NEIGHBORHOOD_NODE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol neighborhood node with traversal depth.",
+    "properties": {
+        "symbol": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        "depth": _schema("integer", "Traversal depth from root symbol.", minimum=0),
+    },
+    "required": ["symbol", "depth"],
+    "additionalProperties": False,
+}
+TRACE_NEIGHBORHOOD_EDGE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Directed edge between two symbol identifiers.",
+    "properties": {
+        "from_symbol_id": _schema("string", "Source symbol identifier."),
+        "to_symbol_id": _schema("string", "Target symbol identifier."),
+    },
+    "required": ["from_symbol_id", "to_symbol_id"],
+    "additionalProperties": False,
+}
+TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Bounded caller/callee symbol neighborhood.",
+    "properties": {
+        "symbol": SYMBOL_META_RESULT_SCHEMA,
+        "direction": _schema(
+            "string",
+            "Graph direction used for traversal.",
+            enum=("callers", "callees", "both"),
+        ),
+        "max_depth": _schema("integer", "Configured traversal depth.", minimum=0),
+        "max_nodes": _schema("integer", "Configured node limit.", minimum=0),
+        "truncated": _schema("boolean", "Whether traversal stopped at the node limit."),
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+        "nodes": {
+            "type": "array",
+            "description": "Neighborhood nodes.",
+            "items": TRACE_NEIGHBORHOOD_NODE_RESULT_SCHEMA,
+        },
+        "edges": {
+            "type": "array",
+            "description": "Neighborhood directed edges.",
+            "items": TRACE_NEIGHBORHOOD_EDGE_RESULT_SCHEMA,
+        },
+    },
+    "required": [
+        "symbol",
+        "direction",
+        "max_depth",
+        "max_nodes",
+        "truncated",
+        "indexed_files",
+        "nodes",
+        "edges",
+    ],
+    "additionalProperties": False,
+}
+SYMBOL_READ_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol source slice and location.",
+    "properties": {
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+        "symbol": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        "source": _schema("string", "Selected symbol source text.", allow_empty=True),
+        "start_point": POSITION_RESULT_SCHEMA,
+        "end_point": POSITION_RESULT_SCHEMA,
+    },
+    "required": ["indexed_files", "symbol", "source", "start_point", "end_point"],
+    "additionalProperties": False,
+}
+SYMBOL_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol read result plus one-hop trace context.",
+    "properties": {
+        "read": SYMBOL_READ_RESULT_SCHEMA,
+        "trace": TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+    },
+    "required": ["read", "trace"],
+    "additionalProperties": False,
+}
+SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol neighborhood plus source reads for included nodes.",
+    "properties": {
+        "neighborhood": TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA,
+        "reads": {
+            "type": "array",
+            "description": "Source reads for neighborhood symbols.",
+            "items": SYMBOL_READ_RESULT_SCHEMA,
+        },
+    },
+    "required": ["neighborhood", "reads"],
+    "additionalProperties": False,
+}
+SYMBOL_DISCOVERY_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Read, trace, and neighborhood context for symbol discovery.",
+    "properties": {
+        "read": SYMBOL_READ_RESULT_SCHEMA,
+        "trace": TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "neighborhood_context": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+    },
+    "required": ["read", "trace", "neighborhood_context"],
+    "additionalProperties": False,
+}
+SYMBOL_LIST_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Bounded symbol list.",
+    "properties": {
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+        "total_symbols": _schema("integer", "Total matching symbols before truncation.", minimum=0),
+        "truncated": _schema("boolean", "Whether results were truncated by limit."),
+        "symbols": {
+            "type": "array",
+            "description": "Symbol summaries.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+    },
+    "required": ["indexed_files", "total_symbols", "truncated", "symbols"],
+    "additionalProperties": False,
+}
+SYMBOL_LIST_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol list plus source reads.",
+    "properties": {
+        "list": SYMBOL_LIST_RESULT_SCHEMA,
+        "reads": {
+            "type": "array",
+            "description": "Source reads for listed symbols.",
+            "items": SYMBOL_READ_RESULT_SCHEMA,
+        },
+    },
+    "required": ["list", "reads"],
+    "additionalProperties": False,
+}
+SYMBOL_LIST_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol list plus neighborhood contexts.",
+    "properties": {
+        "list": SYMBOL_LIST_RESULT_SCHEMA,
+        "contexts": {
+            "type": "array",
+            "description": "Neighborhood contexts for listed symbols.",
+            "items": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        },
+    },
+    "required": ["list", "contexts"],
+    "additionalProperties": False,
+}
+SYMBOL_LIST_DISCOVERY_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol list plus reads and neighborhood contexts.",
+    "properties": {
+        "list": SYMBOL_LIST_RESULT_SCHEMA,
+        "reads": {
+            "type": "array",
+            "description": "Source reads for listed symbols.",
+            "items": SYMBOL_READ_RESULT_SCHEMA,
+        },
+        "contexts": {
+            "type": "array",
+            "description": "Neighborhood contexts for listed symbols.",
+            "items": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        },
+    },
+    "required": ["list", "reads", "contexts"],
+    "additionalProperties": False,
+}
+SYMBOL_SEARCH_MATCH_DETAIL_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Matched fields and score for a search hit.",
+    "properties": {
+        "symbol_id": _schema("string", "Matched symbol identifier."),
+        "score": _schema("integer", "Lower scores are better matches.", minimum=0),
+        "matched_fields": STRING_ARRAY_RESULT_SCHEMA,
+    },
+    "required": ["symbol_id", "score", "matched_fields"],
+    "additionalProperties": False,
+}
+SYMBOL_SEARCH_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Bounded symbol search result.",
+    "properties": {
+        "query": _schema("string", "Search query."),
+        "indexed_files": _schema("integer", "Number of indexed files.", minimum=0),
+        "total_matches": _schema("integer", "Total matches before truncation.", minimum=0),
+        "truncated": _schema("boolean", "Whether results were truncated by limit."),
+        "matches": {
+            "type": "array",
+            "description": "Matched symbol summaries.",
+            "items": SYMBOL_SUMMARY_RESULT_SCHEMA,
+        },
+        "match_details": {
+            "type": "array",
+            "description": "Search scoring and matched fields.",
+            "items": SYMBOL_SEARCH_MATCH_DETAIL_RESULT_SCHEMA,
+        },
+    },
+    "required": [
+        "query",
+        "indexed_files",
+        "total_matches",
+        "truncated",
+        "matches",
+        "match_details",
+    ],
+    "additionalProperties": False,
+}
+SYMBOL_SEARCH_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol search plus source reads.",
+    "properties": {
+        "search": SYMBOL_SEARCH_RESULT_SCHEMA,
+        "reads": {
+            "type": "array",
+            "description": "Source reads for search matches.",
+            "items": SYMBOL_READ_RESULT_SCHEMA,
+        },
+    },
+    "required": ["search", "reads"],
+    "additionalProperties": False,
+}
+SYMBOL_SEARCH_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol search plus neighborhood contexts.",
+    "properties": {
+        "search": SYMBOL_SEARCH_RESULT_SCHEMA,
+        "contexts": {
+            "type": "array",
+            "description": "Neighborhood contexts for search matches.",
+            "items": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        },
+    },
+    "required": ["search", "contexts"],
+    "additionalProperties": False,
+}
+SYMBOL_SEARCH_DISCOVERY_CONTEXT_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Symbol search plus reads and neighborhood contexts.",
+    "properties": {
+        "search": SYMBOL_SEARCH_RESULT_SCHEMA,
+        "reads": {
+            "type": "array",
+            "description": "Source reads for search matches.",
+            "items": SYMBOL_READ_RESULT_SCHEMA,
+        },
+        "contexts": {
+            "type": "array",
+            "description": "Neighborhood contexts for search matches.",
+            "items": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        },
+    },
+    "required": ["search", "reads", "contexts"],
+    "additionalProperties": False,
+}
 QUERY_CAPTURE_RESULT_SCHEMA = {
     "type": "object",
     "description": "Tree-sitter query capture with optional Arborist owner metadata.",
@@ -526,6 +873,20 @@ TOOL_RESULT_SCHEMAS = {
         "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
         "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,
         "symbol_index_health": SYMBOL_INDEX_HEALTH_RESULT_SCHEMA,
+        "trace_symbol_graph": TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
+        "trace_symbol_neighborhood": TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA,
+        "symbol_read": SYMBOL_READ_RESULT_SCHEMA,
+        "symbol_context": SYMBOL_CONTEXT_RESULT_SCHEMA,
+        "symbol_neighborhood_context": SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        "symbol_discovery_context": SYMBOL_DISCOVERY_CONTEXT_RESULT_SCHEMA,
+        "symbol_list": SYMBOL_LIST_RESULT_SCHEMA,
+        "symbol_list_context": SYMBOL_LIST_CONTEXT_RESULT_SCHEMA,
+        "symbol_list_neighborhood_context": SYMBOL_LIST_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        "symbol_list_discovery_context": SYMBOL_LIST_DISCOVERY_CONTEXT_RESULT_SCHEMA,
+        "symbol_search": SYMBOL_SEARCH_RESULT_SCHEMA,
+        "symbol_search_context": SYMBOL_SEARCH_CONTEXT_RESULT_SCHEMA,
+        "symbol_search_neighborhood_context": SYMBOL_SEARCH_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA,
+        "symbol_search_discovery_context": SYMBOL_SEARCH_DISCOVERY_CONTEXT_RESULT_SCHEMA,
     }[schema_key]
     for tool_name, schema_key in TOOL_RESULT_SCHEMA_KEYS.items()
 }
