@@ -10,8 +10,9 @@ use tree_sitter::Node;
 
 use crate::language::{
     c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
-    detect_language, is_c_header_path, node_text, normalize_absolute_path, normalize_path,
-    offset_for_position, parse_document, point_for_offset, position_from, read_source,
+    detect_language, ensure_path_inside_workspace, is_c_header_path, node_text,
+    normalize_absolute_path, normalize_path, offset_for_position, parse_document,
+    path_is_inside_workspace, point_for_offset, position_from, read_source,
     resolve_local_c_include, visit_tree,
 };
 use crate::model::{LanguageId, Position, SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION};
@@ -136,13 +137,7 @@ pub fn trace_symbol_graph_at_position(
 ) -> Result<TraceSymbolGraphResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     trace_symbol_graph_at_position_from_symbols(
         &resolved_symbols,
@@ -164,13 +159,7 @@ pub fn trace_symbol_neighborhood_at_position(
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     trace_symbol_neighborhood_at_position_from_symbols(
         &resolved_symbols,
@@ -253,13 +242,7 @@ pub fn read_symbol_at_position(
 ) -> Result<SymbolReadResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     read_symbol_at_position_from_symbols(
         &resolved_symbols,
@@ -278,13 +261,7 @@ pub fn read_symbol_context_at_position(
 ) -> Result<SymbolContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     read_symbol_context_at_position_from_symbols(
         &resolved_symbols,
@@ -306,13 +283,7 @@ pub fn read_symbol_neighborhood_context_at_position(
 ) -> Result<SymbolNeighborhoodContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     read_symbol_neighborhood_context_at_position_from_symbols(
         &resolved_symbols,
@@ -336,13 +307,7 @@ pub fn read_symbol_discovery_context_at_position(
 ) -> Result<SymbolReadDiscoveryContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
     read_symbol_discovery_context_at_position_from_symbols(
         &resolved_symbols,
@@ -677,13 +642,7 @@ pub fn trace_symbol_graph_at_position_with_overrides(
 ) -> Result<TraceSymbolGraphResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     trace_symbol_graph_at_position_from_symbols(
@@ -707,13 +666,7 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides(
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     trace_symbol_neighborhood_at_position_from_symbols(
@@ -810,13 +763,7 @@ pub fn read_symbol_at_position_with_overrides(
 ) -> Result<SymbolReadResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     read_symbol_at_position_from_symbols(
@@ -837,13 +784,7 @@ pub fn read_symbol_context_at_position_with_overrides(
 ) -> Result<SymbolContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     read_symbol_context_at_position_from_symbols(
@@ -867,13 +808,7 @@ pub fn read_symbol_neighborhood_context_at_position_with_overrides(
 ) -> Result<SymbolNeighborhoodContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     read_symbol_neighborhood_context_at_position_from_symbols(
@@ -899,13 +834,7 @@ pub fn read_symbol_discovery_context_at_position_with_overrides(
 ) -> Result<SymbolReadDiscoveryContextResult> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_path = normalize_absolute_path(file_path)?;
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
     let (resolved_symbols, indexed_files) =
         resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
     read_symbol_discovery_context_at_position_from_symbols(
@@ -2051,13 +1980,7 @@ pub fn refresh_symbol_index_for_file(
     let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
 
-    if !file_path.starts_with(&workspace_root) {
-        return Err(anyhow!(
-            "file {} is outside workspace {}",
-            file_path.display(),
-            workspace_root.display()
-        ));
-    }
+    ensure_path_inside_workspace(&workspace_root, &file_path)?;
 
     if !db_path.exists() {
         return rebuild_symbol_index(&workspace_root, &db_path);
@@ -2834,7 +2757,7 @@ fn resolve_workspace_symbols_with_overrides(
 
     for override_path in file_overrides.keys() {
         let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !override_path.starts_with(&workspace_root)
+        if !path_is_inside_workspace(&workspace_root, &override_path)?
             || should_skip_index_path(&workspace_root, &override_path)
             || detect_language(&override_path).is_err()
         {
@@ -4660,7 +4583,7 @@ fn load_symbol_index_with_overrides(
 
     for (override_path, override_source) in file_overrides {
         let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !override_path.starts_with(&workspace_root)
+        if !path_is_inside_workspace(&workspace_root, &override_path)?
             || should_skip_index_path(&workspace_root, &override_path)
             || detect_language(&override_path).is_err()
         {

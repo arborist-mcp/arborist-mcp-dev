@@ -11,9 +11,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use source_overlay::{
-    ensure_path_inside_workspace, source_override_for_path, source_overrides_for_workspace_path,
-};
+use language::ensure_path_inside_workspace;
+use source_overlay::{source_override_for_path, source_overrides_for_workspace_path};
 
 pub use model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,

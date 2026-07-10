@@ -49,6 +49,55 @@ pub fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
+pub(crate) fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
+    if path_is_inside_workspace(workspace_root, path)? {
+        return Ok(());
+    }
+
+    reject_path_outside_workspace(workspace_root, path)
+}
+
+pub(crate) fn path_is_inside_workspace(workspace_root: &Path, path: &Path) -> Result<bool> {
+    if !path.starts_with(workspace_root) {
+        return Ok(false);
+    }
+
+    let canonical_workspace = canonicalize_with_existing_ancestor(workspace_root)?;
+    let canonical_path = canonicalize_with_existing_ancestor(path)?;
+    Ok(canonical_path.starts_with(&canonical_workspace))
+}
+
+fn reject_path_outside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
+    bail!(
+        "file {} is outside workspace {}",
+        path.display(),
+        workspace_root.display()
+    );
+}
+
+fn canonicalize_with_existing_ancestor(path: &Path) -> Result<PathBuf> {
+    let normalized = normalize_absolute_path(path)?;
+    let mut missing_components = Vec::new();
+    let mut probe = normalized.as_path();
+
+    while !probe.exists() {
+        let Some(file_name) = probe.file_name() else {
+            return Ok(normalized);
+        };
+        missing_components.push(file_name.to_os_string());
+        let Some(parent) = probe.parent() else {
+            return Ok(normalized);
+        };
+        probe = parent;
+    }
+
+    let mut canonical = fs::canonicalize(probe)?;
+    for component in missing_components.iter().rev() {
+        canonical.push(component);
+    }
+    normalize_absolute_path(&canonical)
+}
+
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;

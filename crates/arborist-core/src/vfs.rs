@@ -7,8 +7,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{InputEdit, Tree};
 
 use crate::language::{
-    normalize_absolute_path, normalize_path, offset_for_position, parse_document,
-    parser_for_language, point_for_offset,
+    ensure_path_inside_workspace, normalize_absolute_path, normalize_path, offset_for_position,
+    parse_document, parser_for_language, path_is_inside_workspace, point_for_offset,
 };
 use crate::model::LanguageId;
 use crate::model::{
@@ -326,13 +326,7 @@ impl VirtualFileSystem {
     ) -> Result<TraceBackedPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -351,13 +345,7 @@ impl VirtualFileSystem {
     ) -> Result<TraceBackedPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -379,13 +367,7 @@ impl VirtualFileSystem {
     ) -> Result<GraphBackedPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -407,13 +389,7 @@ impl VirtualFileSystem {
     ) -> Result<GraphBackedPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -435,13 +411,7 @@ impl VirtualFileSystem {
     ) -> Result<NeighborhoodContextPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -469,13 +439,7 @@ impl VirtualFileSystem {
     ) -> Result<NeighborhoodContextPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -503,13 +467,7 @@ impl VirtualFileSystem {
     ) -> Result<DiscoveryContextPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -537,13 +495,7 @@ impl VirtualFileSystem {
     ) -> Result<DiscoveryContextPatchResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        if !path.starts_with(&workspace_root) {
-            bail!(
-                "file {} is outside workspace {}",
-                path.display(),
-                workspace_root.display()
-            );
-        }
+        ensure_path_inside_workspace(&workspace_root, &path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
@@ -1256,7 +1208,7 @@ impl VirtualFileSystem {
         let file_path = normalize_absolute_path(file_path)?;
         for (workspace_root, db_path) in &self.symbol_indexes {
             let workspace_root_path = Path::new(workspace_root);
-            if file_path.starts_with(workspace_root_path) {
+            if path_is_inside_workspace(workspace_root_path, &file_path)? {
                 refresh_symbol_index_for_file(workspace_root_path, db_path, &file_path)?;
             }
         }
