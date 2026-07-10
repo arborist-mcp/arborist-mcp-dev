@@ -2,9 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Row, Transaction, types::Type};
+use serde::de::DeserializeOwned;
 
 use crate::language::{normalize_absolute_path, normalize_path};
+use crate::model::SymbolMeta;
 
 pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
@@ -253,6 +255,88 @@ pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Res
     usize::try_from(count).map_err(|error| anyhow!("invalid row count in `{table_name}`: {error}"))
 }
 
+pub(crate) fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
+    if symbol.byte_range.0 > symbol.byte_range.1 {
+        return Err(anyhow!(
+            "invalid byte range for {}: start {} is after end {}",
+            symbol.semantic_path,
+            symbol.byte_range.0,
+            symbol.byte_range.1
+        ));
+    }
+
+    Ok((
+        i64::try_from(symbol.byte_range.0).map_err(|error| {
+            anyhow!("invalid start byte for {}: {}", symbol.semantic_path, error)
+        })?,
+        i64::try_from(symbol.byte_range.1)
+            .map_err(|error| anyhow!("invalid end byte for {}: {}", symbol.semantic_path, error))?,
+    ))
+}
+
+pub(crate) fn nonempty_string_from_row(
+    row: &Row<'_>,
+    column: usize,
+    column_name: &str,
+) -> rusqlite::Result<String> {
+    let value: String = row.get(column)?;
+    if value.trim().is_empty() {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty {column_name}"),
+            )),
+        ));
+    }
+    Ok(value)
+}
+
+pub(crate) fn json_from_column<T: DeserializeOwned>(
+    json: &str,
+    column: usize,
+) -> rusqlite::Result<T> {
+    serde_json::from_str(json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
+    })
+}
+
+pub(crate) fn string_list_from_json_column(
+    json: &str,
+    column: usize,
+    column_name: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let values: Vec<String> = json_from_column(json, column)?;
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty {column_name} entry"),
+            )),
+        ));
+    }
+    Ok(values)
+}
+
+pub(crate) fn byte_range_from_row(
+    row: &Row<'_>,
+    start_column: usize,
+    end_column: usize,
+) -> rusqlite::Result<(usize, usize)> {
+    let start = nonnegative_i64_as_usize(row.get(start_column)?, start_column)?;
+    let end = nonnegative_i64_as_usize(row.get(end_column)?, end_column)?;
+    if start > end {
+        return Err(integer_conversion_error(
+            end_column,
+            format!("end_byte {end} is before start_byte {start}"),
+        ));
+    }
+    Ok((start, end))
+}
+
 fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
     connection
         .query_row(
@@ -335,6 +419,27 @@ fn table_column_types(
         types.insert(name, column_type);
     }
     Ok(types)
+}
+
+fn nonnegative_i64_as_usize(value: i64, column: usize) -> rusqlite::Result<usize> {
+    if value < 0 {
+        return Err(integer_conversion_error(
+            column,
+            format!("expected non-negative integer, got {value}"),
+        ));
+    }
+    usize::try_from(value).map_err(|error| integer_conversion_error(column, error.to_string()))
+}
+
+fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(
+        column,
+        Type::Integer,
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    )
 }
 
 fn ensure_reference_names_column(connection: &Connection) -> Result<()> {

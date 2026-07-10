@@ -4,14 +4,14 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow, bail};
-use rusqlite::{Connection, Row, params, types::Type};
-use serde::de::DeserializeOwned;
+use rusqlite::{Connection, params};
 use tree_sitter::Node;
 
 use crate::index_store::{
-    SYMBOL_INDEX_SCHEMA_VERSION, count_table_rows, ensure_symbol_tables,
-    load_indexed_files_metadata, load_optional_metadata_value, load_symbol_index_workspace_root,
-    persist_symbol_index_metadata, require_symbol_index_tables,
+    SYMBOL_INDEX_SCHEMA_VERSION, byte_range_from_row, count_table_rows, ensure_symbol_tables,
+    json_from_column, load_indexed_files_metadata, load_optional_metadata_value,
+    load_symbol_index_workspace_root, nonempty_string_from_row, persist_symbol_index_metadata,
+    persisted_byte_range, require_symbol_index_tables, string_list_from_json_column,
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::language::{
@@ -4504,25 +4504,6 @@ fn persist_symbol_index(
     Ok(())
 }
 
-fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
-    if symbol.byte_range.0 > symbol.byte_range.1 {
-        return Err(anyhow!(
-            "invalid byte range for {}: start {} is after end {}",
-            symbol.semantic_path,
-            symbol.byte_range.0,
-            symbol.byte_range.1
-        ));
-    }
-
-    Ok((
-        i64::try_from(symbol.byte_range.0).map_err(|error| {
-            anyhow!("invalid start byte for {}: {}", symbol.semantic_path, error)
-        })?,
-        i64::try_from(symbol.byte_range.1)
-            .map_err(|error| anyhow!("invalid end byte for {}: {}", symbol.semantic_path, error))?,
-    ))
-}
-
 fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
     let connection = Connection::open(context.db_path)?;
     ensure_symbol_tables(&connection)?;
@@ -4798,87 +4779,6 @@ fn load_symbols_from_connection(connection: &Connection) -> Result<(Vec<SymbolMe
     }
 
     Ok((symbols, indexed_files))
-}
-
-fn nonempty_string_from_row(
-    row: &Row<'_>,
-    column: usize,
-    column_name: &str,
-) -> rusqlite::Result<String> {
-    let value: String = row.get(column)?;
-    if value.trim().is_empty() {
-        return Err(rusqlite::Error::FromSqlConversionFailure(
-            column,
-            Type::Text,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("empty {column_name}"),
-            )),
-        ));
-    }
-    Ok(value)
-}
-
-fn json_from_column<T: DeserializeOwned>(json: &str, column: usize) -> rusqlite::Result<T> {
-    serde_json::from_str(json).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
-    })
-}
-
-fn string_list_from_json_column(
-    json: &str,
-    column: usize,
-    column_name: &str,
-) -> rusqlite::Result<Vec<String>> {
-    let values: Vec<String> = json_from_column(json, column)?;
-    if values.iter().any(|value| value.trim().is_empty()) {
-        return Err(rusqlite::Error::FromSqlConversionFailure(
-            column,
-            Type::Text,
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("empty {column_name} entry"),
-            )),
-        ));
-    }
-    Ok(values)
-}
-
-fn byte_range_from_row(
-    row: &Row<'_>,
-    start_column: usize,
-    end_column: usize,
-) -> rusqlite::Result<(usize, usize)> {
-    let start = nonnegative_i64_as_usize(row.get(start_column)?, start_column)?;
-    let end = nonnegative_i64_as_usize(row.get(end_column)?, end_column)?;
-    if start > end {
-        return Err(integer_conversion_error(
-            end_column,
-            format!("end_byte {end} is before start_byte {start}"),
-        ));
-    }
-    Ok((start, end))
-}
-
-fn nonnegative_i64_as_usize(value: i64, column: usize) -> rusqlite::Result<usize> {
-    if value < 0 {
-        return Err(integer_conversion_error(
-            column,
-            format!("expected non-negative integer, got {value}"),
-        ));
-    }
-    usize::try_from(value).map_err(|error| integer_conversion_error(column, error.to_string()))
-}
-
-fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        column,
-        Type::Integer,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            message,
-        )),
-    )
 }
 
 fn raw_symbol_map(symbols: &[IndexedSymbol]) -> BTreeMap<String, IndexedSymbol> {
