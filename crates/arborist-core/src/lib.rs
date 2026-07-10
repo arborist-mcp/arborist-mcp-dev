@@ -1,3 +1,4 @@
+mod index_store;
 mod language;
 mod model;
 mod patching;
