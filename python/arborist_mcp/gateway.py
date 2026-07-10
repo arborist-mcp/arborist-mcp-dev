@@ -1807,9 +1807,7 @@ class ArboristGateway:
         file_path = self._require_string(params, "file_path")
         query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         source = self._optional_string(params, "source", allow_empty=True)
-        max_captures = self._optional_int(params, "max_captures", default=10000)
-        if max_captures == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_captures")
+        max_captures = self._optional_positive_int(params, "max_captures", default=10000)
         payload = self._require_core().execute_tree_query_json(
             file_path, query, source, max_captures
         )
@@ -1946,9 +1944,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
@@ -2012,9 +2008,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().trace_symbol_neighborhood_at_position_json(
@@ -2135,9 +2129,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
@@ -2178,9 +2170,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().read_symbol_neighborhood_context_at_position_json(
@@ -2206,9 +2196,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
@@ -2249,9 +2237,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().read_symbol_discovery_context_at_position_json(
@@ -2344,9 +2330,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
@@ -2393,9 +2377,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
@@ -2503,9 +2485,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
@@ -2551,9 +2531,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
         node_kind = self._optional_string(params, "node_kind")
@@ -2694,9 +2672,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_graph_context_json(
             workspace_root,
@@ -2728,9 +2704,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_graph_context_at_position_json(
             workspace_root,
@@ -2763,9 +2737,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_neighborhood_context_json(
             workspace_root,
@@ -2797,9 +2769,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_neighborhood_context_at_position_json(
             workspace_root,
@@ -2832,9 +2802,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_discovery_context_json(
             workspace_root,
@@ -2866,9 +2834,7 @@ class ArboristGateway:
             allowed=("callers", "callees", "both"),
         )
         max_depth = self._optional_int(params, "max_depth", default=2)
-        max_nodes = self._optional_int(params, "max_nodes", default=64)
-        if max_nodes == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
+        max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
         payload = self._require_core().validate_patch_with_discovery_context_at_position_json(
             workspace_root,
@@ -2888,9 +2854,7 @@ class ArboristGateway:
     def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
-        max_files = self._optional_int(params, "max_files", default=20000)
-        if max_files == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_files")
+        max_files = self._optional_positive_int(params, "max_files", default=20000)
         payload = self._require_core().rebuild_symbol_index_json(
             workspace_root, db_path, max_files
         )
@@ -2911,9 +2875,7 @@ class ArboristGateway:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         file_path = self._require_string(params, "file_path")
-        max_files = self._optional_int(params, "max_files", default=20000)
-        if max_files == 0:
-            raise JsonRpcError(-32602, "invalid positive int param: max_files")
+        max_files = self._optional_positive_int(params, "max_files", default=20000)
         payload = self._require_core().refresh_symbol_index_for_file_json(
             workspace_root,
             db_path,
@@ -3094,6 +3056,13 @@ class ArboristGateway:
             raise JsonRpcError(-32602, f"invalid int param: {key}")
         if value < 0:
             raise JsonRpcError(-32602, f"invalid non-negative int param: {key}")
+        return value
+
+    @staticmethod
+    def _optional_positive_int(params: dict[str, Any], key: str, default: int) -> int:
+        value = ArboristGateway._optional_int(params, key, default)
+        if value == 0:
+            raise JsonRpcError(-32602, f"invalid positive int param: {key}")
         return value
 
     @staticmethod
