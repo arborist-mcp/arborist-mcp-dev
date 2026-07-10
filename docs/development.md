@@ -43,8 +43,9 @@ python -m arborist_mcp.gateway --help
 ```
 
 Windows is the primary development environment today. Linux and macOS have
-basic CI coverage for Rust tests and pure-Python gateway smoke paths; the fuller
-native-extension profile matrix still runs on Windows.
+basic CI coverage for Rust tests and pure-Python gateway smoke paths. Release
+wheel builds run on Windows, Linux, and macOS; the fuller native-extension
+profile matrix still runs on Windows.
 
 ## Common Checks
 
@@ -182,7 +183,8 @@ python -m pip install target/wheels/arborist_mcp-*.whl
 ```
 
 GitHub Actions provides a manual `wheels` workflow and runs the same workflow
-for `v*` tags. A standalone binary server is not published yet.
+for `v*` tags across Windows, Linux, and macOS. A standalone binary server is
+not published yet.
 
 ## Common Failures
 

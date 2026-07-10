@@ -20,6 +20,7 @@ jobs:
         os:
           - windows-latest
           - ubuntu-latest
+          - macos-latest
     env:
       CARGO_TERM_COLOR: always
 
