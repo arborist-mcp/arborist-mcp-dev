@@ -6,10 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 
 use super::{
-    Position, SymbolQueryContext, TraceDirection, VirtualFileSystem, execute_tree_query,
-    execute_tree_query_from_path, execute_tree_query_with_limit, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, inspect_symbol_index, list_symbols, list_symbols_context,
-    list_symbols_context_from_index, list_symbols_discovery_context,
+    DEFAULT_TREE_QUERY_MAX_BYTES, Position, SymbolQueryContext, TraceDirection, VirtualFileSystem,
+    execute_tree_query, execute_tree_query_from_path, execute_tree_query_with_limit,
+    get_semantic_skeleton, get_semantic_skeleton_from_path, inspect_symbol_index, list_symbols,
+    list_symbols_context, list_symbols_context_from_index, list_symbols_discovery_context,
     list_symbols_discovery_context_from_index, list_symbols_filtered, list_symbols_from_index,
     list_symbols_from_index_filtered, list_symbols_from_index_with_source_filtered,
     list_symbols_neighborhood_context, list_symbols_neighborhood_context_from_index,
@@ -3054,6 +3054,17 @@ fn rejects_blank_tree_queries() {
 
     assert!(error.to_string().contains("query"));
     assert!(error.to_string().contains("blank"));
+}
+
+#[test]
+fn rejects_oversized_tree_queries() {
+    let source = "def add(left, right):\n    return left + right\n";
+    let query = "(".repeat(DEFAULT_TREE_QUERY_MAX_BYTES + 1);
+
+    let error = execute_tree_query(Path::new("sample.py"), source, &query)
+        .expect_err("oversized Tree-sitter queries should be rejected before compilation");
+
+    assert!(error.to_string().contains("max query bytes"));
 }
 
 #[test]

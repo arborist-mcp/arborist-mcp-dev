@@ -48965,6 +48965,7 @@
         "query": {
           "type": "string",
           "description": "Tree-sitter query or symbol search text.",
+          "maxLength": 65536,
           "minLength": 1
         },
         "limit": {
@@ -49230,6 +49231,7 @@
         "query": {
           "type": "string",
           "description": "Tree-sitter query or symbol search text.",
+          "maxLength": 65536,
           "minLength": 1
         },
         "limit": {
@@ -49694,6 +49696,7 @@
         "query": {
           "type": "string",
           "description": "Tree-sitter query or symbol search text.",
+          "maxLength": 65536,
           "minLength": 1
         },
         "limit": {
@@ -50545,6 +50548,7 @@
         "query": {
           "type": "string",
           "description": "Tree-sitter query or symbol search text.",
+          "maxLength": 65536,
           "minLength": 1
         },
         "limit": {
@@ -68411,6 +68415,7 @@
         "query": {
           "type": "string",
           "description": "Tree-sitter query or symbol search text.",
+          "maxLength": 65536,
           "minLength": 1
         },
         "source": {

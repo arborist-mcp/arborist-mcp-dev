@@ -260,6 +260,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             query["inputSchema"]["properties"]["max_captures"]["default"], 10000
         )
         self.assertEqual(query["inputSchema"]["properties"]["max_captures"]["minimum"], 1)
+        self.assertEqual(
+            query["inputSchema"]["properties"]["query"]["maxLength"],
+            gateway_module.TREE_QUERY_MAX_LENGTH,
+        )
         query_items = query["outputSchema"]["properties"]["result"]["items"]
         self.assertEqual(query_items["additionalProperties"], False)
         self.assertIn("capture_name", query_items["required"])
@@ -791,6 +795,24 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assert_jsonrpc_error(
             response, request_id=56, code=-32602, contains="max_captures"
         )
+
+    def test_execute_tree_query_rejects_oversized_query_before_core(self) -> None:
+        class StubCore:
+            def execute_tree_query_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/execute_tree_query",
+            {
+                "file_path": "sample.py",
+                "query": "(" * (gateway_module.TREE_QUERY_MAX_LENGTH + 1),
+            },
+            request_id=57,
+        )
+
+        self.assert_jsonrpc_error(response, request_id=57, code=-32602, contains="query")
+        self.assertIn("max length", response["error"]["message"])
 
     def test_execute_tree_query_preserves_owner_metadata_from_core(self) -> None:
         result = self.assert_jsonrpc_ok(

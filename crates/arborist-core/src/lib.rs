@@ -50,8 +50,9 @@ pub use patching::{
     preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
 };
 pub use query::{
-    DEFAULT_TREE_QUERY_MAX_CAPTURES, execute_tree_query, execute_tree_query_from_path,
-    execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
+    DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_MAX_CAPTURES, execute_tree_query,
+    execute_tree_query_from_path, execute_tree_query_from_path_with_limit,
+    execute_tree_query_with_limit,
 };
 pub use symbol_query::SymbolQueryContext;
 pub use symbols::{

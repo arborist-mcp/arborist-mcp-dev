@@ -134,6 +134,7 @@ SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
     )
 )
 READ_ONLY_CATEGORIES = frozenset(("read", "trace"))
+TREE_QUERY_MAX_LENGTH = 64 * 1024
 MAX_BATCH_CALLS = 32
 WRITING_TOOLS = frozenset(
     (
@@ -173,6 +174,7 @@ def _schema(
     enum: tuple[str, ...] | None = None,
     minimum: int | None = None,
     min_items: int | None = None,
+    max_length: int | None = None,
     allow_empty: bool = False,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {"type": schema_type, "description": description}
@@ -184,6 +186,8 @@ def _schema(
         result["minimum"] = minimum
     if min_items is not None:
         result["minItems"] = min_items
+    if max_length is not None:
+        result["maxLength"] = max_length
     if schema_type == "string" and not allow_empty:
         result["minLength"] = 1
     return result
@@ -329,7 +333,11 @@ TOOL_PARAM_SCHEMAS = {
         default=False,
     ),
     "position": POSITION_SCHEMA,
-    "query": _schema("string", "Tree-sitter query or symbol search text."),
+    "query": _schema(
+        "string",
+        "Tree-sitter query or symbol search text.",
+        max_length=TREE_QUERY_MAX_LENGTH,
+    ),
     "semantic_path": _schema("string", "Stable Arborist semantic selector."),
     "source": _schema(
         "string",
@@ -1797,7 +1805,7 @@ class ArboristGateway:
 
     def _execute_tree_query(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         file_path = self._require_string(params, "file_path")
-        query = self._require_string(params, "query")
+        query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         source = self._optional_string(params, "source", allow_empty=True)
         max_captures = self._optional_int(params, "max_captures", default=10000)
         if max_captures == 0:
@@ -2261,7 +2269,7 @@ class ArboristGateway:
 
     def _search_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
-        query = self._require_string(params, "query")
+        query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         limit = self._optional_int(params, "limit", default=20)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
@@ -2294,7 +2302,7 @@ class ArboristGateway:
 
     def _search_symbols_context(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
-        query = self._require_string(params, "query")
+        query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         limit = self._optional_int(params, "limit", default=20)
         index_db_path = self._optional_string(params, "index_db_path")
         file_path_contains = self._optional_string(params, "file_path_contains")
@@ -2327,7 +2335,7 @@ class ArboristGateway:
 
     def _search_symbols_neighborhood_context(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
-        query = self._require_string(params, "query")
+        query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         limit = self._optional_int(params, "limit", default=20)
         direction = self._optional_choice(
             params,
@@ -2376,7 +2384,7 @@ class ArboristGateway:
 
     def _search_symbols_discovery_context(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
-        query = self._require_string(params, "query")
+        query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         limit = self._optional_int(params, "limit", default=20)
         direction = self._optional_choice(
             params,
@@ -3025,11 +3033,19 @@ class ArboristGateway:
 
     @staticmethod
     def _require_string(
-        params: dict[str, Any], key: str, allow_empty: bool = False
+        params: dict[str, Any],
+        key: str,
+        allow_empty: bool = False,
+        max_length: int | None = None,
     ) -> str:
         value = params.get(key)
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"missing required string param: {key}")
+        if max_length is not None and len(value) > max_length:
+            raise JsonRpcError(
+                -32602,
+                f"invalid string param: {key} exceeds max length {max_length}",
+            )
         return value
 
     @staticmethod
@@ -3052,6 +3068,7 @@ class ArboristGateway:
         key: str,
         default: str | None = None,
         allow_empty: bool = False,
+        max_length: int | None = None,
     ) -> str | None:
         if key in params:
             value = params[key]
@@ -3063,6 +3080,11 @@ class ArboristGateway:
             return None
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"invalid string param: {key}")
+        if max_length is not None and len(value) > max_length:
+            raise JsonRpcError(
+                -32602,
+                f"invalid string param: {key} exceeds max length {max_length}",
+            )
         return value
 
     @staticmethod

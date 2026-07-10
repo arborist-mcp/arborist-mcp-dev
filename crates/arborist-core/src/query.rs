@@ -12,6 +12,7 @@ use crate::model::QueryCaptureResult;
 use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_path, semantic_path};
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
+pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
 
 pub fn execute_tree_query_from_path(path: &Path, query: &str) -> Result<Vec<QueryCaptureResult>> {
     execute_tree_query_from_path_with_limit(path, query, DEFAULT_TREE_QUERY_MAX_CAPTURES)
@@ -90,6 +91,12 @@ pub fn execute_tree_query_with_limit(
 fn validate_tree_query(query: &str) -> Result<()> {
     if query.trim().is_empty() {
         bail!("invalid Tree-sitter query: query must not be blank");
+    }
+    if query.len() > DEFAULT_TREE_QUERY_MAX_BYTES {
+        bail!(
+            "invalid Tree-sitter query: query exceeds max query bytes ({})",
+            DEFAULT_TREE_QUERY_MAX_BYTES
+        );
     }
 
     Ok(())
