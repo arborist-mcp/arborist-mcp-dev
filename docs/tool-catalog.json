@@ -4093,11 +4093,127 @@
       "properties": {
         "result": {
           "type": "array",
-          "description": "JSON array of object results returned by Arborist for this tool.",
+          "description": "Tree-sitter query captures.",
           "items": {
             "type": "object",
-            "description": "JSON object result returned by Arborist for this tool.",
-            "additionalProperties": true
+            "description": "Tree-sitter query capture with optional Arborist owner metadata.",
+            "properties": {
+              "capture_name": {
+                "type": "string",
+                "description": "Tree-sitter capture name without the @ prefix.",
+                "minLength": 1
+              },
+              "node_kind": {
+                "type": "string",
+                "description": "Captured Tree-sitter node kind.",
+                "minLength": 1
+              },
+              "text": {
+                "type": "string",
+                "description": "Captured source text."
+              },
+              "owner_symbol_id": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "String value.",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "owner_semantic_path": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "String value.",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "owner_scope_path": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "description": "String value.",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "start_byte": {
+                "type": "integer",
+                "description": "Inclusive start byte of the captured node.",
+                "minimum": 0
+              },
+              "end_byte": {
+                "type": "integer",
+                "description": "Exclusive end byte of the captured node.",
+                "minimum": 0
+              },
+              "start_point": {
+                "type": "object",
+                "description": "Zero-based source position.",
+                "properties": {
+                  "row": {
+                    "type": "integer",
+                    "description": "Zero-based row.",
+                    "minimum": 0
+                  },
+                  "column": {
+                    "type": "integer",
+                    "description": "Zero-based UTF-8 byte column.",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "row",
+                  "column"
+                ],
+                "additionalProperties": false
+              },
+              "end_point": {
+                "type": "object",
+                "description": "Zero-based source position.",
+                "properties": {
+                  "row": {
+                    "type": "integer",
+                    "description": "Zero-based row.",
+                    "minimum": 0
+                  },
+                  "column": {
+                    "type": "integer",
+                    "description": "Zero-based UTF-8 byte column.",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "row",
+                  "column"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "capture_name",
+              "node_kind",
+              "text",
+              "owner_symbol_id",
+              "owner_semantic_path",
+              "owner_scope_path",
+              "start_byte",
+              "end_byte",
+              "start_point",
+              "end_point"
+            ],
+            "additionalProperties": false
           }
         }
       },

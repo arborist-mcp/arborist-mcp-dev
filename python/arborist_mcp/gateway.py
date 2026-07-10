@@ -71,7 +71,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
     ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
     ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read"),
-    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "object_array"),
+    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "query_capture_array"),
 )
 TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
 TOOL_HANDLERS = {spec.name: spec.handler for spec in TOOL_SPECS}
@@ -331,6 +331,50 @@ NULLABLE_STRING_RESULT_SCHEMA = {"anyOf": [_schema("string", "String value."), N
 NULLABLE_INTEGER_RESULT_SCHEMA = {
     "anyOf": [_schema("integer", "Integer value.", minimum=0), NULL_RESULT_SCHEMA]
 }
+POSITION_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Zero-based source position.",
+    "properties": {
+        "row": _schema("integer", "Zero-based row.", minimum=0),
+        "column": _schema("integer", "Zero-based UTF-8 byte column.", minimum=0),
+    },
+    "required": ["row", "column"],
+    "additionalProperties": False,
+}
+QUERY_CAPTURE_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Tree-sitter query capture with optional Arborist owner metadata.",
+    "properties": {
+        "capture_name": _schema("string", "Tree-sitter capture name without the @ prefix."),
+        "node_kind": _schema("string", "Captured Tree-sitter node kind."),
+        "text": _schema("string", "Captured source text.", allow_empty=True),
+        "owner_symbol_id": NULLABLE_STRING_RESULT_SCHEMA,
+        "owner_semantic_path": NULLABLE_STRING_RESULT_SCHEMA,
+        "owner_scope_path": NULLABLE_STRING_RESULT_SCHEMA,
+        "start_byte": _schema("integer", "Inclusive start byte of the captured node.", minimum=0),
+        "end_byte": _schema("integer", "Exclusive end byte of the captured node.", minimum=0),
+        "start_point": POSITION_RESULT_SCHEMA,
+        "end_point": POSITION_RESULT_SCHEMA,
+    },
+    "required": [
+        "capture_name",
+        "node_kind",
+        "text",
+        "owner_symbol_id",
+        "owner_semantic_path",
+        "owner_scope_path",
+        "start_byte",
+        "end_byte",
+        "start_point",
+        "end_point",
+    ],
+    "additionalProperties": False,
+}
+QUERY_CAPTURE_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Tree-sitter query captures.",
+    "items": QUERY_CAPTURE_RESULT_SCHEMA,
+}
 SYMBOL_INDEX_STATS_RESULT_SCHEMA = {
     "type": "object",
     "description": "Persisted symbol-index rebuild or refresh statistics.",
@@ -420,6 +464,7 @@ TOOL_RESULT_SCHEMAS = {
     tool_name: {
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
+        "query_capture_array": QUERY_CAPTURE_ARRAY_RESULT_SCHEMA,
         "symbol_index_stats": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
         "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
         "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,

@@ -136,6 +136,14 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         patch = by_name["arborist/patch_ast_node"]
         self.assertEqual(patch["metadata"]["category"], "write")
         self.assertTrue(patch["annotations"]["destructiveHint"])
+        query = by_name["arborist/execute_tree_query"]
+        query_items = query["outputSchema"]["properties"]["result"]["items"]
+        self.assertEqual(query_items["additionalProperties"], False)
+        self.assertIn("capture_name", query_items["required"])
+        self.assertEqual(query_items["properties"]["start_point"]["properties"]["row"]["type"], "integer")
+        self.assertEqual(
+            query_items["properties"]["owner_symbol_id"]["anyOf"][1]["type"], "null"
+        )
 
     def test_tools_call_invokes_read_tool(self) -> None:
         core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})

@@ -41,7 +41,8 @@ optional `return_type`, and optional `signature` / `docstring`.
 `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a
 capture belongs to a semantic symbol. Results are bounded by `max_captures`
 (default `10000`) so broad arbitrary queries fail closed instead of returning
-unbounded capture sets.
+unbounded capture sets. Its MCP `outputSchema` describes each capture field
+explicitly, including byte ranges and start/end points.
 
 `read_symbol` and `read_symbol_at_position` bridge discovery and action by
 returning structured symbol metadata plus the exact source snippet and start/end
