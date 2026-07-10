@@ -124,8 +124,7 @@ pub fn trace_symbol_graph(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
@@ -136,8 +135,7 @@ pub fn trace_symbol_neighborhood(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     trace_neighborhood_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -193,8 +191,7 @@ pub fn trace_symbol_neighborhood_at_position(
 }
 
 pub fn read_symbol(workspace_root: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     read_symbol_from_symbols(&resolved_symbols, indexed_files, symbol_path, None)
 }
 
@@ -203,8 +200,7 @@ pub fn read_symbol_context(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     read_symbol_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -221,8 +217,7 @@ pub fn read_symbol_neighborhood_context(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     read_symbol_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -241,8 +236,7 @@ pub fn read_symbol_discovery_context(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     read_symbol_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -403,8 +397,7 @@ pub fn search_symbols_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     search_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -426,8 +419,7 @@ pub fn search_symbols_neighborhood_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     search_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -449,8 +441,7 @@ pub fn search_symbols_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     search_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -473,8 +464,7 @@ pub fn search_symbols_discovery_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     search_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -542,8 +532,7 @@ pub fn list_symbols_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     list_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -559,8 +548,7 @@ pub fn list_symbols_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     list_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -581,8 +569,7 @@ pub fn list_symbols_discovery_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     list_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -606,8 +593,7 @@ pub fn list_symbols_neighborhood_context_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
     list_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -2800,6 +2786,11 @@ fn indexed_symbol_candidate_rank(
     }
 
     rank
+}
+
+fn load_live_workspace_symbols(workspace_root: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
+    let workspace_root = normalize_absolute_path(workspace_root)?;
+    resolve_workspace_symbols(&workspace_root)
 }
 
 fn resolve_workspace_symbols(workspace_root: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
