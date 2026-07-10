@@ -3,14 +3,14 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use tree_sitter::Node;
 
 use crate::index_store::{
-    SYMBOL_INDEX_SCHEMA_VERSION, count_table_rows, ensure_symbol_tables, load_file_states,
-    load_indexed_files_metadata, load_indexed_symbols_grouped_by_file,
+    SYMBOL_INDEX_SCHEMA_VERSION, SymbolRefreshPersistence, count_table_rows, ensure_symbol_tables,
+    load_file_states, load_indexed_files_metadata, load_indexed_symbols_grouped_by_file,
     load_optional_metadata_value, load_resolved_symbols, load_symbol_index_workspace_root,
-    persist_symbol_index_metadata, persisted_byte_range, require_symbol_index_tables,
+    persist_symbol_index, persist_symbol_refresh, require_symbol_index_tables,
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::language::{
@@ -53,17 +53,6 @@ type IncrementalWorkspaceSymbols = (
     usize,
     usize,
 );
-
-struct SymbolRefreshPersistence<'a> {
-    db_path: &'a Path,
-    workspace_root: &'a Path,
-    raw_symbols: &'a [IndexedSymbol],
-    symbols: &'a [SymbolMeta],
-    file_states: &'a BTreeMap<String, u64>,
-    changed_file_paths: &'a BTreeSet<String>,
-    impacted_paths: &'a BTreeSet<String>,
-    indexed_files: usize,
-}
 
 #[derive(Debug, Default)]
 struct CIncludeContext {
@@ -2042,6 +2031,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         workspace_root: &workspace_root,
         raw_symbols: &raw_symbols,
         symbols: &resolved_symbols,
+        resolved_symbols_by_id: &resolved_map,
         file_states: &file_states,
         changed_file_paths: &changed_file_paths,
         impacted_paths: &impacted_paths,
@@ -4299,160 +4289,6 @@ fn search_match_detail(
     })
 }
 
-fn persist_symbol_index(
-    db_path: &Path,
-    workspace_root: &Path,
-    raw_symbols: &[IndexedSymbol],
-    symbols: &[SymbolMeta],
-    file_states: &[PersistedFileState],
-    indexed_files: usize,
-) -> Result<()> {
-    let connection = Connection::open(db_path)?;
-    ensure_symbol_tables(&connection)?;
-
-    let tx = connection.unchecked_transaction()?;
-    persist_symbol_index_metadata(&tx, workspace_root, indexed_files)?;
-    tx.execute("DELETE FROM symbols", [])?;
-    tx.execute("DELETE FROM file_state", [])?;
-    let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
-    {
-        let mut statement = tx.prepare(
-            "INSERT INTO symbols (
-                symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-                signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        )?;
-
-        for symbol in symbols {
-            let raw_symbol = raw_symbol_rows
-                .get(&symbol_row_key(symbol))
-                .ok_or_else(|| anyhow!("missing raw symbol for {}", symbol.semantic_path))?;
-            let (start_byte, end_byte) = persisted_byte_range(symbol)?;
-            statement.execute(params![
-                symbol.symbol_id,
-                symbol.semantic_path,
-                symbol.scope_path,
-                symbol.file_path,
-                symbol.node_kind,
-                start_byte,
-                end_byte,
-                symbol.signature,
-                serde_json::to_string(&symbol.parameters)?,
-                symbol.return_type,
-                symbol.docstring,
-                serde_json::to_string(&symbol.dependencies)?,
-                serde_json::to_string(&symbol.references)?,
-                serde_json::to_string(&reference_names(raw_symbol))?,
-            ])?;
-        }
-    }
-    {
-        let mut statement =
-            tx.prepare("INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)")?;
-
-        for file_state in file_states {
-            statement.execute(params![file_state.file_path, file_state.fingerprint as i64])?;
-        }
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> Result<()> {
-    let connection = Connection::open(context.db_path)?;
-    ensure_symbol_tables(&connection)?;
-
-    let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols);
-    let resolved_symbol_map = resolved_symbol_map(context.symbols);
-    let changed_symbols: Vec<_> = context
-        .symbols
-        .iter()
-        .filter(|symbol| context.changed_file_paths.contains(&symbol.file_path))
-        .cloned()
-        .collect();
-
-    let tx = connection.unchecked_transaction()?;
-    persist_symbol_index_metadata(&tx, context.workspace_root, context.indexed_files)?;
-    {
-        let mut delete_statement = tx.prepare("DELETE FROM symbols WHERE file_path = ?1")?;
-        for changed_file_path in context.changed_file_paths {
-            delete_statement.execute([changed_file_path])?;
-        }
-    }
-
-    {
-        let mut insert_statement = tx.prepare(
-            "INSERT INTO symbols (
-                symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-                signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        )?;
-
-        for symbol in &changed_symbols {
-            let raw_symbol = raw_symbol_rows
-                .get(&symbol_row_key(symbol))
-                .ok_or_else(|| anyhow!("missing raw symbol for {}", symbol.semantic_path))?;
-            let (start_byte, end_byte) = persisted_byte_range(symbol)?;
-            insert_statement.execute(params![
-                symbol.symbol_id,
-                symbol.semantic_path,
-                symbol.scope_path,
-                symbol.file_path,
-                symbol.node_kind,
-                start_byte,
-                end_byte,
-                symbol.signature,
-                serde_json::to_string(&symbol.parameters)?,
-                symbol.return_type,
-                symbol.docstring,
-                serde_json::to_string(&symbol.dependencies)?,
-                serde_json::to_string(&symbol.references)?,
-                serde_json::to_string(&reference_names(raw_symbol))?,
-            ])?;
-        }
-    }
-
-    {
-        let mut update_statement = tx.prepare(
-            "UPDATE symbols
-             SET dependencies_json = ?1, references_json = ?2
-             WHERE symbol_id = ?3",
-        )?;
-
-        for impacted_path in context.impacted_paths {
-            let Some(symbol) = resolved_symbol_map.get(impacted_path) else {
-                continue;
-            };
-            if context.changed_file_paths.contains(&symbol.file_path) {
-                continue;
-            }
-            update_statement.execute(params![
-                serde_json::to_string(&symbol.dependencies)?,
-                serde_json::to_string(&symbol.references)?,
-                symbol.symbol_id,
-            ])?;
-        }
-    }
-
-    for changed_file_path in context.changed_file_paths {
-        tx.execute(
-            "DELETE FROM file_state WHERE file_path = ?1",
-            [changed_file_path],
-        )?;
-        if let Some(fingerprint) = context.file_states.get(changed_file_path) {
-            tx.execute(
-                "INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)",
-                params![changed_file_path, *fingerprint as i64],
-            )?;
-        }
-    }
-
-    tx.commit()?;
-    Ok(())
-}
-
 fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     if !db_path.exists() {
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
@@ -4546,26 +4382,6 @@ fn raw_symbol_map(symbols: &[IndexedSymbol]) -> BTreeMap<String, IndexedSymbol> 
     map
 }
 
-fn raw_symbol_row_map(
-    symbols: &[IndexedSymbol],
-) -> BTreeMap<(String, String, usize, usize), IndexedSymbol> {
-    symbols
-        .iter()
-        .cloned()
-        .map(|symbol| {
-            (
-                (
-                    symbol.semantic_path.clone(),
-                    symbol.file_path.clone(),
-                    symbol.byte_range.0,
-                    symbol.byte_range.1,
-                ),
-                symbol,
-            )
-        })
-        .collect()
-}
-
 fn resolved_symbol_map(symbols: &[SymbolMeta]) -> BTreeMap<String, SymbolMeta> {
     let mut map = BTreeMap::new();
     for symbol in symbols {
@@ -4595,25 +4411,12 @@ fn choose_trace_symbol<'a>(symbols: &'a [SymbolMeta], symbol_path: &str) -> Opti
         .max_by_key(|symbol| resolved_symbol_rank(symbol))
 }
 
-fn reference_names(symbol: &IndexedSymbol) -> Vec<String> {
-    symbol.references_by_name.iter().cloned().collect()
-}
-
 fn reference_base_name(reference_name: &str) -> String {
     reference_name
         .rsplit('.')
         .next()
         .unwrap_or(reference_name)
         .to_string()
-}
-
-fn symbol_row_key(symbol: &SymbolMeta) -> (String, String, usize, usize) {
-    (
-        symbol.semantic_path.clone(),
-        symbol.file_path.clone(),
-        symbol.byte_range.0,
-        symbol.byte_range.1,
-    )
 }
 
 fn indexed_symbol_rank(symbol: &IndexedSymbol) -> usize {
@@ -4698,9 +4501,10 @@ mod tests {
 
     use rusqlite::Connection;
 
-    use super::{
-        SymbolMeta, SymbolRefreshPersistence, ensure_symbol_tables, persist_symbol_index,
-        persist_symbol_refresh, persisted_byte_range,
+    use super::{SymbolMeta, ensure_symbol_tables};
+    use crate::index_store::{
+        SymbolRefreshPersistence, persist_symbol_index, persist_symbol_refresh,
+        persisted_byte_range,
     };
     use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 
@@ -4764,12 +4568,14 @@ mod tests {
         let file_states = BTreeMap::from([(normalized_file.clone(), 1)]);
         let changed_file_paths = BTreeSet::from([normalized_file]);
         let impacted_paths = BTreeSet::new();
+        let resolved_symbols_by_id = BTreeMap::from([("helper".to_string(), symbols[0].clone())]);
 
         let error = persist_symbol_refresh(SymbolRefreshPersistence {
             db_path: &db_path,
             workspace_root: &workspace,
             raw_symbols: &raw_symbols,
             symbols: &symbols,
+            resolved_symbols_by_id: &resolved_symbols_by_id,
             file_states: &file_states,
             changed_file_paths: &changed_file_paths,
             impacted_paths: &impacted_paths,
