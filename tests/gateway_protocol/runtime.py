@@ -125,6 +125,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
         self.assertIn("ok", inspect_result["required"])
+        self.assertIn("fresh_file_count", inspect_result["required"])
+        self.assertEqual(inspect_result["properties"]["stale_files"]["type"], "array")
+        self.assertEqual(inspect_result["properties"]["missing_files"]["type"], "array")
+        self.assertEqual(inspect_result["properties"]["unreadable_files"]["type"], "array")
         self.assertEqual(inspect_result["properties"]["issues"]["type"], "array")
         unregister = by_name["arborist/unregister_symbol_index"]
         self.assertEqual(unregister["outputSchema"]["properties"]["result"]["type"], "boolean")

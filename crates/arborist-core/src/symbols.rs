@@ -2170,6 +2170,10 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         indexed_files: None,
         indexed_symbols: None,
         file_state_entries: None,
+        fresh_file_count: None,
+        stale_files: Vec::new(),
+        missing_files: Vec::new(),
+        unreadable_files: Vec::new(),
         issues: Vec::new(),
     };
 
@@ -2243,9 +2247,54 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             .push(format!("failed to count persisted file states: {error}")),
     }
 
+    match load_file_states(&connection) {
+        Ok(file_states) => inspect_symbol_index_freshness(&mut health, &file_states),
+        Err(error) => health
+            .issues
+            .push(format!("failed to inspect persisted file states: {error}")),
+    }
+
     health.ok = health.issues.is_empty();
     health.validate_public_output()?;
     Ok(health)
+}
+
+fn inspect_symbol_index_freshness(
+    health: &mut SymbolIndexHealth,
+    file_states: &BTreeMap<String, u64>,
+) {
+    let mut fresh_files = 0;
+    for (file_path, stored_fingerprint) in file_states {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            health.missing_files.push(file_path.clone());
+            health
+                .issues
+                .push(format!("indexed file is missing: {file_path}"));
+            continue;
+        }
+
+        match read_source(path) {
+            Ok(source) => {
+                let current_fingerprint = source_fingerprint(&source);
+                if current_fingerprint == *stored_fingerprint {
+                    fresh_files += 1;
+                } else {
+                    health.stale_files.push(file_path.clone());
+                    health
+                        .issues
+                        .push(format!("indexed file is stale: {file_path}"));
+                }
+            }
+            Err(error) => {
+                health.unreadable_files.push(file_path.clone());
+                health
+                    .issues
+                    .push(format!("failed to read indexed file {file_path}: {error}"));
+            }
+        }
+    }
+    health.fresh_file_count = Some(fresh_files);
 }
 
 fn expanded_refresh_file_paths(workspace_root: &Path, file_path: &Path) -> Result<Vec<PathBuf>> {

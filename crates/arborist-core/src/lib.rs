@@ -12170,7 +12170,63 @@ def orchestrate(value: int) -> int:\n    return value\n",
         assert_eq!(health.indexed_files, Some(1));
         assert_eq!(health.indexed_symbols, Some(1));
         assert_eq!(health.file_state_entries, Some(1));
+        assert_eq!(health.fresh_file_count, Some(1));
+        assert!(health.stale_files.is_empty());
+        assert!(health.missing_files.is_empty());
+        assert!(health.unreadable_files.is_empty());
         assert!(health.issues.is_empty());
+    }
+
+    #[test]
+    fn inspect_symbol_index_reports_stale_files() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        fs::write(&helper, "def helper() -> int:\n    return 2\n").unwrap();
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(health.exists);
+        assert!(!health.ok);
+        assert_eq!(health.file_state_entries, Some(1));
+        assert_eq!(health.fresh_file_count, Some(0));
+        assert_eq!(health.stale_files, vec![normalize_path(&helper)]);
+        assert!(health.missing_files.is_empty());
+        assert!(health.unreadable_files.is_empty());
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("indexed file is stale"))
+        );
+    }
+
+    #[test]
+    fn inspect_symbol_index_reports_missing_indexed_files() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        fs::remove_file(&helper).unwrap();
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+
+        assert!(health.exists);
+        assert!(!health.ok);
+        assert_eq!(health.file_state_entries, Some(1));
+        assert_eq!(health.fresh_file_count, Some(0));
+        assert!(health.stale_files.is_empty());
+        assert_eq!(health.missing_files, vec![normalize_path(&helper)]);
+        assert!(health.unreadable_files.is_empty());
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("indexed file is missing"))
+        );
     }
 
     #[test]

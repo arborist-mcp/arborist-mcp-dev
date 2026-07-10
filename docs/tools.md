@@ -138,8 +138,9 @@ a committed file belongs to that workspace.
 
 `inspect_symbol_index` is read-only. It reports whether an index exists, whether
 its schema and metadata are healthy, the expected schema version, the stored
-workspace root, indexed file/symbol counts, file-state row count, and diagnostic
-issues.
+workspace root, indexed file/symbol counts, file-state row count, fresh indexed
+file count, stale indexed files whose fingerprints no longer match disk, missing
+indexed files, unreadable indexed files, and diagnostic issues.
 
 Persisted trace reads and single-file refreshes fail closed on missing indexes,
 non-index databases, incomplete schema, missing or unsupported schema versions,

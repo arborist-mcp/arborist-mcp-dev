@@ -37,16 +37,16 @@ for C-like header/source families, but this is not full C++ support yet. See the
 
 ## Implemented Tool Families
 
-The MCP catalog currently exposes 52 tools:
+The MCP catalog currently returns 52 tools:
 
-- Read tools: semantic skeletons, patch previews, raw Tree-sitter queries,
+- Read tools: 26, including semantic skeletons, patch previews, raw Tree-sitter queries,
   symbol reads, symbol list/search, and graph-backed read bundles.
-- Write tools: `patch_ast_node` and `patch_ast_node_at_position`.
-- VFS tools: open/change/close, virtual patching, byte edits, commit/discard,
+- Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
+- VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,
   and virtual reads.
-- Index tools: register, unregister, list, inspect, rebuild, and file refresh
+- Index tools: 6, covering register, unregister, list, inspect, rebuild, and file refresh
   for persisted symbol indexes.
-- Trace tools: graph/neighborhood traces plus trace-backed replay and validation.
+- Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input
@@ -91,10 +91,32 @@ For the normal local loop:
 .\scripts\test.ps1 -Suite inner-loop
 ```
 
+Useful suite variants:
+
+```powershell
+.\scripts\test.ps1 -Suite python-fast
+.\scripts\test.ps1 -Suite python-native
+.\scripts\test.ps1 -Suite python
+.\scripts\test.ps1 -Suite rust,inner-loop -ShowPlan
+python scripts/python_suite_manifest.py
+```
+
 For the full gate:
 
 ```powershell
 .\scripts\check.ps1
+```
+
+Useful profile variants:
+
+```powershell
+.\scripts\check.ps1 -Profile python-fast
+.\scripts\check.ps1 -Profile gateway-fast
+.\scripts\check.ps1 -Profile gateway-native
+.\scripts\check.ps1 -Profile python-discovery
+.\scripts\check.ps1 -Profile gateway-smoke
+.\scripts\check.ps1 -Profile python-native
+.\scripts\check.ps1 -Profile full,python-native -ShowPlan
 ```
 
 Useful direct commands:
@@ -167,8 +189,8 @@ for response shapes, error behavior, and examples.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, and bounded neighborhood context.
 - SQLite-backed persisted symbol indexes with schema-version checks, health
-  inspection, partial refresh, and fail-closed handling for damaged or unrelated
-  databases.
+  inspection, stale/missing/unreadable file diagnostics, partial refresh, and
+  fail-closed handling for damaged or unrelated databases.
 - C include-family tracing and patch disambiguation for header/source projects,
   including duplicate globals and file-local `static` symbols.
 

@@ -338,9 +338,48 @@ impl SymbolIndexHealth {
                 || self.workspace_root.is_some()
                 || self.indexed_files.is_some()
                 || self.indexed_symbols.is_some()
-                || self.file_state_entries.is_some())
+                || self.file_state_entries.is_some()
+                || self.fresh_file_count.is_some()
+                || !self.stale_files.is_empty()
+                || !self.missing_files.is_empty()
+                || !self.unreadable_files.is_empty())
         {
             bail!("invalid symbol_index_health: missing indexes must not report loaded metadata");
+        }
+        if let Some(fresh_file_count) = self.fresh_file_count {
+            let Some(file_state_entries) = self.file_state_entries else {
+                bail!(
+                    "invalid symbol_index_health.fresh_file_count: expected file_state_entries when freshness is inspected"
+                );
+            };
+            if fresh_file_count
+                + self.stale_files.len()
+                + self.missing_files.len()
+                + self.unreadable_files.len()
+                != file_state_entries
+            {
+                bail!(
+                    "invalid symbol_index_health freshness counts: expected fresh, stale, missing, and unreadable files to equal file_state_entries"
+                );
+            }
+        }
+        for (index, file_path) in self.stale_files.iter().enumerate() {
+            ensure_nonblank(
+                file_path,
+                &format!("symbol_index_health.stale_files[{index}]"),
+            )?;
+        }
+        for (index, file_path) in self.missing_files.iter().enumerate() {
+            ensure_nonblank(
+                file_path,
+                &format!("symbol_index_health.missing_files[{index}]"),
+            )?;
+        }
+        for (index, file_path) in self.unreadable_files.iter().enumerate() {
+            ensure_nonblank(
+                file_path,
+                &format!("symbol_index_health.unreadable_files[{index}]"),
+            )?;
         }
         for (index, issue) in self.issues.iter().enumerate() {
             ensure_nonblank(issue, &format!("symbol_index_health.issues[{index}]"))?;
@@ -2595,6 +2634,10 @@ pub struct SymbolIndexHealth {
     pub indexed_files: Option<usize>,
     pub indexed_symbols: Option<usize>,
     pub file_state_entries: Option<usize>,
+    pub fresh_file_count: Option<usize>,
+    pub stale_files: Vec<String>,
+    pub missing_files: Vec<String>,
+    pub unreadable_files: Vec<String>,
     pub issues: Vec<String>,
 }
 

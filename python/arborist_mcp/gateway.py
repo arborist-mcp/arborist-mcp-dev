@@ -365,6 +365,22 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         "indexed_files": NULLABLE_INTEGER_RESULT_SCHEMA,
         "indexed_symbols": NULLABLE_INTEGER_RESULT_SCHEMA,
         "file_state_entries": NULLABLE_INTEGER_RESULT_SCHEMA,
+        "fresh_file_count": NULLABLE_INTEGER_RESULT_SCHEMA,
+        "stale_files": {
+            "type": "array",
+            "description": "Indexed files whose current content no longer matches persisted fingerprints.",
+            "items": _schema("string", "Stale indexed file path."),
+        },
+        "missing_files": {
+            "type": "array",
+            "description": "Indexed files that no longer exist on disk.",
+            "items": _schema("string", "Missing indexed file path."),
+        },
+        "unreadable_files": {
+            "type": "array",
+            "description": "Indexed files that exist but could not be read during freshness inspection.",
+            "items": _schema("string", "Unreadable indexed file path."),
+        },
         "issues": {
             "type": "array",
             "description": "Human-readable health issues. Empty when ok is true.",
@@ -381,6 +397,10 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         "indexed_files",
         "indexed_symbols",
         "file_state_entries",
+        "fresh_file_count",
+        "stale_files",
+        "missing_files",
+        "unreadable_files",
         "issues",
     ],
     "additionalProperties": False,

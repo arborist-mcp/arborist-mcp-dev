@@ -827,6 +827,45 @@
                 }
               ]
             },
+            "fresh_file_count": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stale_files": {
+              "type": "array",
+              "description": "Indexed files whose current content no longer matches persisted fingerprints.",
+              "items": {
+                "type": "string",
+                "description": "Stale indexed file path.",
+                "minLength": 1
+              }
+            },
+            "missing_files": {
+              "type": "array",
+              "description": "Indexed files that no longer exist on disk.",
+              "items": {
+                "type": "string",
+                "description": "Missing indexed file path.",
+                "minLength": 1
+              }
+            },
+            "unreadable_files": {
+              "type": "array",
+              "description": "Indexed files that exist but could not be read during freshness inspection.",
+              "items": {
+                "type": "string",
+                "description": "Unreadable indexed file path.",
+                "minLength": 1
+              }
+            },
             "issues": {
               "type": "array",
               "description": "Human-readable health issues. Empty when ok is true.",
@@ -847,6 +886,10 @@
             "indexed_files",
             "indexed_symbols",
             "file_state_entries",
+            "fresh_file_count",
+            "stale_files",
+            "missing_files",
+            "unreadable_files",
             "issues"
           ],
           "additionalProperties": false
