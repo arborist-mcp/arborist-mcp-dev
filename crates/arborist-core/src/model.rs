@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {
     Python,
@@ -320,6 +322,12 @@ impl RegisteredSymbolIndex {
 
 impl SymbolIndexHealth {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
+        if self.response_schema_version != SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION {
+            bail!(
+                "invalid symbol_index_health.response_schema_version: expected response schema version {}",
+                SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION
+            );
+        }
         ensure_nonblank(&self.db_path, "symbol_index_health.db_path")?;
         ensure_nonblank(
             &self.expected_schema_version,
@@ -2625,6 +2633,7 @@ pub struct RegisteredSymbolIndex {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolIndexHealth {
+    pub response_schema_version: String,
     pub db_path: String,
     pub exists: bool,
     pub ok: bool,

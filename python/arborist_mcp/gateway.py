@@ -356,6 +356,9 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
     "type": "object",
     "description": "Read-only diagnostic summary for a persisted symbol index.",
     "properties": {
+        "response_schema_version": _schema(
+            "string", "Version of the inspect_symbol_index response schema."
+        ),
         "db_path": _schema("string", "Normalized SQLite symbol-index database path."),
         "exists": _schema("boolean", "Whether the database file exists."),
         "ok": _schema("boolean", "Whether the index passed all inspected health checks."),
@@ -388,6 +391,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         },
     },
     "required": [
+        "response_schema_version",
         "db_path",
         "exists",
         "ok",

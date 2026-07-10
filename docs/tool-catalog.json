@@ -749,6 +749,11 @@
           "type": "object",
           "description": "Read-only diagnostic summary for a persisted symbol index.",
           "properties": {
+            "response_schema_version": {
+              "type": "string",
+              "description": "Version of the inspect_symbol_index response schema.",
+              "minLength": 1
+            },
             "db_path": {
               "type": "string",
               "description": "Normalized SQLite symbol-index database path.",
@@ -877,6 +882,7 @@
             }
           },
           "required": [
+            "response_schema_version",
             "db_path",
             "exists",
             "ok",

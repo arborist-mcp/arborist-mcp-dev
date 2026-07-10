@@ -124,6 +124,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         inspect_index = by_name["arborist/inspect_symbol_index"]
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
+        self.assertIn("response_schema_version", inspect_result["required"])
         self.assertIn("ok", inspect_result["required"])
         self.assertIn("fresh_file_count", inspect_result["required"])
         self.assertEqual(inspect_result["properties"]["stale_files"]["type"], "array")

@@ -14,7 +14,7 @@ use crate::language::{
     offset_for_position, parse_document, point_for_offset, position_from, read_source,
     resolve_local_c_include, visit_tree,
 };
-use crate::model::{LanguageId, Position};
+use crate::model::{LanguageId, Position, SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION};
 use crate::model::{
     SymbolContextResult, SymbolIndexHealth, SymbolIndexStats, SymbolListContextResult,
     SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
@@ -2161,6 +2161,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     let db_path = normalize_absolute_path(db_path)?;
     let db_path_display = normalize_path(&db_path);
     let mut health = SymbolIndexHealth {
+        response_schema_version: SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION.to_string(),
         db_path: db_path_display,
         exists: db_path.exists(),
         ok: false,

@@ -12159,6 +12159,7 @@ def orchestrate(value: int) -> int:\n    return value\n",
 
         let health = inspect_symbol_index(&db_path).unwrap();
 
+        assert_eq!(health.response_schema_version, "1");
         assert!(health.exists);
         assert!(health.ok);
         assert_eq!(health.schema_version.as_deref(), Some("1"));
@@ -12236,6 +12237,7 @@ def orchestrate(value: int) -> int:\n    return value\n",
 
         let health = inspect_symbol_index(&db_path).unwrap();
 
+        assert_eq!(health.response_schema_version, "1");
         assert!(!health.exists);
         assert!(!health.ok);
         assert!(health.issues[0].contains("does not exist"));

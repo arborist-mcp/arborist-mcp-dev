@@ -101,6 +101,7 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                     "db_path": "symbols.db",
                 },
                 "payload": {
+                    "response_schema_version": "1",
                     "db_path": "symbols.db",
                     "exists": True,
                     "ok": True,
