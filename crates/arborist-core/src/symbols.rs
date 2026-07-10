@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 
@@ -24,8 +24,7 @@ use crate::model::{
     SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
     SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
-    TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
-    TraceSymbolNeighborhoodResult,
+    TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
 };
 use crate::symbol_dependency::{
     assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
@@ -33,12 +32,14 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_kind_rank};
+use crate::symbol_map::resolved_symbol_map;
 use crate::symbol_position::resolve_symbol_at_position;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
-use crate::symbol_summary::{summarize_symbols, symbol_summary_from_meta, trace_evidence_keys};
+use crate::symbol_summary::symbol_summary_from_meta;
+use crate::symbol_trace::{trace_from_symbol, trace_neighborhood_from_symbol};
 use crate::workspace_scan::{
     WorkspaceScanLimits, collect_source_files, collect_source_files_with_limits,
     should_skip_index_path,
@@ -2463,124 +2464,6 @@ fn read_symbol_from_meta(
     read_symbol_result_from_meta(symbol, indexed_files, file_overrides)
 }
 
-fn trace_from_symbol(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    let symbol = symbol.clone().with_origin_type("trace_root");
-
-    let callers = if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
-        summarize_symbols(resolved_symbols, &symbol.references, None)
-    } else {
-        Vec::new()
-    };
-
-    let callees = if matches!(direction, TraceDirection::Callees | TraceDirection::Both) {
-        summarize_symbols(
-            resolved_symbols,
-            &symbol.dependencies,
-            Some(&symbol.file_path),
-        )
-    } else {
-        Vec::new()
-    };
-
-    let result = TraceSymbolGraphResult {
-        evidence_keys: trace_evidence_keys(&symbol, &callers, &callees),
-        symbol,
-        callers,
-        callees,
-        indexed_files,
-    };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
-fn trace_neighborhood_from_symbol(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    if max_nodes == 0 {
-        return Err(anyhow!("max_nodes must be greater than zero"));
-    }
-
-    let root = symbol.clone().with_origin_type("trace_root");
-    let resolved_map = resolved_symbol_map(resolved_symbols);
-
-    let mut nodes = vec![TraceSymbolNeighborhoodNode {
-        symbol: symbol_summary_from_meta(&root),
-        depth: 0,
-    }];
-    let mut edges = Vec::new();
-    let mut queued = BTreeSet::from([root.symbol_id.clone()]);
-    let mut edge_keys = BTreeSet::new();
-    let mut queue = VecDeque::from([(root.symbol_id.clone(), 0usize)]);
-    let mut truncated = false;
-
-    while let Some((symbol_id, depth)) = queue.pop_front() {
-        if depth >= max_depth {
-            continue;
-        }
-
-        let Some(current) = resolved_map.get(&symbol_id) else {
-            continue;
-        };
-
-        for (from_symbol_id, to_symbol_id) in neighborhood_edges_for_symbol(current, &direction) {
-            let next_symbol_id = if from_symbol_id == current.symbol_id {
-                &to_symbol_id
-            } else {
-                &from_symbol_id
-            };
-
-            let Some(next_symbol) = resolved_map.get(next_symbol_id) else {
-                continue;
-            };
-
-            if !queued.contains(next_symbol_id) {
-                if nodes.len() >= max_nodes {
-                    truncated = true;
-                    continue;
-                }
-
-                queued.insert(next_symbol_id.clone());
-                queue.push_back((next_symbol_id.clone(), depth + 1));
-                nodes.push(TraceSymbolNeighborhoodNode {
-                    symbol: symbol_summary_from_meta(next_symbol),
-                    depth: depth + 1,
-                });
-            }
-
-            let edge_key = (from_symbol_id.clone(), to_symbol_id.clone());
-            if edge_keys.insert(edge_key.clone()) {
-                edges.push(TraceSymbolNeighborhoodEdge {
-                    from_symbol_id: edge_key.0,
-                    to_symbol_id: edge_key.1,
-                });
-            }
-        }
-    }
-
-    let result = TraceSymbolNeighborhoodResult {
-        symbol: root,
-        direction,
-        max_depth,
-        max_nodes,
-        truncated,
-        indexed_files,
-        nodes,
-        edges,
-    };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
 fn read_symbol_context_from_meta(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -3198,34 +3081,6 @@ fn list_neighborhood_context_from_symbols(
     Ok(result)
 }
 
-fn neighborhood_edges_for_symbol(
-    symbol: &SymbolMeta,
-    direction: &TraceDirection,
-) -> Vec<(String, String)> {
-    let mut edges = Vec::new();
-
-    if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
-        edges.extend(
-            symbol
-                .references
-                .iter()
-                .cloned()
-                .map(|caller_id| (caller_id, symbol.symbol_id.clone())),
-        );
-    }
-    if matches!(direction, TraceDirection::Callees | TraceDirection::Both) {
-        edges.extend(
-            symbol
-                .dependencies
-                .iter()
-                .cloned()
-                .map(|callee_id| (symbol.symbol_id.clone(), callee_id)),
-        );
-    }
-
-    edges
-}
-
 fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     if !db_path.exists() {
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
@@ -3305,20 +3160,6 @@ fn load_symbol_index_with_overrides(
     ))
 }
 
-fn resolved_symbol_map(symbols: &[SymbolMeta]) -> BTreeMap<String, SymbolMeta> {
-    let mut map = BTreeMap::new();
-    for symbol in symbols {
-        map.entry(symbol.symbol_id.clone())
-            .and_modify(|existing| {
-                if resolved_symbol_rank(symbol) > resolved_symbol_rank(existing) {
-                    *existing = symbol.clone();
-                }
-            })
-            .or_insert_with(|| symbol.clone());
-    }
-    map
-}
-
 fn validate_trace_symbol_path(symbol_path: &str) -> Result<()> {
     if symbol_path.trim().is_empty() {
         return Err(anyhow!("invalid symbol_path: selector must not be blank"));
@@ -3331,11 +3172,7 @@ fn choose_trace_symbol<'a>(symbols: &'a [SymbolMeta], symbol_path: &str) -> Opti
     symbols
         .iter()
         .filter(|symbol| symbol.symbol_id == symbol_path || symbol.semantic_path == symbol_path)
-        .max_by_key(|symbol| resolved_symbol_rank(symbol))
-}
-
-fn resolved_symbol_rank(symbol: &SymbolMeta) -> usize {
-    symbol_kind_rank(&symbol.node_kind)
+        .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
 }
 
 fn source_fingerprint(source: &str) -> u64 {
