@@ -880,17 +880,6 @@ class ArboristGateway:
         }
 
     @staticmethod
-    def _reject_source_with_index_db_path(
-        source: str | None,
-        index_db_path: str | None,
-    ) -> None:
-        if source is not None and index_db_path is not None:
-            raise JsonRpcError(
-                -32602,
-                "invalid params: index_db_path is not supported when source is provided",
-            )
-
-    @staticmethod
     def _require_file_path_for_source(
         source: str | None,
         file_path: str | None,
@@ -1095,7 +1084,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1132,7 +1120,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1169,7 +1156,6 @@ class ArboristGateway:
         )
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().trace_symbol_graph_at_position_json(
             workspace_root,
             file_path,
@@ -1199,7 +1185,6 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().trace_symbol_neighborhood_at_position_json(
             workspace_root,
             file_path,
@@ -1219,7 +1204,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1244,7 +1228,6 @@ class ArboristGateway:
         row, column = self._require_position(params, "position")
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_at_position_json(
             workspace_root,
             file_path,
@@ -1267,7 +1250,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1300,7 +1282,6 @@ class ArboristGateway:
         )
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_context_at_position_json(
             workspace_root,
             file_path,
@@ -1328,7 +1309,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1371,7 +1351,6 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_neighborhood_context_at_position_json(
             workspace_root,
             file_path,
@@ -1401,7 +1380,6 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1444,7 +1422,6 @@ class ArboristGateway:
             raise JsonRpcError(-32602, "invalid positive int param: max_nodes")
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        self._reject_source_with_index_db_path(source, index_db_path)
         payload = self._require_core().read_symbol_discovery_context_at_position_json(
             workspace_root,
             file_path,
@@ -1467,7 +1444,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1501,7 +1477,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1545,7 +1520,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1595,7 +1569,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1634,7 +1607,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1665,7 +1637,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1708,7 +1679,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -1757,7 +1727,6 @@ class ArboristGateway:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        self._reject_source_with_index_db_path(source, index_db_path)
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:

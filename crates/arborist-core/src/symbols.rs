@@ -1111,7 +1111,8 @@ pub fn trace_symbol_graph_from_index_with_overrides(
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
     let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
     trace_from_symbols(&resolved_symbols, indexed_files, symbol_path, direction)
 }
 
@@ -1124,7 +1125,8 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides(
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
     trace_neighborhood_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -1135,17 +1137,82 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides(
     )
 }
 
+pub fn trace_symbol_graph_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    trace_symbol_graph_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        Some(file_overrides),
+    )
+}
+
+pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    trace_symbol_neighborhood_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
 pub fn read_symbol_from_index_with_overrides(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
     symbol_path: &str,
 ) -> Result<SymbolReadResult> {
     let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
     read_symbol_from_symbols(
         &resolved_symbols,
         indexed_files,
         symbol_path,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_context_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
         Some(file_overrides),
     )
 }
@@ -1159,7 +1226,8 @@ pub fn read_symbol_neighborhood_context_from_index_with_overrides(
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
     let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
     read_symbol_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -1167,6 +1235,312 @@ pub fn read_symbol_neighborhood_context_from_index_with_overrides(
         direction,
         max_depth,
         max_nodes,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_discovery_context_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_discovery_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_context_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_neighborhood_context_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_neighborhood_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
+pub fn read_symbol_discovery_context_at_position_from_index_with_overrides(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let file_path = normalize_absolute_path(file_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    read_symbol_discovery_context_at_position_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        &file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        Some(file_overrides),
+    )
+}
+
+pub fn search_symbols_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    search_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn search_symbols_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    search_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    search_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_discovery_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchDiscoveryContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    search_discovery_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+pub fn list_symbols_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    list_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    list_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    list_neighborhood_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        Some(file_overrides),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_discovery_context_from_index_with_overrides_filtered(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListDiscoveryContextResult> {
+    let db_path = normalize_absolute_path(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+    list_discovery_context_from_symbols(
+        &resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
         Some(file_overrides),
     )
 }

@@ -1908,6 +1908,112 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 any(symbol["semantic_path"] == "helper" for symbol in result["trace"]["callees"])
             )
 
+    def test_trace_symbol_graph_accepts_index_db_path_with_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+                "caller.py": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            caller = workspace.joinpath("caller.py")
+            db_path = workspace.joinpath("symbols.db")
+
+            rebuild = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/rebuild_symbol_index",
+                    {
+                        "workspace_root": str(workspace),
+                        "db_path": str(db_path),
+                    },
+                    request_id=182,
+                ),
+                request_id=182,
+            )
+
+            assert isinstance(rebuild, dict)
+            self.assertEqual(rebuild["indexed_files"], 2)
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/trace_symbol_graph",
+                    {
+                        "workspace_root": str(workspace),
+                        "symbol_path": "orchestrate",
+                        "direction": "both",
+                        "file_path": str(caller),
+                        "source": (
+                            "from helper import helper\n\n\n"
+                            "def orchestrate(value: int) -> int:\n"
+                            "    return helper(value)\n"
+                        ),
+                        "index_db_path": str(db_path),
+                    },
+                    request_id=183,
+                ),
+                request_id=183,
+            )
+
+            assert isinstance(result, dict)
+            self.assertEqual(result["symbol"]["semantic_path"], "orchestrate")
+            self.assertTrue(
+                any(symbol["semantic_path"] == "helper" for symbol in result["callees"])
+            )
+            self.assertIn("return value + 1", caller.read_text(encoding="utf-8"))
+
+    def test_search_symbols_accepts_index_db_path_with_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper() -> int:\n    return 1\n",
+            }
+        ) as workspace:
+            helper = workspace.joinpath("helper.py")
+            db_path = workspace.joinpath("symbols.db")
+
+            rebuild = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/rebuild_symbol_index",
+                    {
+                        "workspace_root": str(workspace),
+                        "db_path": str(db_path),
+                    },
+                    request_id=184,
+                ),
+                request_id=184,
+            )
+
+            assert isinstance(rebuild, dict)
+            self.assertEqual(rebuild["indexed_files"], 1)
+
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/search_symbols",
+                    {
+                        "workspace_root": str(workspace),
+                        "query": "helper_alias",
+                        "limit": 10,
+                        "file_path": str(helper),
+                        "source": (
+                            "def helper() -> int:\n"
+                            "    return 1\n\n\n"
+                            "def helper_alias() -> int:\n"
+                            "    return helper()\n"
+                        ),
+                        "index_db_path": str(db_path),
+                    },
+                    request_id=185,
+                ),
+                request_id=185,
+            )
+
+            assert isinstance(result, dict)
+            self.assertEqual(result["total_matches"], 1)
+            self.assertEqual(result["matches"][0]["semantic_path"], "helper_alias")
+            self.assertNotIn("helper_alias", helper.read_text(encoding="utf-8"))
+
     def test_read_at_position_accepts_unsaved_source(self) -> None:
         with self.temp_workspace(
             {

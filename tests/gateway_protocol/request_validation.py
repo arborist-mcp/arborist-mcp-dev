@@ -1239,42 +1239,46 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn(expected_key, response["error"]["message"])
 
-    def test_rejects_source_with_index_db_path_for_position_entrypoints(self) -> None:
-        class StubCore:
-            def __getattr__(self, name: str):
-                if name.endswith("_json"):
-                    def _unexpected(*args: object) -> str:
-                        raise AssertionError(f"core should not be called: {name}")
-
-                    return _unexpected
-                raise AttributeError(name)
-
-        gateway = self.make_gateway()
-        gateway._core = StubCore()
+    def test_position_entrypoints_allow_source_with_index_db_path(self) -> None:
+        source = "def helper() -> int:\n    return 1\n"
+        core = make_recording_json_core(
+            read_symbol_at_position_json={},
+            read_symbol_context_at_position_json={},
+            read_symbol_neighborhood_context_at_position_json={},
+            read_symbol_discovery_context_at_position_json={},
+            trace_symbol_graph_at_position_json={},
+            trace_symbol_neighborhood_at_position_json={},
+        )
+        gateway = self.make_gateway(core)
 
         cases = [
             (
+                "read_symbol_at_position_json",
                 "arborist/read_symbol_at_position",
                 {
                     "workspace_root": ".",
                     "file_path": "graph_a.py",
                     "position": {"row": 1, "column": 2},
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, source, "symbols.db"),
             ),
             (
+                "read_symbol_context_at_position_json",
                 "arborist/read_symbol_context_at_position",
                 {
                     "workspace_root": ".",
                     "file_path": "graph_a.py",
                     "position": {"row": 1, "column": 2},
                     "direction": "callers",
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, "callers", source, "symbols.db"),
             ),
             (
+                "read_symbol_neighborhood_context_at_position_json",
                 "arborist/read_symbol_neighborhood_context_at_position",
                 {
                     "workspace_root": ".",
@@ -1283,11 +1287,13 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "direction": "callers",
                     "max_depth": 2,
                     "max_nodes": 10,
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, "callers", 2, 10, source, "symbols.db"),
             ),
             (
+                "read_symbol_discovery_context_at_position_json",
                 "arborist/read_symbol_discovery_context_at_position",
                 {
                     "workspace_root": ".",
@@ -1296,22 +1302,26 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "direction": "callers",
                     "max_depth": 2,
                     "max_nodes": 10,
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, "callers", 2, 10, source, "symbols.db"),
             ),
             (
+                "trace_symbol_graph_at_position_json",
                 "arborist/trace_symbol_graph_at_position",
                 {
                     "workspace_root": ".",
                     "file_path": "graph_a.py",
                     "position": {"row": 1, "column": 2},
                     "direction": "callers",
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, "callers", source, "symbols.db"),
             ),
             (
+                "trace_symbol_neighborhood_at_position_json",
                 "arborist/trace_symbol_neighborhood_at_position",
                 {
                     "workspace_root": ".",
@@ -1320,21 +1330,21 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "direction": "callers",
                     "max_depth": 2,
                     "max_nodes": 10,
-                    "source": "def helper() -> int:\n    return 1\n",
+                    "source": source,
                     "index_db_path": "symbols.db",
                 },
+                (".", "graph_a.py", 1, 2, "callers", 2, 10, source, "symbols.db"),
             ),
         ]
 
-        for method, params in cases:
-            with self.subTest(method=method):
-                self.assert_invalid_params(
-                    method,
-                    params,
+        for core_method, rpc_method, params, expected_call in cases:
+            with self.subTest(method=rpc_method):
+                result = self.assert_jsonrpc_ok(
+                    self.call_gateway(gateway, rpc_method, params, request_id=111),
                     request_id=111,
-                    contains="index_db_path is not supported when source is provided",
-                    gateway=gateway,
                 )
+                self.assertEqual(result, {})
+                self.assertEqual(core.calls_for(core_method), [expected_call])
 
     def test_rejects_invalid_patch_at_position_position_as_invalid_params(self) -> None:
         class StubCore:
@@ -1439,32 +1449,47 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     }
                 )
 
-    def test_rejects_source_with_index_db_path_for_path_and_workspace_entrypoints(self) -> None:
-        class StubCore:
-            def __getattr__(self, name: str):
-                if name.endswith("_json"):
-                    def _unexpected(*args: object) -> str:
-                        raise AssertionError(f"core should not be called: {name}")
-
-                    return _unexpected
-                raise AttributeError(name)
-
-        gateway = self.make_gateway()
-        gateway._core = StubCore()
+    def test_path_and_workspace_entrypoints_allow_source_with_index_db_path(self) -> None:
+        source = "def helper() -> int:\n    return 1\n"
+        core = make_recording_json_core(
+            read_symbol_json={},
+            read_symbol_context_json={},
+            read_symbol_neighborhood_context_json={},
+            read_symbol_discovery_context_json={},
+            trace_symbol_graph_json={},
+            trace_symbol_neighborhood_json={},
+            search_symbols_json={},
+            search_symbols_context_json={},
+            search_symbols_neighborhood_context_json={},
+            search_symbols_discovery_context_json={},
+            list_symbols_json={},
+            list_symbols_context_json={},
+            list_symbols_neighborhood_context_json={},
+            list_symbols_discovery_context_json={},
+        )
+        gateway = self.make_gateway(core)
 
         shared = {
             "workspace_root": ".",
             "file_path": "graph_a.py",
-            "source": "def helper() -> int:\n    return 1\n",
+            "source": source,
             "index_db_path": "symbols.db",
         }
         cases = [
-            ("arborist/read_symbol", {**shared, "symbol_path": "helper"}),
             (
-                "arborist/read_symbol_context",
-                {**shared, "symbol_path": "helper", "direction": "callers"},
+                "read_symbol_json",
+                "arborist/read_symbol",
+                {**shared, "symbol_path": "helper"},
+                (".", "helper", "symbols.db", "graph_a.py", source),
             ),
             (
+                "read_symbol_context_json",
+                "arborist/read_symbol_context",
+                {**shared, "symbol_path": "helper", "direction": "callers"},
+                (".", "helper", "callers", "symbols.db", "graph_a.py", source),
+            ),
+            (
+                "read_symbol_neighborhood_context_json",
                 "arborist/read_symbol_neighborhood_context",
                 {
                     **shared,
@@ -1473,8 +1498,19 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    "graph_a.py",
+                    source,
+                ),
             ),
             (
+                "read_symbol_discovery_context_json",
                 "arborist/read_symbol_discovery_context",
                 {
                     **shared,
@@ -1483,12 +1519,25 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    "graph_a.py",
+                    source,
+                ),
             ),
             (
+                "trace_symbol_graph_json",
                 "arborist/trace_symbol_graph",
                 {**shared, "symbol_path": "helper", "direction": "callers"},
+                (".", "helper", "callers", "symbols.db", "graph_a.py", source),
             ),
             (
+                "trace_symbol_neighborhood_json",
                 "arborist/trace_symbol_neighborhood",
                 {
                     **shared,
@@ -1497,16 +1546,31 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    "graph_a.py",
+                    source,
+                ),
             ),
             (
+                "search_symbols_json",
                 "arborist/search_symbols",
                 {**shared, "query": "helper", "limit": 5},
+                (".", "helper", 5, "symbols.db", None, None, "graph_a.py", source),
             ),
             (
+                "search_symbols_context_json",
                 "arborist/search_symbols_context",
                 {**shared, "query": "helper", "limit": 5},
+                (".", "helper", 5, "symbols.db", None, None, "graph_a.py", source),
             ),
             (
+                "search_symbols_neighborhood_context_json",
                 "arborist/search_symbols_neighborhood_context",
                 {
                     **shared,
@@ -1516,8 +1580,22 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    "helper",
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    "graph_a.py",
+                    source,
+                ),
             ),
             (
+                "search_symbols_discovery_context_json",
                 "arborist/search_symbols_discovery_context",
                 {
                     **shared,
@@ -1527,10 +1605,34 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    "helper",
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    "graph_a.py",
+                    source,
+                ),
             ),
-            ("arborist/list_symbols", {**shared, "limit": 5}),
-            ("arborist/list_symbols_context", {**shared, "limit": 5}),
             (
+                "list_symbols_json",
+                "arborist/list_symbols",
+                {**shared, "limit": 5},
+                (".", 5, "symbols.db", None, None, "graph_a.py", source),
+            ),
+            (
+                "list_symbols_context_json",
+                "arborist/list_symbols_context",
+                {**shared, "limit": 5},
+                (".", 5, "symbols.db", None, None, "graph_a.py", source),
+            ),
+            (
+                "list_symbols_neighborhood_context_json",
                 "arborist/list_symbols_neighborhood_context",
                 {
                     **shared,
@@ -1539,8 +1641,21 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    "graph_a.py",
+                    source,
+                ),
             ),
             (
+                "list_symbols_discovery_context_json",
                 "arborist/list_symbols_discovery_context",
                 {
                     **shared,
@@ -1549,18 +1664,29 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_depth": 2,
                     "max_nodes": 10,
                 },
+                (
+                    ".",
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    "graph_a.py",
+                    source,
+                ),
             ),
         ]
 
-        for method, params in cases:
-            with self.subTest(method=method):
-                self.assert_invalid_params(
-                    method,
-                    params,
+        for core_method, rpc_method, params, expected_call in cases:
+            with self.subTest(method=rpc_method):
+                result = self.assert_jsonrpc_ok(
+                    self.call_gateway(gateway, rpc_method, params, request_id=112),
                     request_id=112,
-                    contains="index_db_path is not supported when source is provided",
-                    gateway=gateway,
                 )
+                self.assertEqual(result, {})
+                self.assertEqual(core.calls_for(core_method), [expected_call])
 
     def test_patch_context_entrypoints_allow_source_with_index_db_path(self) -> None:
         source = "def orchestrate(value: int) -> int:\n    return value + 1\n"

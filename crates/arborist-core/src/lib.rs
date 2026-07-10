@@ -105,17 +105,24 @@ fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn source_override_for_path(
+    path: &Path,
+    source: &str,
+) -> Result<(PathBuf, BTreeMap<String, String>)> {
+    let path = language::normalize_absolute_path(path)?;
+    let mut overrides = BTreeMap::new();
+    overrides.insert(language::normalize_path(&path), source.to_string());
+    Ok((path, overrides))
+}
+
 fn source_overrides_for_workspace_path(
     workspace_root: &Path,
     path: &Path,
     source: &str,
 ) -> Result<(PathBuf, PathBuf, BTreeMap<String, String>)> {
     let workspace_root = language::normalize_absolute_path(workspace_root)?;
-    let path = language::normalize_absolute_path(path)?;
+    let (path, overrides) = source_override_for_path(path, source)?;
     ensure_path_inside_workspace(&workspace_root, &path)?;
-
-    let mut overrides = BTreeMap::new();
-    overrides.insert(language::normalize_path(&path), source.to_string());
     Ok((workspace_root, path, overrides))
 }
 
@@ -508,6 +515,375 @@ pub fn list_symbols_discovery_context_with_source_filtered(
         source_overrides_for_workspace_path(workspace_root, path, source)?;
     symbols::list_symbols_discovery_context_with_overrides_filtered(
         &workspace_root,
+        &overrides,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn trace_symbol_graph_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::trace_symbol_graph_from_index_with_overrides(
+        db_path,
+        &overrides,
+        symbol_path,
+        direction,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn trace_symbol_neighborhood_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::trace_symbol_neighborhood_from_index_with_overrides(
+        db_path,
+        &overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn trace_symbol_graph_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<TraceSymbolGraphResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::trace_symbol_graph_at_position_from_index_with_overrides(
+        db_path, &overrides, &path, position, direction,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn trace_symbol_neighborhood_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<TraceSymbolNeighborhoodResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::trace_symbol_neighborhood_at_position_from_index_with_overrides(
+        db_path, &overrides, &path, position, direction, max_depth, max_nodes,
+    )
+}
+
+pub fn read_symbol_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+) -> Result<SymbolReadResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_from_index_with_overrides(db_path, &overrides, symbol_path)
+}
+
+pub fn read_symbol_context_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_context_from_index_with_overrides(
+        db_path,
+        &overrides,
+        symbol_path,
+        direction,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn read_symbol_neighborhood_context_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_neighborhood_context_from_index_with_overrides(
+        db_path,
+        &overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn read_symbol_discovery_context_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_discovery_context_from_index_with_overrides(
+        db_path,
+        &overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+    )
+}
+
+pub fn read_symbol_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+) -> Result<SymbolReadResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_at_position_from_index_with_overrides(db_path, &overrides, &path, position)
+}
+
+pub fn read_symbol_context_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+) -> Result<SymbolContextResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_context_at_position_from_index_with_overrides(
+        db_path, &overrides, &path, position, direction,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn read_symbol_neighborhood_context_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_neighborhood_context_at_position_from_index_with_overrides(
+        db_path, &overrides, &path, position, direction, max_depth, max_nodes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn read_symbol_discovery_context_at_position_from_index_with_source(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+) -> Result<SymbolReadDiscoveryContextResult> {
+    let (path, overrides) = source_override_for_path(path, source)?;
+    symbols::read_symbol_discovery_context_at_position_from_index_with_overrides(
+        db_path, &overrides, &path, position, direction, max_depth, max_nodes,
+    )
+}
+
+pub fn search_symbols_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::search_symbols_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn search_symbols_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::search_symbols_context_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::search_symbols_neighborhood_context_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_discovery_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolSearchDiscoveryContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::search_symbols_discovery_context_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::list_symbols_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+pub fn list_symbols_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::list_symbols_context_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        limit,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::list_symbols_neighborhood_context_from_index_with_overrides_filtered(
+        db_path,
+        &overrides,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_discovery_context_from_index_with_source_filtered(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+) -> Result<SymbolListDiscoveryContextResult> {
+    let (_path, overrides) = source_override_for_path(path, source)?;
+    symbols::list_symbols_discovery_context_from_index_with_overrides_filtered(
+        db_path,
         &overrides,
         limit,
         direction,
@@ -2003,10 +2379,11 @@ mod tests {
         list_symbols, list_symbols_context, list_symbols_context_from_index,
         list_symbols_discovery_context, list_symbols_discovery_context_from_index,
         list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
-        list_symbols_neighborhood_context, list_symbols_neighborhood_context_from_index,
-        patch_ast_node, patch_ast_node_at_position, patch_ast_node_from_path, read_symbol,
-        read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
-        read_symbol_context_from_index, read_symbol_discovery_context,
+        list_symbols_from_index_with_source_filtered, list_symbols_neighborhood_context,
+        list_symbols_neighborhood_context_from_index, patch_ast_node, patch_ast_node_at_position,
+        patch_ast_node_from_path, read_symbol, read_symbol_at_position,
+        read_symbol_at_position_from_index, read_symbol_context, read_symbol_context_from_index,
+        read_symbol_context_from_index_with_source, read_symbol_discovery_context,
         read_symbol_discovery_context_at_position,
         read_symbol_discovery_context_at_position_from_index,
         read_symbol_discovery_context_at_position_with_source,
@@ -2016,10 +2393,12 @@ mod tests {
         search_symbols, search_symbols_context, search_symbols_context_from_index,
         search_symbols_discovery_context, search_symbols_discovery_context_from_index,
         search_symbols_filtered, search_symbols_from_index, search_symbols_from_index_filtered,
-        search_symbols_neighborhood_context, search_symbols_neighborhood_context_from_index,
-        trace_symbol_graph, trace_symbol_graph_at_position,
-        trace_symbol_graph_at_position_from_index, trace_symbol_graph_at_position_with_source,
-        trace_symbol_graph_from_index, trace_symbol_neighborhood,
+        search_symbols_from_index_with_source_filtered, search_symbols_neighborhood_context,
+        search_symbols_neighborhood_context_from_index, trace_symbol_graph,
+        trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
+        trace_symbol_graph_at_position_from_index_with_source,
+        trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
+        trace_symbol_graph_from_index_with_source, trace_symbol_neighborhood,
         trace_symbol_neighborhood_at_position, trace_symbol_neighborhood_at_position_from_index,
         trace_symbol_neighborhood_from_index, validate_patch_commit_with_trace,
         validate_patch_trace_validation_result, validate_patch_with_discovery_context,
@@ -2027,8 +2406,8 @@ mod tests {
         validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
         validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
         validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
-        validate_patch_with_trace_context_at_position, validate_patch_with_trace_context_from_path,
-        validate_patch_with_trace_context_from_index,
+        validate_patch_with_trace_context_at_position,
+        validate_patch_with_trace_context_from_index, validate_patch_with_trace_context_from_path,
         validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
     };
     use crate::language::normalize_path;
@@ -4682,12 +5061,199 @@ int helper(int value) {
         .unwrap();
 
         assert!(result.patch.applied);
-        assert_eq!(result.patch.file, caller.to_string_lossy().replace('\\', "/"));
+        assert_eq!(
+            result.patch.file,
+            caller.to_string_lossy().replace('\\', "/")
+        );
         assert!(result.trace_error.is_none());
-        assert_eq!(result.trace_validation.as_ref().map(|value| value.allowed), Some(true));
+        assert_eq!(
+            result.trace_validation.as_ref().map(|value| value.allowed),
+            Some(true)
+        );
         let trace = result.trace.expect("trace should be present");
         assert_eq!(trace.symbol.semantic_path, "orchestrate");
-        assert!(trace.callees.iter().any(|symbol| symbol.semantic_path == "helper"));
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn traces_symbol_graph_from_index_with_unsaved_source_overlay() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "def orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let source = "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n";
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &caller,
+            source,
+            "orchestrate",
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+        assert_eq!(trace.symbol.semantic_path, "orchestrate");
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+        assert!(
+            fs::read_to_string(&caller)
+                .unwrap()
+                .contains("return value + 1")
+        );
+    }
+
+    #[test]
+    fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "def orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let source = "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n";
+        let trace = trace_symbol_graph_at_position_from_index_with_source(
+            &db_path,
+            &caller,
+            source,
+            &Position { row: 3, column: 5 },
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+        assert_eq!(trace.symbol.semantic_path, "orchestrate");
+        assert!(
+            trace
+                .callees
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper")
+        );
+    }
+
+    #[test]
+    fn reads_symbol_context_from_index_with_unsaved_source_overlay() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let caller = dir.join("caller.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(
+            &helper,
+            "def helper(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &caller,
+            "def orchestrate(value: int) -> int:\n    return value + 1\n",
+        )
+        .unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let source = "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n";
+        let context = read_symbol_context_from_index_with_source(
+            &db_path,
+            &caller,
+            source,
+            "helper",
+            TraceDirection::Callers,
+        )
+        .unwrap();
+
+        assert_eq!(context.read.symbol.semantic_path, "helper");
+        assert_eq!(context.trace.symbol.semantic_path, "helper");
+        assert_eq!(context.trace.callers.len(), 1);
+        assert_eq!(context.trace.callers[0].semantic_path, "orchestrate");
+    }
+
+    #[test]
+    fn searches_symbols_from_index_with_unsaved_source_overlay() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let source = "def helper() -> int:\n    return 1\n\n\ndef helper_alias() -> int:\n    return helper()\n";
+        let results = search_symbols_from_index_with_source_filtered(
+            &db_path,
+            &helper,
+            source,
+            "helper_alias",
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(results.total_matches, 1);
+        assert_eq!(results.matches.len(), 1);
+        assert_eq!(results.matches[0].semantic_path, "helper_alias");
+        assert!(
+            fs::read_to_string(&helper)
+                .unwrap()
+                .contains("def helper() -> int")
+        );
+        assert!(
+            !fs::read_to_string(&helper)
+                .unwrap()
+                .contains("helper_alias")
+        );
+    }
+
+    #[test]
+    fn lists_symbols_from_index_with_unsaved_source_overlay() {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+
+        fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let source = "def helper() -> int:\n    return 1\n\n\ndef helper_alias() -> int:\n    return helper()\n";
+        let listed =
+            list_symbols_from_index_with_source_filtered(&db_path, &helper, source, 10, None, None)
+                .unwrap();
+
+        assert_eq!(listed.total_symbols, 2);
+        assert_eq!(listed.symbols.len(), 2);
+        assert!(
+            listed
+                .symbols
+                .iter()
+                .any(|symbol| symbol.semantic_path == "helper_alias")
+        );
     }
 
     #[test]

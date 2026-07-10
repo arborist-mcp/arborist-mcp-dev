@@ -108,7 +108,8 @@ extension-based; Python files use `.py`, and C routing includes `.c`, `.h`,
   and symbol/list/search analysis requests can analyze an optional `source`
   buffer without first writing it to disk; symbol/list/search overlays use a
   `file_path` anchor to identify which workspace file the unsaved buffer
-  should replace
+  should replace, and persisted-index read/trace/list/search requests can
+  apply that same overlay when `index_db_path` is provided
 - Session-managed symbol index registrations with commit-time auto-refresh
 - File-scoped persisted index refresh for tighter post-commit sync
 - Partial SQLite persistence updates for changed or deleted file refreshes
