@@ -330,11 +330,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => trace_symbol_graph_from_index_with_source(
                 Path::new(&index_db_path),
@@ -378,11 +374,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_from_index_with_source(
@@ -433,11 +425,7 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => read_symbol_from_index_with_source(
                 Path::new(&index_db_path),
@@ -515,11 +503,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => read_symbol_context_from_index_with_source(
                 Path::new(&index_db_path),
@@ -720,11 +704,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_from_index_with_source(
@@ -842,11 +822,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_from_index_with_source(
@@ -963,11 +939,7 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => search_symbols_from_index_with_source_filtered(
                 Path::new(&index_db_path),
@@ -1020,11 +992,7 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_context_from_index_with_source_filtered(
@@ -1083,11 +1051,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_neighborhood_context_from_index_with_source_filtered(
@@ -1161,11 +1125,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 search_symbols_discovery_context_from_index_with_source_filtered(
@@ -1234,11 +1194,7 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => list_symbols_from_index_with_source_filtered(
                 Path::new(&index_db_path),
@@ -1286,11 +1242,7 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_context_from_index_with_source_filtered(
@@ -1344,11 +1296,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_neighborhood_context_from_index_with_source_filtered(
@@ -1417,11 +1365,7 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        if source.is_some() && file_path.is_none() {
-            return Err(PyValueError::new_err(
-                "file_path is required when source is provided",
-            ));
-        }
+        require_file_path_for_source(source.as_deref(), file_path.as_deref())?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_discovery_context_from_index_with_source_filtered(
@@ -2238,6 +2182,15 @@ fn to_runtime_error(error: serde_json::Error) -> PyErr {
 
 fn to_json_result<T: Serialize>(result: &T) -> PyResult<String> {
     serde_json::to_string(result).map_err(to_runtime_error)
+}
+
+fn require_file_path_for_source(source: Option<&str>, file_path: Option<&str>) -> PyResult<()> {
+    if source.is_some() && file_path.is_none() {
+        return Err(PyValueError::new_err(
+            "file_path is required when source is provided",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
