@@ -203,6 +203,20 @@ function Invoke-VersionConsistencyCheck {
     }
 }
 
+function Invoke-ToolCatalogSnapshotCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    Invoke-NativeOrThrow `
+        "Checking tool catalog snapshot..." `
+        $Python `
+        @((Join-Path $RepoRoot "scripts\tool_catalog.py"), "--check")
+}
+
 function Ensure-GatewayExtension {
     param(
         [Parameter(Mandatory = $true)]
@@ -288,6 +302,7 @@ function Invoke-CheckProfile {
         "sanity" {
             Invoke-PowerShellSyntaxCheck
             Invoke-VersionConsistencyCheck $RepoRoot
+            Invoke-ToolCatalogSnapshotCheck $Python $RepoRoot
             return
         }
         "rust" {

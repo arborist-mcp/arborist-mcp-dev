@@ -1,7 +1,7 @@
 {
   "profiles": {
     "sanity": {
-      "description": "Run PowerShell syntax and cross-file version consistency checks.",
+      "description": "Run PowerShell syntax, version consistency, and tool catalog snapshot checks.",
       "handler": "sanity"
     },
     "rust": {

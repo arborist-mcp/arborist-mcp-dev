@@ -169,9 +169,9 @@ python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
 ```
 
-Windows is the primary development environment today, and Linux has basic CI
-coverage. macOS is expected to work through the same `maturin develop` flow, but
-it is not yet part of CI.
+Windows is the primary development environment today. Linux and macOS have basic
+CI coverage for Rust tests and the pure-Python gateway smoke path; the fuller
+native-extension profile matrix still runs on Windows.
 
 Common build failures:
 
@@ -218,9 +218,9 @@ Run the full local gate:
 .\scripts\check.ps1
 ```
 
-The full gate also checks PowerShell script syntax, version consistency, builds
-and syncs the local gateway extension, and runs the shared gateway smoke helper
-with a real `initialize` request.
+The full gate also checks PowerShell script syntax, version consistency, the
+generated tool catalog snapshot, builds and syncs the local gateway extension,
+and runs the shared gateway smoke helper with a real `initialize` request.
 
 `check.ps1` now also supports focused profiles, so CI and local debugging can
 run the same named slices instead of maintaining separate ad hoc command sets:

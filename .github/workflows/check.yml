@@ -89,3 +89,30 @@ jobs:
 
       - name: Check gateway smoke path
         run: python scripts/gateway_smoke.py
+
+  macos-basic:
+    name: macos-basic
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Run Rust tests
+        run: cargo test --locked
+
+      - name: Check gateway smoke path
+        run: python scripts/gateway_smoke.py

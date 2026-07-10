@@ -47,7 +47,7 @@ class CheckWorkflowTests(unittest.TestCase):
         profiles = snapshot["profiles"]
 
         self.assertEqual(profiles["sanity"]["handler"], "sanity")
-        self.assertFalse(profiles["sanity"]["needs_python"])
+        self.assertTrue(profiles["sanity"]["needs_python"])
         self.assertFalse(profiles["sanity"]["needs_rust"])
         self.assertEqual(profiles["rust"]["handler"], "rust")
         self.assertFalse(profiles["rust"]["needs_python"])
@@ -161,7 +161,7 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertEqual(
             lines,
             [
-                "sanity           sanity [none]",
+                "sanity           sanity [python]",
                 "rust             rust [rust]",
                 "gateway-native   suite -> gateway-native -> prepare-extension [rust+python]",
                 "python-discovery suite -> python -> prepare-extension [rust+python]",
@@ -189,6 +189,7 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("gateway_smoke.py", check_script)
         self.assertIn("--require-core", check_script)
         self.assertIn("python scripts/gateway_smoke.py", workflow)
+        self.assertIn("macos-basic:", workflow)
         self.assertNotIn("printf '%s\\n'", workflow)
 
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
