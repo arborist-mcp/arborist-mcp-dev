@@ -138,6 +138,22 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             gateway_module.MAX_BATCH_CALLS,
         )
         self.assertEqual(batch["outputSchema"]["properties"]["result"]["type"], "array")
+        batch_item_schema = batch["outputSchema"]["properties"]["result"]["items"]
+        batch_inner_result_schema = batch_item_schema["properties"]["result"]
+        self.assertIn("anyOf", batch_inner_result_schema)
+        self.assertIn(
+            gateway_module.SEMANTIC_SKELETON_RESULT_SCHEMA,
+            batch_inner_result_schema["anyOf"],
+        )
+        self.assertIn(gateway_module.SYMBOL_LIST_RESULT_SCHEMA, batch_inner_result_schema["anyOf"])
+        self.assertIn(
+            gateway_module.SYMBOL_INDEX_HEALTH_RESULT_SCHEMA,
+            batch_inner_result_schema["anyOf"],
+        )
+        self.assertNotIn(
+            gateway_module.PATCH_AST_NODE_RESULT_SCHEMA,
+            batch_inner_result_schema["anyOf"],
+        )
         skeleton = by_name["arborist/get_semantic_skeleton"]
         self.assertEqual(skeleton["metadata"]["category"], "read")
         self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])

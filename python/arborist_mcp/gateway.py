@@ -376,7 +376,7 @@ BATCH_CALL_RESULT_SCHEMA = {
     "properties": {
         "name": _schema("string", "Arborist tool name that was called."),
         "result": {
-            "description": "Result returned by the inner tool.",
+            "description": "Result returned by the inner tool. Filled from the batch-allowed tool schemas below.",
         },
     },
     "required": ["name", "result"],
@@ -1362,6 +1362,15 @@ TOOL_RESULT_SCHEMAS = {
     }[schema_key]
     for tool_name, schema_key in TOOL_RESULT_SCHEMA_KEYS.items()
 }
+BATCH_CALL_RESULT_SCHEMA["properties"]["result"] = {
+    "description": "Result returned by the inner read-only tool.",
+    "anyOf": [
+        TOOL_RESULT_SCHEMAS[tool_name]
+        for tool_name in TOOL_NAMES
+        if tool_name in BATCH_ALLOWED_TOOLS and tool_name in TOOL_RESULT_SCHEMAS
+    ],
+}
+TOOL_RESULT_SCHEMAS["arborist/batch"] = BATCH_RESULT_SCHEMA
 
 
 class JsonRpcError(ValueError):
