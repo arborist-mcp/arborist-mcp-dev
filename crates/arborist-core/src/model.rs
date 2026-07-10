@@ -169,6 +169,14 @@ pub struct PatchAstNodeResult {
     pub validation: PatchValidationReport,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PatchPreviewResult {
+    pub patch: PatchAstNodeResult,
+    pub unified_diff: String,
+    pub changed: bool,
+}
+
 impl PatchAstNodeResult {
     pub fn validate_trace_replay_input(&self) -> Result<()> {
         ensure_nonblank(&self.file, "patch.file")?;
@@ -186,6 +194,16 @@ impl PatchAstNodeResult {
     pub(crate) fn validate_public_output(&self) -> Result<()> {
         ensure_nonblank(&self.updated_source, "patch.updated_source")?;
         self.validate_trace_replay_input()
+    }
+}
+
+impl PatchPreviewResult {
+    pub(crate) fn validate_public_output(&self) -> Result<()> {
+        self.patch.validate_public_output()?;
+        if self.changed == self.unified_diff.is_empty() {
+            bail!("invalid patch_preview.changed: expected changed to match unified_diff presence");
+        }
+        Ok(())
     }
 }
 

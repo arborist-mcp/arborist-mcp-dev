@@ -17,10 +17,10 @@ use source_overlay::{
 
 pub use model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,
-    NeighborhoodContextPatchResult, PatchAstNodeResult, PatchTraceValidationResult,
-    PatchValidationReport, Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex,
-    SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult, SymbolIndexHealth,
-    SymbolIndexStats, SymbolListContextResult, SymbolListDiscoveryContextResult,
+    NeighborhoodContextPatchResult, PatchAstNodeResult, PatchPreviewResult,
+    PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit, QueryCaptureResult,
+    RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult,
+    SymbolIndexHealth, SymbolIndexStats, SymbolListContextResult, SymbolListDiscoveryContextResult,
     SymbolListNeighborhoodContextResult, SymbolListResult, SymbolMeta,
     SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult, SymbolReadResult,
     SymbolSearchContextResult, SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
@@ -34,7 +34,8 @@ pub use model::{
 pub use language::{read_source, supported_languages};
 pub use patching::{
     patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
-    patch_ast_node_from_path,
+    patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
+    preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
 };
 pub use query::{execute_tree_query, execute_tree_query_from_path};
 pub use symbols::{
@@ -2352,10 +2353,10 @@ mod tests {
         list_symbols_filtered, list_symbols_from_index, list_symbols_from_index_filtered,
         list_symbols_from_index_with_source_filtered, list_symbols_neighborhood_context,
         list_symbols_neighborhood_context_from_index, patch_ast_node, patch_ast_node_at_position,
-        patch_ast_node_from_path, read_symbol, read_symbol_at_position,
-        read_symbol_at_position_from_index, read_symbol_context, read_symbol_context_from_index,
-        read_symbol_context_from_index_with_source, read_symbol_discovery_context,
-        read_symbol_discovery_context_at_position,
+        patch_ast_node_from_path, preview_patch_ast_node_from_path, read_symbol,
+        read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
+        read_symbol_context_from_index, read_symbol_context_from_index_with_source,
+        read_symbol_discovery_context, read_symbol_discovery_context_at_position,
         read_symbol_discovery_context_at_position_from_index,
         read_symbol_discovery_context_at_position_with_source,
         read_symbol_discovery_context_from_index, read_symbol_from_index,
@@ -7558,6 +7559,30 @@ def top_level(value: int) -> int:
         let updated = fs::read_to_string(&file).unwrap();
         assert!(result.applied);
         assert!(updated.contains("return value + 2"));
+    }
+
+    #[test]
+    fn previews_patch_diff_without_writing_to_disk() {
+        let dir = temporary_dir();
+        let file = dir.join("patch_target.py");
+        let original = "def top_level(value: int) -> int:\n    return value + 1\n";
+        fs::write(&file, original).unwrap();
+
+        let result = preview_patch_ast_node_from_path(
+            &file,
+            "top_level",
+            "def top_level(value: int) -> int:\n    return value + 2\n",
+            None,
+        )
+        .unwrap();
+
+        let disk_source = fs::read_to_string(&file).unwrap();
+        assert_eq!(disk_source, original);
+        assert!(result.patch.applied);
+        assert!(result.changed);
+        assert!(result.unified_diff.contains("--- a/"));
+        assert!(result.unified_diff.contains("-    return value + 1"));
+        assert!(result.unified_diff.contains("+    return value + 2"));
     }
 
     #[test]

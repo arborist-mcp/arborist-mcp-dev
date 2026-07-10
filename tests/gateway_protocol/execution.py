@@ -11,6 +11,8 @@ COVERED_TOOLS = (
     "arborist/get_semantic_skeleton",
     "arborist/patch_ast_node",
     "arborist/patch_ast_node_at_position",
+    "arborist/preview_patch_ast_node",
+    "arborist/preview_patch_ast_node_at_position",
     "arborist/replay_patch_evidence_against_trace",
     "arborist/validate_patch_with_trace_context_at_position",
 )
@@ -257,6 +259,31 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             self.assertTrue(result["applied"])
             self.assertIn("return 2", result["updated_source"])
 
+    def test_preview_patch_ast_node_returns_diff_without_writing_disk(self) -> None:
+        with self.temp_workspace() as workspace:
+            file_path = workspace.joinpath("sample.py")
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/preview_patch_ast_node",
+                    {
+                        "file_path": str(file_path),
+                        "source": "def top_level() -> int:\n    return 1\n",
+                        "semantic_path": "top_level",
+                        "new_code": "def top_level() -> int:\n    return 2\n",
+                    },
+                    request_id=121,
+                ),
+                request_id=121,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(file_path.exists())
+            self.assertTrue(result["patch"]["applied"])
+            self.assertTrue(result["changed"])
+            self.assertIn("-    return 1", result["unified_diff"])
+            self.assertIn("+    return 2", result["unified_diff"])
+
     def test_patch_ast_node_at_position_accepts_unsaved_source_without_writing_disk(
         self,
     ) -> None:
@@ -288,6 +315,30 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             self.assertTrue(result["applied"])
             self.assertEqual(result["resolved_path"], "helper")
             self.assertIn("return 2", result["updated_source"])
+
+    def test_preview_patch_ast_node_at_position_accepts_unsaved_source(self) -> None:
+        with self.temp_workspace() as workspace:
+            file_path = workspace.joinpath("sample.py")
+            result = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/preview_patch_ast_node_at_position",
+                    {
+                        "file_path": str(file_path),
+                        "source": "def helper() -> int:\n    return 1\n",
+                        "position": {"row": 0, "column": 4},
+                        "new_code": "def helper() -> int:\n    return 2\n",
+                    },
+                    request_id=122,
+                ),
+                request_id=122,
+            )
+
+            assert isinstance(result, dict)
+            self.assertFalse(file_path.exists())
+            self.assertTrue(result["patch"]["applied"])
+            self.assertEqual(result["patch"]["resolved_path"], "helper")
+            self.assertIn("+    return 2", result["unified_diff"])
 
     def test_trace_context_at_position_accepts_unsaved_source(self) -> None:
         with self.temp_workspace(

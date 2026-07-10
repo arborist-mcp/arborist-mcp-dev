@@ -13,6 +13,8 @@ extension-based; Python files use `.py`, and C routing includes `.c`, `.h`,
 ## What is implemented
 
 - `get_semantic_skeleton`
+- `preview_patch_ast_node`
+- `preview_patch_ast_node_at_position`
 - `patch_ast_node`
 - `patch_ast_node_at_position`
 - `patch_virtual_ast_node`
@@ -372,9 +374,9 @@ Minimal MCP messages:
 
 `tools/list` is generated from the gateway's tool catalog and is the source of
 truth for tool names, JSON input schemas, output schemas, defaults, and
-categories. It currently returns 50 tools:
+categories. It currently returns 52 tools:
 
-- Read tools: 24, including semantic skeletons, raw Tree-sitter queries, symbol reads, symbol list/search, and graph-backed read bundles.
+- Read tools: 26, including semantic skeletons, patch previews, raw Tree-sitter queries, symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `arborist/patch_ast_node` and `arborist/patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard, and virtual reads.
 - Index tools: 6, covering register, unregister, list, inspect, rebuild, and file refresh for symbol indexes.
@@ -565,6 +567,7 @@ Phase 1 is complete for the Python/C read path. The current Phase 2 foundation i
 - One-shot skeleton, query, patch, trace-context, and position-based
   read/trace requests accept optional `source` buffers for unsaved-file
   analysis without mutating disk
+- Patch preview tools return the same validation payload as normal patching plus a unified diff, without writing to disk
 - Patch responses now report `resolved_symbol_id`, so callers can round-trip a precise C trace target into a later patch request
 - C patch validation now reports structured binding feedback, including resolved `symbol_id` matches and ambiguous same-name candidates
 - Python patch validation now reports structured resolved binding feedback for visible module symbols, parameters, local assignments, local or relative aliases, and package `__init__.py` re-exports

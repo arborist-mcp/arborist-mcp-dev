@@ -13,7 +13,9 @@ use arborist_core::{
     list_symbols_neighborhood_context_from_index_filtered,
     list_symbols_neighborhood_context_from_index_with_source_filtered,
     list_symbols_neighborhood_context_with_source_filtered, list_symbols_with_source_filtered,
-    patch_ast_node, patch_ast_node_at_position, read_symbol_at_position_from_index,
+    patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
+    preview_patch_ast_node_at_position, preview_patch_ast_node_at_position_from_path,
+    preview_patch_ast_node_from_path, read_symbol_at_position_from_index,
     read_symbol_at_position_from_index_with_source, read_symbol_at_position_with_source,
     read_symbol_context_at_position_from_index,
     read_symbol_context_at_position_from_index_with_source,
@@ -200,6 +202,66 @@ impl ArboristCore {
                 }
                 Ok(result)
             }
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
+    fn preview_patch_ast_node_json(
+        &self,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        let result = match source {
+            Some(source) => preview_patch_ast_node(
+                Path::new(file_path),
+                &source,
+                semantic_path,
+                new_code,
+                bypass_reason.as_deref(),
+            ),
+            None => preview_patch_ast_node_from_path(
+                Path::new(file_path),
+                semantic_path,
+                new_code,
+                bypass_reason.as_deref(),
+            ),
+        }
+        .map_err(to_py_error)?;
+
+        serde_json::to_string(&result).map_err(to_runtime_error)
+    }
+
+    #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
+    fn preview_patch_ast_node_at_position_json(
+        &self,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        let position = Position { row, column };
+        let result = match source {
+            Some(source) => preview_patch_ast_node_at_position(
+                Path::new(file_path),
+                &source,
+                &position,
+                new_code,
+                bypass_reason.as_deref(),
+            ),
+            None => preview_patch_ast_node_at_position_from_path(
+                Path::new(file_path),
+                &position,
+                new_code,
+                bypass_reason.as_deref(),
+            ),
         }
         .map_err(to_py_error)?;
 

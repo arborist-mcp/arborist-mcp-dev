@@ -21,6 +21,8 @@ class ToolSpec(NamedTuple):
 
 TOOL_SPECS = (
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read"),
+    ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "read"),
+    ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "read"),
     ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "write"),
     ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "write"),
     ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs"),
@@ -730,6 +732,37 @@ class ArboristGateway:
         source = self._optional_string(params, "source", allow_empty=True)
         payload = self._require_core().execute_tree_query_json(file_path, query, source)
         return self._decode_core_object_array(payload)
+
+    def _preview_patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        semantic_path = self._require_string(params, "semantic_path")
+        new_code = self._require_string(params, "new_code")
+        source = self._optional_string(params, "source", allow_empty=True)
+        bypass_reason = self._optional_string(params, "bypass_reason")
+        payload = self._require_core().preview_patch_ast_node_json(
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+        )
+        return self._decode_core_object(payload)
+
+    def _preview_patch_ast_node_at_position(self, params: dict[str, Any]) -> dict[str, Any]:
+        file_path = self._require_string(params, "file_path")
+        row, column = self._require_position(params, "position")
+        new_code = self._require_string(params, "new_code")
+        source = self._optional_string(params, "source", allow_empty=True)
+        bypass_reason = self._optional_string(params, "bypass_reason")
+        payload = self._require_core().preview_patch_ast_node_at_position_json(
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+        )
+        return self._decode_core_object(payload)
 
     def _patch_ast_node(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")

@@ -61,6 +61,148 @@
     }
   },
   {
+    "name": "arborist/preview_patch_ast_node",
+    "title": "Preview Patch Ast Node",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/preview_patch_ast_node.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "semantic_path": {
+          "type": "string",
+          "description": "Stable Arborist semantic selector.",
+          "minLength": 1
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "semantic_path",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/preview_patch_ast_node",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/preview_patch_ast_node_at_position",
+    "title": "Preview Patch Ast Node At Position",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/preview_patch_ast_node_at_position.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "Source file path. Python and C extensions are supported.",
+          "minLength": 1
+        },
+        "position": {
+          "type": "object",
+          "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+          "properties": {
+            "row": {
+              "type": "integer",
+              "description": "Zero-based row.",
+              "minimum": 0
+            },
+            "column": {
+              "type": "integer",
+              "description": "Zero-based column.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "row",
+            "column"
+          ],
+          "additionalProperties": false
+        },
+        "new_code": {
+          "type": "string",
+          "description": "Replacement source code for the selected AST node.",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "description": "Optional unsaved source buffer to analyze instead of reading from disk."
+        },
+        "bypass_reason": {
+          "type": "string",
+          "description": "Required explanation when intentionally bypassing trace-backed commit gates.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "file_path",
+        "position",
+        "new_code"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "JSON object result returned by Arborist for this tool.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/preview_patch_ast_node_at_position",
+      "mutatesState": false
+    }
+  },
+  {
     "name": "arborist/patch_ast_node",
     "title": "Patch Ast Node",
     "description": "Patch persisted source files through Arborist semantic targeting. Legacy JSON-RPC method: arborist/patch_ast_node.",
