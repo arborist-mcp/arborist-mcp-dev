@@ -10,6 +10,7 @@ from tests.gateway_protocol.helpers import GatewayProtocolTestCase, make_recordi
 SUITE_NAME = "gateway-runtime"
 REQUIRES_EXTENSION = True
 COVERED_TOOLS = (
+    "arborist/batch",
     "arborist/execute_tree_query",
     "arborist/get_semantic_skeleton",
     "arborist/list_symbol_indexes",
@@ -127,6 +128,16 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             [spec.name for spec in gateway_module.TOOL_SPECS if spec.result_schema == "object"],
             [],
         )
+        batch = by_name["arborist/batch"]
+        self.assertEqual(batch["metadata"]["category"], "read")
+        self.assertTrue(batch["annotations"]["readOnlyHint"])
+        self.assertFalse(batch["metadata"]["mutatesState"])
+        self.assertEqual(batch["inputSchema"]["required"], ["calls"])
+        self.assertEqual(
+            batch["inputSchema"]["properties"]["calls"]["maxItems"],
+            gateway_module.MAX_BATCH_CALLS,
+        )
+        self.assertEqual(batch["outputSchema"]["properties"]["result"]["type"], "array")
         skeleton = by_name["arborist/get_semantic_skeleton"]
         self.assertEqual(skeleton["metadata"]["category"], "read")
         self.assertEqual(skeleton["inputSchema"]["required"], ["file_path"])
@@ -174,6 +185,8 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             virtual_edit,
         )
         inspect_index = by_name["arborist/inspect_symbol_index"]
+        self.assertTrue(inspect_index["annotations"]["readOnlyHint"])
+        self.assertFalse(inspect_index["metadata"]["mutatesState"])
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
         self.assertIn("response_schema_version", inspect_result["required"])
@@ -409,6 +422,130 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"symbol": "top_level"})
         self.assertEqual(core.calls_for("trace_symbol_graph_json"), [(".", "top_level", "both", None)])
+
+    def test_tools_call_invokes_read_only_batch(self) -> None:
+        core = make_recording_json_core(
+            get_semantic_skeleton_json={"kind": "module"},
+            trace_symbol_graph_json={"symbol": "top_level"},
+        )
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/batch",
+                    "arguments": {
+                        "calls": [
+                            {
+                                "name": "arborist/get_semantic_skeleton",
+                                "arguments": {"file_path": "sample.py"},
+                            },
+                            {
+                                "name": "arborist/trace_symbol_graph",
+                                "arguments": {
+                                    "workspace_root": ".",
+                                    "symbol_path": "top_level",
+                                },
+                            },
+                        ]
+                    },
+                },
+                request_id=113,
+            ),
+            request_id=113,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        self.assertEqual(
+            result["structuredContent"]["result"],
+            [
+                {
+                    "name": "arborist/get_semantic_skeleton",
+                    "result": {"kind": "module"},
+                },
+                {
+                    "name": "arborist/trace_symbol_graph",
+                    "result": {"symbol": "top_level"},
+                },
+            ],
+        )
+        self.assertEqual(core.calls_for("get_semantic_skeleton_json"), [("sample.py", None, 2, None)])
+        self.assertEqual(core.calls_for("trace_symbol_graph_json"), [(".", "top_level", "both", None)])
+
+    def test_batch_rejects_write_tool(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "tools/call",
+                {
+                    "name": "arborist/batch",
+                    "arguments": {
+                        "calls": [
+                            {
+                                "name": "arborist/patch_ast_node",
+                                "arguments": {
+                                    "file_path": "sample.py",
+                                    "semantic_path": "top_level",
+                                    "new_code": "def top_level():\n    return 1\n",
+                                },
+                            }
+                        ]
+                    },
+                },
+                request_id=114,
+            ),
+            request_id=114,
+        )
+
+        assert isinstance(result, dict)
+        self.assertTrue(result["isError"])
+        self.assertIn("batch only supports read-only tools", result["content"][0]["text"])
+
+    def test_batch_rejects_unknown_tool(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "tools/call",
+                {
+                    "name": "arborist/batch",
+                    "arguments": {
+                        "calls": [
+                            {"name": "arborist/missing", "arguments": {}},
+                        ]
+                    },
+                },
+                request_id=115,
+            ),
+            request_id=115,
+        )
+
+        assert isinstance(result, dict)
+        self.assertTrue(result["isError"])
+        self.assertIn("unknown batch tool", result["content"][0]["text"])
+
+    def test_batch_rejects_nested_batch(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(),
+                "tools/call",
+                {
+                    "name": "arborist/batch",
+                    "arguments": {
+                        "calls": [
+                            {"name": "arborist/batch", "arguments": {"calls": []}},
+                        ]
+                    },
+                },
+                request_id=116,
+            ),
+            request_id=116,
+        )
+
+        assert isinstance(result, dict)
+        self.assertTrue(result["isError"])
+        self.assertIn("may not include arborist/batch", result["content"][0]["text"])
 
     def test_tools_call_rejects_unknown_tool(self) -> None:
         response = self.call_gateway(

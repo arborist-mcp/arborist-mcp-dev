@@ -4,9 +4,9 @@ This guide summarizes Arborist's tool families and semantic behavior. The exact
 MCP schemas are generated from the gateway and checked in at
 [`docs/tool-catalog.json`](tool-catalog.json).
 
-As of this revision, `tools/list` returns 52 tools:
+As of this revision, `tools/list` returns 53 tools:
 
-- Read tools: 26, including semantic skeletons, patch previews, raw Tree-sitter
+- Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter
   queries, symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `arborist/patch_ast_node` and
   `arborist/patch_ast_node_at_position`.

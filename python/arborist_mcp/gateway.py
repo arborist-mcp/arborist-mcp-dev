@@ -20,6 +20,7 @@ class ToolSpec(NamedTuple):
 
 
 TOOL_SPECS = (
+    ToolSpec("arborist/batch", "_batch", ("calls",), "read", "batch"),
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read", "semantic_skeleton"),
     ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
     ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "read", "patch_preview"),
@@ -133,6 +134,7 @@ SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
     )
 )
 READ_ONLY_CATEGORIES = frozenset(("read", "trace"))
+MAX_BATCH_CALLS = 32
 WRITING_TOOLS = frozenset(
     (
         "arborist/patch_ast_node",
@@ -145,6 +147,7 @@ NON_MUTATING_STATE_TOOLS = frozenset(
         "arborist/list_virtual_files",
         "arborist/read_virtual_file",
         "arborist/list_symbol_indexes",
+        "arborist/inspect_symbol_index",
     )
 )
 MUTATING_TOOLS = frozenset(
@@ -152,6 +155,14 @@ MUTATING_TOOLS = frozenset(
     for tool_name, category in TOOL_CATEGORIES.items()
     if category in {"write", "vfs", "index"}
 ) - NON_MUTATING_STATE_TOOLS
+BATCH_ALLOWED_TOOLS = frozenset(
+    tool_name
+    for tool_name, category in TOOL_CATEGORIES.items()
+    if (
+        (category in READ_ONLY_CATEGORIES or tool_name in NON_MUTATING_STATE_TOOLS)
+        and tool_name != "arborist/batch"
+    )
+)
 
 
 def _schema(
@@ -208,11 +219,32 @@ JSON_OBJECT_SCHEMA = {
     "description": "JSON object returned by a prior Arborist patch or trace call.",
     "additionalProperties": True,
 }
+BATCH_CALL_SCHEMA = {
+    "type": "object",
+    "description": "Read-only Arborist tool call to run inside a batch.",
+    "properties": {
+        "name": _schema("string", "Arborist tool name to call."),
+        "arguments": {
+            "type": "object",
+            "description": "Arguments for the inner tool call.",
+            "additionalProperties": True,
+        },
+    },
+    "required": ["name"],
+    "additionalProperties": False,
+}
 TOOL_PARAM_SCHEMAS = {
     "bypass_reason": _schema(
         "string",
         "Required explanation when intentionally bypassing trace-backed commit gates.",
     ),
+    "calls": {
+        "type": "array",
+        "description": "Read-only Arborist tool calls to execute in order.",
+        "items": BATCH_CALL_SCHEMA,
+        "minItems": 1,
+        "maxItems": MAX_BATCH_CALLS,
+    },
     "db_path": _schema("string", "SQLite symbol-index database path."),
     "depth_limit": _schema(
         "integer",
@@ -337,6 +369,23 @@ OBJECT_ARRAY_RESULT_SCHEMA = {
     "type": "array",
     "description": "JSON array of object results returned by Arborist for this tool.",
     "items": OBJECT_RESULT_SCHEMA,
+}
+BATCH_CALL_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Result returned by one inner batch call.",
+    "properties": {
+        "name": _schema("string", "Arborist tool name that was called."),
+        "result": {
+            "description": "Result returned by the inner tool.",
+        },
+    },
+    "required": ["name", "result"],
+    "additionalProperties": False,
+}
+BATCH_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Ordered results for the requested read-only batch calls.",
+    "items": BATCH_CALL_RESULT_SCHEMA,
 }
 BOOLEAN_RESULT_SCHEMA = {
     "type": "boolean",
@@ -1276,6 +1325,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
 }
 TOOL_RESULT_SCHEMAS = {
     tool_name: {
+        "batch": BATCH_RESULT_SCHEMA,
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
         "semantic_skeleton": SEMANTIC_SKELETON_RESULT_SCHEMA,
@@ -1642,6 +1692,54 @@ class ArboristGateway:
             return self._mcp_tool_error(str(exc))
 
         return self._mcp_tool_result(tool_result)
+
+    def _batch(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        calls = params.get("calls")
+        if not isinstance(calls, list):
+            raise JsonRpcError(-32602, "missing required array param: calls")
+        if not calls:
+            raise JsonRpcError(-32602, "invalid params: calls must not be empty")
+        if len(calls) > MAX_BATCH_CALLS:
+            raise JsonRpcError(
+                -32602,
+                f"invalid params: calls must contain at most {MAX_BATCH_CALLS} entries",
+            )
+
+        results: list[dict[str, Any]] = []
+        for index, call in enumerate(calls):
+            if not isinstance(call, dict):
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid params: calls[{index}] must be an object",
+                )
+            self._reject_unexpected_params(call, ("name", "arguments"))
+            tool_name = call.get("name")
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                raise JsonRpcError(
+                    -32602,
+                    f"missing required string param: calls[{index}].name",
+                )
+            if tool_name not in TOOL_HANDLERS:
+                raise JsonRpcError(-32602, f"unknown batch tool: {tool_name}")
+            if tool_name == "arborist/batch":
+                raise JsonRpcError(-32602, "batch calls may not include arborist/batch")
+            if tool_name not in BATCH_ALLOWED_TOOLS:
+                raise JsonRpcError(
+                    -32602,
+                    f"batch only supports read-only tools: {tool_name}",
+                )
+
+            arguments = call.get("arguments", {})
+            if not isinstance(arguments, dict):
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid params: calls[{index}].arguments must be an object",
+                )
+            self._reject_unexpected_params(arguments, TOOL_PARAM_NAMES[tool_name])
+            handler = getattr(self, TOOL_HANDLERS[tool_name])
+            results.append({"name": tool_name, "result": handler(arguments)})
+
+        return results
 
     @staticmethod
     def _server_info() -> dict[str, Any]:

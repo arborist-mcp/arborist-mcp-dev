@@ -1,5 +1,86 @@
 [
   {
+    "name": "arborist/batch",
+    "title": "Batch",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/batch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "array",
+          "description": "Read-only Arborist tool calls to execute in order.",
+          "items": {
+            "type": "object",
+            "description": "Read-only Arborist tool call to run inside a batch.",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Arborist tool name to call.",
+                "minLength": 1
+              },
+              "arguments": {
+                "type": "object",
+                "description": "Arguments for the inner tool call.",
+                "additionalProperties": true
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "calls"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "array",
+          "description": "Ordered results for the requested read-only batch calls.",
+          "items": {
+            "type": "object",
+            "description": "Result returned by one inner batch call.",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Arborist tool name that was called.",
+                "minLength": 1
+              },
+              "result": {
+                "description": "Result returned by the inner tool."
+              }
+            },
+            "required": [
+              "name",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/batch",
+      "mutatesState": false
+    }
+  },
+  {
     "name": "arborist/get_semantic_skeleton",
     "title": "Get Semantic Skeleton",
     "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/get_semantic_skeleton.",
@@ -6724,13 +6805,13 @@
       "additionalProperties": false
     },
     "annotations": {
-      "readOnlyHint": false,
+      "readOnlyHint": true,
       "destructiveHint": false
     },
     "metadata": {
       "category": "index",
       "legacyMethod": "arborist/inspect_symbol_index",
-      "mutatesState": true
+      "mutatesState": false
     }
   },
   {
