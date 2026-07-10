@@ -32,3 +32,13 @@ pub(crate) fn symbol_base_name(semantic_path: &str) -> String {
         .unwrap_or(semantic_path)
         .to_string()
 }
+
+pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
+    match node_kind {
+        "function_definition" => 3,
+        "class_definition" => 3,
+        "type_definition" => 2,
+        "declaration" => 1,
+        _ => 0,
+    }
+}
