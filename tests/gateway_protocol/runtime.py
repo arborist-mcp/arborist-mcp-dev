@@ -129,6 +129,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(skeleton["outputSchema"]["required"], ["result"])
         self.assertEqual(skeleton["outputSchema"]["properties"]["result"]["type"], "object")
         self.assertEqual(skeleton["inputSchema"]["properties"]["depth_limit"]["default"], 2)
+        self.assertIn(
+            "not full C++ parsing",
+            skeleton["inputSchema"]["properties"]["file_path"]["description"],
+        )
         list_indexes = by_name["arborist/list_symbol_indexes"]
         self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
         rebuild_index = by_name["arborist/rebuild_symbol_index"]

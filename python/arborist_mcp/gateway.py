@@ -241,7 +241,10 @@ TOOL_PARAM_SCHEMAS = {
         "description": "Semantic selectors to expand in the returned skeleton.",
         "items": _schema("string", "Semantic selector."),
     },
-    "file_path": _schema("string", "Source file path. Python and C extensions are supported."),
+    "file_path": _schema(
+        "string",
+        "Source file path. Python and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+    ),
     "file_path_contains": _schema(
         "string",
         "Optional substring filter applied to indexed file paths.",
