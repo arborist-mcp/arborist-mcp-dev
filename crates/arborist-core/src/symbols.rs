@@ -7,12 +7,11 @@ use rusqlite::{Connection, params};
 use tree_sitter::Node;
 
 use crate::index_store::{
-    SYMBOL_INDEX_SCHEMA_VERSION, byte_range_from_row, count_table_rows, ensure_symbol_tables,
-    json_from_column, load_file_states, load_indexed_files_metadata, load_optional_metadata_value,
-    load_resolved_symbols, load_symbol_index_workspace_root, nonempty_string_from_row,
+    SYMBOL_INDEX_SCHEMA_VERSION, count_table_rows, ensure_symbol_tables, load_file_states,
+    load_indexed_files_metadata, load_indexed_symbols_grouped_by_file,
+    load_optional_metadata_value, load_resolved_symbols, load_symbol_index_workspace_root,
     persist_symbol_index_metadata, persisted_byte_range, require_symbol_index_tables,
-    string_list_from_json_column, validate_symbol_index_schema_version,
-    validate_symbol_index_workspace,
+    validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::language::{
     c_companion_source_path, c_include_targets, c_local_include_targets, contains_kind,
@@ -40,32 +39,11 @@ use crate::semantic::{
     c_symbol_id_for_node, python_display_byte_range, python_display_header, python_docstring,
     python_parameters, python_return_type, semantic_parent_path, semantic_path,
 };
+use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_base_name};
 use crate::workspace_scan::{
     WorkspaceScanLimits, collect_source_files, collect_source_files_with_limits,
     should_skip_index_path,
 };
-
-#[derive(Debug, Clone)]
-struct IndexedSymbol {
-    symbol_id: String,
-    semantic_path: String,
-    base_name: String,
-    scope_path: Option<String>,
-    file_path: String,
-    node_kind: String,
-    byte_range: (usize, usize),
-    signature: Option<String>,
-    parameters: Vec<String>,
-    return_type: Option<String>,
-    docstring: Option<String>,
-    references_by_name: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone)]
-struct PersistedFileState {
-    file_path: String,
-    fingerprint: u64,
-}
 
 type IncrementalWorkspaceSymbols = (
     Vec<IndexedSymbol>,
@@ -2872,17 +2850,6 @@ fn same_stem(left: &Path, right: &Path) -> bool {
         .is_some_and(|(left_stem, right_stem)| left_stem == right_stem)
 }
 
-fn symbol_base_name(semantic_path: &str) -> String {
-    semantic_path
-        .rsplit("::")
-        .next()
-        .unwrap_or(semantic_path)
-        .rsplit('.')
-        .next()
-        .unwrap_or(semantic_path)
-        .to_string()
-}
-
 fn symbol_meta_from_indexed(symbol: &IndexedSymbol) -> SymbolMeta {
     SymbolMeta::new(SymbolMetaInit {
         symbol_id: symbol.symbol_id.clone(),
@@ -4565,50 +4532,6 @@ fn load_symbol_index_with_overrides(
     ))
 }
 
-fn load_indexed_symbols_grouped_by_file(
-    connection: &Connection,
-) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
-    let mut statement = connection.prepare(
-        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-                signature, parameters_json, return_type, docstring, reference_names_json
-         FROM symbols
-         ORDER BY file_path, semantic_path",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let parameters_json: String = row.get(8)?;
-        let reference_names_json: String = row.get(11)?;
-        let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
-        let reference_names =
-            string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
-        let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
-        let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
-        Ok(IndexedSymbol {
-            symbol_id,
-            base_name: symbol_base_name(&semantic_path),
-            semantic_path,
-            scope_path: row.get(2)?,
-            file_path: nonempty_string_from_row(row, 3, "file_path")?,
-            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
-            byte_range: byte_range_from_row(row, 5, 6)?,
-            signature: row.get(7)?,
-            parameters,
-            return_type: row.get(9)?,
-            docstring: row.get(10)?,
-            references_by_name: reference_names.into_iter().collect(),
-        })
-    })?;
-
-    let mut grouped = BTreeMap::new();
-    for row in rows {
-        let symbol = row?;
-        grouped
-            .entry(symbol.file_path.clone())
-            .or_insert_with(Vec::new)
-            .push(symbol);
-    }
-    Ok(grouped)
-}
-
 fn raw_symbol_map(symbols: &[IndexedSymbol]) -> BTreeMap<String, IndexedSymbol> {
     let mut map = BTreeMap::new();
     for symbol in symbols {
@@ -4776,9 +4699,10 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        IndexedSymbol, PersistedFileState, SymbolMeta, SymbolRefreshPersistence,
-        ensure_symbol_tables, persist_symbol_index, persist_symbol_refresh, persisted_byte_range,
+        SymbolMeta, SymbolRefreshPersistence, ensure_symbol_tables, persist_symbol_index,
+        persist_symbol_refresh, persisted_byte_range,
     };
+    use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

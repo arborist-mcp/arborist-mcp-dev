@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::language::{normalize_absolute_path, normalize_path};
 use crate::model::{SymbolMeta, SymbolMetaInit};
+use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 
 pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
@@ -265,6 +266,50 @@ pub(crate) fn load_file_states(connection: &Connection) -> Result<BTreeMap<Strin
         states.insert(file_path, fingerprint);
     }
     Ok(states)
+}
+
+pub(crate) fn load_indexed_symbols_grouped_by_file(
+    connection: &Connection,
+) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
+    let mut statement = connection.prepare(
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, reference_names_json
+         FROM symbols
+         ORDER BY file_path, semantic_path",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let parameters_json: String = row.get(8)?;
+        let reference_names_json: String = row.get(11)?;
+        let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
+        let reference_names =
+            string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
+        let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
+        let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
+        Ok(IndexedSymbol {
+            symbol_id,
+            base_name: symbol_base_name(&semantic_path),
+            semantic_path,
+            scope_path: row.get(2)?,
+            file_path: nonempty_string_from_row(row, 3, "file_path")?,
+            node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
+            byte_range: byte_range_from_row(row, 5, 6)?,
+            signature: row.get(7)?,
+            parameters,
+            return_type: row.get(9)?,
+            docstring: row.get(10)?,
+            references_by_name: reference_names.into_iter().collect(),
+        })
+    })?;
+
+    let mut grouped = BTreeMap::new();
+    for row in rows {
+        let symbol = row?;
+        grouped
+            .entry(symbol.file_path.clone())
+            .or_insert_with(Vec::new)
+            .push(symbol);
+    }
+    Ok(grouped)
 }
 
 pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<SymbolMeta>, usize)> {

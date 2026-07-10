@@ -6,6 +6,7 @@ mod patching;
 mod query;
 mod semantic;
 mod source_overlay;
+mod symbol_index_model;
 mod symbol_query;
 mod symbols;
 mod vfs;
