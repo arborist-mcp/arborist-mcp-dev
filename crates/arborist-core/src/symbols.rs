@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use rusqlite::Connection;
 
-use crate::index_store::{
-    SYMBOL_INDEX_SCHEMA_VERSION, SymbolRefreshPersistence, count_table_rows, ensure_symbol_tables,
-    load_file_states, load_indexed_files_metadata, load_indexed_symbols_grouped_by_file,
-    load_optional_metadata_value, load_resolved_symbols, load_symbol_index_workspace_root,
-    persist_symbol_index, persist_symbol_refresh, require_symbol_index_tables,
+use crate::index_schema::{
+    SYMBOL_INDEX_SCHEMA_VERSION, ensure_symbol_tables, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root, require_symbol_index_tables,
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
+};
+use crate::index_store::{
+    SymbolRefreshPersistence, count_table_rows, load_file_states,
+    load_indexed_symbols_grouped_by_file, load_resolved_symbols, persist_symbol_index,
+    persist_symbol_refresh,
 };
 use crate::language::{
     c_include_targets, c_local_include_targets, detect_language, ensure_path_inside_workspace,
