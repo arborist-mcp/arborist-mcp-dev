@@ -4,10 +4,12 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{
-    is_python_parameter_symbol_name, is_python_with_target_name, python_enclosing_case_clause,
-    python_enclosing_except_clause, python_match_capture_names, python_nearest_scope_node,
+use super::python_patterns::{python_enclosing_case_clause, python_match_capture_names};
+use super::python_references::{
+    is_python_parameter_symbol_name, is_python_with_target_name, python_enclosing_except_clause,
+    python_nearest_scope_node,
 };
+use super::python_visibility::{python_comprehension_part_index, python_enclosing_comprehension};
 use crate::language::{node_text, normalize_path, visit_tree};
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
@@ -450,12 +452,12 @@ fn collect_python_named_expression_symbols(
                     rank: rank + target.start_byte(),
                     visibility: PythonSymbolVisibility::NamedExpression {
                         expression_range: (candidate.start_byte(), candidate.end_byte()),
-                        comprehension_range: super::python_enclosing_comprehension(candidate).map(
+                        comprehension_range: python_enclosing_comprehension(candidate).map(
                             |comprehension| (comprehension.start_byte(), comprehension.end_byte()),
                         ),
-                        comprehension_part_index: super::python_enclosing_comprehension(candidate)
+                        comprehension_part_index: python_enclosing_comprehension(candidate)
                             .and_then(|comprehension| {
-                                super::python_comprehension_part_index(comprehension, candidate)
+                                python_comprehension_part_index(comprehension, candidate)
                             }),
                     },
                 });
