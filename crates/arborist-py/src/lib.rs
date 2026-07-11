@@ -1,4 +1,5 @@
 mod json_args;
+mod symbol_queries;
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -7,54 +8,11 @@ use arborist_core::{
     PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
     VirtualFileSystem, WorkspaceScanLimits, execute_tree_query_from_path_with_limit,
     execute_tree_query_with_limit, get_semantic_skeleton, get_semantic_skeleton_from_path,
-    inspect_symbol_index, list_symbols_context_from_index_filtered,
-    list_symbols_context_from_index_with_source_filtered,
-    list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
-    list_symbols_discovery_context_from_index_with_source_filtered,
-    list_symbols_discovery_context_with_source_filtered, list_symbols_from_index_filtered,
-    list_symbols_from_index_with_source_filtered,
-    list_symbols_neighborhood_context_from_index_filtered,
-    list_symbols_neighborhood_context_from_index_with_source_filtered,
-    list_symbols_neighborhood_context_with_source_filtered, list_symbols_with_source_filtered,
-    patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
+    inspect_symbol_index, patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
     preview_patch_ast_node_at_position, preview_patch_ast_node_at_position_from_path,
-    preview_patch_ast_node_from_path, read_symbol_at_position_from_index,
-    read_symbol_at_position_from_index_with_source, read_symbol_at_position_with_source,
-    read_symbol_context_at_position_from_index,
-    read_symbol_context_at_position_from_index_with_source,
-    read_symbol_context_at_position_with_source, read_symbol_context_from_index,
-    read_symbol_context_from_index_with_source, read_symbol_context_with_source,
-    read_symbol_discovery_context_at_position_from_index,
-    read_symbol_discovery_context_at_position_from_index_with_source,
-    read_symbol_discovery_context_at_position_with_source,
-    read_symbol_discovery_context_from_index, read_symbol_discovery_context_from_index_with_source,
-    read_symbol_discovery_context_with_source, read_symbol_from_index,
-    read_symbol_from_index_with_source, read_symbol_neighborhood_context_at_position_from_index,
-    read_symbol_neighborhood_context_at_position_from_index_with_source,
-    read_symbol_neighborhood_context_at_position_with_source,
-    read_symbol_neighborhood_context_from_index,
-    read_symbol_neighborhood_context_from_index_with_source,
-    read_symbol_neighborhood_context_with_source, read_symbol_with_source,
-    rebuild_symbol_index_with_limits, refresh_symbol_index_for_file_with_limits,
-    replay_patch_evidence_against_trace, search_symbols_context_from_index_filtered,
-    search_symbols_context_from_index_with_source_filtered,
-    search_symbols_context_with_source_filtered,
-    search_symbols_discovery_context_from_index_filtered,
-    search_symbols_discovery_context_from_index_with_source_filtered,
-    search_symbols_discovery_context_with_source_filtered, search_symbols_from_index_filtered,
-    search_symbols_from_index_with_source_filtered,
-    search_symbols_neighborhood_context_from_index_filtered,
-    search_symbols_neighborhood_context_from_index_with_source_filtered,
-    search_symbols_neighborhood_context_with_source_filtered, search_symbols_with_source_filtered,
-    supported_languages, trace_symbol_graph_at_position_from_index,
-    trace_symbol_graph_at_position_from_index_with_source,
-    trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
-    trace_symbol_graph_from_index_with_source, trace_symbol_graph_with_source,
-    trace_symbol_neighborhood_at_position_from_index,
-    trace_symbol_neighborhood_at_position_from_index_with_source,
-    trace_symbol_neighborhood_at_position_with_source, trace_symbol_neighborhood_from_index,
-    trace_symbol_neighborhood_from_index_with_source, trace_symbol_neighborhood_with_source,
-    validate_patch_commit_with_trace, validate_patch_with_discovery_context,
+    preview_patch_ast_node_from_path, rebuild_symbol_index_with_limits,
+    refresh_symbol_index_for_file_with_limits, replay_patch_evidence_against_trace,
+    supported_languages, validate_patch_commit_with_trace, validate_patch_with_discovery_context,
     validate_patch_with_discovery_context_at_position,
     validate_patch_with_discovery_context_at_position_from_index,
     validate_patch_with_discovery_context_from_index, validate_patch_with_graph_context,
@@ -331,34 +289,14 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => trace_symbol_graph_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (Some(source), None) => trace_symbol_graph_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (None, Some(index_db_path)) => {
-                trace_symbol_graph_from_index(Path::new(&index_db_path), symbol_path, direction)
-            }
-            (None, None) => self.vfs.borrow_mut().trace_symbol_graph(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.trace_symbol_graph_json_impl(
+            workspace_root,
+            symbol_path,
+            direction,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -374,46 +312,16 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                trace_symbol_neighborhood_from_index_with_source(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    symbol_path,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => trace_symbol_neighborhood_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => trace_symbol_neighborhood_from_index(
-                Path::new(&index_db_path),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_neighborhood(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.trace_symbol_neighborhood_json_impl(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None, file_path=None, source=None))]
@@ -425,30 +333,13 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => read_symbol_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-            ),
-            (Some(source), None) => read_symbol_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-            ),
-            (None, Some(index_db_path)) => {
-                read_symbol_from_index(Path::new(&index_db_path), symbol_path)
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .read_symbol(Path::new(workspace_root), symbol_path),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_json_impl(
+            workspace_root,
+            symbol_path,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, source=None, index_db_path=None))]
@@ -461,34 +352,14 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => read_symbol_at_position_from_index_with_source(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &source,
-                &position,
-            ),
-            (Some(source), None) => read_symbol_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-            ),
-            (None, Some(index_db_path)) => read_symbol_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-            ),
-            (None, None) => self.vfs.borrow_mut().read_symbol_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
@@ -501,34 +372,14 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => read_symbol_context_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (Some(source), None) => read_symbol_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (None, Some(index_db_path)) => {
-                read_symbol_context_from_index(Path::new(&index_db_path), symbol_path, direction)
-            }
-            (None, None) => self.vfs.borrow_mut().read_symbol_context(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_context_json_impl(
+            workspace_root,
+            symbol_path,
+            direction,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None))]
@@ -543,41 +394,15 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    direction,
-                )
-            }
-            (Some(source), None) => read_symbol_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                direction,
-            ),
-            (None, Some(index_db_path)) => read_symbol_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-            ),
-            (None, None) => self.vfs.borrow_mut().read_symbol_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                direction,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None))]
@@ -592,41 +417,15 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                trace_symbol_graph_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    direction,
-                )
-            }
-            (Some(source), None) => trace_symbol_graph_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                direction,
-            ),
-            (None, Some(index_db_path)) => trace_symbol_graph_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-            ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_graph_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                direction,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.trace_symbol_graph_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -643,49 +442,17 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                trace_symbol_neighborhood_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => trace_symbol_neighborhood_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => trace_symbol_neighborhood_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_neighborhood_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.trace_symbol_neighborhood_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            max_depth,
+            max_nodes,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -701,46 +468,16 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_neighborhood_context_from_index_with_source(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    symbol_path,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => read_symbol_neighborhood_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => read_symbol_neighborhood_context_from_index(
-                Path::new(&index_db_path),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self.vfs.borrow_mut().read_symbol_neighborhood_context(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_neighborhood_context_json_impl(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -757,52 +494,17 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_neighborhood_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => read_symbol_neighborhood_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => read_symbol_neighborhood_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .read_symbol_neighborhood_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_neighborhood_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            max_depth,
+            max_nodes,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
@@ -818,46 +520,16 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_discovery_context_from_index_with_source(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    symbol_path,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => read_symbol_discovery_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => read_symbol_discovery_context_from_index(
-                Path::new(&index_db_path),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self.vfs.borrow_mut().read_symbol_discovery_context(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_discovery_context_json_impl(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
@@ -874,52 +546,17 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_discovery_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => read_symbol_discovery_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => read_symbol_discovery_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .read_symbol_discovery_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_symbol_discovery_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            direction,
+            max_depth,
+            max_nodes,
+            source,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -935,43 +572,16 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => search_symbols_from_index_with_source_filtered(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (Some(source), None) => search_symbols_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => search_symbols_from_index_filtered(
-                Path::new(&index_db_path),
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self.vfs.borrow_mut().search_symbols_filtered(
-                Path::new(workspace_root),
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.search_symbols_json_impl(
+            workspace_root,
+            query,
+            limit,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -987,49 +597,20 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                search_symbols_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    query,
-                    limit,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => search_symbols_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => search_symbols_context_from_index_filtered(
-                Path::new(&index_db_path),
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self.vfs.borrow_mut().search_symbols_context_filtered(
-                Path::new(workspace_root),
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.search_symbols_context_json_impl(
+            workspace_root,
+            query,
+            limit,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn search_symbols_neighborhood_context_json(
         &self,
         workspace_root: &str,
@@ -1044,65 +625,23 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                search_symbols_neighborhood_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    query,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => search_symbols_neighborhood_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                query,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => search_symbols_neighborhood_context_from_index_filtered(
-                Path::new(&index_db_path),
-                query,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .search_symbols_neighborhood_context_filtered(
-                    Path::new(workspace_root),
-                    query,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.search_symbols_neighborhood_context_json_impl(
+            workspace_root,
+            query,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (workspace_root, query, limit=20, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn search_symbols_discovery_context_json(
         &self,
         workspace_root: &str,
@@ -1117,61 +656,19 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                search_symbols_discovery_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    query,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => search_symbols_discovery_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                query,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => search_symbols_discovery_context_from_index_filtered(
-                Path::new(&index_db_path),
-                query,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .search_symbols_discovery_context_filtered(
-                    Path::new(workspace_root),
-                    query,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.search_symbols_discovery_context_json_impl(
+            workspace_root,
+            query,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1186,39 +683,15 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => list_symbols_from_index_with_source_filtered(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (Some(source), None) => list_symbols_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_from_index_filtered(
-                Path::new(&index_db_path),
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self.vfs.borrow_mut().list_symbols_filtered(
-                Path::new(workspace_root),
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.list_symbols_json_impl(
+            workspace_root,
+            limit,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
     #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
@@ -1233,45 +706,19 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                list_symbols_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    limit,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => list_symbols_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_context_from_index_filtered(
-                Path::new(&index_db_path),
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self.vfs.borrow_mut().list_symbols_context_filtered(
-                Path::new(workspace_root),
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.list_symbols_context_json_impl(
+            workspace_root,
+            limit,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn list_symbols_neighborhood_context_json(
         &self,
         workspace_root: &str,
@@ -1285,61 +732,22 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                list_symbols_neighborhood_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => list_symbols_neighborhood_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_neighborhood_context_from_index_filtered(
-                Path::new(&index_db_path),
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .list_symbols_neighborhood_context_filtered(
-                    Path::new(workspace_root),
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.list_symbols_neighborhood_context_json_impl(
+            workspace_root,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn list_symbols_discovery_context_json(
         &self,
         workspace_root: &str,
@@ -1353,57 +761,18 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                list_symbols_discovery_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                )
-            }
-            (Some(source), None) => list_symbols_discovery_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_discovery_context_from_index_filtered(
-                Path::new(&index_db_path),
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .list_symbols_discovery_context_filtered(
-                    Path::new(workspace_root),
-                    limit,
-                    direction,
-                    max_depth,
-                    max_nodes,
-                    file_path_contains.as_deref(),
-                    node_kind.as_deref(),
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.list_symbols_discovery_context_json_impl(
+            workspace_root,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+            file_path_contains,
+            node_kind,
+            file_path,
+            source,
+        )
     }
 
     fn replay_patch_evidence_against_trace_json(
