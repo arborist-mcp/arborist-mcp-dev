@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import argparse
 import importlib
 import json
 import math
-import sys
-from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .gateway_cli import (
+    build_parser as _build_parser,
+    main as _gateway_main,
+    run_stdio as _run_stdio,
+)
 from .jsonrpc import (
     error_response as build_error_response,
     _reject_duplicate_object_keys,
@@ -69,6 +71,33 @@ from .tool_result_schemas import (
 def is_mcp_initialize(params: dict[str, Any]) -> bool:
     return bool(MCP_INITIALIZE_MARKERS & set(params))
 
+
+def build_parser():
+    return _build_parser(__version__)
+
+
+def run_stdio() -> int:
+    return _run_stdio(
+        gateway_factory=ArboristGateway,
+        parse_request=parse_request_json,
+        is_notification=is_notification_request,
+        serialize_response=_serialize_response,
+        write_response=_write_response,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    return _gateway_main(
+        argv=argv,
+        version=__version__,
+        gateway_factory=ArboristGateway,
+        build_tool_catalog=build_tool_catalog,
+        parse_request=parse_request_json,
+        is_notification=is_notification_request,
+        serialize_response=_serialize_response,
+        print_response=_print_response,
+        run_stdio=run_stdio,
+    )
 
 def build_tool_catalog() -> list[dict[str, Any]]:
     return [build_tool_descriptor(tool_name) for tool_name in TOOL_NAMES]
@@ -1886,80 +1915,8 @@ class ArboristGateway:
                 )
             return
         raise JsonRpcError(-32602, f"invalid JSON-compatible param: {path}")
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="MCP-compatible stdio JSON-RPC gateway for the Arborist Rust core."
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {__version__}",
-    )
-    parser.add_argument(
-        "--once",
-        type=Path,
-        help="Read one request from a JSON file and print the response.",
-    )
-    parser.add_argument(
-        "--dump-tool-catalog",
-        action="store_true",
-        help="Print the generated MCP tool catalog as JSON and exit.",
-    )
-    return parser
 
 
-def run_stdio() -> int:
-    gateway: ArboristGateway | None = None
-
-    for raw_line in sys.stdin:
-        line = raw_line.strip()
-        if not line:
-            continue
-
-        request, response = parse_request_json(line)
-        if response is None:
-            if gateway is None:
-                gateway = ArboristGateway()
-            response = gateway.handle_request(request)
-
-        if response is not None and not is_notification_request(request):
-            if not _write_response(_serialize_response(response) + "\n"):
-                return 0
-
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    if args.dump_tool_catalog:
-        if not _print_response(
-            json.dumps(build_tool_catalog(), ensure_ascii=False, allow_nan=False, indent=2)
-        ):
-            return 0
-        return 0
-
-    if args.once:
-        try:
-            raw_request = args.once.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            print(
-                f"error: failed to read request file {args.once}: {exc}",
-                file=sys.stderr,
-            )
-            return 1
-        request, response = parse_request_json(raw_request)
-        if response is None:
-            gateway = ArboristGateway()
-            response = gateway.handle_request(request)
-        if response is not None and not is_notification_request(request):
-            if not _print_response(_serialize_response(response, indent=2)):
-                return 0
-        return 0
-
-    return run_stdio()
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
