@@ -4,7 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{PythonImportBinding, python_symbol_summary};
+use super::PythonImportBinding;
+use super::python_bindings::python_symbol_summary;
 use crate::language::{node_text, normalize_path, parse_document, read_source};
 use crate::model::{LanguageId, SymbolSummary};
 

@@ -1,9 +1,8 @@
 use tree_sitter::Node;
 
-use super::{
-    PythonAccessibleSymbol, PythonSymbolVisibility, is_python_class_header_expression,
-    is_python_default_parameter_value,
-};
+use super::is_python_class_header_expression;
+use super::is_python_default_parameter_value;
+use super::python_bindings::{PythonAccessibleSymbol, PythonSymbolVisibility};
 use crate::language::contains_node;
 
 fn python_reference_uses_direct_class_scope(
