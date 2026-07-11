@@ -11,6 +11,7 @@ mod symbol_dependency;
 mod symbol_extractor;
 mod symbol_index_model;
 mod symbol_index_state;
+mod symbol_index_workspace;
 mod symbol_map;
 mod symbol_position;
 mod symbol_query;
