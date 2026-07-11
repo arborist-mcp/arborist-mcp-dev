@@ -109,4 +109,3 @@ impl<'de> Visitor<'de> for DuplicateCheckedJsonVisitor {
         Ok(DuplicateCheckedJson(serde_json::Value::Object(values)))
     }
 }
-
