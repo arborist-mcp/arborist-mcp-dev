@@ -1,4 +1,5 @@
 mod api;
+mod api_source_query;
 mod index_schema;
 mod index_store;
 mod language;
