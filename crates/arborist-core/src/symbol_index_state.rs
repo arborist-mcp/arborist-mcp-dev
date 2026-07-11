@@ -157,7 +157,9 @@ pub(crate) fn load_symbol_index_with_overrides(
 
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();
+    let persisted_file_states = load_file_states(&connection)?;
     let mut changed_file_paths = BTreeSet::new();
+    let mut added_file_paths = BTreeSet::new();
 
     for (override_path, override_source) in file_overrides {
         let override_path = normalize_absolute_path(Path::new(override_path))?;
@@ -171,6 +173,9 @@ pub(crate) fn load_symbol_index_with_overrides(
         let document = parse_document(&override_path, override_source)?;
         let symbols = index_symbols_from_document(&override_path, override_source, &document)?;
         let normalized_path = normalize_path(&override_path);
+        if !persisted_file_states.contains_key(&normalized_path) {
+            added_file_paths.insert(normalized_path.clone());
+        }
         grouped_symbols.insert(normalized_path.clone(), symbols);
         changed_file_paths.insert(normalized_path);
     }
@@ -181,7 +186,7 @@ pub(crate) fn load_symbol_index_with_overrides(
         .collect::<Vec<_>>();
     assign_symbol_ids(&mut raw_symbols)?;
 
-    let (resolved_symbols, indexed_files) = load_resolved_symbols(&connection)?;
+    let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);
     let old_changed_symbols = original_grouped_symbols
         .iter()
@@ -200,6 +205,7 @@ pub(crate) fn load_symbol_index_with_overrides(
         &new_changed_symbols,
         &changed_file_paths,
     );
+    let indexed_files = persisted_indexed_files + added_file_paths.len();
 
     Ok((
         materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),

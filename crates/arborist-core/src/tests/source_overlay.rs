@@ -335,6 +335,37 @@ fn symbol_query_context_applies_multiple_index_overlays() {
 }
 
 #[test]
+fn index_overlay_counts_new_unsaved_files_in_indexed_file_totals() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let new_file = dir.join("helper_alias.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let context = SymbolQueryContext::index(&db_path)
+        .unwrap()
+        .with_source_overlay(
+            &new_file,
+            "from helper import helper\n\n\ndef helper_alias() -> int:\n    return helper()\n",
+        )
+        .unwrap();
+
+    let listed = context.list_symbols(10, None, None).unwrap();
+
+    assert_eq!(listed.indexed_files, 2);
+    assert_eq!(listed.total_symbols, 2);
+    assert!(
+        listed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper_alias")
+    );
+    assert!(!new_file.exists());
+}
+
+#[test]
 fn symbol_query_context_rejects_workspace_overlay_outside_workspace() {
     let dir = temporary_dir();
     let workspace = dir.join("workspace");
