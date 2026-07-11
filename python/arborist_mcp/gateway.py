@@ -9,6 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .jsonrpc import (
+    error_response as build_error_response,
+    _reject_duplicate_object_keys,
+    _reject_nonstandard_json_constant,
+    is_notification_request,
+    is_valid_request_id,
+    parse_request_json,
+    print_response as _print_response,
+    serialize_response as _serialize_response,
+    write_response as _write_response,
+)
 from .tool_specs import (
     BATCH_ALLOWED_TOOLS,
     BYPASS_REASON_MAX_LENGTH,
@@ -257,14 +268,7 @@ class ArboristGateway:
         code: int,
         message: str,
     ) -> dict[str, Any]:
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": code,
-                "message": message,
-            },
-        }
+        return build_error_response(request_id, code, message)
 
     @staticmethod
     def _require_file_path_for_source(
@@ -1882,59 +1886,6 @@ class ArboristGateway:
                 )
             return
         raise JsonRpcError(-32602, f"invalid JSON-compatible param: {path}")
-
-
-def is_notification_request(request: Any) -> bool:
-    return (
-        isinstance(request, dict)
-        and request.get("jsonrpc") == "2.0"
-        and "id" not in request
-        and isinstance(request.get("method"), str)
-        and bool(request.get("method"))
-    )
-
-
-def is_valid_request_id(request_id: Any) -> bool:
-    if request_id is None or isinstance(request_id, str):
-        return True
-
-    if isinstance(request_id, bool):
-        return False
-
-    if isinstance(request_id, int):
-        return True
-
-    return False
-
-
-def _reject_nonstandard_json_constant(name: str) -> Any:
-    raise ValueError(f"non-standard JSON constant: {name}")
-
-
-def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    obj: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in obj:
-            raise ValueError(f"duplicate JSON object key: {key}")
-        obj[key] = value
-    return obj
-
-
-def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
-    try:
-        return json.loads(
-            raw_request,
-            parse_constant=_reject_nonstandard_json_constant,
-            object_pairs_hook=_reject_duplicate_object_keys,
-        ), None
-    except (json.JSONDecodeError, ValueError) as exc:
-        return None, ArboristGateway._error_response(
-            None,
-            -32700,
-            f"invalid JSON: {exc}",
-        )
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="MCP-compatible stdio JSON-RPC gateway for the Arborist Rust core."
@@ -2008,41 +1959,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     return run_stdio()
-
-
-def _write_response(payload: str) -> bool:
-    try:
-        sys.stdout.write(payload)
-        sys.stdout.flush()
-    except BrokenPipeError:
-        return False
-    return True
-
-
-def _serialize_response(response: dict[str, Any], indent: int | None = None) -> str:
-    try:
-        return json.dumps(response, ensure_ascii=False, allow_nan=False, indent=indent)
-    except (TypeError, ValueError) as exc:
-        response_id = response.get("id")
-        fallback = {
-            "jsonrpc": "2.0",
-            "id": response_id if is_valid_request_id(response_id) else None,
-            "error": {
-                "code": -32000,
-                "message": f"failed to serialize response: {exc}",
-            },
-        }
-        return json.dumps(fallback, ensure_ascii=False, allow_nan=False, indent=indent)
-
-
-def _print_response(payload: str) -> bool:
-    try:
-        print(payload)
-    except BrokenPipeError:
-        return False
-    return True
-
-
 if __name__ == "__main__":
     raise SystemExit(main())
 
