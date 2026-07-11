@@ -9,6 +9,26 @@ use crate::patching::patch_ast_node;
 use crate::symbol_query::SymbolQueryContext;
 use crate::{language, patching, semantic, symbols};
 
+#[derive(Debug, Clone, Copy)]
+enum SourceQueryRoot<'a> {
+    Workspace(&'a Path),
+    Index(&'a Path),
+}
+
+fn with_source_query_context<T>(
+    root: SourceQueryRoot<'_>,
+    path: &Path,
+    source: &str,
+    query: impl FnOnce(&SymbolQueryContext) -> Result<T>,
+) -> Result<T> {
+    let context = match root {
+        SourceQueryRoot::Workspace(workspace_root) => SymbolQueryContext::workspace(workspace_root),
+        SourceQueryRoot::Index(db_path) => SymbolQueryContext::index(db_path),
+    }?
+    .with_source_overlay(path, source)?;
+    query(&context)
+}
+
 pub fn get_semantic_skeleton_from_path(
     path: &Path,
     depth_limit: usize,
@@ -55,9 +75,12 @@ pub fn trace_symbol_graph_at_position_with_source(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_graph_at_position(path, position, direction)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.trace_symbol_graph_at_position(path, position, direction),
+    )
 }
 
 pub fn trace_symbol_graph_with_source(
@@ -67,9 +90,12 @@ pub fn trace_symbol_graph_with_source(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_graph(symbol_path, direction)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.trace_symbol_graph(symbol_path, direction),
+    )
 }
 
 pub fn trace_symbol_neighborhood_at_position_with_source(
@@ -81,9 +107,16 @@ pub fn trace_symbol_neighborhood_at_position_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_neighborhood_at_position(path, position, direction, max_depth, max_nodes)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.trace_symbol_neighborhood_at_position(
+                path, position, direction, max_depth, max_nodes,
+            )
+        },
+    )
 }
 
 pub fn trace_symbol_neighborhood_with_source(
@@ -95,9 +128,12 @@ pub fn trace_symbol_neighborhood_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_neighborhood(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.trace_symbol_neighborhood(symbol_path, direction, max_depth, max_nodes),
+    )
 }
 
 pub fn read_symbol_at_position_with_source(
@@ -106,9 +142,12 @@ pub fn read_symbol_at_position_with_source(
     source: &str,
     position: &Position,
 ) -> Result<SymbolReadResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_at_position(path, position)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.read_symbol_at_position(path, position),
+    )
 }
 
 pub fn read_symbol_with_source(
@@ -117,9 +156,12 @@ pub fn read_symbol_with_source(
     source: &str,
     symbol_path: &str,
 ) -> Result<SymbolReadResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol(symbol_path)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.read_symbol(symbol_path),
+    )
 }
 
 pub fn read_symbol_context_at_position_with_source(
@@ -129,9 +171,12 @@ pub fn read_symbol_context_at_position_with_source(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_context_at_position(path, position, direction)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.read_symbol_context_at_position(path, position, direction),
+    )
 }
 
 pub fn read_symbol_context_with_source(
@@ -141,9 +186,12 @@ pub fn read_symbol_context_with_source(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_context(symbol_path, direction)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.read_symbol_context(symbol_path, direction),
+    )
 }
 
 pub fn read_symbol_neighborhood_context_at_position_with_source(
@@ -155,11 +203,16 @@ pub fn read_symbol_neighborhood_context_at_position_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_neighborhood_context_at_position(
-            path, position, direction, max_depth, max_nodes,
-        )
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.read_symbol_neighborhood_context_at_position(
+                path, position, direction, max_depth, max_nodes,
+            )
+        },
+    )
 }
 
 pub fn read_symbol_neighborhood_context_with_source(
@@ -171,9 +224,14 @@ pub fn read_symbol_neighborhood_context_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_neighborhood_context(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.read_symbol_neighborhood_context(symbol_path, direction, max_depth, max_nodes)
+        },
+    )
 }
 
 pub fn read_symbol_discovery_context_at_position_with_source(
@@ -185,9 +243,16 @@ pub fn read_symbol_discovery_context_at_position_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_discovery_context_at_position(path, position, direction, max_depth, max_nodes)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.read_symbol_discovery_context_at_position(
+                path, position, direction, max_depth, max_nodes,
+            )
+        },
+    )
 }
 
 pub fn read_symbol_discovery_context_with_source(
@@ -199,9 +264,14 @@ pub fn read_symbol_discovery_context_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .read_symbol_discovery_context(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.read_symbol_discovery_context(symbol_path, direction, max_depth, max_nodes)
+        },
+    )
 }
 
 pub fn search_symbols_with_source_filtered(
@@ -213,9 +283,12 @@ pub fn search_symbols_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .search_symbols(query, limit, file_path_contains, node_kind)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.search_symbols(query, limit, file_path_contains, node_kind),
+    )
 }
 
 pub fn search_symbols_context_with_source_filtered(
@@ -227,9 +300,12 @@ pub fn search_symbols_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .search_symbols_context(query, limit, file_path_contains, node_kind)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.search_symbols_context(query, limit, file_path_contains, node_kind),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -245,17 +321,22 @@ pub fn search_symbols_neighborhood_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .search_symbols_neighborhood_context(
-            query,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-        )
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.search_symbols_neighborhood_context(
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+            )
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -271,17 +352,22 @@ pub fn search_symbols_discovery_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .search_symbols_discovery_context(
-            query,
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-        )
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.search_symbols_discovery_context(
+                query,
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+            )
+        },
+    )
 }
 
 pub fn list_symbols_with_source_filtered(
@@ -292,9 +378,12 @@ pub fn list_symbols_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .list_symbols(limit, file_path_contains, node_kind)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.list_symbols(limit, file_path_contains, node_kind),
+    )
 }
 
 pub fn list_symbols_context_with_source_filtered(
@@ -305,9 +394,12 @@ pub fn list_symbols_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .list_symbols_context(limit, file_path_contains, node_kind)
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| context.list_symbols_context(limit, file_path_contains, node_kind),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,16 +414,21 @@ pub fn list_symbols_neighborhood_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .list_symbols_neighborhood_context(
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-        )
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.list_symbols_neighborhood_context(
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+            )
+        },
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -346,16 +443,21 @@ pub fn list_symbols_discovery_context_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    SymbolQueryContext::workspace(workspace_root)?
-        .with_source_overlay(path, source)?
-        .list_symbols_discovery_context(
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-        )
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.list_symbols_discovery_context(
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+            )
+        },
+    )
 }
 
 pub fn trace_symbol_graph_from_index_with_source(
@@ -365,9 +467,9 @@ pub fn trace_symbol_graph_from_index_with_source(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_graph(symbol_path, direction)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.trace_symbol_graph(symbol_path, direction)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -380,9 +482,9 @@ pub fn trace_symbol_neighborhood_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_neighborhood(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.trace_symbol_neighborhood(symbol_path, direction, max_depth, max_nodes)
+    })
 }
 
 pub fn trace_symbol_graph_at_position_from_index_with_source(
@@ -392,9 +494,9 @@ pub fn trace_symbol_graph_at_position_from_index_with_source(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_graph_at_position(path, position, direction)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.trace_symbol_graph_at_position(path, position, direction)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -407,9 +509,10 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .trace_symbol_neighborhood_at_position(path, position, direction, max_depth, max_nodes)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context
+            .trace_symbol_neighborhood_at_position(path, position, direction, max_depth, max_nodes)
+    })
 }
 
 pub fn read_symbol_from_index_with_source(
@@ -418,9 +521,9 @@ pub fn read_symbol_from_index_with_source(
     source: &str,
     symbol_path: &str,
 ) -> Result<SymbolReadResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol(symbol_path)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol(symbol_path)
+    })
 }
 
 pub fn read_symbol_context_from_index_with_source(
@@ -430,9 +533,9 @@ pub fn read_symbol_context_from_index_with_source(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_context(symbol_path, direction)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_context(symbol_path, direction)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -445,9 +548,9 @@ pub fn read_symbol_neighborhood_context_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_neighborhood_context(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_neighborhood_context(symbol_path, direction, max_depth, max_nodes)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -460,9 +563,9 @@ pub fn read_symbol_discovery_context_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_discovery_context(symbol_path, direction, max_depth, max_nodes)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_discovery_context(symbol_path, direction, max_depth, max_nodes)
+    })
 }
 
 pub fn read_symbol_at_position_from_index_with_source(
@@ -471,9 +574,9 @@ pub fn read_symbol_at_position_from_index_with_source(
     source: &str,
     position: &Position,
 ) -> Result<SymbolReadResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_at_position(path, position)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_at_position(path, position)
+    })
 }
 
 pub fn read_symbol_context_at_position_from_index_with_source(
@@ -483,9 +586,9 @@ pub fn read_symbol_context_at_position_from_index_with_source(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_context_at_position(path, position, direction)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_context_at_position(path, position, direction)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -498,11 +601,11 @@ pub fn read_symbol_neighborhood_context_at_position_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_neighborhood_context_at_position(
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_neighborhood_context_at_position(
             path, position, direction, max_depth, max_nodes,
         )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -515,9 +618,11 @@ pub fn read_symbol_discovery_context_at_position_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .read_symbol_discovery_context_at_position(path, position, direction, max_depth, max_nodes)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.read_symbol_discovery_context_at_position(
+            path, position, direction, max_depth, max_nodes,
+        )
+    })
 }
 
 pub fn search_symbols_from_index_with_source_filtered(
@@ -529,9 +634,9 @@ pub fn search_symbols_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .search_symbols(query, limit, file_path_contains, node_kind)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.search_symbols(query, limit, file_path_contains, node_kind)
+    })
 }
 
 pub fn search_symbols_context_from_index_with_source_filtered(
@@ -543,9 +648,9 @@ pub fn search_symbols_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .search_symbols_context(query, limit, file_path_contains, node_kind)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.search_symbols_context(query, limit, file_path_contains, node_kind)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -561,9 +666,8 @@ pub fn search_symbols_neighborhood_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .search_symbols_neighborhood_context(
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.search_symbols_neighborhood_context(
             query,
             limit,
             direction,
@@ -572,6 +676,7 @@ pub fn search_symbols_neighborhood_context_from_index_with_source_filtered(
             file_path_contains,
             node_kind,
         )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -587,9 +692,8 @@ pub fn search_symbols_discovery_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .search_symbols_discovery_context(
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.search_symbols_discovery_context(
             query,
             limit,
             direction,
@@ -598,6 +702,7 @@ pub fn search_symbols_discovery_context_from_index_with_source_filtered(
             file_path_contains,
             node_kind,
         )
+    })
 }
 
 pub fn list_symbols_from_index_with_source_filtered(
@@ -608,9 +713,9 @@ pub fn list_symbols_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .list_symbols(limit, file_path_contains, node_kind)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.list_symbols(limit, file_path_contains, node_kind)
+    })
 }
 
 pub fn list_symbols_context_from_index_with_source_filtered(
@@ -621,9 +726,9 @@ pub fn list_symbols_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .list_symbols_context(limit, file_path_contains, node_kind)
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.list_symbols_context(limit, file_path_contains, node_kind)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -638,9 +743,8 @@ pub fn list_symbols_neighborhood_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .list_symbols_neighborhood_context(
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.list_symbols_neighborhood_context(
             limit,
             direction,
             max_depth,
@@ -648,6 +752,7 @@ pub fn list_symbols_neighborhood_context_from_index_with_source_filtered(
             file_path_contains,
             node_kind,
         )
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -662,9 +767,8 @@ pub fn list_symbols_discovery_context_from_index_with_source_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    SymbolQueryContext::index(db_path)?
-        .with_source_overlay(path, source)?
-        .list_symbols_discovery_context(
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.list_symbols_discovery_context(
             limit,
             direction,
             max_depth,
@@ -672,6 +776,7 @@ pub fn list_symbols_discovery_context_from_index_with_source_filtered(
             file_path_contains,
             node_kind,
         )
+    })
 }
 
 fn validate_replay_patch_payload(patch: &PatchAstNodeResult) -> Result<()> {
