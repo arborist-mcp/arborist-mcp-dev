@@ -83,14 +83,10 @@ TOOL_SPECS = (
     ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "query_capture_array"),
 )
 TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
+TOOL_SPECS_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
 TOOL_HANDLERS = {spec.name: spec.handler for spec in TOOL_SPECS}
 TOOL_PARAM_NAMES = {spec.name: spec.params for spec in TOOL_SPECS}
 TOOL_CATEGORIES = {spec.name: spec.category for spec in TOOL_SPECS}
-TOOL_RESULT_SCHEMA_KEYS = {
-    spec.name: spec.result_schema
-    for spec in TOOL_SPECS
-    if spec.result_schema != "object"
-}
 
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -142,18 +138,22 @@ NON_MUTATING_STATE_TOOLS = frozenset(
     )
 )
 MUTATING_TOOLS = frozenset(
-    tool_name
-    for tool_name, category in TOOL_CATEGORIES.items()
-    if category in {"write", "vfs", "index"}
+    spec.name
+    for spec in TOOL_SPECS
+    if spec.category in {"write", "vfs", "index"}
 ) - NON_MUTATING_STATE_TOOLS
 BATCH_ALLOWED_TOOLS = frozenset(
-    tool_name
-    for tool_name, category in TOOL_CATEGORIES.items()
+    spec.name
+    for spec in TOOL_SPECS
     if (
-        (category in READ_ONLY_CATEGORIES or tool_name in NON_MUTATING_STATE_TOOLS)
-        and tool_name != "arborist/batch"
+        (spec.category in READ_ONLY_CATEGORIES or spec.name in NON_MUTATING_STATE_TOOLS)
+        and spec.name != "arborist/batch"
     )
 )
+
+
+def tool_spec(tool_name: str) -> ToolSpec:
+    return TOOL_SPECS_BY_NAME[tool_name]
 
 
 def _schema(
@@ -430,6 +430,10 @@ TOOL_PARAM_SPECS = {
         default=".",
     ),
 }
+def tool_param_spec(param_name: str) -> ToolParamSpec:
+    return TOOL_PARAM_SPECS[param_name]
+
+
 TOOL_PARAM_SCHEMAS = {
     name: spec.schema for name, spec in TOOL_PARAM_SPECS.items()
 }
@@ -1415,7 +1419,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
     "additionalProperties": False,
 }
 TOOL_RESULT_SCHEMAS = {
-    tool_name: {
+    spec.name: {
         "batch": BATCH_RESULT_SCHEMA,
         "object_array": OBJECT_ARRAY_RESULT_SCHEMA,
         "boolean": BOOLEAN_RESULT_SCHEMA,
@@ -1450,8 +1454,9 @@ TOOL_RESULT_SCHEMAS = {
         "graph_backed_patch": GRAPH_BACKED_PATCH_RESULT_SCHEMA,
         "neighborhood_context_patch": NEIGHBORHOOD_CONTEXT_PATCH_RESULT_SCHEMA,
         "discovery_context_patch": DISCOVERY_CONTEXT_PATCH_RESULT_SCHEMA,
-    }[schema_key]
-    for tool_name, schema_key in TOOL_RESULT_SCHEMA_KEYS.items()
+    }[spec.result_schema]
+    for spec in TOOL_SPECS
+    if spec.result_schema != "object"
 }
 BATCH_CALL_RESULT_SCHEMA["properties"]["result"] = {
     "description": "Result returned by the inner read-only tool.",
@@ -1490,7 +1495,8 @@ def build_resource_catalog() -> list[dict[str, Any]]:
 
 
 def build_tool_descriptor(tool_name: str) -> dict[str, Any]:
-    category = TOOL_CATEGORIES[tool_name]
+    spec = tool_spec(tool_name)
+    category = spec.category
     tool: dict[str, Any] = {
         "name": tool_name,
         "title": _tool_title(tool_name),
@@ -1536,8 +1542,8 @@ def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
 
 def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
     properties: dict[str, Any] = {}
-    for param_name in TOOL_PARAM_NAMES[tool_name]:
-        param_schema = dict(TOOL_PARAM_SCHEMAS[param_name])
+    for param_name in tool_spec(tool_name).params:
+        param_schema = dict(tool_param_spec(param_name).schema)
         default = tool_param_default(tool_name, param_name)
         if default is not None:
             param_schema["default"] = default
@@ -1554,17 +1560,17 @@ def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
 def required_tool_params(tool_name: str) -> tuple[str, ...]:
     return tuple(
         param_name
-        for param_name in TOOL_PARAM_NAMES[tool_name]
-        if param_name not in OPTIONAL_TOOL_PARAMS
+        for param_name in tool_spec(tool_name).params
+        if not tool_param_spec(param_name).optional
         and not (
             param_name == "file_path"
-            and tool_name in SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS
+            and tool_name in tool_param_spec("file_path").source_anchored_optional_tools
         )
     )
 
 
 def tool_param_default(tool_name: str, param_name: str) -> Any:
-    default = TOOL_PARAM_DEFAULTS.get(param_name)
+    default = tool_param_spec(param_name).default
     if isinstance(default, dict):
         if tool_name.startswith("arborist/list_symbols"):
             return default["list"]
@@ -1649,9 +1655,10 @@ class ArboristGateway:
                 result = self._resources_list(params)
             elif method == "resources/read":
                 result = self._resources_read(params)
-            elif method in TOOL_HANDLERS:
-                self._reject_unexpected_params(params, TOOL_PARAM_NAMES[method])
-                handler = getattr(self, TOOL_HANDLERS[method])
+            elif method in TOOL_SPECS_BY_NAME:
+                spec = tool_spec(method)
+                self._reject_unexpected_params(params, spec.params)
+                handler = getattr(self, spec.handler)
                 result = handler(params)
             else:
                 return self._error_response(response_id, -32601, f"method not found: {method}")
@@ -1774,15 +1781,16 @@ class ArboristGateway:
         tool_name = params.get("name")
         if not isinstance(tool_name, str) or not tool_name.strip():
             raise JsonRpcError(-32602, "missing required string param: name")
-        if tool_name not in TOOL_HANDLERS:
+        if tool_name not in TOOL_SPECS_BY_NAME:
             raise JsonRpcError(-32602, f"unknown tool: {tool_name}")
         arguments = params.get("arguments", {})
         if not isinstance(arguments, dict):
             raise JsonRpcError(-32602, "invalid params: arguments must be an object")
 
         try:
-            self._reject_unexpected_params(arguments, TOOL_PARAM_NAMES[tool_name])
-            handler = getattr(self, TOOL_HANDLERS[tool_name])
+            spec = tool_spec(tool_name)
+            self._reject_unexpected_params(arguments, spec.params)
+            handler = getattr(self, spec.handler)
             tool_result = handler(arguments)
         except JsonRpcError as exc:
             return self._mcp_tool_error(str(exc))
@@ -1819,7 +1827,7 @@ class ArboristGateway:
                     -32602,
                     f"missing required string param: calls[{index}].name",
                 )
-            if tool_name not in TOOL_HANDLERS:
+            if tool_name not in TOOL_SPECS_BY_NAME:
                 raise JsonRpcError(-32602, f"unknown batch tool: {tool_name}")
             if tool_name == "arborist/batch":
                 raise JsonRpcError(-32602, "batch calls may not include arborist/batch")
@@ -1835,8 +1843,9 @@ class ArboristGateway:
                     -32602,
                     f"invalid params: calls[{index}].arguments must be an object",
                 )
-            self._reject_unexpected_params(arguments, TOOL_PARAM_NAMES[tool_name])
-            handler = getattr(self, TOOL_HANDLERS[tool_name])
+            spec = tool_spec(tool_name)
+            self._reject_unexpected_params(arguments, spec.params)
+            handler = getattr(self, spec.handler)
             results.append({"name": tool_name, "result": handler(arguments)})
 
         return results
@@ -3086,7 +3095,10 @@ class ArboristGateway:
         value = params.get(key)
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"missing required string param: {key}")
-        effective_max_length = max_length or STRING_PARAM_MAX_LENGTHS.get(key)
+        param_spec = TOOL_PARAM_SPECS.get(key)
+        effective_max_length = max_length or (
+            param_spec.string_max_length if param_spec is not None else None
+        )
         ArboristGateway._validate_string_length(value, key, effective_max_length)
         return value
 
@@ -3122,7 +3134,10 @@ class ArboristGateway:
             return None
         if not isinstance(value, str) or (not allow_empty and not value.strip()):
             raise JsonRpcError(-32602, f"invalid string param: {key}")
-        effective_max_length = max_length or STRING_PARAM_MAX_LENGTHS.get(key)
+        param_spec = TOOL_PARAM_SPECS.get(key)
+        effective_max_length = max_length or (
+            param_spec.string_max_length if param_spec is not None else None
+        )
         ArboristGateway._validate_string_length(value, key, effective_max_length)
         return value
 
