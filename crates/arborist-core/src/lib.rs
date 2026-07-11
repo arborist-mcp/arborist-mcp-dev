@@ -10,6 +10,7 @@ mod source_overlay;
 mod symbol_dependency;
 mod symbol_extractor;
 mod symbol_index_model;
+mod symbol_index_state;
 mod symbol_map;
 mod symbol_position;
 mod symbol_query;
@@ -55,9 +56,10 @@ pub use query::{
     execute_tree_query_from_path, execute_tree_query_from_path_with_limit,
     execute_tree_query_with_limit,
 };
+pub use symbol_index_state::inspect_symbol_index;
 pub use symbol_query::SymbolQueryContext;
 pub use symbols::{
-    inspect_symbol_index, list_symbols, list_symbols_context, list_symbols_context_filtered,
+    list_symbols, list_symbols_context, list_symbols_context_filtered,
     list_symbols_context_from_index, list_symbols_context_from_index_filtered,
     list_symbols_discovery_context, list_symbols_discovery_context_filtered,
     list_symbols_discovery_context_from_index, list_symbols_discovery_context_from_index_filtered,
