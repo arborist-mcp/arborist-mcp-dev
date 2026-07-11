@@ -4,69 +4,16 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    PatchCommitGateReport, PatchValidationReport, Position,
-    SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolSummary, TraceSymbolGraphResult,
-    TraceSymbolNeighborhoodResult, ensure_nonblank, ensure_nonblank_strings, ensure_unique_strings,
+    Position, SymbolSummary, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
+    ensure_nonblank, ensure_nonblank_strings, ensure_unique_strings,
     ensure_unique_symbol_evidence_keys,
 };
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolIndexStats {
-    pub db_path: String,
-    pub indexed_files: usize,
-    pub indexed_symbols: usize,
-    pub rebuilt_files: usize,
-    pub reused_files: usize,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct VirtualFileSnapshot {
-    pub file: String,
-    pub source: String,
-    pub disk_source: String,
-    pub dirty: bool,
-    pub version: u64,
-    pub syntax_error_count: usize,
-}
+mod index_results;
+mod virtual_results;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct VirtualEditResult {
-    pub file: String,
-    pub source: String,
-    pub dirty: bool,
-    pub version: u64,
-    pub incremental_parse: bool,
-    pub validation: PatchValidationReport,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RegisteredSymbolIndex {
-    pub workspace_root: String,
-    pub db_path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolIndexHealth {
-    pub response_schema_version: String,
-    pub db_path: String,
-    pub exists: bool,
-    pub ok: bool,
-    pub schema_version: Option<String>,
-    pub expected_schema_version: String,
-    pub workspace_root: Option<String>,
-    pub indexed_files: Option<usize>,
-    pub indexed_symbols: Option<usize>,
-    pub file_state_entries: Option<usize>,
-    pub fresh_file_count: Option<usize>,
-    pub stale_files: Vec<String>,
-    pub missing_files: Vec<String>,
-    pub unreadable_files: Vec<String>,
-    pub issues: Vec<String>,
-}
+pub use index_results::{RegisteredSymbolIndex, SymbolIndexHealth, SymbolIndexStats};
+pub use virtual_results::{VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -170,112 +117,6 @@ pub struct SymbolSearchMatchDetail {
     pub symbol_id: String,
     pub score: usize,
     pub matched_fields: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct VirtualFileStatus {
-    pub file: String,
-    pub dirty: bool,
-    pub version: u64,
-    pub syntax_error_count: usize,
-}
-
-impl SymbolIndexStats {
-    pub(crate) fn validate_public_output(&self) -> Result<()> {
-        ensure_nonblank(&self.db_path, "symbol_index.db_path")?;
-        if self.rebuilt_files + self.reused_files != self.indexed_files {
-            bail!(
-                "invalid symbol_index.indexed_files: expected indexed_files to equal rebuilt_files + reused_files"
-            );
-        }
-        Ok(())
-    }
-}
-
-impl RegisteredSymbolIndex {
-    pub(crate) fn validate_public_output(&self, index: usize) -> Result<()> {
-        let prefix = format!("registered_symbol_indexes[{index}]");
-        ensure_nonblank(&self.workspace_root, &format!("{prefix}.workspace_root"))?;
-        ensure_nonblank(&self.db_path, &format!("{prefix}.db_path"))?;
-        Ok(())
-    }
-}
-
-impl SymbolIndexHealth {
-    pub(crate) fn validate_public_output(&self) -> Result<()> {
-        if self.response_schema_version != SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION {
-            bail!(
-                "invalid symbol_index_health.response_schema_version: expected response schema version {}",
-                SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION
-            );
-        }
-        ensure_nonblank(&self.db_path, "symbol_index_health.db_path")?;
-        ensure_nonblank(
-            &self.expected_schema_version,
-            "symbol_index_health.expected_schema_version",
-        )?;
-        if self.ok && !self.issues.is_empty() {
-            bail!("invalid symbol_index_health.ok: expected healthy indexes to have no issues");
-        }
-        if !self.ok && self.issues.is_empty() {
-            bail!(
-                "invalid symbol_index_health.issues: expected unhealthy indexes to report issues"
-            );
-        }
-        if !self.exists
-            && (self.schema_version.is_some()
-                || self.workspace_root.is_some()
-                || self.indexed_files.is_some()
-                || self.indexed_symbols.is_some()
-                || self.file_state_entries.is_some()
-                || self.fresh_file_count.is_some()
-                || !self.stale_files.is_empty()
-                || !self.missing_files.is_empty()
-                || !self.unreadable_files.is_empty())
-        {
-            bail!("invalid symbol_index_health: missing indexes must not report loaded metadata");
-        }
-        if let Some(fresh_file_count) = self.fresh_file_count {
-            let Some(file_state_entries) = self.file_state_entries else {
-                bail!(
-                    "invalid symbol_index_health.fresh_file_count: expected file_state_entries when freshness is inspected"
-                );
-            };
-            if fresh_file_count
-                + self.stale_files.len()
-                + self.missing_files.len()
-                + self.unreadable_files.len()
-                != file_state_entries
-            {
-                bail!(
-                    "invalid symbol_index_health freshness counts: expected fresh, stale, missing, and unreadable files to equal file_state_entries"
-                );
-            }
-        }
-        for (index, file_path) in self.stale_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.stale_files[{index}]"),
-            )?;
-        }
-        for (index, file_path) in self.missing_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.missing_files[{index}]"),
-            )?;
-        }
-        for (index, file_path) in self.unreadable_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.unreadable_files[{index}]"),
-            )?;
-        }
-        for (index, issue) in self.issues.iter().enumerate() {
-            ensure_nonblank(issue, &format!("symbol_index_health.issues[{index}]"))?;
-        }
-        Ok(())
-    }
 }
 
 impl SymbolReadResult {
@@ -844,57 +685,5 @@ impl SymbolSearchMatchDetail {
             }
         }
         Ok(())
-    }
-}
-
-impl VirtualFileSnapshot {
-    pub(crate) fn validate_public_output(&self) -> Result<()> {
-        ensure_nonblank(&self.file, "virtual_snapshot.file")?;
-        if self.dirty != (self.source != self.disk_source) {
-            bail!(
-                "invalid virtual_snapshot.dirty: expected dirty to match whether source differs from disk_source"
-            );
-        }
-        Ok(())
-    }
-}
-
-impl VirtualEditResult {
-    pub(crate) fn validate_public_output(&self) -> Result<()> {
-        ensure_nonblank(&self.file, "virtual_edit.file")?;
-        for (index, issue) in self.validation.syntax_errors.iter().enumerate() {
-            issue.validate_trace_replay_input(index)?;
-        }
-        ensure_nonblank_strings(
-            &self.validation.unresolved_identifiers,
-            "virtual_edit.validation.unresolved_identifiers",
-        )?;
-        if !self.validation.resolved_identifiers.is_empty() {
-            bail!(
-                "invalid virtual_edit.validation.resolved_identifiers: buffer edit results must not report resolved identifiers"
-            );
-        }
-        if !self.validation.ambiguous_identifiers.is_empty() {
-            bail!(
-                "invalid virtual_edit.validation.ambiguous_identifiers: buffer edit results must not report ambiguous identifiers"
-            );
-        }
-        if !self.validation.binding_decisions.is_empty() {
-            bail!(
-                "invalid virtual_edit.validation.binding_decisions: buffer edit results must not report binding decisions"
-            );
-        }
-        if self.validation.commit_gate != PatchCommitGateReport::default() {
-            bail!(
-                "invalid virtual_edit.validation.commit_gate: buffer edit results must leave commit_gate at the default not_evaluated state"
-            );
-        }
-        Ok(())
-    }
-}
-
-impl VirtualFileStatus {
-    pub(crate) fn validate_public_output(&self, index: usize) -> Result<()> {
-        ensure_nonblank(&self.file, &format!("virtual_statuses[{index}].file"))
     }
 }
