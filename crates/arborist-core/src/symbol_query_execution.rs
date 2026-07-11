@@ -1,94 +1,36 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use crate::model::Position;
 use crate::model::{
-    SymbolContextResult, SymbolListContextResult, SymbolListDiscoveryContextResult,
-    SymbolListNeighborhoodContextResult, SymbolListResult, SymbolMeta,
-    SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult, SymbolReadResult,
-    SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
-    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
-    TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
+    SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
+    SymbolListResult, SymbolMeta, SymbolReadResult, SymbolSearchContextResult,
+    SymbolSearchDiscoveryContextResult, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
+    TraceDirection,
 };
 use crate::symbol_index_model::symbol_kind_rank;
 use crate::symbol_map::resolved_symbol_map;
-use crate::symbol_position::resolve_symbol_at_position;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
 use crate::symbol_summary::symbol_summary_from_meta;
-use crate::symbol_trace::{trace_from_symbol, trace_neighborhood_from_symbol};
 
-pub(crate) fn trace_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    validate_trace_symbol_path(symbol_path)?;
+mod read;
+mod trace;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)
-}
-
-pub(crate) fn trace_neighborhood_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    validate_trace_symbol_path(symbol_path)?;
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    trace_neighborhood_from_symbol(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-    )
-}
-
-pub(crate) fn trace_symbol_graph_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<TraceSymbolGraphResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn trace_symbol_neighborhood_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    trace_neighborhood_from_symbol(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-    )
-}
+pub(crate) use read::{
+    read_symbol_at_position_from_symbols, read_symbol_context_at_position_from_symbols,
+    read_symbol_context_from_symbols, read_symbol_discovery_context_at_position_from_symbols,
+    read_symbol_discovery_context_from_symbols, read_symbol_from_symbols,
+    read_symbol_neighborhood_context_at_position_from_symbols,
+    read_symbol_neighborhood_context_from_symbols,
+};
+pub(crate) use trace::{
+    trace_from_symbols, trace_neighborhood_from_symbols,
+    trace_symbol_graph_at_position_from_symbols,
+    trace_symbol_neighborhood_at_position_from_symbols,
+};
 
 pub(crate) fn read_symbol_from_meta(
     symbol: &SymbolMeta,
@@ -96,247 +38,6 @@ pub(crate) fn read_symbol_from_meta(
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolReadResult> {
     read_symbol_result_from_meta(symbol, indexed_files, file_overrides)
-}
-
-pub(crate) fn read_symbol_context_from_meta(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolContextResult> {
-    let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
-    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)?;
-    let result = SymbolContextResult { read, trace };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
-pub(crate) fn read_symbol_neighborhood_context_from_meta(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    let neighborhood = trace_neighborhood_from_symbol(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-    )?;
-    let resolved_map = resolved_symbol_map(resolved_symbols);
-    let mut reads = Vec::with_capacity(neighborhood.nodes.len());
-
-    for node in &neighborhood.nodes {
-        let symbol = resolved_map.get(&node.symbol.symbol_id).ok_or_else(|| {
-            anyhow!(
-                "symbol not found in workspace index while reading neighborhood node: {}",
-                node.symbol.symbol_id
-            )
-        })?;
-        reads.push(read_symbol_result_from_meta(
-            symbol,
-            indexed_files,
-            file_overrides,
-        )?);
-    }
-
-    let result = SymbolNeighborhoodContextResult {
-        neighborhood,
-        reads,
-    };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
-pub(crate) fn read_symbol_discovery_context_from_meta(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadDiscoveryContextResult> {
-    let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
-    let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)?;
-    let neighborhood_context = read_symbol_neighborhood_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-    )?;
-    let result = SymbolReadDiscoveryContextResult {
-        read,
-        trace,
-        neighborhood_context,
-    };
-    result.validate_public_output()?;
-    Ok(result)
-}
-
-pub(crate) fn read_symbol_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    read_symbol_from_meta(symbol, indexed_files, file_overrides)
-}
-
-pub(crate) fn read_symbol_context_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolContextResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    read_symbol_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        file_overrides,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    read_symbol_neighborhood_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_discovery_context_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadDiscoveryContextResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    read_symbol_discovery_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-    )
-}
-
-pub(crate) fn read_symbol_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadResult> {
-    validate_trace_symbol_path(symbol_path)?;
-
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_from_meta(symbol, indexed_files, file_overrides)
-}
-
-pub(crate) fn read_symbol_context_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolContextResult> {
-    validate_trace_symbol_path(symbol_path)?;
-
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        file_overrides,
-    )
-}
-
-pub(crate) fn read_symbol_neighborhood_context_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    validate_trace_symbol_path(symbol_path)?;
-
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_neighborhood_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-    )
-}
-
-pub(crate) fn read_symbol_discovery_context_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolReadDiscoveryContextResult> {
-    validate_trace_symbol_path(symbol_path)?;
-
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
-        .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_discovery_context_from_meta(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-    )
 }
 
 pub(crate) fn search_from_symbols(
