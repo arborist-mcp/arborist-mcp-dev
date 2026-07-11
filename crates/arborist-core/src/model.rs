@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "1";
 
 mod query_results;
+mod symbols;
 mod trace_patch_results;
 pub use query_results::{
     RegisteredSymbolIndex, SymbolContextResult, SymbolIndexHealth, SymbolIndexStats,
@@ -15,6 +16,8 @@ pub use query_results::{
     SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
     VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
+pub(crate) use symbols::ensure_unique_symbol_evidence_keys;
+pub use symbols::{SymbolMeta, SymbolMetaInit, SymbolSummary, SymbolSummaryInit};
 pub use trace_patch_results::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchTraceValidationResult, TraceBackedPatchResult, TraceEvidenceKeys,
@@ -324,196 +327,6 @@ pub enum TraceDirection {
     Both,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolMeta {
-    pub symbol_id: String,
-    pub semantic_path: String,
-    pub scope_path: Option<String>,
-    pub file_path: String,
-    pub node_kind: String,
-    pub origin_type: String,
-    pub evidence_key: String,
-    pub byte_range: (usize, usize),
-    pub signature: Option<String>,
-    pub parameters: Vec<String>,
-    pub return_type: Option<String>,
-    pub docstring: Option<String>,
-    pub dependencies: Vec<String>,
-    pub references: Vec<String>,
-}
-
-pub struct SymbolMetaInit {
-    pub symbol_id: String,
-    pub semantic_path: String,
-    pub scope_path: Option<String>,
-    pub file_path: String,
-    pub node_kind: String,
-    pub origin_type: String,
-    pub byte_range: (usize, usize),
-    pub signature: Option<String>,
-    pub parameters: Vec<String>,
-    pub return_type: Option<String>,
-    pub docstring: Option<String>,
-    pub dependencies: Vec<String>,
-    pub references: Vec<String>,
-}
-
-impl SymbolMeta {
-    pub fn new(init: SymbolMetaInit) -> Self {
-        let evidence_key = symbol_evidence_key(
-            &init.symbol_id,
-            &init.file_path,
-            &init.node_kind,
-            &init.origin_type,
-            init.byte_range,
-            init.signature.as_deref(),
-        );
-
-        Self {
-            symbol_id: init.symbol_id,
-            semantic_path: init.semantic_path,
-            scope_path: init.scope_path,
-            file_path: init.file_path,
-            node_kind: init.node_kind,
-            origin_type: init.origin_type,
-            evidence_key,
-            byte_range: init.byte_range,
-            signature: init.signature,
-            parameters: init.parameters,
-            return_type: init.return_type,
-            docstring: init.docstring,
-            dependencies: init.dependencies,
-            references: init.references,
-        }
-    }
-
-    pub fn with_origin_type(&self, origin_type: &str) -> Self {
-        Self::new(SymbolMetaInit {
-            symbol_id: self.symbol_id.clone(),
-            semantic_path: self.semantic_path.clone(),
-            scope_path: self.scope_path.clone(),
-            file_path: self.file_path.clone(),
-            node_kind: self.node_kind.clone(),
-            origin_type: origin_type.to_string(),
-            byte_range: self.byte_range,
-            signature: self.signature.clone(),
-            parameters: self.parameters.clone(),
-            return_type: self.return_type.clone(),
-            docstring: self.docstring.clone(),
-            dependencies: self.dependencies.clone(),
-            references: self.references.clone(),
-        })
-    }
-
-    pub fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
-        validate_symbol_identity(
-            SymbolIdentityRef {
-                symbol_id: &self.symbol_id,
-                semantic_path: &self.semantic_path,
-                file_path: &self.file_path,
-                node_kind: &self.node_kind,
-                origin_type: &self.origin_type,
-                evidence_key: &self.evidence_key,
-                byte_range: self.byte_range,
-                signature: self.signature.as_deref(),
-            },
-            field,
-        )
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(deny_unknown_fields)]
-pub struct SymbolSummary {
-    pub symbol_id: String,
-    pub semantic_path: String,
-    pub scope_path: Option<String>,
-    pub file_path: String,
-    pub node_kind: String,
-    pub origin_type: String,
-    pub evidence_key: String,
-    pub byte_range: (usize, usize),
-    pub signature: Option<String>,
-    pub parameters: Vec<String>,
-    pub return_type: Option<String>,
-    pub docstring: Option<String>,
-}
-
-pub struct SymbolSummaryInit {
-    pub symbol_id: String,
-    pub semantic_path: String,
-    pub scope_path: Option<String>,
-    pub file_path: String,
-    pub node_kind: String,
-    pub origin_type: String,
-    pub byte_range: (usize, usize),
-    pub signature: Option<String>,
-    pub parameters: Vec<String>,
-    pub return_type: Option<String>,
-    pub docstring: Option<String>,
-}
-
-impl SymbolSummary {
-    pub fn new(init: SymbolSummaryInit) -> Self {
-        let evidence_key = symbol_evidence_key(
-            &init.symbol_id,
-            &init.file_path,
-            &init.node_kind,
-            &init.origin_type,
-            init.byte_range,
-            init.signature.as_deref(),
-        );
-
-        Self {
-            symbol_id: init.symbol_id,
-            semantic_path: init.semantic_path,
-            scope_path: init.scope_path,
-            file_path: init.file_path,
-            node_kind: init.node_kind,
-            origin_type: init.origin_type,
-            evidence_key,
-            byte_range: init.byte_range,
-            signature: init.signature,
-            parameters: init.parameters,
-            return_type: init.return_type,
-            docstring: init.docstring,
-        }
-    }
-
-    pub fn validate_trace_replay_input(&self, field: &str) -> Result<()> {
-        validate_symbol_identity(
-            SymbolIdentityRef {
-                symbol_id: &self.symbol_id,
-                semantic_path: &self.semantic_path,
-                file_path: &self.file_path,
-                node_kind: &self.node_kind,
-                origin_type: &self.origin_type,
-                evidence_key: &self.evidence_key,
-                byte_range: self.byte_range,
-                signature: self.signature.as_deref(),
-            },
-            field,
-        )
-    }
-}
-
-fn symbol_evidence_key(
-    symbol_id: &str,
-    file_path: &str,
-    node_kind: &str,
-    origin_type: &str,
-    byte_range: (usize, usize),
-    signature: Option<&str>,
-) -> String {
-    format!(
-        "{symbol_id}|{file_path}|{node_kind}|{origin_type}|{}..{}|{}",
-        byte_range.0,
-        byte_range.1,
-        signature.unwrap_or("")
-    )
-}
-
 fn ensure_nonblank(value: &str, field: &str) -> Result<()> {
     if value.trim().is_empty() {
         bail!("invalid {field}: value must not be blank");
@@ -538,55 +351,8 @@ fn ensure_unique_strings(values: &[String], field: &str) -> Result<()> {
     Ok(())
 }
 
-fn ensure_unique_symbol_evidence_keys(symbols: &[SymbolSummary], field: &str) -> Result<()> {
-    let mut seen = BTreeSet::new();
-    for (index, symbol) in symbols.iter().enumerate() {
-        if !seen.insert(symbol.evidence_key.clone()) {
-            bail!("invalid {field}[{index}].evidence_key: duplicate evidence keys are not allowed");
-        }
-    }
-    Ok(())
-}
-
 fn point_is_after(start: &Position, end: &Position) -> bool {
     start.row > end.row || (start.row == end.row && start.column > end.column)
-}
-
-struct SymbolIdentityRef<'a> {
-    symbol_id: &'a str,
-    semantic_path: &'a str,
-    file_path: &'a str,
-    node_kind: &'a str,
-    origin_type: &'a str,
-    evidence_key: &'a str,
-    byte_range: (usize, usize),
-    signature: Option<&'a str>,
-}
-
-fn validate_symbol_identity(identity: SymbolIdentityRef<'_>, field: &str) -> Result<()> {
-    ensure_nonblank(identity.symbol_id, &format!("{field}.symbol_id"))?;
-    ensure_nonblank(identity.semantic_path, &format!("{field}.semantic_path"))?;
-    ensure_nonblank(identity.file_path, &format!("{field}.file_path"))?;
-    ensure_nonblank(identity.node_kind, &format!("{field}.node_kind"))?;
-    ensure_nonblank(identity.origin_type, &format!("{field}.origin_type"))?;
-    ensure_nonblank(identity.evidence_key, &format!("{field}.evidence_key"))?;
-    if identity.byte_range.0 > identity.byte_range.1 {
-        bail!("invalid {field}.byte_range: start byte is after end byte");
-    }
-
-    let expected = symbol_evidence_key(
-        identity.symbol_id,
-        identity.file_path,
-        identity.node_kind,
-        identity.origin_type,
-        identity.byte_range,
-        identity.signature,
-    );
-    if identity.evidence_key != expected {
-        bail!("invalid {field}.evidence_key: expected evidence key to match symbol identity");
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
