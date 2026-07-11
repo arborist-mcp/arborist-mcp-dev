@@ -19,6 +19,14 @@ class ToolSpec(NamedTuple):
     result_schema: str = "object"
 
 
+class ToolParamSpec(NamedTuple):
+    schema: dict[str, Any]
+    optional: bool = False
+    default: Any = None
+    string_max_length: int | None = None
+    source_anchored_optional_tools: frozenset[str] = frozenset()
+
+
 TOOL_SPECS = (
     ToolSpec("arborist/batch", "_batch", ("calls",), "read", "batch"),
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes"), "read", "semantic_skeleton"),
@@ -95,27 +103,7 @@ MCP_RESOURCE_READ_PARAM_NAMES = ("uri", "_meta")
 TOOL_CATALOG_RESOURCE_URI = "arborist://tool-catalog"
 TOOL_CATALOG_RESOURCE_MIME_TYPE = "application/json"
 MCP_INITIALIZE_MARKERS = frozenset(("protocolVersion", "capabilities", "clientInfo"))
-OPTIONAL_TOOL_PARAMS = frozenset(
-    (
-        "bypass_reason",
-        "depth_limit",
-        "direction",
-        "dirty_only",
-        "expand_nodes",
-        "file_path_contains",
-        "index_db_path",
-        "limit",
-        "max_captures",
-        "max_depth",
-        "max_files",
-        "max_nodes",
-        "node_kind",
-        "persist",
-        "source",
-        "workspace_root",
-    )
-)
-SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
+_SOURCE_ANCHORED_FILE_PATH_TOOLS = frozenset(
     (
         "arborist/trace_symbol_graph",
         "arborist/trace_symbol_neighborhood",
@@ -240,149 +228,228 @@ BATCH_CALL_SCHEMA = {
     "required": ["name"],
     "additionalProperties": False,
 }
-TOOL_PARAM_SCHEMAS = {
-    "bypass_reason": _schema(
-        "string",
-        "Required explanation when intentionally bypassing trace-backed commit gates.",
-        max_length=BYPASS_REASON_MAX_LENGTH,
+TOOL_PARAM_SPECS = {
+    "bypass_reason": ToolParamSpec(
+        _schema(
+            "string",
+            "Required explanation when intentionally bypassing trace-backed commit gates.",
+            max_length=BYPASS_REASON_MAX_LENGTH,
+        ),
+        optional=True,
+        string_max_length=BYPASS_REASON_MAX_LENGTH,
     ),
-    "calls": {
-        "type": "array",
-        "description": "Read-only Arborist tool calls to execute in order.",
-        "items": BATCH_CALL_SCHEMA,
-        "minItems": 1,
-        "maxItems": MAX_BATCH_CALLS,
-    },
-    "db_path": _schema("string", "SQLite symbol-index database path."),
-    "depth_limit": _schema(
-        "integer",
-        "Maximum semantic skeleton expansion depth.",
+    "calls": ToolParamSpec(
+        {
+            "type": "array",
+            "description": "Read-only Arborist tool calls to execute in order.",
+            "items": BATCH_CALL_SCHEMA,
+            "minItems": 1,
+            "maxItems": MAX_BATCH_CALLS,
+        }
+    ),
+    "db_path": ToolParamSpec(_schema("string", "SQLite symbol-index database path.")),
+    "depth_limit": ToolParamSpec(
+        _schema(
+            "integer",
+            "Maximum semantic skeleton expansion depth.",
+            default=2,
+            minimum=0,
+        ),
+        optional=True,
         default=2,
-        minimum=0,
     ),
-    "direction": _schema(
-        "string",
-        "Graph direction to inspect.",
+    "direction": ToolParamSpec(
+        _schema(
+            "string",
+            "Graph direction to inspect.",
+            default="both",
+            enum=("callers", "callees", "both"),
+        ),
+        optional=True,
         default="both",
-        enum=("callers", "callees", "both"),
     ),
-    "dirty_only": _schema(
-        "boolean",
-        "When true, list only virtual files with unsaved changes.",
+    "dirty_only": ToolParamSpec(
+        _schema(
+            "boolean",
+            "When true, list only virtual files with unsaved changes.",
+            default=False,
+        ),
+        optional=True,
         default=False,
     ),
-    "edits": {
-        "type": "array",
-        "description": "Ordered LSP-style position edits to apply to an open virtual file.",
-        "items": POSITION_EDIT_SCHEMA,
-    },
-    "expand_nodes": {
-        "type": "array",
-        "description": "Semantic selectors to expand in the returned skeleton.",
-        "items": _schema("string", "Semantic selector."),
-    },
-    "file_path": _schema(
-        "string",
-        "Source file path. Python and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+    "edits": ToolParamSpec(
+        {
+            "type": "array",
+            "description": "Ordered LSP-style position edits to apply to an open virtual file.",
+            "items": POSITION_EDIT_SCHEMA,
+        }
     ),
-    "file_path_contains": _schema(
-        "string",
-        "Optional substring filter applied to indexed file paths.",
+    "expand_nodes": ToolParamSpec(
+        {
+            "type": "array",
+            "description": "Semantic selectors to expand in the returned skeleton.",
+            "items": _schema("string", "Semantic selector."),
+        },
+        optional=True,
     ),
-    "index_db_path": _schema(
-        "string",
-        "Optional persisted symbol-index database path.",
+    "file_path": ToolParamSpec(
+        _schema(
+            "string",
+            "Source file path. Python and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+        ),
+        source_anchored_optional_tools=_SOURCE_ANCHORED_FILE_PATH_TOOLS,
     ),
-    "limit": _schema("integer", "Maximum number of symbols to return.", minimum=0),
-    "max_depth": _schema(
-        "integer",
-        "Maximum graph expansion depth.",
+    "file_path_contains": ToolParamSpec(
+        _schema(
+            "string",
+            "Optional substring filter applied to indexed file paths.",
+        ),
+        optional=True,
+    ),
+    "index_db_path": ToolParamSpec(
+        _schema(
+            "string",
+            "Optional persisted symbol-index database path.",
+        ),
+        optional=True,
+    ),
+    "limit": ToolParamSpec(
+        _schema("integer", "Maximum number of symbols to return.", minimum=0),
+        optional=True,
+        default={"list": 100, "search": 20},
+    ),
+    "max_depth": ToolParamSpec(
+        _schema(
+            "integer",
+            "Maximum graph expansion depth.",
+            default=2,
+            minimum=0,
+        ),
+        optional=True,
         default=2,
-        minimum=0,
     ),
-    "max_nodes": _schema(
-        "integer",
-        "Maximum graph node count. Must be greater than zero.",
+    "max_nodes": ToolParamSpec(
+        _schema(
+            "integer",
+            "Maximum graph node count. Must be greater than zero.",
+            default=64,
+            minimum=1,
+        ),
+        optional=True,
         default=64,
-        minimum=1,
     ),
-    "max_captures": _schema(
-        "integer",
-        "Maximum Tree-sitter query captures to return. Must be greater than zero.",
+    "max_captures": ToolParamSpec(
+        _schema(
+            "integer",
+            "Maximum Tree-sitter query captures to return. Must be greater than zero.",
+            default=10000,
+            minimum=1,
+        ),
+        optional=True,
         default=10000,
-        minimum=1,
     ),
-    "max_files": _schema(
-        "integer",
-        "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+    "max_files": ToolParamSpec(
+        _schema(
+            "integer",
+            "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+            default=20000,
+            minimum=1,
+        ),
+        optional=True,
         default=20000,
-        minimum=1,
     ),
-    "new_code": _schema(
-        "string",
-        "Replacement source code for the selected AST node.",
-        max_length=TEXT_PARAM_MAX_LENGTH,
+    "new_code": ToolParamSpec(
+        _schema(
+            "string",
+            "Replacement source code for the selected AST node.",
+            max_length=TEXT_PARAM_MAX_LENGTH,
+        ),
+        string_max_length=TEXT_PARAM_MAX_LENGTH,
     ),
-    "new_text": _schema(
-        "string",
-        "Replacement text for a byte-range edit.",
-        allow_empty=True,
-        max_length=TEXT_PARAM_MAX_LENGTH,
+    "new_text": ToolParamSpec(
+        _schema(
+            "string",
+            "Replacement text for a byte-range edit.",
+            allow_empty=True,
+            max_length=TEXT_PARAM_MAX_LENGTH,
+        ),
+        string_max_length=TEXT_PARAM_MAX_LENGTH,
     ),
-    "node_kind": _schema("string", "Optional Tree-sitter node-kind filter."),
-    "old_end_byte": _schema(
-        "integer",
-        "Exclusive end byte of the old range.",
-        minimum=0,
+    "node_kind": ToolParamSpec(
+        _schema("string", "Optional Tree-sitter node-kind filter."),
+        optional=True,
     ),
-    "patch": JSON_OBJECT_SCHEMA,
-    "persist": _schema(
-        "boolean",
-        "When closing a virtual file, commit changes to disk before closing.",
+    "old_end_byte": ToolParamSpec(
+        _schema(
+            "integer",
+            "Exclusive end byte of the old range.",
+            minimum=0,
+        )
+    ),
+    "patch": ToolParamSpec(JSON_OBJECT_SCHEMA),
+    "persist": ToolParamSpec(
+        _schema(
+            "boolean",
+            "When closing a virtual file, commit changes to disk before closing.",
+            default=False,
+        ),
+        optional=True,
         default=False,
     ),
-    "position": POSITION_SCHEMA,
-    "query": _schema(
-        "string",
-        "Tree-sitter query or symbol search text.",
-        max_length=TREE_QUERY_MAX_LENGTH,
+    "position": ToolParamSpec(POSITION_SCHEMA),
+    "query": ToolParamSpec(
+        _schema(
+            "string",
+            "Tree-sitter query or symbol search text.",
+            max_length=TREE_QUERY_MAX_LENGTH,
+        )
     ),
-    "semantic_path": _schema("string", "Stable Arborist semantic selector."),
-    "source": _schema(
-        "string",
-        "Optional unsaved source buffer to analyze instead of reading from disk.",
-        allow_empty=True,
-        max_length=TEXT_PARAM_MAX_LENGTH,
+    "semantic_path": ToolParamSpec(_schema("string", "Stable Arborist semantic selector.")),
+    "source": ToolParamSpec(
+        _schema(
+            "string",
+            "Optional unsaved source buffer to analyze instead of reading from disk.",
+            allow_empty=True,
+            max_length=TEXT_PARAM_MAX_LENGTH,
+        ),
+        optional=True,
+        string_max_length=TEXT_PARAM_MAX_LENGTH,
     ),
-    "start_byte": _schema("integer", "Inclusive start byte for a buffer edit.", minimum=0),
-    "symbol_path": _schema("string", "Stable symbol path or symbol_id selector."),
-    "trace": JSON_OBJECT_SCHEMA,
-    "workspace_root": _schema(
-        "string",
-        "Workspace root for index, trace, and symbol operations.",
+    "start_byte": ToolParamSpec(
+        _schema("integer", "Inclusive start byte for a buffer edit.", minimum=0)
+    ),
+    "symbol_path": ToolParamSpec(_schema("string", "Stable symbol path or symbol_id selector.")),
+    "trace": ToolParamSpec(JSON_OBJECT_SCHEMA),
+    "workspace_root": ToolParamSpec(
+        _schema(
+            "string",
+            "Workspace root for index, trace, and symbol operations.",
+            default=".",
+        ),
+        optional=True,
         default=".",
     ),
 }
+TOOL_PARAM_SCHEMAS = {
+    name: spec.schema for name, spec in TOOL_PARAM_SPECS.items()
+}
+OPTIONAL_TOOL_PARAMS = frozenset(
+    name for name, spec in TOOL_PARAM_SPECS.items() if spec.optional
+)
+SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS = frozenset(
+    tool_name
+    for spec in TOOL_PARAM_SPECS.values()
+    for tool_name in spec.source_anchored_optional_tools
+)
 TOOL_PARAM_DEFAULTS = {
-    "depth_limit": 2,
-    "direction": "both",
-    "dirty_only": False,
-    "limit": {
-        "list": 100,
-        "search": 20,
-    },
-    "max_depth": 2,
-    "max_nodes": 64,
-    "max_captures": 10000,
-    "max_files": 20000,
-    "persist": False,
-    "workspace_root": ".",
+    name: spec.default
+    for name, spec in TOOL_PARAM_SPECS.items()
+    if spec.default is not None
 }
 STRING_PARAM_MAX_LENGTHS = {
-    "bypass_reason": BYPASS_REASON_MAX_LENGTH,
-    "new_code": TEXT_PARAM_MAX_LENGTH,
-    "new_text": TEXT_PARAM_MAX_LENGTH,
-    "source": TEXT_PARAM_MAX_LENGTH,
+    name: spec.string_max_length
+    for name, spec in TOOL_PARAM_SPECS.items()
+    if spec.string_max_length is not None
 }
 OBJECT_RESULT_SCHEMA = {
     "type": "object",

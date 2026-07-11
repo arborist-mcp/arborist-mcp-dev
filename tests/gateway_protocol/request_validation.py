@@ -157,6 +157,41 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         }
 
         self.assertEqual(expected_params, set(gateway_module.TOOL_PARAM_SCHEMAS))
+        self.assertEqual(expected_params, set(gateway_module.TOOL_PARAM_SPECS))
+
+    def test_tool_param_specs_drive_optional_defaults_and_length_maps(self) -> None:
+        self.assertEqual(
+            gateway_module.OPTIONAL_TOOL_PARAMS,
+            frozenset(
+                name
+                for name, spec in gateway_module.TOOL_PARAM_SPECS.items()
+                if spec.optional
+            ),
+        )
+        self.assertEqual(
+            gateway_module.TOOL_PARAM_DEFAULTS,
+            {
+                name: spec.default
+                for name, spec in gateway_module.TOOL_PARAM_SPECS.items()
+                if spec.default is not None
+            },
+        )
+        self.assertEqual(
+            gateway_module.STRING_PARAM_MAX_LENGTHS,
+            {
+                name: spec.string_max_length
+                for name, spec in gateway_module.TOOL_PARAM_SPECS.items()
+                if spec.string_max_length is not None
+            },
+        )
+        self.assertEqual(
+            gateway_module.SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS,
+            frozenset(
+                tool_name
+                for spec in gateway_module.TOOL_PARAM_SPECS.values()
+                for tool_name in spec.source_anchored_optional_tools
+            ),
+        )
 
     def test_generated_tool_catalog_matches_gateway_specs(self) -> None:
         catalog = gateway_module.build_tool_catalog()
