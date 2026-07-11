@@ -1,19 +1,19 @@
+mod index_bindings;
 mod json_args;
 mod patch_validation;
 mod symbol_queries;
+mod vfs_bindings;
 
 use std::cell::RefCell;
 use std::path::Path;
 
 use arborist_core::{
-    PatchAstNodeResult, Position, PositionEdit, TraceDirection, TraceSymbolGraphResult,
-    VirtualFileSystem, WorkspaceScanLimits, execute_tree_query_from_path_with_limit,
-    execute_tree_query_with_limit, get_semantic_skeleton, get_semantic_skeleton_from_path,
-    inspect_symbol_index, patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
-    preview_patch_ast_node_at_position, preview_patch_ast_node_at_position_from_path,
-    preview_patch_ast_node_from_path, rebuild_symbol_index_with_limits,
-    refresh_symbol_index_for_file_with_limits, replay_patch_evidence_against_trace,
-    supported_languages, validate_patch_commit_with_trace,
+    PatchAstNodeResult, Position, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
+    execute_tree_query_from_path_with_limit, execute_tree_query_with_limit, get_semantic_skeleton,
+    get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_at_position,
+    preview_patch_ast_node, preview_patch_ast_node_at_position,
+    preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
+    replay_patch_evidence_against_trace, supported_languages, validate_patch_commit_with_trace,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -1024,20 +1024,11 @@ impl ArboristCore {
         db_path: &str,
         max_files: usize,
     ) -> PyResult<String> {
-        let result = rebuild_symbol_index_with_limits(
-            Path::new(workspace_root),
-            Path::new(db_path),
-            WorkspaceScanLimits { max_files },
-        )
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.rebuild_symbol_index_json_impl(workspace_root, db_path, max_files)
     }
 
     fn inspect_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
-        let result = inspect_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.inspect_symbol_index_json_impl(db_path)
     }
 
     #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000))]
@@ -1048,70 +1039,31 @@ impl ArboristCore {
         file_path: &str,
         max_files: usize,
     ) -> PyResult<String> {
-        let result = refresh_symbol_index_for_file_with_limits(
-            Path::new(workspace_root),
-            Path::new(db_path),
-            Path::new(file_path),
-            WorkspaceScanLimits { max_files },
-        )
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.refresh_symbol_index_for_file_json_impl(workspace_root, db_path, file_path, max_files)
     }
 
     fn register_symbol_index_json(&self, workspace_root: &str, db_path: &str) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .register_symbol_index(Path::new(workspace_root), Path::new(db_path))
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.register_symbol_index_json_impl(workspace_root, db_path)
     }
 
     fn unregister_symbol_index_json(&self, workspace_root: &str) -> PyResult<bool> {
-        self.vfs
-            .borrow_mut()
-            .unregister_symbol_index(Path::new(workspace_root))
-            .map_err(to_py_error)
+        self.unregister_symbol_index_json_impl(workspace_root)
     }
 
     fn list_symbol_indexes_json(&self) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow()
-            .registered_symbol_indexes_checked()
-            .map_err(to_py_error)?;
-        to_json_result(&result)
+        self.list_symbol_indexes_json_impl()
     }
 
     fn open_virtual_file_json(&self, file_path: &str, source: Option<String>) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .open_file(Path::new(file_path), source.as_deref())
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.open_virtual_file_json_impl(file_path, source)
     }
 
     fn read_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .read_file(Path::new(file_path))
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.read_virtual_file_json_impl(file_path)
     }
 
     fn list_virtual_files_json(&self, dirty_only: bool) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .virtual_file_statuses(dirty_only)
-            .map_err(to_py_error)?;
-        to_json_result(&result)
+        self.list_virtual_files_json_impl(dirty_only)
     }
 
     fn apply_buffer_edit_json(
@@ -1121,55 +1073,24 @@ impl ArboristCore {
         old_end_byte: usize,
         new_text: &str,
     ) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .apply_edit(Path::new(file_path), start_byte, old_end_byte, new_text)
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.apply_buffer_edit_json_impl(file_path, start_byte, old_end_byte, new_text)
     }
 
     fn apply_position_edits_json(&self, file_path: &str, edits_json: &str) -> PyResult<String> {
-        let edits: Vec<PositionEdit> = parse_json_arg(edits_json)?;
-        let result = self
-            .vfs
-            .borrow_mut()
-            .apply_position_edits(Path::new(file_path), &edits)
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.apply_position_edits_json_impl(file_path, edits_json)
     }
 
     fn commit_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .commit_file(Path::new(file_path))
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.commit_virtual_file_json_impl(file_path)
     }
 
     fn discard_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .discard_file(Path::new(file_path))
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.discard_virtual_file_json_impl(file_path)
     }
 
     #[pyo3(signature = (file_path, persist=false))]
     fn close_virtual_file_json(&self, file_path: &str, persist: bool) -> PyResult<String> {
-        let result = self
-            .vfs
-            .borrow_mut()
-            .close_file(Path::new(file_path), persist)
-            .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.close_virtual_file_json_impl(file_path, persist)
     }
 }
 

@@ -1,6 +1,5 @@
-use super::{
-    ArboristCore, PatchAstNodeResult, PositionEdit, TraceSymbolGraphResult, parse_json_arg,
-};
+use super::{ArboristCore, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg};
+use arborist_core::PositionEdit;
 use std::sync::Once;
 
 fn prepare_python() {
