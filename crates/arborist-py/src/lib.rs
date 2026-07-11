@@ -1,4 +1,5 @@
 mod json_args;
+mod patch_validation;
 mod symbol_queries;
 
 use std::cell::RefCell;
@@ -12,19 +13,7 @@ use arborist_core::{
     preview_patch_ast_node_at_position, preview_patch_ast_node_at_position_from_path,
     preview_patch_ast_node_from_path, rebuild_symbol_index_with_limits,
     refresh_symbol_index_for_file_with_limits, replay_patch_evidence_against_trace,
-    supported_languages, validate_patch_commit_with_trace, validate_patch_with_discovery_context,
-    validate_patch_with_discovery_context_at_position,
-    validate_patch_with_discovery_context_at_position_from_index,
-    validate_patch_with_discovery_context_from_index, validate_patch_with_graph_context,
-    validate_patch_with_graph_context_at_position,
-    validate_patch_with_graph_context_at_position_from_index,
-    validate_patch_with_graph_context_from_index, validate_patch_with_neighborhood_context,
-    validate_patch_with_neighborhood_context_at_position,
-    validate_patch_with_neighborhood_context_at_position_from_index,
-    validate_patch_with_neighborhood_context_from_index, validate_patch_with_trace_context,
-    validate_patch_with_trace_context_at_position,
-    validate_patch_with_trace_context_at_position_from_index,
-    validate_patch_with_trace_context_from_index,
+    supported_languages, validate_patch_commit_with_trace,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -798,7 +787,6 @@ impl ArboristCore {
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
-    // Keep the Python binding signature aligned with the JSON-RPC parameter surface.
     #[allow(clippy::too_many_arguments)]
     fn validate_patch_with_trace_context_json(
         &self,
@@ -811,51 +799,16 @@ impl ArboristCore {
         direction: &str,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => validate_patch_with_trace_context_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-            ),
-            (Some(source), None) => validate_patch_with_trace_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_trace_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                )
-            }
-            (None, None) => self.vfs.borrow_mut().validate_patch_with_trace_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_trace_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
@@ -872,57 +825,17 @@ impl ArboristCore {
         direction: &str,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_trace_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                )
-            }
-            (Some(source), None) => validate_patch_with_trace_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_trace_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                )
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .validate_patch_with_trace_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_trace_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -940,59 +853,18 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => validate_patch_with_graph_context_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (Some(source), None) => validate_patch_with_graph_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_graph_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self.vfs.borrow_mut().validate_patch_with_graph_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_graph_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1011,65 +883,19 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_graph_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => validate_patch_with_graph_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_graph_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .validate_patch_with_graph_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_graph_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1087,64 +913,18 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_neighborhood_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => validate_patch_with_neighborhood_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_neighborhood_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .validate_patch_with_neighborhood_context(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_neighborhood_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1163,65 +943,19 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_neighborhood_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => validate_patch_with_neighborhood_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_neighborhood_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .validate_patch_with_neighborhood_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_neighborhood_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1239,61 +973,18 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_discovery_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => validate_patch_with_discovery_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_discovery_context_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    semantic_path,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self.vfs.borrow_mut().validate_patch_with_discovery_context(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                semantic_path,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_discovery_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
@@ -1312,68 +1003,21 @@ impl ArboristCore {
         max_nodes: usize,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let direction = parse_direction(direction)?;
-        let position = Position { row, column };
-        let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => {
-                validate_patch_with_discovery_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (Some(source), None) => validate_patch_with_discovery_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                max_depth,
-                max_nodes,
-            ),
-            (None, Some(index_db_path)) => {
-                let source =
-                    arborist_core::read_source(Path::new(file_path)).map_err(to_py_error)?;
-                validate_patch_with_discovery_context_at_position_from_index(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                )
-            }
-            (None, None) => self
-                .vfs
-                .borrow_mut()
-                .validate_patch_with_discovery_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
-                    &position,
-                    new_code,
-                    bypass_reason.as_deref(),
-                    direction,
-                    max_depth,
-                    max_nodes,
-                ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
+        self.validate_patch_with_discovery_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            index_db_path,
+        )
     }
 
-    #[pyo3(signature = (workspace_root, db_path, max_files=20_000))]
     fn rebuild_symbol_index_json(
         &self,
         workspace_root: &str,
