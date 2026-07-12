@@ -20,6 +20,17 @@ def _load_check_profile_module():
     return module
 
 
+def _load_version_consistency_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "scripts" / "version_consistency.py"
+    spec = importlib.util.spec_from_file_location("version_consistency", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
 
@@ -28,6 +39,7 @@ class CheckWorkflowTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.repo_root = Path(__file__).resolve().parents[1]
         cls.module = _load_check_profile_module()
+        cls.version_module = _load_version_consistency_module()
 
     def test_check_profile_snapshot_has_expected_profile_order(self) -> None:
         snapshot = self.module.build_snapshot()
@@ -186,6 +198,25 @@ class CheckWorkflowTests(unittest.TestCase):
         )
         self.assertIn("Gateway smoke checks passed.", completed.stdout)
 
+    def test_version_consistency_script_passes_for_repo_versions(self) -> None:
+        script_path = self.repo_root / "scripts" / "version_consistency.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("Version consistency checks passed.", completed.stdout)
+
+    def test_version_consistency_module_reads_matching_repo_versions(self) -> None:
+        versions = self.version_module.collect_versions(self.repo_root)
+        workspace_version = versions["cargo_workspace"]
+        self.assertEqual(versions["pyproject"], workspace_version)
+        self.assertEqual(versions["python_package"], workspace_version)
+        self.assertEqual(versions["cargo_lock:arborist-core"], workspace_version)
+        self.assertEqual(versions["cargo_lock:arborist-py"], workspace_version)
+
     def test_check_script_and_linux_ci_share_gateway_smoke_helper(self) -> None:
         check_script = (self.repo_root / "scripts" / "check.ps1").read_text(encoding="utf-8")
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
@@ -197,6 +228,17 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/gateway_smoke.py", workflow)
         self.assertIn("macos-basic:", workflow)
         self.assertNotIn("printf '%s\\n'", workflow)
+
+    def test_check_script_and_unix_ci_share_cross_platform_metadata_checks(self) -> None:
+        check_script = (self.repo_root / "scripts" / "check.ps1").read_text(encoding="utf-8")
+        workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("version_consistency.py", check_script)
+        self.assertIn('Join-Path $RepoRoot "scripts\\version_consistency.py"', check_script)
+        self.assertIn("python scripts/version_consistency.py", workflow)
+        self.assertIn("python scripts/tool_catalog.py --check", workflow)
 
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(

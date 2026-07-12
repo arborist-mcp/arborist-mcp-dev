@@ -44,10 +44,11 @@ python scripts/gateway_smoke.py --require-core
 python -m arborist_mcp.gateway --help
 ```
 
-Windows is the primary development environment today. Linux and macOS have
-basic CI coverage for Rust tests plus native-extension gateway smoke. Release
-wheel builds run on Windows, Linux, and macOS; the fuller native-extension
-profile matrix still runs on Windows.
+Windows is the primary development environment today. Linux and macOS CI also
+run cross-platform metadata checks for version consistency and the generated
+tool catalog, plus Rust tests and native-extension gateway smoke. Release wheel
+builds run on Windows, Linux, and macOS; the fuller native-extension profile
+matrix still runs on Windows.
 
 ## Common Checks
 
@@ -129,6 +130,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 python -m pip install .
+python scripts/version_consistency.py
 python scripts/gateway_smoke.py --require-core
 python -m unittest tests.test_gateway_protocol
 python -m unittest tests.gateway_protocol.request_validation

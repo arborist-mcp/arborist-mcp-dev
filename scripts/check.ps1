@@ -131,76 +131,18 @@ function Invoke-PowerShellSyntaxCheck {
     }
 }
 
-function Get-RequiredRegexValue {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [string]$Pattern,
-        [Parameter(Mandatory = $true)]
-        [string]$Description
-    )
-
-    $content = Get-Content -LiteralPath $Path -Raw
-    $match = [regex]::Match($content, $Pattern)
-    if (-not $match.Success) {
-        throw "Could not read $Description from $Path."
-    }
-
-    return $match.Groups[1].Value
-}
-
-function Get-CargoLockPackageVersion {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [string]$PackageName
-    )
-
-    $content = Get-Content -LiteralPath $Path -Raw
-    $escapedPackageName = [regex]::Escape($PackageName)
-    $pattern = '(?ms)^\[\[package\]\]\s*(?:(?!^\[\[package\]\]).)*?^name\s*=\s*"' + $escapedPackageName + '"\s*(?:(?!^\[\[package\]\]).)*?^version\s*=\s*"([^"]+)"'
-    $match = [regex]::Match($content, $pattern)
-    if (-not $match.Success) {
-        throw "Could not read Cargo.lock version for package $PackageName from $Path."
-    }
-
-    return $match.Groups[1].Value
-}
-
 function Invoke-VersionConsistencyCheck {
     param(
+        [Parameter(Mandatory = $true)]
+        [string]$Python,
         [Parameter(Mandatory = $true)]
         [string]$RepoRoot
     )
 
-    Write-Host "Checking version consistency..."
-    $pyprojectVersion = Get-RequiredRegexValue `
-        (Join-Path $RepoRoot "pyproject.toml") `
-        '(?ms)^\[project\]\s*(?:(?!^\[).)*?^version\s*=\s*"([^"]+)"' `
-        "pyproject version"
-    $cargoVersion = Get-RequiredRegexValue `
-        (Join-Path $RepoRoot "Cargo.toml") `
-        '(?ms)^\[workspace\.package\]\s*(?:(?!^\[).)*?^version\s*=\s*"([^"]+)"' `
-        "Cargo workspace version"
-    $packageVersion = Get-RequiredRegexValue `
-        (Join-Path $RepoRoot "python\arborist_mcp\_version.py") `
-        '(?m)^__version__\s*=\s*"([^"]+)"' `
-        "Python package version"
-
-    if ($pyprojectVersion -ne $cargoVersion -or $pyprojectVersion -ne $packageVersion) {
-        throw "Version mismatch: pyproject=$pyprojectVersion Cargo=$cargoVersion package=$packageVersion."
-    }
-
-    foreach ($packageName in @("arborist-core", "arborist-py")) {
-        $lockVersion = Get-CargoLockPackageVersion `
-            (Join-Path $RepoRoot "Cargo.lock") `
-            $packageName
-        if ($lockVersion -ne $cargoVersion) {
-            throw "Version mismatch: Cargo workspace=$cargoVersion Cargo.lock $packageName=$lockVersion."
-        }
-    }
+    Invoke-NativeOrThrow `
+        "Checking version consistency..." `
+        $Python `
+        @((Join-Path $RepoRoot "scripts\version_consistency.py"), "--repo-root", $RepoRoot)
 }
 
 function Invoke-ToolCatalogSnapshotCheck {
@@ -301,7 +243,7 @@ function Invoke-CheckProfile {
     switch ($handler) {
         "sanity" {
             Invoke-PowerShellSyntaxCheck
-            Invoke-VersionConsistencyCheck $RepoRoot
+            Invoke-VersionConsistencyCheck $Python $RepoRoot
             Invoke-ToolCatalogSnapshotCheck $Python $RepoRoot
             return
         }
