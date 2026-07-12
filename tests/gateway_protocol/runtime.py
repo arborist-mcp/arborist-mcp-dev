@@ -182,6 +182,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             rebuild_index["inputSchema"]["properties"]["max_files"]["default"], 20000
         )
         self.assertEqual(rebuild_index["inputSchema"]["properties"]["max_files"]["minimum"], 1)
+        self.assertEqual(
+            rebuild_index["inputSchema"]["properties"]["max_files"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_FILES,
+        )
         virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
             "result"
         ]
@@ -285,6 +289,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         )
         self.assertEqual(query["inputSchema"]["properties"]["max_captures"]["minimum"], 1)
         self.assertEqual(
+            query["inputSchema"]["properties"]["max_captures"]["maximum"],
+            gateway_module.TREE_QUERY_MAX_CAPTURES,
+        )
+        self.assertEqual(
             query["inputSchema"]["properties"]["query"]["maxLength"],
             gateway_module.TREE_QUERY_MAX_LENGTH,
         )
@@ -315,6 +323,18 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             ]["minimum"],
             1,
         )
+        self.assertEqual(
+            by_name["arborist/trace_symbol_neighborhood"]["inputSchema"]["properties"][
+                "max_nodes"
+            ]["maximum"],
+            gateway_module.MAX_GRAPH_NODES,
+        )
+        self.assertEqual(
+            by_name["arborist/trace_symbol_neighborhood"]["inputSchema"]["properties"][
+                "max_depth"
+            ]["maximum"],
+            gateway_module.MAX_GRAPH_DEPTH,
+        )
         self.assertIn("nodes", trace_neighborhood["required"])
         self.assertEqual(
             trace_neighborhood["properties"]["nodes"]["items"]["properties"]["depth"]["type"],
@@ -326,6 +346,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         )
         self.assertEqual(read_symbol["properties"]["symbol"]["additionalProperties"], False)
         list_symbols = by_name["arborist/list_symbols"]["outputSchema"]["properties"]["result"]
+        self.assertEqual(
+            by_name["arborist/list_symbols"]["inputSchema"]["properties"]["limit"]["maximum"],
+            gateway_module.MAX_SYMBOL_LIMIT,
+        )
         self.assertEqual(
             list_symbols["required"], ["indexed_files", "total_symbols", "truncated", "symbols"]
         )

@@ -31,6 +31,10 @@ from .tool_specs import (
     BATCH_ALLOWED_TOOLS,
     BYPASS_REASON_MAX_LENGTH,
     MAX_BATCH_CALLS,
+    MAX_GRAPH_DEPTH,
+    MAX_GRAPH_NODES,
+    MAX_SYMBOL_LIMIT,
+    MAX_WORKSPACE_SCAN_FILES,
     MCP_INITIALIZED_PARAM_NAMES,
     MCP_INITIALIZE_MARKERS,
     MCP_INITIALIZE_PARAM_NAMES,
@@ -58,6 +62,7 @@ from .tool_specs import (
     TOOL_SPECS,
     TOOL_SPECS_BY_NAME,
     TREE_QUERY_MAX_LENGTH,
+    TREE_QUERY_MAX_CAPTURES,
     WRITING_TOOLS,
     tool_param_spec,
     tool_spec,
@@ -1662,6 +1667,13 @@ class ArboristGateway:
             raise JsonRpcError(-32602, f"invalid int param: {key}")
         if value < 0:
             raise JsonRpcError(-32602, f"invalid non-negative int param: {key}")
+        param_spec = TOOL_PARAM_SPECS.get(key)
+        max_value = param_spec.int_max_value if param_spec is not None else None
+        if max_value is not None and value > max_value:
+            raise JsonRpcError(
+                -32602,
+                f"invalid int param: {key} exceeds maximum {max_value}",
+            )
         return value
 
     @staticmethod
@@ -1808,4 +1820,3 @@ class ArboristGateway:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

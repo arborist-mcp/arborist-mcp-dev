@@ -41,10 +41,11 @@ optional `return_type`, and optional `signature` / `docstring`.
 `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a
 capture belongs to a semantic symbol. Results are bounded by `max_captures`
 (default `10000`) so broad arbitrary queries fail closed instead of returning
-unbounded capture sets. Query text is also capped at 64 KiB before compilation,
-which keeps accidental or adversarial raw Tree-sitter queries from consuming
-unbounded parser resources. Its MCP `outputSchema` describes each capture field
-explicitly, including byte ranges and start/end points.
+unbounded capture sets. `max_captures` is capped at `100000`. Query text is also
+capped at 64 KiB before compilation, which keeps accidental or adversarial raw
+Tree-sitter queries from consuming unbounded parser resources. Its MCP
+`outputSchema` describes each capture field explicitly, including byte ranges
+and start/end points.
 
 `read_symbol` and `read_symbol_at_position` bridge discovery and action by
 returning structured symbol metadata plus the exact source snippet and start/end
@@ -112,7 +113,8 @@ returns the traced symbol, callers, callees, and `evidence_keys`.
 
 `trace_symbol_neighborhood` expands a trace into a bounded graph. Callers can
 control `direction`, `max_depth`, and `max_nodes`; `truncated` indicates the
-bounded expansion omitted reachable symbols.
+bounded expansion omitted reachable symbols. `max_depth` is capped at `64`, and
+`max_nodes` is capped at `10000` across trace, context, and patch-impact tools.
 
 `read_symbol_context`, `read_symbol_neighborhood_context`, and
 `read_symbol_discovery_context` combine source reads with trace and neighborhood
@@ -143,7 +145,8 @@ deleted file state when needed, reuses stored symbols for unchanged files, and
 persists a partial SQLite update. Workspace scans are bounded by `max_files`
 (default `20000`) on rebuilds and missing-index refresh fallbacks so
 unexpectedly large workspaces fail with an actionable limit error instead of
-scanning without bound.
+scanning without bound. `max_files` is capped at `200000`; symbol list/search
+`limit` values are capped at `10000`.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when

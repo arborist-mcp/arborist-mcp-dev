@@ -35996,7 +35996,8 @@
           "type": "integer",
           "description": "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
           "default": 20000,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 200000
         }
       },
       "required": [
@@ -38901,7 +38902,8 @@
           "type": "integer",
           "description": "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
           "default": 20000,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 200000
         }
       },
       "required": [
@@ -39508,13 +39510,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -40484,13 +40488,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "source": {
           "type": "string",
@@ -42834,13 +42840,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -43484,13 +43492,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "source": {
           "type": "string",
@@ -44109,13 +44119,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -45394,13 +45406,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "source": {
           "type": "string",
@@ -46638,6 +46652,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 100
         },
         "index_db_path": {
@@ -46855,6 +46870,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 100
         },
         "index_db_path": {
@@ -47271,6 +47287,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 100
         },
         "direction": {
@@ -47288,13 +47305,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -48074,6 +48093,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 100
         },
         "direction": {
@@ -48091,13 +48111,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -49072,6 +49094,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 20
         },
         "index_db_path": {
@@ -49339,6 +49362,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 20
         },
         "index_db_path": {
@@ -49805,6 +49829,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 20
         },
         "direction": {
@@ -49822,13 +49847,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -50658,6 +50685,7 @@
           "type": "integer",
           "description": "Maximum number of symbols to return.",
           "minimum": 0,
+          "maximum": 10000,
           "default": 20
         },
         "direction": {
@@ -50675,13 +50703,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -55319,13 +55349,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -57341,13 +57373,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -59347,13 +59381,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -61568,13 +61604,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -63773,13 +63811,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -66186,13 +66226,15 @@
           "type": "integer",
           "description": "Maximum graph expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "max_nodes": {
           "type": "integer",
           "description": "Maximum graph node count. Must be greater than zero.",
           "default": 64,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 10000
         },
         "index_db_path": {
           "type": "string",
@@ -68555,7 +68597,8 @@
           "type": "integer",
           "description": "Maximum Tree-sitter query captures to return. Must be greater than zero.",
           "default": 10000,
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 100000
         }
       },
       "required": [

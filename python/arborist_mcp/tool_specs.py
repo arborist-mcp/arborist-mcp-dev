@@ -15,6 +15,7 @@ class ToolParamSpec(NamedTuple):
     optional: bool = False
     default: Any = None
     string_max_length: int | None = None
+    int_max_value: int | None = None
     source_anchored_optional_tools: frozenset[str] = frozenset()
 
 
@@ -110,9 +111,14 @@ _SOURCE_ANCHORED_FILE_PATH_TOOLS = frozenset(
 )
 READ_ONLY_CATEGORIES = frozenset(("read", "trace"))
 TREE_QUERY_MAX_LENGTH = 64 * 1024
+TREE_QUERY_MAX_CAPTURES = 100_000
 TEXT_PARAM_MAX_LENGTH = 4 * 1024 * 1024
 BYPASS_REASON_MAX_LENGTH = 4 * 1024
 MAX_BATCH_CALLS = 32
+MAX_GRAPH_DEPTH = 64
+MAX_GRAPH_NODES = 10_000
+MAX_SYMBOL_LIMIT = 10_000
+MAX_WORKSPACE_SCAN_FILES = 200_000
 WRITING_TOOLS = frozenset(
     (
         "arborist/patch_ast_node",
@@ -154,6 +160,7 @@ def _schema(
     default: Any = None,
     enum: tuple[str, ...] | None = None,
     minimum: int | None = None,
+    maximum: int | None = None,
     min_items: int | None = None,
     max_length: int | None = None,
     allow_empty: bool = False,
@@ -165,6 +172,8 @@ def _schema(
         result["enum"] = list(enum)
     if minimum is not None:
         result["minimum"] = minimum
+    if maximum is not None:
+        result["maximum"] = maximum
     if min_items is not None:
         result["minItems"] = min_items
     if max_length is not None:
@@ -305,9 +314,15 @@ TOOL_PARAM_SPECS = {
         optional=True,
     ),
     "limit": ToolParamSpec(
-        _schema("integer", "Maximum number of symbols to return.", minimum=0),
+        _schema(
+            "integer",
+            "Maximum number of symbols to return.",
+            minimum=0,
+            maximum=MAX_SYMBOL_LIMIT,
+        ),
         optional=True,
         default={"list": 100, "search": 20},
+        int_max_value=MAX_SYMBOL_LIMIT,
     ),
     "max_depth": ToolParamSpec(
         _schema(
@@ -315,9 +330,11 @@ TOOL_PARAM_SPECS = {
             "Maximum graph expansion depth.",
             default=2,
             minimum=0,
+            maximum=MAX_GRAPH_DEPTH,
         ),
         optional=True,
         default=2,
+        int_max_value=MAX_GRAPH_DEPTH,
     ),
     "max_nodes": ToolParamSpec(
         _schema(
@@ -325,9 +342,11 @@ TOOL_PARAM_SPECS = {
             "Maximum graph node count. Must be greater than zero.",
             default=64,
             minimum=1,
+            maximum=MAX_GRAPH_NODES,
         ),
         optional=True,
         default=64,
+        int_max_value=MAX_GRAPH_NODES,
     ),
     "max_captures": ToolParamSpec(
         _schema(
@@ -335,9 +354,11 @@ TOOL_PARAM_SPECS = {
             "Maximum Tree-sitter query captures to return. Must be greater than zero.",
             default=10000,
             minimum=1,
+            maximum=TREE_QUERY_MAX_CAPTURES,
         ),
         optional=True,
         default=10000,
+        int_max_value=TREE_QUERY_MAX_CAPTURES,
     ),
     "max_files": ToolParamSpec(
         _schema(
@@ -345,9 +366,11 @@ TOOL_PARAM_SPECS = {
             "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
             default=20000,
             minimum=1,
+            maximum=MAX_WORKSPACE_SCAN_FILES,
         ),
         optional=True,
         default=20000,
+        int_max_value=MAX_WORKSPACE_SCAN_FILES,
     ),
     "new_code": ToolParamSpec(
         _schema(

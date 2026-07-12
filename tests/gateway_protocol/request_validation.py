@@ -185,6 +185,18 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             },
         )
         self.assertEqual(
+            {
+                name: spec.schema["maximum"]
+                for name, spec in gateway_module.TOOL_PARAM_SPECS.items()
+                if spec.int_max_value is not None
+            },
+            {
+                name: spec.int_max_value
+                for name, spec in gateway_module.TOOL_PARAM_SPECS.items()
+                if spec.int_max_value is not None
+            },
+        )
+        self.assertEqual(
             gateway_module.SOURCE_ANCHORED_OPTIONAL_FILE_PATH_TOOLS,
             frozenset(
                 tool_name
@@ -976,6 +988,71 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["id"], 57)
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_files", response["error"]["message"])
+
+    def test_rejects_excessive_bounded_integer_params_without_calling_core(self) -> None:
+        class StubCore:
+            def __getattr__(self, name: str) -> object:
+                raise AssertionError(f"core method should not be called: {name}")
+
+        cases = [
+            (
+                "arborist/search_symbols",
+                {
+                    "workspace_root": ".",
+                    "query": "helper",
+                    "limit": gateway_module.MAX_SYMBOL_LIMIT + 1,
+                },
+                "limit",
+            ),
+            (
+                "arborist/trace_symbol_neighborhood",
+                {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "max_nodes": gateway_module.MAX_GRAPH_NODES + 1,
+                },
+                "max_nodes",
+            ),
+            (
+                "arborist/trace_symbol_neighborhood",
+                {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "max_depth": gateway_module.MAX_GRAPH_DEPTH + 1,
+                },
+                "max_depth",
+            ),
+            (
+                "arborist/rebuild_symbol_index",
+                {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_files": gateway_module.MAX_WORKSPACE_SCAN_FILES + 1,
+                },
+                "max_files",
+            ),
+            (
+                "arborist/execute_tree_query",
+                {
+                    "file_path": "sample.py",
+                    "query": "(module) @root",
+                    "max_captures": gateway_module.TREE_QUERY_MAX_CAPTURES + 1,
+                },
+                "max_captures",
+            ),
+        ]
+
+        for index, (method, params, expected_param) in enumerate(cases, start=1):
+            with self.subTest(method=method, param=expected_param):
+                response = self.make_gateway(StubCore()).handle_request(
+                    self.request(method, params, request_id=340 + index)
+                )
+
+                self.assertEqual(response["jsonrpc"], "2.0")
+                self.assertEqual(response["id"], 340 + index)
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn(expected_param, response["error"]["message"])
+                self.assertIn("exceeds maximum", response["error"]["message"])
 
     def test_rejects_oversized_text_params_before_core_call(self) -> None:
         class StubCore:
