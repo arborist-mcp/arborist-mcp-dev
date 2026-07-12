@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from arborist_mcp.gateway import build_tool_catalog
+from arborist_mcp.tool_manifest import build_tool_catalog
 
 
 DEFAULT_SNAPSHOT_PATH = REPO_ROOT / "docs" / "tool-catalog.json"
@@ -25,8 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--check",
-        action="store_true",
-        help="Fail if the snapshot does not match the generated catalog.",
+        nargs="?",
+        const=DEFAULT_SNAPSHOT_PATH,
+        type=Path,
+        metavar="SNAPSHOT",
+        help="Fail if the snapshot does not match the generated catalog. Defaults to docs/tool-catalog.json.",
     )
     parser.add_argument(
         "--output",
@@ -46,8 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     payload = _catalog_json()
 
-    if args.check:
-        snapshot_path = args.snapshot
+    if args.check is not None:
+        snapshot_path = args.check
+        if snapshot_path == DEFAULT_SNAPSHOT_PATH and args.snapshot != DEFAULT_SNAPSHOT_PATH:
+            snapshot_path = args.snapshot
         try:
             existing = snapshot_path.read_text(encoding="utf-8")
         except FileNotFoundError:
