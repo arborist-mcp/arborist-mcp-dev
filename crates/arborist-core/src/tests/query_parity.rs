@@ -1266,10 +1266,16 @@ fn patches_python_symbol_at_position_from_decorator_line() {
     )
     .unwrap();
 
-    assert!(result.applied);
+    assert!(!result.applied);
     assert_eq!(result.resolved_path, "helper");
     assert_eq!(result.resolved_symbol_id, "helper");
-    assert!(!result.updated_source.contains("@decorator"));
+    assert!(
+        result
+            .validation
+            .syntax_errors
+            .iter()
+            .any(|issue| issue.kind == "decorator")
+    );
     assert!(result.updated_source.contains("return value + 2"));
 }
 

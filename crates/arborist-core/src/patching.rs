@@ -47,6 +47,22 @@ pub(crate) struct ReferenceValidation {
     binding_decisions: Vec<ValidationBindingDecision>,
 }
 
+pub(crate) struct PreparedPatchReplacement {
+    pub(crate) start_byte: usize,
+    pub(crate) end_byte: usize,
+    pub(crate) replacement: String,
+    pub(crate) validation_issues: Vec<ValidationIssue>,
+}
+
+struct SemanticTargetInfo {
+    language_id: LanguageId,
+    start_byte: usize,
+    end_byte: usize,
+    node_kind: String,
+    start_point: Position,
+    end_point: Position,
+}
+
 #[derive(Debug, Clone)]
 enum PythonImportBinding {
     Module {
@@ -91,11 +107,11 @@ pub fn semantic_target_at_position(
     }
 }
 
-pub(crate) fn semantic_target_range(
+fn semantic_target_info(
     path: &Path,
     source: &str,
     semantic_target: &str,
-) -> Result<(usize, usize)> {
+) -> Result<SemanticTargetInfo> {
     validate_semantic_target(semantic_target)?;
     let document = parse_document(path, source)?;
     let target_node = find_semantic_node(
@@ -108,7 +124,50 @@ pub(crate) fn semantic_target_range(
     .ok_or_else(|| anyhow!("semantic path not found: {semantic_target}"))?;
     let target_node = python_symbol_replacement_node(document.language_id, target_node);
 
-    Ok((target_node.start_byte(), target_node.end_byte()))
+    Ok(SemanticTargetInfo {
+        language_id: document.language_id,
+        start_byte: target_node.start_byte(),
+        end_byte: target_node.end_byte(),
+        node_kind: target_node.kind().to_string(),
+        start_point: position_from(target_node.start_position()),
+        end_point: position_from(target_node.end_position()),
+    })
+}
+
+pub(crate) fn prepare_patch_replacement(
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+) -> Result<PreparedPatchReplacement> {
+    let target = semantic_target_info(path, source, semantic_target)?;
+    let replacement = match target.language_id {
+        LanguageId::Python => {
+            normalize_python_replacement_indentation(source, target.start_byte, new_code)
+        }
+        LanguageId::C => new_code.to_string(),
+    };
+    let mut validation_issues = Vec::new();
+    if target.language_id == LanguageId::Python
+        && target.node_kind == "decorated_definition"
+        && !python_replacement_starts_with_decorator(&replacement)
+    {
+        validation_issues.push(ValidationIssue {
+            kind: "decorator".to_string(),
+            message: "replacement would remove existing Python decorator(s); include decorators in new_code or provide an explicit bypass_reason".to_string(),
+            start_byte: target.start_byte,
+            end_byte: target.end_byte,
+            start_point: target.start_point,
+            end_point: target.end_point,
+        });
+    }
+
+    Ok(PreparedPatchReplacement {
+        start_byte: target.start_byte,
+        end_byte: target.end_byte,
+        replacement,
+        validation_issues,
+    })
 }
 
 fn validate_semantic_target(semantic_target: &str) -> Result<()> {
@@ -161,9 +220,12 @@ pub(crate) fn build_patch_result(
     bypass_reason: Option<&str>,
     patch_start: usize,
     replacement_len: usize,
+    mut preflight_issues: Vec<ValidationIssue>,
 ) -> Result<PatchAstNodeResult> {
     let virtual_document = parse_document(path, &updated_source)?;
-    let syntax_errors = collect_syntax_errors(virtual_document.tree.root_node(), &updated_source);
+    let mut syntax_errors =
+        collect_syntax_errors(virtual_document.tree.root_node(), &updated_source);
+    syntax_errors.append(&mut preflight_issues);
 
     let mut validation = PatchValidationReport {
         syntax_errors,
@@ -315,6 +377,140 @@ pub(crate) fn collect_syntax_errors(root: Node<'_>, source: &str) -> Vec<Validat
     };
 
     visit_tree(root, &mut callback);
+    if root.kind() == "module" {
+        issues.extend(collect_python_indentation_issues(source));
+    }
+    issues
+}
+
+fn normalize_python_replacement_indentation(
+    source: &str,
+    target_start: usize,
+    new_code: &str,
+) -> String {
+    let dedented = dedent_python_replacement(new_code);
+    let ambient_indent = python_target_ambient_indent(source, target_start);
+    if ambient_indent.is_empty() {
+        return dedented;
+    }
+
+    let mut adjusted = String::with_capacity(dedented.len() + ambient_indent.len());
+    for (index, line) in split_preserving_newline(&dedented).into_iter().enumerate() {
+        if index > 0 && !line.trim().is_empty() {
+            adjusted.push_str(&ambient_indent);
+        }
+        adjusted.push_str(line);
+    }
+    adjusted
+}
+
+fn dedent_python_replacement(new_code: &str) -> String {
+    let indent = split_preserving_newline(new_code)
+        .iter()
+        .filter_map(|line| {
+            let content = line.trim_end_matches(['\r', '\n']);
+            (!content.trim().is_empty()).then(|| leading_indent_len(content))
+        })
+        .min()
+        .unwrap_or(0);
+
+    if indent == 0 {
+        return new_code.to_string();
+    }
+
+    let mut dedented = String::with_capacity(new_code.len());
+    for line in split_preserving_newline(new_code) {
+        let remove = indent.min(leading_indent_len(line));
+        dedented.push_str(&line[remove..]);
+    }
+    dedented
+}
+
+fn python_target_ambient_indent(source: &str, target_start: usize) -> String {
+    let line_start = source[..target_start]
+        .rfind('\n')
+        .map_or(0, |index| index + 1);
+    let prefix = &source[line_start..target_start];
+    if prefix.chars().all(|ch| ch == ' ' || ch == '\t') {
+        prefix.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn python_replacement_starts_with_decorator(replacement: &str) -> bool {
+    replacement
+        .lines()
+        .map(str::trim_start)
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(|line| line.starts_with('@'))
+}
+
+fn split_preserving_newline(value: &str) -> Vec<&str> {
+    if value.is_empty() {
+        return vec![""];
+    }
+
+    let mut lines = value.split_inclusive('\n').collect::<Vec<_>>();
+    if !value.ends_with('\n')
+        && let Some(last_newline) = value.rfind('\n')
+        && last_newline + 1 < value.len()
+        && lines.is_empty()
+    {
+        lines.push(&value[last_newline + 1..]);
+    }
+    lines
+}
+
+fn leading_indent_len(line: &str) -> usize {
+    line.as_bytes()
+        .iter()
+        .take_while(|byte| **byte == b' ' || **byte == b'\t')
+        .count()
+}
+
+fn collect_python_indentation_issues(source: &str) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let mut pending_block: Option<(usize, usize, usize)> = None;
+    let mut byte_start = 0usize;
+
+    for (row, line) in source.split_inclusive('\n').enumerate() {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let trimmed = content.trim();
+        let indent = leading_indent_len(content);
+
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            if let Some((header_indent, header_row, header_start)) = pending_block.take()
+                && indent <= header_indent
+            {
+                issues.push(ValidationIssue {
+                    kind: "indentation".to_string(),
+                    message: format!(
+                        "Python indentation appears invalid: expected an indented block after line {}",
+                        header_row + 1
+                    ),
+                    start_byte: byte_start,
+                    end_byte: byte_start + content.len(),
+                    start_point: Position {
+                        row,
+                        column: 0,
+                    },
+                    end_point: Position {
+                        row,
+                        column: content.len(),
+                    },
+                });
+                pending_block = Some((header_indent, header_row, header_start));
+            }
+
+            if trimmed.ends_with(':') {
+                pending_block = Some((indent, row, byte_start));
+            }
+        }
+
+        byte_start += line.len();
+    }
+
     issues
 }
 

@@ -433,7 +433,7 @@ impl ValidationIssue {
         ensure_nonblank(&self.kind, &format!("{prefix}.kind"))?;
         ensure_nonblank(&self.message, &format!("{prefix}.message"))?;
         match self.kind.as_str() {
-            "error" | "missing" => {}
+            "decorator" | "error" | "indentation" | "missing" => {}
             other => {
                 bail!("invalid {prefix}.kind: unsupported syntax issue kind `{other}`");
             }

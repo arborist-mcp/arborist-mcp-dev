@@ -178,12 +178,19 @@ fn patches_virtual_symbol_at_position_without_immediate_commit() {
         )
         .unwrap();
 
-    assert!(result.applied);
+    assert!(!result.applied);
     assert_eq!(result.resolved_path, "value");
+    assert!(
+        result
+            .validation
+            .syntax_errors
+            .iter()
+            .any(|issue| issue.kind == "decorator")
+    );
     let snapshot = vfs.read_file(&file).unwrap();
-    assert!(snapshot.dirty);
-    assert!(!snapshot.source.contains("@decorator"));
-    assert!(snapshot.source.contains("return 3"));
+    assert!(!snapshot.dirty);
+    assert!(snapshot.source.contains("@decorator"));
+    assert!(snapshot.source.contains("return 1"));
     assert!(fs::read_to_string(&file).unwrap().contains("@decorator"));
 }
 

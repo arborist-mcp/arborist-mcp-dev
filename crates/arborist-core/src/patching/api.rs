@@ -1,13 +1,12 @@
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::language::{normalize_absolute_path, normalize_path, read_source};
+use crate::language::{normalize_absolute_path, normalize_path, read_source, write_source_atomic};
 use crate::model::{PatchAstNodeResult, PatchPreviewResult, Position};
 
 use super::{
-    build_patch_result, semantic_target_at_position, semantic_target_range, splice_source,
+    build_patch_result, prepare_patch_replacement, semantic_target_at_position, splice_source,
     validate_bypass_reason, validate_patch_replacement,
 };
 
@@ -28,7 +27,7 @@ pub fn patch_ast_node_from_path(
     )?;
 
     if result.applied {
-        fs::write(&path, &result.updated_source)
+        write_source_atomic(&path, &result.updated_source)
             .with_context(|| format!("failed to write patched source to {}", path.display()))?;
     }
 
@@ -84,15 +83,20 @@ pub fn patch_ast_node(
     let path = normalize_absolute_path(path)?;
     validate_patch_replacement(new_code)?;
     validate_bypass_reason(bypass_reason)?;
-    let (start_byte, end_byte) = semantic_target_range(&path, source, semantic_target)?;
-    let updated_source = splice_source(source, start_byte..end_byte, new_code);
+    let prepared = prepare_patch_replacement(&path, source, semantic_target, new_code)?;
+    let updated_source = splice_source(
+        source,
+        prepared.start_byte..prepared.end_byte,
+        &prepared.replacement,
+    );
     build_patch_result(
         &path,
         semantic_target,
         updated_source,
         bypass_reason,
-        start_byte,
-        new_code.len(),
+        prepared.start_byte,
+        prepared.replacement.len(),
+        prepared.validation_issues,
     )
 }
 
@@ -175,7 +179,7 @@ fn unified_diff(path: &Path, old_source: &str, new_source: &str) -> String {
     let new_changed = &new_lines[prefix_len..new_lines.len() - suffix_len];
     let old_start = prefix_len + 1;
     let new_start = prefix_len + 1;
-    let path = normalize_path(path);
+    let path = normalize_path(path).trim_start_matches('/').to_string();
     let mut diff = format!(
         "--- a/{path}\n+++ b/{path}\n@@ -{},{} +{},{} @@\n",
         old_start,

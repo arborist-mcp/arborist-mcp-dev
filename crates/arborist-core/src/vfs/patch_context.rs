@@ -10,8 +10,8 @@ use crate::model::{
     PatchAstNodeResult, TraceBackedPatchResult, TraceDirection,
 };
 use crate::patching::{
-    build_patch_result, semantic_target_at_position, semantic_target_range, validate_bypass_reason,
-    validate_patch_replacement,
+    build_patch_result, prepare_patch_replacement, semantic_target_at_position,
+    validate_bypass_reason, validate_patch_replacement,
 };
 use crate::symbols::{
     read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
@@ -38,12 +38,12 @@ impl VirtualFileSystem {
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
-        let (start_byte, end_byte) = {
+        let prepared = {
             let entry = self
                 .entries
                 .get(&normalized)
                 .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-            semantic_target_range(&entry.path, &entry.source, semantic_target)?
+            prepare_patch_replacement(&entry.path, &entry.source, semantic_target, new_code)?
         };
 
         let previous = self
@@ -52,7 +52,12 @@ impl VirtualFileSystem {
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
             .clone();
 
-        self.apply_edit(&path, start_byte, end_byte, new_code)?;
+        self.apply_edit(
+            &path,
+            prepared.start_byte,
+            prepared.end_byte,
+            &prepared.replacement,
+        )?;
 
         let validation_result = {
             let entry = self
@@ -64,8 +69,9 @@ impl VirtualFileSystem {
                 semantic_target,
                 entry.source.clone(),
                 bypass_reason,
-                start_byte,
-                new_code.len(),
+                prepared.start_byte,
+                prepared.replacement.len(),
+                prepared.validation_issues,
             )
         };
 
