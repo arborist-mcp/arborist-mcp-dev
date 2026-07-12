@@ -240,6 +240,16 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("python scripts/version_consistency.py", workflow)
         self.assertIn("python scripts/tool_catalog.py --check", workflow)
 
+    def test_unix_ci_runs_rust_formatting_and_lint_checks(self) -> None:
+        workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("rustfmt", workflow)
+        self.assertIn("clippy", workflow)
+        self.assertIn("cargo fmt --check", workflow)
+        self.assertIn("cargo clippy --locked --all-targets -- -D warnings", workflow)
+
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
             encoding="utf-8"

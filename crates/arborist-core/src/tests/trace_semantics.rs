@@ -1784,20 +1784,25 @@ fn traces_python_instance_method_calls_across_files() {
     )
     .unwrap();
 
-    let live_trace = trace_symbol_graph(&dir, "Product.price_with_tax", TraceDirection::Both).unwrap();
-    assert!(live_trace
-        .callers
-        .iter()
-        .any(|symbol| symbol.semantic_path == "orchestrate"));
+    let live_trace =
+        trace_symbol_graph(&dir, "Product.price_with_tax", TraceDirection::Both).unwrap();
+    assert!(
+        live_trace
+            .callers
+            .iter()
+            .any(|symbol| symbol.semantic_path == "orchestrate")
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted_trace =
         trace_symbol_graph_from_index(&db_path, "Product.price_with_tax", TraceDirection::Both)
             .unwrap();
-    assert!(persisted_trace
-        .callers
-        .iter()
-        .any(|symbol| symbol.semantic_path == "orchestrate"));
+    assert!(
+        persisted_trace
+            .callers
+            .iter()
+            .any(|symbol| symbol.semantic_path == "orchestrate")
+    );
 }
 
 #[test]

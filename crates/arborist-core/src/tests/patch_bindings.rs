@@ -1272,7 +1272,11 @@ def top_level() -> int:
 
     assert!(result.applied);
     assert!(result.validation.syntax_errors.is_empty());
-    assert!(result.updated_source.contains("@decorator\ndef top_level() -> int:"));
+    assert!(
+        result
+            .updated_source
+            .contains("@decorator\ndef top_level() -> int:")
+    );
     assert!(result.updated_source.contains("return 2"));
 }
 
