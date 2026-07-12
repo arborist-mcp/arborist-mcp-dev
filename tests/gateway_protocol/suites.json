@@ -10,6 +10,11 @@
       "description": "Run gateway routing and JSON decoding tests with stub cores.",
       "requires_extension": false
     },
+    "gateway-symbol-routes-native": {
+      "module": "tests.gateway_protocol.symbol_routes_live",
+      "description": "Run live gateway symbol route tests against the synced native extension.",
+      "requires_extension": true
+    },
     "gateway-execution": {
       "module": "tests.gateway_protocol.execution",
       "description": "Run gateway execution tests against the synced native extension.",
@@ -18,7 +23,7 @@
     "gateway-trace-payloads": {
       "module": "tests.gateway_protocol.trace_payloads",
       "description": "Run trace payload validation and replay-shape tests.",
-      "requires_extension": false
+      "requires_extension": true
     },
     "gateway-management-routes": {
       "module": "tests.gateway_protocol.management_routes",
@@ -37,13 +42,14 @@
       "entries": [
         "gateway-request-validation",
         "gateway-symbol-routes",
-        "gateway-trace-payloads",
         "gateway-management-routes"
       ]
     },
     "gateway-native": {
       "description": "Run the gateway suites that execute against the synced native extension.",
       "entries": [
+        "gateway-symbol-routes-native",
+        "gateway-trace-payloads",
         "gateway-execution",
         "gateway-runtime"
       ]

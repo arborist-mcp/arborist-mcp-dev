@@ -2259,3 +2259,33 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
             self.assertEqual(result["total_symbols"], 1)
             self.assertEqual(result["symbols"][0]["semantic_path"], "orchestrate")
             self.assertEqual(result["symbols"][0]["file_path"], expected_file)
+
+
+_LIVE_CORE_TEST_NAMES = (
+    "test_trace_context_returns_trace_error_when_patch_gate_rejects",
+    "test_trace_context_returns_trace_error_when_patch_has_syntax_errors",
+    "test_trace_context_accepts_unsaved_source",
+    "test_graph_context_accepts_unsaved_source",
+    "test_neighborhood_context_accepts_unsaved_source",
+    "test_discovery_context_accepts_unsaved_source",
+    "test_trace_context_accepts_index_db_path_with_unsaved_source",
+    "test_trace_symbol_graph_accepts_index_db_path_with_unsaved_source",
+    "test_search_symbols_accepts_index_db_path_with_unsaved_source",
+    "test_read_at_position_accepts_unsaved_source",
+    "test_trace_graph_at_position_accepts_unsaved_source",
+    "test_discovery_context_at_position_accepts_unsaved_source",
+    "test_read_symbol_accepts_unsaved_source_with_file_anchor",
+    "test_trace_symbol_graph_accepts_unsaved_source_with_file_anchor",
+    "test_list_symbols_accepts_unsaved_source_with_file_anchor",
+)
+
+
+def _extract_live_core_tests() -> dict[str, object]:
+    extracted: dict[str, object] = {}
+    for test_name in _LIVE_CORE_TEST_NAMES:
+        extracted[test_name] = getattr(GatewaySymbolRouteTests, test_name)
+        delattr(GatewaySymbolRouteTests, test_name)
+    return extracted
+
+
+LIVE_CORE_TESTS = _extract_live_core_tests()

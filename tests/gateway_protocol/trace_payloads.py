@@ -4,7 +4,7 @@ from tests.gateway_protocol.helpers import GatewayProtocolTestCase, deep_merge
 from tests.gateway_protocol.semantic_fixtures import GatewaySemanticFixtureMixin
 
 SUITE_NAME = "gateway-trace-payloads"
-REQUIRES_EXTENSION = False
+REQUIRES_EXTENSION = True
 COVERED_TOOLS = (
     "arborist/replay_patch_evidence_against_trace",
     "arborist/validate_patch_commit_with_trace",

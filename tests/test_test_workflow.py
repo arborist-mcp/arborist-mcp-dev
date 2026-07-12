@@ -130,7 +130,7 @@ class TestWorkflowTests(unittest.TestCase):
         )
         lines = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
         self.assertEqual(lines[0], "rust    <- rust")
-        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 6 module(s)]")
+        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 5 module(s)]")
         self.assertEqual(
             lines[2:],
             [f"          {module_name}" for module_name in GROUP_MODULES["python-fast"]],
