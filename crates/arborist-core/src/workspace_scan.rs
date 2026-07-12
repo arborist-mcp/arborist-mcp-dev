@@ -97,9 +97,13 @@ fn walk_workspace(
             return Ok(());
         }
 
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            walk_workspace(workspace_root, &entry.path(), files, limits)?;
+        let mut entries = fs::read_dir(path)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort();
+
+        for entry_path in entries {
+            walk_workspace(workspace_root, &entry_path, files, limits)?;
         }
         return Ok(());
     }
@@ -107,8 +111,9 @@ fn walk_workspace(
     if detect_language(path).is_ok() {
         if files.len() >= limits.max_files {
             bail!(
-                "workspace scan file limit exceeded: max_files={}",
-                limits.max_files
+                "workspace scan file limit exceeded at {}: max_files={}",
+                path.display(),
+                limits.max_files,
             );
         }
         files.push(path.to_path_buf());
@@ -195,6 +200,19 @@ mod tests {
 
         assert!(error.to_string().contains("file limit exceeded"));
         assert!(error.to_string().contains("max_files=1"));
+    }
+
+    #[test]
+    fn collect_source_files_reports_deterministic_limit_overflow_path() {
+        let workspace = temporary_dir();
+        fs::write(workspace.join("b.py"), "def b():\n    return 2\n").unwrap();
+        fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();
+
+        let error =
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+                .expect_err("workspace scans should reject more files than max_files");
+
+        assert!(error.to_string().contains("b.py"));
     }
 
     #[test]
