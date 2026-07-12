@@ -1274,7 +1274,7 @@ fn patches_python_symbol_at_position_from_decorator_line() {
             .validation
             .syntax_errors
             .iter()
-            .any(|issue| issue.kind == "decorator")
+            .any(|issue| issue.kind == "decorator_guard")
     );
     assert!(result.updated_source.contains("return value + 2"));
 }

@@ -185,7 +185,7 @@ fn patches_virtual_symbol_at_position_without_immediate_commit() {
             .validation
             .syntax_errors
             .iter()
-            .any(|issue| issue.kind == "decorator")
+            .any(|issue| issue.kind == "decorator_guard")
     );
     let snapshot = vfs.read_file(&file).unwrap();
     assert!(!snapshot.dirty);

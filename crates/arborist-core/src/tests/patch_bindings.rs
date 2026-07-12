@@ -1244,7 +1244,7 @@ def top_level() -> int:
             .validation
             .syntax_errors
             .iter()
-            .any(|issue| issue.kind == "decorator")
+            .any(|issue| issue.kind == "decorator_guard")
     );
     assert!(result.updated_source.contains("def top_level() -> int:"));
     assert_eq!(result.resolved_path, "top_level");
@@ -1306,7 +1306,7 @@ class Container:
             .validation
             .syntax_errors
             .iter()
-            .any(|issue| issue.kind == "decorator")
+            .any(|issue| issue.kind == "decorator_guard")
     );
     assert!(result.updated_source.contains("class Container:"));
     assert_eq!(result.resolved_path, "Container");
@@ -1338,7 +1338,7 @@ async def top_level() -> int:
             .validation
             .syntax_errors
             .iter()
-            .any(|issue| issue.kind == "decorator")
+            .any(|issue| issue.kind == "decorator_guard")
     );
     assert!(
         result

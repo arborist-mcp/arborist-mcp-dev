@@ -156,7 +156,7 @@ pub(crate) fn prepare_patch_replacement(
         && !python_replacement_starts_with_decorator(&replacement)
     {
         validation_issues.push(ValidationIssue {
-            kind: "decorator".to_string(),
+            kind: "decorator_guard".to_string(),
             message: "replacement would remove existing Python decorator(s); include decorators in new_code or provide an explicit bypass_reason".to_string(),
             start_byte: target.start_byte,
             end_byte: target.end_byte,
