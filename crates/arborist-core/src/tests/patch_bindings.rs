@@ -1374,6 +1374,55 @@ class Product:
 }
 
 #[test]
+fn reindents_python_tab_indented_method_replacements_without_mixing_spaces() {
+    let source = "class Product:\n\tdef price_with_tax(self, rate: float) -> float:\n\t\treturn self.price\n";
+
+    let result = patch_ast_node(
+        Path::new("sample.py"),
+        source,
+        "Product.price_with_tax",
+        "def price_with_tax(self, rate: float) -> float:\n    return self.price * rate\n",
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        result.applied,
+        "{updated_source:?}\n{validation:#?}",
+        updated_source = result.updated_source,
+        validation = result.validation
+    );
+    assert!(result.validation.syntax_errors.is_empty());
+    assert!(result.updated_source.contains(
+        "class Product:\n\tdef price_with_tax(self, rate: float) -> float:\n\t\treturn self.price * rate\n"
+    ));
+    assert!(!result.updated_source.contains("\t    return"));
+}
+
+#[test]
+fn preserves_python_crlf_line_endings_in_replacements() {
+    let source = "def helper() -> int:\r\n    return 1\r\n";
+
+    let result = patch_ast_node(
+        Path::new("sample.py"),
+        source,
+        "helper",
+        "def helper() -> int:\n    return 2\n",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert!(result.validation.syntax_errors.is_empty());
+    assert!(
+        result
+            .updated_source
+            .contains("def helper() -> int:\r\n    return 2\r\n")
+    );
+    assert!(!result.updated_source.replace("\r\n", "").contains('\n'));
+}
+
+#[test]
 fn rejects_bad_python_nested_method_indentation_before_binding_validation() {
     let source = r#"
 class Product:
