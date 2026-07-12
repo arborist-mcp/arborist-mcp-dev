@@ -14,11 +14,15 @@ impl ArboristCore {
         workspace_root: &str,
         db_path: &str,
         max_files: usize,
+        max_file_bytes: Option<u64>,
     ) -> PyResult<String> {
         let result = rebuild_symbol_index_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
-            WorkspaceScanLimits { max_files },
+            WorkspaceScanLimits {
+                max_files,
+                max_file_bytes,
+            },
         )
         .map_err(to_py_error)?;
 
@@ -37,12 +41,16 @@ impl ArboristCore {
         db_path: &str,
         file_path: &str,
         max_files: usize,
+        max_file_bytes: Option<u64>,
     ) -> PyResult<String> {
         let result = refresh_symbol_index_for_file_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
             Path::new(file_path),
-            WorkspaceScanLimits { max_files },
+            WorkspaceScanLimits {
+                max_files,
+                max_file_bytes,
+            },
         )
         .map_err(to_py_error)?;
 

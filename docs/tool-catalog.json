@@ -35998,6 +35998,12 @@
           "default": 20000,
           "minimum": 1,
           "maximum": 200000
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "description": "Optional maximum byte size for each source file read while indexing. Must be greater than zero when supplied.",
+          "minimum": 1,
+          "maximum": 67108864
         }
       },
       "required": [
@@ -38904,6 +38910,12 @@
           "default": 20000,
           "minimum": 1,
           "maximum": 200000
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "description": "Optional maximum byte size for each source file read while indexing. Must be greater than zero when supplied.",
+          "minimum": 1,
+          "maximum": 67108864
         }
       },
       "required": [

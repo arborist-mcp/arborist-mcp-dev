@@ -25,12 +25,23 @@ pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceScanLimits {
     pub max_files: usize,
+    pub max_file_bytes: Option<u64>,
 }
 
 impl Default for WorkspaceScanLimits {
     fn default() -> Self {
         Self {
             max_files: DEFAULT_WORKSPACE_MAX_FILES,
+            max_file_bytes: None,
+        }
+    }
+}
+
+impl WorkspaceScanLimits {
+    pub fn with_max_files(max_files: usize) -> Self {
+        Self {
+            max_files,
+            ..Self::default()
         }
     }
 }
@@ -63,9 +74,38 @@ pub(crate) fn should_skip_index_path(workspace_root: &Path, path: &Path) -> bool
         })
 }
 
-fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {
+pub(crate) fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {
     if limits.max_files == 0 {
         bail!("invalid workspace scan max_files: value must be greater than zero");
+    }
+    if limits.max_file_bytes == Some(0) {
+        bail!("invalid workspace scan max_file_bytes: value must be greater than zero");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_source_file_size(path: &Path, limits: WorkspaceScanLimits) -> Result<()> {
+    let Some(max_file_bytes) = limits.max_file_bytes else {
+        return Ok(());
+    };
+
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("failed to inspect source file {}", path.display()))?;
+    validate_source_file_metadata(path, &metadata, max_file_bytes)
+}
+
+fn validate_source_file_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+    max_file_bytes: u64,
+) -> Result<()> {
+    if metadata.len() > max_file_bytes {
+        bail!(
+            "workspace scan source file too large at {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            metadata.len(),
+            max_file_bytes,
+        );
     }
     Ok(())
 }
@@ -109,6 +149,9 @@ fn walk_workspace(
     }
 
     if detect_language(path).is_ok() {
+        if let Some(max_file_bytes) = limits.max_file_bytes {
+            validate_source_file_metadata(path, &metadata, max_file_bytes)?;
+        }
         if files.len() >= limits.max_files {
             bail!(
                 "workspace scan file limit exceeded at {}: max_files={}",
@@ -195,7 +238,7 @@ mod tests {
         fs::write(workspace.join("b.py"), "def b():\n    return 2\n").unwrap();
 
         let error =
-            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
                 .expect_err("workspace scans should reject more files than max_files");
 
         assert!(error.to_string().contains("file limit exceeded"));
@@ -209,7 +252,7 @@ mod tests {
         fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();
 
         let error =
-            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
                 .expect_err("workspace scans should reject more files than max_files");
 
         assert!(error.to_string().contains("b.py"));
@@ -224,7 +267,7 @@ mod tests {
         fs::write(workspace.join("kept.py"), "def kept():\n    return 2\n").unwrap();
 
         let files =
-            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 1 })
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
                 .unwrap();
 
         assert_eq!(files, vec![workspace.join("kept.py")]);
@@ -246,7 +289,7 @@ mod tests {
         }
 
         let files =
-            collect_source_files_with_limits(&workspace, WorkspaceScanLimits { max_files: 2 })
+            collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(2))
                 .unwrap();
 
         assert_eq!(files, vec![workspace.join("kept.py")]);
@@ -266,12 +309,34 @@ mod tests {
             return;
         }
 
-        let files =
-            collect_source_files_with_limits(&workspace_link, WorkspaceScanLimits { max_files: 1 })
-                .unwrap();
+        let files = collect_source_files_with_limits(
+            &workspace_link,
+            WorkspaceScanLimits::with_max_files(1),
+        )
+        .unwrap();
 
         assert_eq!(files, vec![workspace_link.join("kept.py")]);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn collect_source_files_rejects_source_file_size_overflow() {
+        let workspace = temporary_dir();
+        let oversized = workspace.join("huge.py");
+        fs::write(&oversized, "def huge():\n    return 'too much'\n").unwrap();
+
+        let error = collect_source_files_with_limits(
+            &workspace,
+            WorkspaceScanLimits {
+                max_files: 10,
+                max_file_bytes: Some(8),
+            },
+        )
+        .expect_err("workspace scans should reject source files larger than max_file_bytes");
+
+        assert!(error.to_string().contains("source file too large"));
+        assert!(error.to_string().contains("max_file_bytes=8"));
+        assert!(error.to_string().contains("huge.py"));
     }
 
     fn temporary_dir() -> PathBuf {

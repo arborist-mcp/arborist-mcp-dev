@@ -186,6 +186,14 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             rebuild_index["inputSchema"]["properties"]["max_files"]["maximum"],
             gateway_module.MAX_WORKSPACE_SCAN_FILES,
         )
+        self.assertNotIn("max_file_bytes", rebuild_index["inputSchema"]["required"])
+        self.assertEqual(
+            rebuild_index["inputSchema"]["properties"]["max_file_bytes"]["minimum"], 1
+        )
+        self.assertEqual(
+            rebuild_index["inputSchema"]["properties"]["max_file_bytes"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_FILE_BYTES,
+        )
         virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
             "result"
         ]

@@ -29,7 +29,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
     ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
     ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path"), "index", "registered_symbol_index"),
-    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files"), "index", "symbol_index_stats"),
+    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files", "max_file_bytes"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
@@ -41,7 +41,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs", "virtual_edit"),
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path",), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files"), "index", "symbol_index_stats"),
+    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes"), "index", "symbol_index_stats"),
     ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "trace", "trace_symbol_graph"),
     ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "trace", "trace_symbol_neighborhood"),
     ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "trace", "trace_symbol_graph"),
@@ -119,6 +119,7 @@ MAX_GRAPH_DEPTH = 64
 MAX_GRAPH_NODES = 10_000
 MAX_SYMBOL_LIMIT = 10_000
 MAX_WORKSPACE_SCAN_FILES = 200_000
+MAX_WORKSPACE_SCAN_FILE_BYTES = 64 * 1024 * 1024
 WRITING_TOOLS = frozenset(
     (
         "arborist/patch_ast_node",
@@ -371,6 +372,16 @@ TOOL_PARAM_SPECS = {
         optional=True,
         default=20000,
         int_max_value=MAX_WORKSPACE_SCAN_FILES,
+    ),
+    "max_file_bytes": ToolParamSpec(
+        _schema(
+            "integer",
+            "Optional maximum byte size for each source file read while indexing. Must be greater than zero when supplied.",
+            minimum=1,
+            maximum=MAX_WORKSPACE_SCAN_FILE_BYTES,
+        ),
+        optional=True,
+        int_max_value=MAX_WORKSPACE_SCAN_FILE_BYTES,
     ),
     "new_code": ToolParamSpec(
         _schema(

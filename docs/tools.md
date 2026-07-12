@@ -145,8 +145,10 @@ deleted file state when needed, reuses stored symbols for unchanged files, and
 persists a partial SQLite update. Workspace scans are bounded by `max_files`
 (default `20000`) on rebuilds and missing-index refresh fallbacks so
 unexpectedly large workspaces fail with an actionable limit error instead of
-scanning without bound. `max_files` is capped at `200000`; symbol list/search
-`limit` values are capped at `10000`.
+scanning without bound. Rebuild and refresh calls can also provide
+`max_file_bytes` to reject oversized source files before indexing reads them;
+this optional limit is capped at `67108864`. `max_files` is capped at `200000`;
+symbol list/search `limit` values are capped at `10000`.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when

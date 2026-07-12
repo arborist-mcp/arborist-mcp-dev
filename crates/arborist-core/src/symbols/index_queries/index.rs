@@ -26,7 +26,10 @@ use crate::symbol_index_workspace::{
     expanded_refresh_file_paths, resolve_workspace_symbols_incremental_with_limits,
 };
 use crate::symbol_map::resolved_symbol_map;
-use crate::workspace_scan::{WorkspaceScanLimits, should_skip_index_path};
+use crate::workspace_scan::{
+    WorkspaceScanLimits, should_skip_index_path, validate_source_file_size,
+    validate_workspace_scan_limits,
+};
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
     rebuild_symbol_index_with_limits(workspace_root, db_path, WorkspaceScanLimits::default())
@@ -37,6 +40,7 @@ pub fn rebuild_symbol_index_with_limits(
     db_path: &Path,
     limits: WorkspaceScanLimits,
 ) -> Result<SymbolIndexStats> {
+    validate_workspace_scan_limits(limits)?;
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     if db_path.exists() {
@@ -87,6 +91,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     file_path: &Path,
     limits: WorkspaceScanLimits,
 ) -> Result<SymbolIndexStats> {
+    validate_workspace_scan_limits(limits)?;
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
@@ -131,6 +136,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         );
 
         if refresh_path.exists() && !skip_refresh_path {
+            validate_source_file_size(refresh_path, limits)?;
             let source = read_source(refresh_path)?;
             let document = parse_document(refresh_path, &source)?;
             let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;

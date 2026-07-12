@@ -17,7 +17,7 @@ use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
 use crate::workspace_scan::{
     WorkspaceScanLimits, collect_source_files, collect_source_files_with_limits,
-    should_skip_index_path,
+    should_skip_index_path, validate_source_file_size,
 };
 
 pub(crate) type IncrementalWorkspaceSymbols = (
@@ -137,6 +137,7 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_limits(
     let mut reused_files = 0;
 
     for path in indexed_paths {
+        validate_source_file_size(&path, limits)?;
         let source = read_source(&path)?;
         let normalized_path = normalize_path(&path);
         let fingerprint = source_fingerprint(&source);

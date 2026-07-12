@@ -989,6 +989,31 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_files", response["error"]["message"])
 
+    def test_rejects_zero_index_max_file_bytes(self) -> None:
+        class StubCore:
+            def rebuild_symbol_index_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway(StubCore())
+
+        response = gateway.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 58,
+                "method": "arborist/rebuild_symbol_index",
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_file_bytes": 0,
+                },
+            }
+        )
+
+        self.assertEqual(response["jsonrpc"], "2.0")
+        self.assertEqual(response["id"], 58)
+        self.assertEqual(response["error"]["code"], -32602)
+        self.assertIn("max_file_bytes", response["error"]["message"])
+
     def test_rejects_excessive_bounded_integer_params_without_calling_core(self) -> None:
         class StubCore:
             def __getattr__(self, name: str) -> object:
@@ -1030,6 +1055,15 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_files": gateway_module.MAX_WORKSPACE_SCAN_FILES + 1,
                 },
                 "max_files",
+            ),
+            (
+                "arborist/rebuild_symbol_index",
+                {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_file_bytes": gateway_module.MAX_WORKSPACE_SCAN_FILE_BYTES + 1,
+                },
+                "max_file_bytes",
             ),
             (
                 "arborist/execute_tree_query",
