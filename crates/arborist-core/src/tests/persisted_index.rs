@@ -132,6 +132,59 @@ fn refresh_existing_database_with_unrelated_symbols_table_does_not_migrate() {
 }
 
 #[test]
+fn rebuild_existing_database_with_unrelated_symbols_table_does_not_migrate() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("not-symbols.db");
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute("CREATE TABLE symbols (name TEXT NOT NULL)", [])
+        .unwrap();
+    drop(connection);
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+    let error = rebuild_symbol_index(&dir, &db_path)
+        .expect_err("rebuild should reject databases with non-index symbols tables");
+
+    assert!(error.to_string().contains("missing symbol index table"));
+    let connection = Connection::open(&db_path).unwrap();
+    assert_eq!(symbol_table_columns(&connection), vec!["name"]);
+    let created_table_count: usize = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name IN ('metadata', 'file_state')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(created_table_count, 0);
+}
+
+#[test]
+fn rebuild_existing_empty_database_does_not_initialize_schema() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("empty.db");
+    let connection = Connection::open(&db_path).unwrap();
+    drop(connection);
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+    let error = rebuild_symbol_index(&dir, &db_path)
+        .expect_err("rebuild should reject existing databases without symbol index tables");
+
+    assert!(error.to_string().contains("missing symbol index table"));
+    let connection = Connection::open(&db_path).unwrap();
+    let table_count: usize = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(table_count, 0);
+}
+
+#[test]
 fn refresh_existing_database_with_incomplete_symbol_columns_does_not_migrate() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

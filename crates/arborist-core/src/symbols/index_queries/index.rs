@@ -39,6 +39,13 @@ pub fn rebuild_symbol_index_with_limits(
 ) -> Result<SymbolIndexStats> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
+    if db_path.exists() {
+        let connection = Connection::open(&db_path)?;
+        require_symbol_index_tables(&connection, &db_path)?;
+        validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
+        load_indexed_files_metadata(&connection)?;
+        validate_symbol_index_schema_version(&connection, &db_path)?;
+    }
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
         resolve_workspace_symbols_incremental_with_limits(&workspace_root, &db_path, limits)?;
     persist_symbol_index(

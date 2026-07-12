@@ -134,13 +134,16 @@ a single allowed/status/reason decision.
 
 ## Symbol Index Tools
 
-`rebuild_symbol_index` creates or replaces a persisted SQLite symbol index.
-`refresh_symbol_index_for_file` reparses one changed file, removes deleted file
-state when needed, reuses stored symbols for unchanged files, and persists a
-partial SQLite update. Workspace scans are bounded by `max_files` (default
-`20000`) on rebuilds and missing-index refresh fallbacks so unexpectedly large
-workspaces fail with an actionable limit error instead of scanning without
-bound.
+`rebuild_symbol_index` creates a missing persisted SQLite symbol index or
+rebuilds an existing valid Arborist index for the same workspace. Existing
+non-index databases, incomplete schemas, unsupported schema versions, and
+indexes from other workspaces are rejected before any schema initialization or
+rewrite. `refresh_symbol_index_for_file` reparses one changed file, removes
+deleted file state when needed, reuses stored symbols for unchanged files, and
+persists a partial SQLite update. Workspace scans are bounded by `max_files`
+(default `20000`) on rebuilds and missing-index refresh fallbacks so
+unexpectedly large workspaces fail with an actionable limit error instead of
+scanning without bound.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when
