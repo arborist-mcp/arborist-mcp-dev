@@ -908,6 +908,21 @@ REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA = {
     "description": "Registered workspace-to-symbol-index mappings.",
     "items": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
 }
+SYMBOL_INDEX_MIGRATION_PLAN_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Machine-readable recommendation for making an inspected symbol index usable.",
+    "properties": {
+        "required": _schema("boolean", "Whether a migration, rebuild, or manual action is required."),
+        "action": _schema(
+            "string",
+            "Recommended action for the inspected symbol index.",
+            enum=("none", "rebuild", "manual"),
+        ),
+        "reason": _schema("string", "Why this migration action was selected."),
+    },
+    "required": ["required", "action", "reason"],
+    "additionalProperties": False,
+}
 SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
     "type": "object",
     "description": "Read-only diagnostic summary for a persisted symbol index.",
@@ -920,6 +935,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         "ok": _schema("boolean", "Whether the index passed all inspected health checks."),
         "schema_version": NULLABLE_STRING_RESULT_SCHEMA,
         "expected_schema_version": _schema("string", "Schema version supported by this Arborist build."),
+        "migration": SYMBOL_INDEX_MIGRATION_PLAN_RESULT_SCHEMA,
         "workspace_root": NULLABLE_STRING_RESULT_SCHEMA,
         "indexed_files": NULLABLE_INTEGER_RESULT_SCHEMA,
         "indexed_symbols": NULLABLE_INTEGER_RESULT_SCHEMA,
@@ -953,6 +969,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         "ok",
         "schema_version",
         "expected_schema_version",
+        "migration",
         "workspace_root",
         "indexed_files",
         "indexed_symbols",

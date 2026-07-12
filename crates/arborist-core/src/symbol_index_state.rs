@@ -17,7 +17,10 @@ use crate::language::{
     detect_language, normalize_absolute_path, normalize_path, parse_document,
     path_is_inside_workspace, read_source,
 };
-use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth, SymbolMeta};
+use crate::model::{
+    SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth, SymbolIndexMigrationPlan,
+    SymbolMeta,
+};
 use crate::symbol_dependency::{
     assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
 };
@@ -35,6 +38,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         ok: false,
         schema_version: None,
         expected_schema_version: SYMBOL_INDEX_SCHEMA_VERSION.to_string(),
+        migration: SymbolIndexMigrationPlan::none("symbol index inspection is pending"),
         workspace_root: None,
         indexed_files: None,
         indexed_symbols: None,
@@ -50,6 +54,9 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         health
             .issues
             .push(format!("symbol index {} does not exist", db_path.display()));
+        health.migration = SymbolIndexMigrationPlan::rebuild(
+            "symbol index is missing; rebuild_symbol_index can create it",
+        );
         health.validate_public_output()?;
         return Ok(health);
     }
@@ -67,6 +74,9 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
 
     if let Err(error) = require_symbol_index_tables(&connection, &db_path) {
         health.issues.push(error.to_string());
+        health.migration = SymbolIndexMigrationPlan::manual(
+            "database is not a complete Arborist symbol index; choose a new db_path or replace it explicitly",
+        );
         health.validate_public_output()?;
         return Ok(health);
     }
@@ -84,6 +94,9 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             "missing schema_version metadata in symbol index {}",
             db_path.display()
         ));
+        health.migration = SymbolIndexMigrationPlan::manual(
+            "schema_version metadata is missing; choose a new db_path or explicitly rebuild this index",
+        );
     } else if health.schema_version.as_deref() != Some(SYMBOL_INDEX_SCHEMA_VERSION) {
         health.issues.push(format!(
             "unsupported symbol index schema_version `{}` in {}; expected `{}`",
@@ -91,6 +104,9 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             db_path.display(),
             SYMBOL_INDEX_SCHEMA_VERSION
         ));
+        health.migration = SymbolIndexMigrationPlan::rebuild(
+            "stored schema_version is unsupported by this Arborist build; rebuild the symbol index",
+        );
     }
 
     match load_symbol_index_workspace_root(&connection, &db_path) {
@@ -124,6 +140,15 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     }
 
     health.ok = health.issues.is_empty();
+    if health.ok {
+        health.migration = SymbolIndexMigrationPlan::none(
+            "index schema and persisted file fingerprints are current",
+        );
+    } else if !health.migration.required {
+        health.migration = SymbolIndexMigrationPlan::rebuild(
+            "index health checks failed; rebuild after reviewing reported issues",
+        );
+    }
     health.validate_public_output()?;
     Ok(health)
 }

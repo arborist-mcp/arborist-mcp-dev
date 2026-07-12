@@ -2186,6 +2186,37 @@
                         "description": "Schema version supported by this Arborist build.",
                         "minLength": 1
                       },
+                      "migration": {
+                        "type": "object",
+                        "description": "Machine-readable recommendation for making an inspected symbol index usable.",
+                        "properties": {
+                          "required": {
+                            "type": "boolean",
+                            "description": "Whether a migration, rebuild, or manual action is required."
+                          },
+                          "action": {
+                            "type": "string",
+                            "description": "Recommended action for the inspected symbol index.",
+                            "enum": [
+                              "none",
+                              "rebuild",
+                              "manual"
+                            ],
+                            "minLength": 1
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "Why this migration action was selected.",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "required",
+                          "action",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      },
                       "workspace_root": {
                         "anyOf": [
                           {
@@ -2290,6 +2321,7 @@
                       "ok",
                       "schema_version",
                       "expected_schema_version",
+                      "migration",
                       "workspace_root",
                       "indexed_files",
                       "indexed_symbols",
@@ -36185,6 +36217,37 @@
               "description": "Schema version supported by this Arborist build.",
               "minLength": 1
             },
+            "migration": {
+              "type": "object",
+              "description": "Machine-readable recommendation for making an inspected symbol index usable.",
+              "properties": {
+                "required": {
+                  "type": "boolean",
+                  "description": "Whether a migration, rebuild, or manual action is required."
+                },
+                "action": {
+                  "type": "string",
+                  "description": "Recommended action for the inspected symbol index.",
+                  "enum": [
+                    "none",
+                    "rebuild",
+                    "manual"
+                  ],
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Why this migration action was selected.",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "required",
+                "action",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
             "workspace_root": {
               "anyOf": [
                 {
@@ -36289,6 +36352,7 @@
             "ok",
             "schema_version",
             "expected_schema_version",
+            "migration",
             "workspace_root",
             "indexed_files",
             "indexed_symbols",

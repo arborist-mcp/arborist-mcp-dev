@@ -483,11 +483,13 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "1");
+    assert_eq!(health.response_schema_version, "2");
     assert!(health.exists);
     assert!(health.ok);
     assert_eq!(health.schema_version.as_deref(), Some("1"));
     assert_eq!(health.expected_schema_version, "1");
+    assert!(!health.migration.required);
+    assert_eq!(health.migration.action, "none");
     assert_eq!(
         health.workspace_root.as_deref(),
         Some(normalize_path(&dir).as_str())
@@ -561,11 +563,37 @@ fn inspect_symbol_index_reports_missing_database_without_creating_it() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "1");
+    assert_eq!(health.response_schema_version, "2");
     assert!(!health.exists);
     assert!(!health.ok);
+    assert!(health.migration.required);
+    assert_eq!(health.migration.action, "rebuild");
     assert!(health.issues[0].contains("does not exist"));
     assert!(!db_path.exists());
+}
+
+#[test]
+fn inspect_symbol_index_reports_manual_action_for_non_index_database() {
+    let dir = temporary_dir();
+    let db_path = dir.join("not-symbols.db");
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute("CREATE TABLE symbols (name TEXT NOT NULL)", [])
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+
+    assert!(health.exists);
+    assert!(!health.ok);
+    assert!(health.migration.required);
+    assert_eq!(health.migration.action, "manual");
+    assert!(
+        health
+            .migration
+            .reason
+            .contains("not a complete Arborist symbol index")
+    );
 }
 
 #[test]
@@ -634,6 +662,8 @@ fn inspect_symbol_index_reports_schema_version_issues_without_migration() {
     assert!(health.exists);
     assert!(!health.ok);
     assert!(health.schema_version.is_none());
+    assert!(health.migration.required);
+    assert_eq!(health.migration.action, "manual");
     assert!(
         health
             .issues
@@ -668,6 +698,8 @@ fn inspect_symbol_index_reports_unsupported_schema_version_without_rewrite() {
 
     assert!(!health.ok);
     assert_eq!(health.schema_version.as_deref(), Some("99"));
+    assert!(health.migration.required);
+    assert_eq!(health.migration.action, "rebuild");
     assert!(
         health
             .issues

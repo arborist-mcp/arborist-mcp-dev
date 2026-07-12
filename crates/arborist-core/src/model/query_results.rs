@@ -9,7 +9,9 @@ mod list_search_results;
 mod read_results;
 mod virtual_results;
 
-pub use index_results::{RegisteredSymbolIndex, SymbolIndexHealth, SymbolIndexStats};
+pub use index_results::{
+    RegisteredSymbolIndex, SymbolIndexHealth, SymbolIndexMigrationPlan, SymbolIndexStats,
+};
 pub use list_search_results::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,

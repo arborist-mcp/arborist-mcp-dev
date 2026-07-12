@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
-pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "1";
+pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "2";
 
 mod patch_validation;
 mod primitives;
@@ -18,12 +18,13 @@ pub use primitives::{
     SemanticSkeletonSymbol, TraceDirection,
 };
 pub use query_results::{
-    RegisteredSymbolIndex, SymbolContextResult, SymbolIndexHealth, SymbolIndexStats,
-    SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
-    SymbolListResult, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
-    SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
-    SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    RegisteredSymbolIndex, SymbolContextResult, SymbolIndexHealth, SymbolIndexMigrationPlan,
+    SymbolIndexStats, SymbolListContextResult, SymbolListDiscoveryContextResult,
+    SymbolListNeighborhoodContextResult, SymbolListResult, SymbolNeighborhoodContextResult,
+    SymbolReadDiscoveryContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
+    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 pub(crate) use symbols::ensure_unique_symbol_evidence_keys;
 pub use symbols::{SymbolMeta, SymbolMetaInit, SymbolSummary, SymbolSummaryInit};

@@ -115,12 +115,17 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                     "db_path": "symbols.db",
                 },
                 "payload": {
-                    "response_schema_version": "1",
+                    "response_schema_version": "2",
                     "db_path": "symbols.db",
                     "exists": True,
                     "ok": True,
                     "schema_version": "1",
                     "expected_schema_version": "1",
+                    "migration": {
+                        "required": False,
+                        "action": "none",
+                        "reason": "index schema and persisted file fingerprints are current",
+                    },
                     "workspace_root": ".",
                     "indexed_files": 1,
                     "indexed_symbols": 1,

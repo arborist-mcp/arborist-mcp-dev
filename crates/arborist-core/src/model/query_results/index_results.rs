@@ -29,6 +29,7 @@ pub struct SymbolIndexHealth {
     pub ok: bool,
     pub schema_version: Option<String>,
     pub expected_schema_version: String,
+    pub migration: SymbolIndexMigrationPlan,
     pub workspace_root: Option<String>,
     pub indexed_files: Option<usize>,
     pub indexed_symbols: Option<usize>,
@@ -38,6 +39,14 @@ pub struct SymbolIndexHealth {
     pub missing_files: Vec<String>,
     pub unreadable_files: Vec<String>,
     pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolIndexMigrationPlan {
+    pub required: bool,
+    pub action: String,
+    pub reason: String,
 }
 
 impl SymbolIndexStats {
@@ -74,8 +83,14 @@ impl SymbolIndexHealth {
             &self.expected_schema_version,
             "symbol_index_health.expected_schema_version",
         )?;
+        self.migration.validate_public_output()?;
         if self.ok && !self.issues.is_empty() {
             bail!("invalid symbol_index_health.ok: expected healthy indexes to have no issues");
+        }
+        if self.ok && self.migration.required {
+            bail!(
+                "invalid symbol_index_health.migration: healthy indexes must not require migration"
+            );
         }
         if !self.ok && self.issues.is_empty() {
             bail!(
@@ -132,6 +147,49 @@ impl SymbolIndexHealth {
         }
         for (index, issue) in self.issues.iter().enumerate() {
             ensure_nonblank(issue, &format!("symbol_index_health.issues[{index}]"))?;
+        }
+        Ok(())
+    }
+}
+
+impl SymbolIndexMigrationPlan {
+    pub(crate) fn none(reason: &str) -> Self {
+        Self {
+            required: false,
+            action: "none".to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
+    pub(crate) fn rebuild(reason: &str) -> Self {
+        Self {
+            required: true,
+            action: "rebuild".to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
+    pub(crate) fn manual(reason: &str) -> Self {
+        Self {
+            required: true,
+            action: "manual".to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
+    fn validate_public_output(&self) -> Result<()> {
+        ensure_nonblank(&self.action, "symbol_index_health.migration.action")?;
+        ensure_nonblank(&self.reason, "symbol_index_health.migration.reason")?;
+        match self.action.as_str() {
+            "none" | "rebuild" | "manual" => {}
+            action => {
+                bail!("invalid symbol_index_health.migration.action: unsupported action `{action}`")
+            }
+        }
+        if !self.required && self.action != "none" {
+            bail!(
+                "invalid symbol_index_health.migration.required: optional migration must use action `none`"
+            );
         }
         Ok(())
     }
