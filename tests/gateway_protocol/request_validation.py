@@ -107,6 +107,41 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(gateway_module.__version__, arborist_mcp.__version__)
         self.assertEqual(gateway_module.__version__, version_module.__version__)
 
+    def test_repo_root_shim_extends_package_path_for_extra_install_locations(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            package_dir = Path(temp_dir) / "arborist_mcp"
+            package_dir.mkdir()
+            package_dir.joinpath("_probe.py").write_text(
+                "VALUE = 'probe-loaded'\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json, sys; "
+                        f"sys.path[:0] = [{str(repo_root)!r}, {temp_dir!r}]; "
+                        "import arborist_mcp; "
+                        "from arborist_mcp import _probe; "
+                        "print(json.dumps({'path': list(arborist_mcp.__path__), 'value': _probe.VALUE}))"
+                    ),
+                ],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["value"], "probe-loaded")
+        normalized_paths = [entry.replace("\\", "/") for entry in payload["path"]]
+        self.assertIn(str(package_dir).replace("\\", "/"), normalized_paths)
+
     def test_cli_version_reports_package_version(self) -> None:
         stdout = io.StringIO()
 
