@@ -116,8 +116,14 @@ fn walk_workspace(
     files: &mut Vec<PathBuf>,
     limits: WorkspaceScanLimits,
 ) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
+    let symlink_metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect workspace path {}", path.display()))?;
+    let metadata = if path == workspace_root && symlink_metadata.file_type().is_symlink() {
+        fs::metadata(path)
+            .with_context(|| format!("failed to inspect workspace path {}", path.display()))?
+    } else {
+        symlink_metadata
+    };
 
     if path != workspace_root
         && metadata.file_type().is_symlink()

@@ -1,7 +1,9 @@
+use std::cell::Cell;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use tree_sitter::{Query, QueryCursor, StreamingIterator};
+use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::language::{
     contains_kind, contains_node, language_for_id, normalize_absolute_path, normalize_path,
@@ -13,6 +15,8 @@ use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_pat
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
 pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
+pub const DEFAULT_TREE_QUERY_TIMEOUT_MICROS: u64 = 500_000;
+pub const DEFAULT_TREE_QUERY_MATCH_LIMIT: u32 = 32_768;
 
 pub fn execute_tree_query_from_path(path: &Path, query: &str) -> Result<Vec<QueryCaptureResult>> {
     execute_tree_query_from_path_with_limit(path, query, DEFAULT_TREE_QUERY_MAX_CAPTURES)
@@ -52,9 +56,21 @@ pub fn execute_tree_query_with_limit(
         .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(&path)))?;
 
     let mut cursor = QueryCursor::new();
+    cursor.set_match_limit(DEFAULT_TREE_QUERY_MATCH_LIMIT);
     let mut captures = Vec::new();
+    let deadline = Instant::now() + Duration::from_micros(DEFAULT_TREE_QUERY_TIMEOUT_MICROS);
+    let timed_out = Cell::new(false);
+    let mut progress_callback = |_: &tree_sitter::QueryCursorState| -> bool {
+        if Instant::now() >= deadline {
+            timed_out.set(true);
+            return false;
+        }
+        true
+    };
+    let options = QueryCursorOptions::new().progress_callback(&mut progress_callback);
 
-    let mut query_captures = cursor.captures(&compiled, root, source.as_bytes());
+    let mut query_captures =
+        cursor.captures_with_options(&compiled, root, source.as_bytes(), options);
     while let Some((query_match, capture_index)) = query_captures.next() {
         if captures.len() >= max_captures {
             bail!(
@@ -79,6 +95,22 @@ pub fn execute_tree_query_with_limit(
             start_point: position_from(node.start_position()),
             end_point: position_from(node.end_position()),
         });
+    }
+    drop(query_captures);
+
+    if timed_out.get() {
+        bail!(
+            "Tree-sitter query timed out for {} after {} microseconds",
+            normalize_path(&path),
+            DEFAULT_TREE_QUERY_TIMEOUT_MICROS
+        );
+    }
+    if cursor.did_exceed_match_limit() {
+        bail!(
+            "Tree-sitter query match limit exceeded for {}: match_limit={}",
+            normalize_path(&path),
+            DEFAULT_TREE_QUERY_MATCH_LIMIT
+        );
     }
 
     for (index, capture) in captures.iter().enumerate() {

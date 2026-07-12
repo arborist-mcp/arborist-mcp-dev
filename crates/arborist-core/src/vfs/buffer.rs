@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -12,7 +11,7 @@ use super::state::{
 };
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
-    parser_for_language, path_is_inside_workspace, point_for_offset,
+    parser_for_language, path_is_inside_workspace, point_for_offset, write_source_atomic,
 };
 use crate::model::{
     PatchValidationReport, PositionEdit, RegisteredSymbolIndex, SymbolIndexStats,
@@ -183,7 +182,7 @@ impl VirtualFileSystem {
                 .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
             if entry.dirty {
-                fs::write(&entry.path, &entry.source)
+                write_source_atomic(&entry.path, &entry.source)
                     .with_context(|| format!("failed to write {}", entry.path.display()))?;
                 entry.disk_source = entry.source.clone();
                 entry.dirty = false;

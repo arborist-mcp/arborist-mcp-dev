@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use rusqlite::Connection;
 
 use crate::index_schema::{
@@ -163,6 +163,8 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
     load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
+    let file_states = load_file_states(&connection)?;
+    ensure_symbol_index_fresh(db_path, &file_states, None)?;
     load_resolved_symbols(&connection)
 }
 
@@ -183,6 +185,7 @@ pub(crate) fn load_symbol_index_with_overrides(
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();
     let persisted_file_states = load_file_states(&connection)?;
+    ensure_symbol_index_fresh(db_path, &persisted_file_states, Some(file_overrides))?;
     let mut changed_file_paths = BTreeSet::new();
     let mut added_file_paths = BTreeSet::new();
 
@@ -280,4 +283,52 @@ fn inspect_symbol_index_freshness(
         }
     }
     health.fresh_file_count = Some(fresh_files);
+}
+
+fn ensure_symbol_index_fresh(
+    db_path: &Path,
+    file_states: &BTreeMap<String, u64>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<()> {
+    let issues = symbol_index_freshness_issues(file_states, file_overrides);
+    if issues.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "symbol index {} is stale; refresh_symbol_index_for_file or rebuild_symbol_index before querying: {}",
+        db_path.display(),
+        issues.join("; ")
+    );
+}
+
+fn symbol_index_freshness_issues(
+    file_states: &BTreeMap<String, u64>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Vec<String> {
+    let mut issues = Vec::new();
+    for (file_path, stored_fingerprint) in file_states {
+        if file_overrides.is_some_and(|overrides| overrides.contains_key(file_path)) {
+            continue;
+        }
+
+        let path = Path::new(file_path);
+        if !path.exists() {
+            issues.push(format!("indexed file is missing: {file_path}"));
+            continue;
+        }
+
+        match read_source(path) {
+            Ok(source) => {
+                let current_fingerprint = source_fingerprint(&source);
+                if current_fingerprint != *stored_fingerprint {
+                    issues.push(format!("indexed file is stale: {file_path}"));
+                }
+            }
+            Err(error) => {
+                issues.push(format!("failed to read indexed file {file_path}: {error}"));
+            }
+        }
+    }
+    issues
 }

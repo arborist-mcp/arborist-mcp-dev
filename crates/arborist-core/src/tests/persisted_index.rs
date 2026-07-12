@@ -10,9 +10,10 @@ use super::support::{
 };
 use crate::language::normalize_path;
 use crate::{
-    TraceDirection, WorkspaceScanLimits, inspect_symbol_index, rebuild_symbol_index,
-    rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
-    refresh_symbol_index_for_file_with_limits, trace_symbol_graph_from_index,
+    TraceDirection, WorkspaceScanLimits, inspect_symbol_index, read_symbol_from_index,
+    rebuild_symbol_index, rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
+    refresh_symbol_index_for_file_with_limits, search_symbols_from_index,
+    trace_symbol_graph_from_index,
 };
 
 #[test]
@@ -652,6 +653,33 @@ fn inspect_symbol_index_reports_stale_files() {
             .iter()
             .any(|issue| issue.contains("indexed file is stale"))
     );
+}
+
+#[test]
+fn persisted_index_queries_reject_stale_file_states() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 2\n").unwrap();
+
+    for error in [
+        read_symbol_from_index(&db_path, "helper")
+            .expect_err("read_symbol should reject stale persisted indexes")
+            .to_string(),
+        search_symbols_from_index(&db_path, "helper", 10)
+            .expect_err("search_symbols should reject stale persisted indexes")
+            .to_string(),
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("trace_symbol_graph should reject stale persisted indexes")
+            .to_string(),
+    ] {
+        assert!(error.contains("symbol index"));
+        assert!(error.contains("is stale"));
+        assert!(error.contains("indexed file is stale"));
+        assert!(error.contains("helper.py"));
+    }
 }
 
 #[test]
