@@ -22,7 +22,10 @@ pub(super) use self::filters::{
     is_python_parameter_symbol_name, is_python_with_target_name, python_enclosing_except_clause,
     python_nearest_scope_node,
 };
-use self::targets::{collect_python_reference_entries, collect_python_reference_targets};
+use self::targets::{
+    collect_python_instance_type_bindings, collect_python_reference_entries,
+    collect_python_reference_targets,
+};
 
 pub(super) fn collect_python_reference_validation(
     path: &Path,
@@ -134,12 +137,14 @@ pub(crate) fn collect_python_references(
 ) -> Result<()> {
     let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
     let local_bindings = collect_python_local_bindings(current_path, node, source)?;
+    let instance_bindings = collect_python_instance_type_bindings(node, source)?;
     collect_python_reference_entries(
         current_path,
         node,
         source,
         &bindings,
         &local_bindings,
+        &instance_bindings,
         references,
     )
 }

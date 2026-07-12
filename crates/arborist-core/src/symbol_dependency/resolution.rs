@@ -171,16 +171,18 @@ fn resolve_reference_path(
         )
         .ok()
         .flatten();
+        let class_method_path = format!("{module_hint}.{lookup_name}");
         let filtered = candidate_slice
             .iter()
             .copied()
             .filter(|index| {
-                python_symbol_matches_module_hint(
-                    source_symbol,
-                    &raw_symbols[*index],
-                    module_hint,
-                    imported_summary.as_ref(),
-                )
+                raw_symbols[*index].semantic_path == class_method_path
+                    || python_symbol_matches_module_hint(
+                        source_symbol,
+                        &raw_symbols[*index],
+                        module_hint,
+                        imported_summary.as_ref(),
+                    )
             })
             .collect::<Vec<_>>();
         if filtered.is_empty() {

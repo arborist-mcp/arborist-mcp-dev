@@ -1767,6 +1767,40 @@ fn traces_python_absolute_package_alias_import_calls_across_files() {
 }
 
 #[test]
+fn traces_python_instance_method_calls_across_files() {
+    let dir = temporary_dir();
+    let model = dir.join("product.py");
+    let caller = dir.join("orchestrate.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &model,
+        "class Product:\n    def price_with_tax(self, rate: float) -> float:\n        return self.price * rate\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "from product import Product\n\n\ndef orchestrate(rate: float) -> float:\n    product = Product()\n    return product.price_with_tax(rate)\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "Product.price_with_tax", TraceDirection::Both).unwrap();
+    assert!(live_trace
+        .callers
+        .iter()
+        .any(|symbol| symbol.semantic_path == "orchestrate"));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "Product.price_with_tax", TraceDirection::Both)
+            .unwrap();
+    assert!(persisted_trace
+        .callers
+        .iter()
+        .any(|symbol| symbol.semantic_path == "orchestrate"));
+}
+
+#[test]
 fn traces_python_import_from_module_alias_calls_across_files() {
     let dir = temporary_dir();
     let package = dir.join("pkg");

@@ -88,6 +88,7 @@ pub(super) fn collect_python_reference_entries(
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
     local_bindings: &[PythonAccessibleSymbol],
+    instance_bindings: &BTreeMap<String, String>,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     if node.kind() == "attribute"
@@ -103,6 +104,10 @@ pub(super) fn collect_python_reference_entries(
                 references.insert(format!("{module_name}.{attribute_name}"));
                 return Ok(());
             }
+            if let Some(type_name) = instance_bindings.get(&object_name) {
+                references.insert(format!("{type_name}.{attribute_name}"));
+                return Ok(());
+            }
         }
 
         collect_python_reference_entries(
@@ -111,6 +116,7 @@ pub(super) fn collect_python_reference_entries(
             source,
             bindings,
             local_bindings,
+            instance_bindings,
             references,
         )?;
         return Ok(());
@@ -159,8 +165,50 @@ pub(super) fn collect_python_reference_entries(
                 source,
                 bindings,
                 local_bindings,
+                instance_bindings,
                 references,
             )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub(super) fn collect_python_instance_type_bindings(
+    node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut bindings = BTreeMap::new();
+    collect_python_instance_type_bindings_inner(node, source, &mut bindings)?;
+    Ok(bindings)
+}
+
+fn collect_python_instance_type_bindings_inner(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, String>,
+) -> Result<()> {
+    if node.kind() == "assignment"
+        && let (Some(left), Some(right)) = (
+            node.child_by_field_name("left"),
+            node.child_by_field_name("right"),
+        )
+        && left.kind() == "identifier"
+        && matches!(right.kind(), "call" | "call_expression")
+        && let Some(function) = right.child_by_field_name("function")
+        && function.kind() == "identifier"
+    {
+        let variable_name = node_text(left, source)?.trim().to_string();
+        let type_name = node_text(function, source)?.trim().to_string();
+        if !variable_name.is_empty() && !type_name.is_empty() {
+            bindings.insert(variable_name, type_name);
+        }
+    }
+
+    let child_count = node.child_count();
+    for index in 0..child_count {
+        if let Some(child) = node.child(index) {
+            collect_python_instance_type_bindings_inner(child, source, bindings)?;
         }
     }
 
