@@ -328,7 +328,7 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                             "    return 1\n"
                         ),
                         "position": {"row": 3, "column": 1},
-                        "new_code": "def helper() -> int:\n    return 2\n",
+                        "new_code": "@decorator\ndef helper() -> int:\n    return 2\n",
                     },
                     request_id=102,
                 ),
@@ -339,6 +339,7 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             self.assertFalse(file_path.exists())
             self.assertTrue(result["applied"])
             self.assertEqual(result["resolved_path"], "helper")
+            self.assertIn("@decorator", result["updated_source"])
             self.assertIn("return 2", result["updated_source"])
 
     def test_preview_patch_ast_node_at_position_accepts_unsaved_source(self) -> None:
