@@ -296,7 +296,7 @@ TOOL_PARAM_SPECS = {
     "file_path": ToolParamSpec(
         _schema(
             "string",
-            "Source file path. Python and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+            "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
         ),
         source_anchored_optional_tools=_SOURCE_ANCHORED_FILE_PATH_TOOLS,
     ),
@@ -480,4 +480,3 @@ STRING_PARAM_MAX_LENGTHS = {
     for name, spec in TOOL_PARAM_SPECS.items()
     if spec.string_max_length is not None
 }
-

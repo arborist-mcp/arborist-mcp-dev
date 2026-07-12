@@ -87,8 +87,11 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked
 
+      - name: Install package with native extension
+        run: python -m pip install .
+
       - name: Check gateway smoke path
-        run: python scripts/gateway_smoke.py
+        run: python scripts/gateway_smoke.py --require-core
 
   macos-basic:
     name: macos-basic
@@ -114,5 +117,8 @@ jobs:
       - name: Run Rust tests
         run: cargo test --locked
 
+      - name: Install package with native extension
+        run: python -m pip install .
+
       - name: Check gateway smoke path
-        run: python scripts/gateway_smoke.py
+        run: python scripts/gateway_smoke.py --require-core

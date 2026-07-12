@@ -227,7 +227,7 @@ function Ensure-GatewayExtension {
         return
     }
 
-    Invoke-NativeOrThrow "Building gateway extension..." "cargo" @("build", "--locked", "-p", "arborist-py")
+    Invoke-NativeOrThrow "Building gateway extension..." "cargo" @("build", "--locked", "-p", "arborist-py", "--features", "extension-module")
     Invoke-ScriptOrThrow "Syncing gateway extension..." { & (Join-Path $PSScriptRoot "sync-extension.ps1") -SkipBuild }
     $script:GatewayExtensionPrepared = $true
 }

@@ -23,3 +23,4 @@ arborist-mcp = "arborist_mcp.gateway:main"
 python-source = "python"
 module-name = "arborist_mcp._arborist_core"
 manifest-path = "crates/arborist-py/Cargo.toml"
+features = ["extension-module"]

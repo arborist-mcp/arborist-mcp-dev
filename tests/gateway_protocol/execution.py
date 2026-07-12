@@ -259,6 +259,31 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             self.assertTrue(result["applied"])
             self.assertIn("return 2", result["updated_source"])
 
+    def test_patch_ast_node_rejects_writes_outside_server_workspace(self) -> None:
+        class StubCore:
+            def patch_ast_node_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        with self.temp_workspace() as workspace:
+            outside_file = workspace.joinpath("sample.py")
+            response = self.call_gateway(
+                self.make_gateway(StubCore()),
+                "arborist/patch_ast_node",
+                {
+                    "file_path": str(outside_file),
+                    "semantic_path": "top_level",
+                    "new_code": "def top_level() -> int:\n    return 2\n",
+                },
+                request_id=452,
+            )
+
+            self.assert_jsonrpc_error(
+                response,
+                request_id=452,
+                code=-32602,
+                contains="outside server workspace",
+            )
+
     def test_preview_patch_ast_node_returns_diff_without_writing_disk(self) -> None:
         with self.temp_workspace() as workspace:
             file_path = workspace.joinpath("sample.py")

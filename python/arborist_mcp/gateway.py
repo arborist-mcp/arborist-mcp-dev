@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import math
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -204,6 +205,18 @@ class ArboristGateway:
                 -32602,
                 "invalid params: file_path is required when source is provided",
             )
+
+    @staticmethod
+    def _ensure_write_path_inside_server_workspace(file_path: str) -> None:
+        workspace = Path.cwd().resolve()
+        candidate = Path(file_path).resolve(strict=False)
+        try:
+            candidate.relative_to(workspace)
+        except ValueError as exc:
+            raise JsonRpcError(
+                -32602,
+                f"invalid params: file_path is outside server workspace: {file_path}",
+            ) from exc
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         if not is_mcp_initialize(params):
@@ -450,6 +463,8 @@ class ArboristGateway:
         new_code = self._require_string(params, "new_code")
         source = self._optional_string(params, "source", allow_empty=True)
         bypass_reason = self._optional_string(params, "bypass_reason")
+        if source is None:
+            self._ensure_write_path_inside_server_workspace(file_path)
         payload = self._require_core().patch_ast_node_json(
             file_path,
             semantic_path,
@@ -465,6 +480,8 @@ class ArboristGateway:
         new_code = self._require_string(params, "new_code")
         source = self._optional_string(params, "source", allow_empty=True)
         bypass_reason = self._optional_string(params, "bypass_reason")
+        if source is None:
+            self._ensure_write_path_inside_server_workspace(file_path)
         payload = self._require_core().patch_ast_node_at_position_json(
             file_path,
             row,
@@ -1531,6 +1548,8 @@ class ArboristGateway:
     def _did_close(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         persist = self._optional_bool(params, "persist", default=False)
+        if persist:
+            self._ensure_write_path_inside_server_workspace(file_path)
         payload = self._require_core().close_virtual_file_json(file_path, persist)
         return self._decode_core_object(payload)
 
@@ -1564,6 +1583,7 @@ class ArboristGateway:
 
     def _commit_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
+        self._ensure_write_path_inside_server_workspace(file_path)
         payload = self._require_core().commit_virtual_file_json(file_path)
         return self._decode_core_object(payload)
 

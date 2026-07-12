@@ -28,7 +28,7 @@ Current layers:
 Arborist currently supports Python and C source files. Language routing is
 extension-based:
 
-- Python: `.py`
+- Python: `.py`, `.pyi`
 - C grammar: `.c`, `.h`, `.hpp`, `.hh`
 
 `.hpp` and `.hh` files are routed through the C grammar today. They are useful
@@ -63,6 +63,7 @@ python -m pip install --upgrade pip
 python -m pip install "maturin>=1.7,<2.0"
 maturin develop --locked
 .\scripts\sync-extension.ps1 -SkipBuild
+python scripts\gateway_smoke.py --require-core
 python -m arborist_mcp.gateway --help
 ```
 
@@ -80,6 +81,8 @@ python3 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install "maturin>=1.7,<2.0"
 maturin develop --locked
+python -m pip install .
+python scripts/gateway_smoke.py --require-core
 python -m arborist_mcp.gateway --help
 ```
 
@@ -126,6 +129,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 python scripts\tool_catalog.py --check
+python scripts\gateway_smoke.py --require-core
 python -m unittest tests.gateway_protocol.request_validation
 python -m arborist_mcp.gateway --help
 ```

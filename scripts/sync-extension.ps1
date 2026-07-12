@@ -27,7 +27,7 @@ Push-Location $repoRoot
 try {
     if (-not $SkipBuild) {
         Write-Host "Building arborist-py debug extension..."
-        Invoke-NativeOrThrow "Building arborist-py debug extension" "cargo" @("build", "--locked", "-p", "arborist-py")
+        Invoke-NativeOrThrow "Building arborist-py debug extension" "cargo" @("build", "--locked", "-p", "arborist-py", "--features", "extension-module")
     }
 } finally {
     Pop-Location
@@ -35,7 +35,7 @@ try {
 
 if (-not (Test-Path $source)) {
     if ($SkipBuild) {
-        throw "Compiled extension not found at $source. Re-run without -SkipBuild or build it first with cargo build --locked -p arborist-py."
+        throw "Compiled extension not found at $source. Re-run without -SkipBuild or build it first with cargo build --locked -p arborist-py --features extension-module."
     }
 
     throw "Compiled extension not found at $source after cargo build."

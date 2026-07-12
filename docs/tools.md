@@ -22,7 +22,7 @@ As of this revision, `tools/list` returns 53 tools:
 Arborist currently supports Python and C source files. Language routing is based
 on case-insensitive file extensions:
 
-- Python: `.py`
+- Python: `.py`, `.pyi`
 - C grammar: `.c`, `.h`, `.hpp`, `.hh`
 
 Important C++ caveat: `.hpp` and `.hh` are currently parsed with the C grammar.
@@ -41,7 +41,9 @@ optional `return_type`, and optional `signature` / `docstring`.
 `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a
 capture belongs to a semantic symbol. Results are bounded by `max_captures`
 (default `10000`) so broad arbitrary queries fail closed instead of returning
-unbounded capture sets. `max_captures` is capped at `100000`. Query text is also
+unbounded capture sets. `max_captures` is capped at `100000`, Tree-sitter match
+expansion is capped internally, and long-running queries stop after a short
+execution timeout. Query text is also
 capped at 64 KiB before compilation, which keeps accidental or adversarial raw
 Tree-sitter queries from consuming unbounded parser resources. Its MCP
 `outputSchema` describes each capture field explicitly, including byte ranges

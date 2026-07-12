@@ -39,11 +39,13 @@ python3 -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install "maturin>=1.7,<2.0"
 maturin develop --locked
+python -m pip install .
+python scripts/gateway_smoke.py --require-core
 python -m arborist_mcp.gateway --help
 ```
 
 Windows is the primary development environment today. Linux and macOS have
-basic CI coverage for Rust tests and pure-Python gateway smoke paths. Release
+basic CI coverage for Rust tests plus native-extension gateway smoke. Release
 wheel builds run on Windows, Linux, and macOS; the fuller native-extension
 profile matrix still runs on Windows.
 
@@ -126,6 +128,8 @@ The underlying commands are still useful for focused debugging:
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
+python -m pip install .
+python scripts/gateway_smoke.py --require-core
 python -m unittest tests.test_gateway_protocol
 python -m unittest tests.gateway_protocol.request_validation
 python -m unittest discover -s tests
@@ -135,7 +139,8 @@ python scripts\tool_catalog.py --check
 ```
 
 The gateway smoke helper can run without loading the native extension unless
-`--require-core` is supplied:
+`--require-core` is supplied. Use `python -m pip install .` first when you want
+Linux/macOS validation to exercise the compiled PyO3 extension path:
 
 ```powershell
 python scripts\gateway_smoke.py
@@ -145,7 +150,7 @@ python scripts\gateway_smoke.py --require-core
 ## Lightweight Benchmarks
 
 Use the benchmark helper after building the native extension with
-`maturin develop --locked`. It generates a small Python workspace and measures
+`maturin develop --locked` or `python -m pip install .`. It generates a small Python workspace and measures
 the core index and lookup workflows through the same gateway path used by MCP:
 
 ```powershell
@@ -167,6 +172,7 @@ Source checkouts can build locally with:
 
 ```bash
 maturin develop --locked
+python -m pip install .
 ```
 
 Release wheels should be built with:
@@ -192,7 +198,8 @@ not published yet.
   `python -m pip --version` points inside the intended virtual environment.
 - Rust: install a stable toolchain with `rustup`, then retry `cargo test
   --locked`.
-- Native extension: rerun `maturin develop --locked` after Rust changes.
+- Native extension: rerun `maturin develop --locked` or `python -m pip install .`
+  after Rust changes.
 - Repo-root gateway: `python -m arborist_mcp.gateway --help` requires the
   native `_arborist_core` module to be built or synced.
 - Virtual, shared, or network drives: retry from a local non-synced path if

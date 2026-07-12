@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
 
 from tests import GROUP_MODULES, build_manifest_snapshot
 from tests.gateway_protocol import GROUP_MODULES as GATEWAY_GROUP_MODULES
+
+POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
 
 class TestWorkflowTests(unittest.TestCase):
@@ -80,10 +83,11 @@ class TestWorkflowTests(unittest.TestCase):
         )
         self.assertFalse(plan["steps"][1]["requires_extension"])
 
+    @unittest.skipUnless(POWERSHELL, "PowerShell is required for test.ps1 contract checks")
     def test_test_script_lists_suites_from_snapshot(self) -> None:
         snapshot = build_manifest_snapshot()
         completed = subprocess.run(
-            ["powershell", "-File", "scripts/test.ps1", "-ListSuites"],
+            [POWERSHELL, "-File", "scripts/test.ps1", "-ListSuites"],
             cwd=self.repo_root,
             check=True,
             capture_output=True,
@@ -108,10 +112,11 @@ class TestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(lines, expected)
 
+    @unittest.skipUnless(POWERSHELL, "PowerShell is required for test.ps1 contract checks")
     def test_test_script_show_plan_reports_deduplicated_execution_steps(self) -> None:
         completed = subprocess.run(
             [
-                "powershell",
+                POWERSHELL,
                 "-File",
                 "scripts/test.ps1",
                 "-Suite",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
@@ -17,6 +18,9 @@ def _load_check_profile_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
 
 class CheckWorkflowTests(unittest.TestCase):
@@ -126,10 +130,11 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertEqual(plan["steps"][2]["suite"], "gateway-native")
         self.assertTrue(plan["steps"][4]["prepare_extension"])
 
+    @unittest.skipUnless(POWERSHELL, "PowerShell is required for check.ps1 contract checks")
     def test_check_script_lists_profiles_from_snapshot(self) -> None:
         snapshot = self.module.build_snapshot()
         completed = subprocess.run(
-            ["powershell", "-File", "scripts/check.ps1", "-ListProfiles"],
+            [POWERSHELL, "-File", "scripts/check.ps1", "-ListProfiles"],
             cwd=self.repo_root,
             check=True,
             capture_output=True,
@@ -142,10 +147,11 @@ class CheckWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(lines, expected)
 
+    @unittest.skipUnless(POWERSHELL, "PowerShell is required for check.ps1 contract checks")
     def test_check_script_show_plan_reports_deduplicated_leaf_profiles(self) -> None:
         completed = subprocess.run(
             [
-                "powershell",
+                POWERSHELL,
                 "-File",
                 "scripts/check.ps1",
                 "-Profile",
