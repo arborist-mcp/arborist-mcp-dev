@@ -295,16 +295,30 @@ pub(crate) fn splice_source(source: &str, range: Range<usize>, replacement: &str
 
 fn locate_patched_symbol<'tree>(
     document: &'tree ParsedDocument,
-    _source: &str,
+    source: &str,
     patch_start: usize,
     replacement_len: usize,
 ) -> Option<Node<'tree>> {
-    let patch_end = patch_start + replacement_len.saturating_sub(1);
+    let patch_end = replacement_content_end(source, patch_start, replacement_len)?;
     let root = document.tree.root_node();
     let descendant = root
         .named_descendant_for_byte_range(patch_start, patch_end)
         .or_else(|| root.named_descendant_for_byte_range(patch_start, patch_start))?;
     ascend_to_symbol(document.language_id, descendant)
+}
+
+fn replacement_content_end(
+    source: &str,
+    patch_start: usize,
+    replacement_len: usize,
+) -> Option<usize> {
+    let patch_end = patch_start.checked_add(replacement_len)?;
+    let replacement = source.get(patch_start..patch_end)?;
+    let content_len = replacement.trim_end().len();
+    if content_len == 0 {
+        return Some(patch_start);
+    }
+    Some(patch_start + content_len - 1)
 }
 
 fn python_symbol_replacement_node<'tree>(

@@ -1423,6 +1423,35 @@ fn preserves_python_crlf_line_endings_in_replacements() {
 }
 
 #[test]
+fn validates_python_crlf_replacement_bindings() {
+    let source = "def helper(value: int) -> int:\r\n    return value + 1\r\n";
+
+    let result = patch_ast_node(
+        Path::new("sample.py"),
+        source,
+        "helper",
+        "def helper(value: int) -> int:\n    return missing_helper(value)\n",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied);
+    assert_eq!(result.validation.commit_gate.status, "rejected");
+    assert_eq!(
+        result.validation.unresolved_identifiers,
+        vec!["missing_helper"]
+    );
+    assert!(
+        result
+            .validation
+            .binding_decisions
+            .iter()
+            .any(|decision| decision.name == "missing_helper" && decision.status == "unresolved")
+    );
+    assert!(!result.updated_source.replace("\r\n", "").contains('\n'));
+}
+
+#[test]
 fn rejects_bad_python_nested_method_indentation_before_binding_validation() {
     let source = r#"
 class Product:

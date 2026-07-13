@@ -606,6 +606,44 @@ fn trace_patch_context_uses_unsaved_workspace_overrides() {
 }
 
 #[test]
+fn trace_patch_context_rejects_unresolved_crlf_patch_bindings() {
+    let workspace = temp_workspace();
+    let caller_path = workspace.join("caller.py");
+    let original_source = "def orchestrate(value: int) -> int:\r\n    return value + 1\r\n";
+
+    fs::write(&caller_path, original_source).unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    let result = vfs
+        .validate_patch_with_trace_context(
+            &workspace,
+            &caller_path,
+            "orchestrate",
+            "def orchestrate(value: int) -> int:\n    return missing_helper(value)\n",
+            None,
+            TraceDirection::Both,
+        )
+        .unwrap();
+
+    assert!(!result.patch.applied);
+    assert_eq!(result.patch.validation.commit_gate.status, "rejected");
+    assert_eq!(
+        result.patch.validation.unresolved_identifiers,
+        vec!["missing_helper"]
+    );
+    assert!(result.trace.is_none());
+    assert!(result.trace_validation.is_none());
+    assert_eq!(
+        result.trace_error.as_deref(),
+        Some("trace skipped because patch validation rejected the patch")
+    );
+
+    let snapshot = vfs.read_file(&caller_path).unwrap();
+    assert_eq!(snapshot.source, original_source);
+    assert!(!snapshot.dirty);
+}
+
+#[test]
 fn trace_symbol_graph_ignores_virtual_files_in_skipped_dirs() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");
