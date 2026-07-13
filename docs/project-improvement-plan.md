@@ -38,7 +38,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Make the gateway-suite manifest helper expose the same basic CLI
   ergonomics as the Python-suite manifest helper, including descriptions or
   plan output if useful.
-- [ ] Reduce duplicated protocol error response construction in
+- [x] Reduce duplicated protocol error response construction in
   `python/arborist_mcp/gateway.py`.
 - [x] Centralize unexpected-parameter validation across MCP helper modules and
   legacy gateway routes.
@@ -101,12 +101,13 @@ completed item can land in its own commit unless two changes are inseparable.
 5. `refactor(gateway): extract lifecycle handlers`
 6. `refactor(gateway): share mcp param validation`
 7. `refactor(gateway): extract batch tool dispatch`
-8. `refactor(pyo3): consolidate shared wrapper arguments`
-9. `perf(scripts): broaden benchmark workflows`
-10. `ci(gateway): smoke installed console script`
-11. `feat(index): add schema migration scaffolding`
-12. `feat(index): add watch-mode refresh loop`
-13. `feat(core): add cpp grammar support`
+8. `refactor(gateway): use shared error responses`
+9. `refactor(pyo3): consolidate shared wrapper arguments`
+10. `perf(scripts): broaden benchmark workflows`
+11. `ci(gateway): smoke installed console script`
+12. `feat(index): add schema migration scaffolding`
+13. `feat(index): add watch-mode refresh loop`
+14. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
