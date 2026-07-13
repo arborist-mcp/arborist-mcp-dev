@@ -10,7 +10,8 @@ completed item can land in its own commit unless two changes are inseparable.
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
 - The largest production files are still large enough to slow review:
-  `python/arborist_mcp/gateway.py` is about 1750 lines and
+  `python/arborist_mcp/gateway.py` is now about 1686 lines after the first
+  protocol-helper splits, and
   `crates/arborist-py/src/lib.rs` is about 990 lines.
 - The README already names the main strategic gaps: Rust module splits, PyO3
   wrapper repetition, durable schema migrations, full C++ grammar support,
@@ -22,10 +23,10 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P0: Keep Existing Contracts Healthy
 
-- [ ] Run the documented inner loop and record any failures before larger work:
+- [x] Run the documented inner loop and record any failures before larger work:
   `.\scripts\test.ps1 -Suite inner-loop`.
-- [ ] Add missing regression tests for any reproducible failure found during
-  the inner loop.
+- [x] Add missing regression tests for any reproducible failure found during
+  the inner loop. No failures were found in the current run.
 - [ ] Keep `docs/tool-catalog.json` synchronized whenever tool schemas or
   result schemas change.
 - [ ] Keep `README.md`, `docs/protocol.md`, and `docs/tools.md` synchronized
@@ -33,15 +34,17 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P1: Small Reliability And Maintainability Fixes
 
-- [ ] Make the gateway-suite manifest helper expose the same basic CLI
+- [x] Make the gateway-suite manifest helper expose the same basic CLI
   ergonomics as the Python-suite manifest helper, including descriptions or
   plan output if useful.
 - [ ] Reduce duplicated protocol error response construction in
   `python/arborist_mcp/gateway.py`.
-- [ ] Move gateway resource handling into a focused helper module while keeping
+- [x] Move gateway resource handling into a focused helper module while keeping
   `gateway.py` as transport glue.
-- [ ] Move gateway tool-call dispatch helpers into a focused module without
+- [x] Move gateway tool-call dispatch helpers into a focused module without
   changing public response shapes.
+- [x] Move MCP initialize and initialized handling into a focused helper module
+  without changing core loading or response shapes.
 - [ ] Introduce shared PyO3 argument/context structs where wrappers repeatedly
   validate the same `workspace_root`, `file_path`, `index_db_path`, `source`,
   `symbol_path`, `direction`, `max_depth`, and `max_nodes` patterns.
@@ -88,10 +91,11 @@ completed item can land in its own commit unless two changes are inseparable.
 2. `test(gateway): improve gateway suite manifest coverage`
 3. `refactor(gateway): extract resource handlers`
 4. `refactor(gateway): extract tool dispatch helpers`
-5. `refactor(pyo3): consolidate shared wrapper arguments`
-6. `feat(index): add schema migration scaffolding`
-7. `feat(index): add watch-mode refresh loop`
-8. `feat(core): add cpp grammar support`
+5. `refactor(gateway): extract lifecycle handlers`
+6. `refactor(pyo3): consolidate shared wrapper arguments`
+7. `feat(index): add schema migration scaffolding`
+8. `feat(index): add watch-mode refresh loop`
+9. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
