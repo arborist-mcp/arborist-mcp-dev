@@ -16,11 +16,17 @@ EXPECTED_TOOL = "arborist/get_semantic_skeleton"
 
 def _run_gateway(
     python: str,
+    launcher: str,
     *arguments: str,
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    command = (
+        [python, "-m", "arborist_mcp.gateway", *arguments]
+        if launcher == "module"
+        else ["arborist-mcp", *arguments]
+    )
     return subprocess.run(
-        [python, "-m", "arborist_mcp.gateway", *arguments],
+        command,
         cwd=REPO_ROOT,
         input=input_text,
         check=True,
@@ -51,14 +57,19 @@ def _assert_jsonrpc_ok(response: Any, description: str, request_id: int) -> dict
     return result
 
 
-def _request_once(python: str, request: dict[str, Any], description: str) -> dict[str, Any]:
+def _request_once(
+    python: str,
+    launcher: str,
+    request: dict[str, Any],
+    description: str,
+) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         request_path = Path(handle.name)
         json.dump(request, handle, ensure_ascii=False)
         handle.write("\n")
 
     try:
-        completed = _run_gateway(python, "--once", str(request_path))
+        completed = _run_gateway(python, launcher, "--once", str(request_path))
     finally:
         request_path.unlink(missing_ok=True)
 
@@ -69,9 +80,15 @@ def _request_once(python: str, request: dict[str, Any], description: str) -> dic
     return _assert_jsonrpc_ok(response, description, request_id)
 
 
-def _request_stdio(python: str, request: dict[str, Any], description: str) -> dict[str, Any]:
+def _request_stdio(
+    python: str,
+    launcher: str,
+    request: dict[str, Any],
+    description: str,
+) -> dict[str, Any]:
     completed = _run_gateway(
         python,
+        launcher,
         input_text=json.dumps(request, ensure_ascii=False) + "\n",
     )
     response = _load_json(completed.stdout, description)
@@ -81,13 +98,13 @@ def _request_stdio(python: str, request: dict[str, Any], description: str) -> di
     return _assert_jsonrpc_ok(response, description, request_id)
 
 
-def check_cli(python: str) -> None:
-    _run_gateway(python, "--help")
-    _run_gateway(python, "--version")
+def check_cli(python: str, launcher: str) -> None:
+    _run_gateway(python, launcher, "--help")
+    _run_gateway(python, launcher, "--version")
 
 
-def check_tool_catalog_dump(python: str) -> None:
-    completed = _run_gateway(python, "--dump-tool-catalog")
+def check_tool_catalog_dump(python: str, launcher: str) -> None:
+    completed = _run_gateway(python, launcher, "--dump-tool-catalog")
     catalog = _load_json(completed.stdout, "gateway tool catalog dump")
     if not isinstance(catalog, list) or not catalog:
         raise RuntimeError("gateway tool catalog dump returned no tools")
@@ -100,9 +117,10 @@ def check_tool_catalog_dump(python: str) -> None:
         raise RuntimeError(f"gateway tool catalog dump did not include {EXPECTED_TOOL}")
 
 
-def check_tools_list(python: str) -> None:
+def check_tools_list(python: str, launcher: str) -> None:
     result = _request_stdio(
         python,
+        launcher,
         {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
         "MCP tools/list",
     )
@@ -118,9 +136,10 @@ def check_tools_list(python: str) -> None:
         raise RuntimeError(f"MCP tools/list did not include {EXPECTED_TOOL}")
 
 
-def check_initialize(python: str) -> None:
+def check_initialize(python: str, launcher: str) -> None:
     legacy = _request_once(
         python,
+        launcher,
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         "legacy gateway initialize",
     )
@@ -133,6 +152,7 @@ def check_initialize(python: str) -> None:
 
     mcp = _request_once(
         python,
+        launcher,
         {
             "jsonrpc": "2.0",
             "id": 2,
@@ -162,7 +182,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--python",
         default=sys.executable,
-        help="Python executable used to launch arborist_mcp.gateway.",
+        help="Python executable used with --launcher module.",
+    )
+    parser.add_argument(
+        "--launcher",
+        choices=("module", "console"),
+        default="module",
+        help=(
+            "Launch mode: 'module' runs python -m arborist_mcp.gateway; "
+            "'console' runs the installed arborist-mcp entry point."
+        ),
     )
     parser.add_argument(
         "--require-core",
@@ -171,11 +200,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    check_cli(args.python)
-    check_tool_catalog_dump(args.python)
-    check_tools_list(args.python)
+    check_cli(args.python, args.launcher)
+    check_tool_catalog_dump(args.python, args.launcher)
+    check_tools_list(args.python, args.launcher)
     if args.require_core:
-        check_initialize(args.python)
+        check_initialize(args.python, args.launcher)
     print("Gateway smoke checks passed.")
     return 0
 

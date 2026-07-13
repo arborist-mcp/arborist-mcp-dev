@@ -104,6 +104,9 @@ jobs:
       - name: Check gateway smoke path
         run: python scripts/gateway_smoke.py --require-core
 
+      - name: Check installed gateway console script
+        run: python scripts/gateway_smoke.py --launcher console --require-core
+
   macos-basic:
     name: macos-basic
     runs-on: macos-latest
@@ -144,3 +147,6 @@ jobs:
 
       - name: Check gateway smoke path
         run: python scripts/gateway_smoke.py --require-core
+
+      - name: Check installed gateway console script
+        run: python scripts/gateway_smoke.py --launcher console --require-core

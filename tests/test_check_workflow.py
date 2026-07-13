@@ -226,6 +226,7 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("gateway_smoke.py", check_script)
         self.assertIn("--require-core", check_script)
         self.assertIn("python scripts/gateway_smoke.py", workflow)
+        self.assertIn("python scripts/gateway_smoke.py --launcher console --require-core", workflow)
         self.assertIn("macos-basic:", workflow)
         self.assertNotIn("printf '%s\\n'", workflow)
 

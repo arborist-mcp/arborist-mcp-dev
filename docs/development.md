@@ -148,6 +148,7 @@ Linux/macOS validation to exercise the compiled PyO3 extension path:
 ```powershell
 python scripts\gateway_smoke.py
 python scripts\gateway_smoke.py --require-core
+python scripts\gateway_smoke.py --launcher console --require-core
 ```
 
 ## Lightweight Benchmarks
