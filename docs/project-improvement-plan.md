@@ -89,7 +89,7 @@ completed item can land in its own commit unless two changes are inseparable.
   patch replacement boundaries, and persisted-index loading.
 - [ ] Add benchmark regression thresholds once local benchmark variance is
   understood.
-- [ ] Add cross-platform smoke coverage for repo-root gateway startup and
+- [x] Add cross-platform smoke coverage for repo-root gateway startup and
   package-installed gateway startup.
 
 ## Suggested Commit Sequence
@@ -103,9 +103,10 @@ completed item can land in its own commit unless two changes are inseparable.
 7. `refactor(gateway): extract batch tool dispatch`
 8. `refactor(pyo3): consolidate shared wrapper arguments`
 9. `perf(scripts): broaden benchmark workflows`
-10. `feat(index): add schema migration scaffolding`
-11. `feat(index): add watch-mode refresh loop`
-12. `feat(core): add cpp grammar support`
+10. `ci(gateway): smoke installed console script`
+11. `feat(index): add schema migration scaffolding`
+12. `feat(index): add watch-mode refresh loop`
+13. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
