@@ -12,6 +12,7 @@ from .gateway_cli import (
     main as _gateway_main,
     run_stdio as _run_stdio,
 )
+from .batch_tools import batch_tools
 from .jsonrpc import (
     error_response as build_error_response,
     _reject_duplicate_object_keys,
@@ -33,7 +34,6 @@ from .tool_manifest import (
     required_tool_params,
 )
 from .tool_specs import (
-    BATCH_ALLOWED_TOOLS,
     BYPASS_REASON_MAX_LENGTH,
     MAX_BATCH_CALLS,
     MAX_GRAPH_DEPTH,
@@ -238,53 +238,7 @@ class ArboristGateway:
         return handler(params)
 
     def _batch(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        calls = params.get("calls")
-        if not isinstance(calls, list):
-            raise JsonRpcError(-32602, "missing required array param: calls")
-        if not calls:
-            raise JsonRpcError(-32602, "invalid params: calls must not be empty")
-        if len(calls) > MAX_BATCH_CALLS:
-            raise JsonRpcError(
-                -32602,
-                f"invalid params: calls must contain at most {MAX_BATCH_CALLS} entries",
-            )
-
-        results: list[dict[str, Any]] = []
-        for index, call in enumerate(calls):
-            if not isinstance(call, dict):
-                raise JsonRpcError(
-                    -32602,
-                    f"invalid params: calls[{index}] must be an object",
-                )
-            self._reject_unexpected_params(call, ("name", "arguments"))
-            tool_name = call.get("name")
-            if not isinstance(tool_name, str) or not tool_name.strip():
-                raise JsonRpcError(
-                    -32602,
-                    f"missing required string param: calls[{index}].name",
-                )
-            if tool_name not in TOOL_SPECS_BY_NAME:
-                raise JsonRpcError(-32602, f"unknown batch tool: {tool_name}")
-            if tool_name == "arborist/batch":
-                raise JsonRpcError(-32602, "batch calls may not include arborist/batch")
-            if tool_name not in BATCH_ALLOWED_TOOLS:
-                raise JsonRpcError(
-                    -32602,
-                    f"batch only supports read-only tools: {tool_name}",
-                )
-
-            arguments = call.get("arguments", {})
-            if not isinstance(arguments, dict):
-                raise JsonRpcError(
-                    -32602,
-                    f"invalid params: calls[{index}].arguments must be an object",
-                )
-            spec = tool_spec(tool_name)
-            self._reject_unexpected_params(arguments, spec.params)
-            handler = getattr(self, spec.handler)
-            results.append({"name": tool_name, "result": handler(arguments)})
-
-        return results
+        return batch_tools(params, self._execute_tool)
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
