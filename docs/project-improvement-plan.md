@@ -11,7 +11,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
 - The largest production files are still large enough to slow review:
   `python/arborist_mcp/gateway.py` is now about 1686 lines after the first
-  protocol-helper splits, and
+  protocol-helper splits and validation consolidation, and
   `crates/arborist-py/src/lib.rs` is about 990 lines.
 - The README already names the main strategic gaps: Rust module splits, PyO3
   wrapper repetition, durable schema migrations, full C++ grammar support,
@@ -39,6 +39,8 @@ completed item can land in its own commit unless two changes are inseparable.
   plan output if useful.
 - [ ] Reduce duplicated protocol error response construction in
   `python/arborist_mcp/gateway.py`.
+- [x] Centralize unexpected-parameter validation across MCP helper modules and
+  legacy gateway routes.
 - [x] Move gateway resource handling into a focused helper module while keeping
   `gateway.py` as transport glue.
 - [x] Move gateway tool-call dispatch helpers into a focused module without
@@ -48,6 +50,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Introduce shared PyO3 argument/context structs where wrappers repeatedly
   validate the same `workspace_root`, `file_path`, `index_db_path`, `source`,
   `symbol_path`, `direction`, `max_depth`, and `max_nodes` patterns.
+- [x] Introduce a shared PyO3 source-position helper as the first small step
+  toward consolidated wrapper arguments.
 
 ### P2: Core Architecture Improvements
 
@@ -92,10 +96,11 @@ completed item can land in its own commit unless two changes are inseparable.
 3. `refactor(gateway): extract resource handlers`
 4. `refactor(gateway): extract tool dispatch helpers`
 5. `refactor(gateway): extract lifecycle handlers`
-6. `refactor(pyo3): consolidate shared wrapper arguments`
-7. `feat(index): add schema migration scaffolding`
-8. `feat(index): add watch-mode refresh loop`
-9. `feat(core): add cpp grammar support`
+6. `refactor(gateway): share mcp param validation`
+7. `refactor(pyo3): consolidate shared wrapper arguments`
+8. `feat(index): add schema migration scaffolding`
+9. `feat(index): add watch-mode refresh loop`
+10. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
