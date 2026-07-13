@@ -23,6 +23,7 @@ from .jsonrpc import (
     serialize_response as _serialize_response,
     write_response as _write_response,
 )
+from .mcp_lifecycle import initialized, initialize, server_info
 from .mcp_tools import tools_call, tools_list
 from .resources import resources_list, resources_read
 from .tool_manifest import (
@@ -39,9 +40,6 @@ from .tool_specs import (
     MAX_SYMBOL_LIMIT,
     MAX_WORKSPACE_SCAN_FILE_BYTES,
     MAX_WORKSPACE_SCAN_FILES,
-    MCP_INITIALIZED_PARAM_NAMES,
-    MCP_INITIALIZE_MARKERS,
-    MCP_INITIALIZE_PARAM_NAMES,
     MCP_PROTOCOL_VERSION,
     MUTATING_TOOLS,
     NON_MUTATING_STATE_TOOLS,
@@ -75,10 +73,6 @@ from .tool_result_schemas import (
     SYMBOL_LIST_RESULT_SCHEMA,
     TOOL_RESULT_SCHEMAS,
 )
-
-
-def is_mcp_initialize(params: dict[str, Any]) -> bool:
-    return bool(MCP_INITIALIZE_MARKERS & set(params))
 
 
 def build_parser():
@@ -216,52 +210,14 @@ class ArboristGateway:
             ) from exc
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
-        if not is_mcp_initialize(params):
-            self._reject_unexpected_params(params, ())
-            return {
-                "serverInfo": self._server_info(),
-                "capabilities": {
-                    "tools": list(TOOL_NAMES),
-                    "resources": build_resource_catalog(),
-                },
-                "supportedLanguages": self._require_core().supported_languages(),
-            }
-
-        self._reject_unexpected_params(params, MCP_INITIALIZE_PARAM_NAMES)
-        self._optional_string(
+        return initialize(
             params,
-            "protocolVersion",
-            default=MCP_PROTOCOL_VERSION,
+            server_info=server_info(__version__),
+            supported_languages=lambda: self._require_core().supported_languages(),
         )
-        capabilities = params.get("capabilities", {})
-        if not isinstance(capabilities, dict):
-            raise JsonRpcError(-32602, "invalid params: capabilities must be an object")
-        client_info = params.get("clientInfo", {})
-        if not isinstance(client_info, dict):
-            raise JsonRpcError(-32602, "invalid params: clientInfo must be an object")
-
-        return {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {
-                "tools": {
-                    "listChanged": False,
-                },
-                "resources": {
-                    "subscribe": False,
-                    "listChanged": False,
-                },
-            },
-            "serverInfo": self._server_info(),
-            "instructions": (
-                "Use tools/list to discover Arborist tools and tools/call with "
-                "arguments matching each tool inputSchema."
-            ),
-            "supportedLanguages": self._require_core().supported_languages(),
-        }
 
     def _initialized(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._reject_unexpected_params(params, MCP_INITIALIZED_PARAM_NAMES)
-        return {}
+        return initialized(params)
 
     def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         return tools_list(params)
@@ -328,13 +284,6 @@ class ArboristGateway:
             results.append({"name": tool_name, "result": handler(arguments)})
 
         return results
-
-    @staticmethod
-    def _server_info() -> dict[str, Any]:
-        return {
-            "name": "arborist-mcp",
-            "version": __version__,
-        }
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
