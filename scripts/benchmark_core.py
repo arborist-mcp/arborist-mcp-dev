@@ -88,15 +88,7 @@ def nonnegative_int(value: str) -> int:
 def write_workspace(workspace: Path, modules: int, revision: int) -> Path:
     workspace.mkdir(parents=True, exist_ok=True)
     for index in range(modules):
-        source = (
-            f"def helper_{index}(value):\n"
-            f"    return value + {index + revision}\n\n"
-            f"def caller_{index}(value):\n"
-            f"    return helper_{index}(value)\n"
-        )
-        (workspace / f"module_{index}.py").write_text(
-            source, encoding="utf-8", newline="\n"
-        )
+        write_module(workspace, index, revision)
 
     app_source = (
         "from module_0 import helper_0\n\n"
@@ -105,6 +97,18 @@ def write_workspace(workspace: Path, modules: int, revision: int) -> Path:
     )
     (workspace / "app.py").write_text(app_source, encoding="utf-8", newline="\n")
     return workspace / "module_0.py"
+
+
+def write_module(workspace: Path, index: int, revision: int) -> Path:
+    source = (
+        f"def helper_{index}(value):\n"
+        f"    return value + {index + revision}\n\n"
+        f"def caller_{index}(value):\n"
+        f"    return helper_{index}(value)\n"
+    )
+    path = workspace / f"module_{index}.py"
+    path.write_text(source, encoding="utf-8", newline="\n")
+    return path
 
 
 def call_gateway(
@@ -186,7 +190,7 @@ def run_benchmarks(
 
     def refresh() -> None:
         nonlocal refresh_revision, refresh_target
-        refresh_target = write_workspace(workspace, modules, revision=refresh_revision)
+        refresh_target = write_module(workspace, 0, revision=refresh_revision)
         refresh_revision += 1
         call_gateway(
             gateway,
@@ -226,11 +230,44 @@ def run_benchmarks(
             next_id(),
         )
 
+    def list_symbols() -> None:
+        call_gateway(
+            gateway,
+            "arborist/list_symbols",
+            {
+                "workspace_root": str(workspace),
+                "index_db_path": str(db_path),
+                "limit": 50,
+            },
+            next_id(),
+        )
+
+    def validate_patch() -> None:
+        call_gateway(
+            gateway,
+            "arborist/validate_patch_with_trace_context",
+            {
+                "workspace_root": str(workspace),
+                "file_path": str(workspace / "app.py"),
+                "semantic_path": "orchestrate",
+                "new_code": (
+                    "def orchestrate(value):\n"
+                    "    adjusted = helper_0(value)\n"
+                    "    return adjusted\n"
+                ),
+                "direction": "both",
+                "index_db_path": str(db_path),
+            },
+            next_id(),
+        )
+
     return [
         measure("rebuild_symbol_index", iterations, warmup, rebuild),
         measure("refresh_symbol_index_for_file", iterations, warmup, refresh),
+        measure("list_symbols", iterations, warmup, list_symbols),
         measure("trace_symbol_graph", iterations, warmup, trace),
         measure("search_symbols", iterations, warmup, search),
+        measure("validate_patch_with_trace_context", iterations, warmup, validate_patch),
     ]
 
 

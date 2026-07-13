@@ -162,7 +162,8 @@ python scripts\benchmark_core.py --iterations 10 --json
 ```
 
 The benchmark currently covers `rebuild_symbol_index`,
-`refresh_symbol_index_for_file`, `trace_symbol_graph`, and `search_symbols`.
+`refresh_symbol_index_for_file`, `list_symbols`, `trace_symbol_graph`,
+`search_symbols`, and `validate_patch_with_trace_context`.
 It is intended for local regression checks and comparative profiling rather
 than CI pass/fail gating.
 
