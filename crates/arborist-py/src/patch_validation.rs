@@ -16,7 +16,9 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
-use crate::{ArboristCore, parse_direction, source_position, to_json_result, to_py_error};
+use crate::{
+    ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
+};
 
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
@@ -152,8 +154,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -166,8 +167,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (Some(source), None) => validate_patch_with_graph_context(
                 Path::new(workspace_root),
@@ -177,8 +178,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -191,8 +192,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self.vfs.borrow_mut().validate_patch_with_graph_context(
@@ -202,8 +203,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
         }
         .map_err(to_py_error)?;
@@ -221,8 +222,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -237,8 +237,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => validate_patch_with_graph_context_at_position(
@@ -249,8 +249,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -263,8 +263,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self
@@ -277,8 +277,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;
@@ -295,8 +295,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -310,8 +309,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => validate_patch_with_neighborhood_context(
@@ -322,8 +321,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -336,8 +335,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self
@@ -350,8 +349,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;
@@ -369,8 +368,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -385,8 +383,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => validate_patch_with_neighborhood_context_at_position(
@@ -397,8 +395,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -411,8 +409,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self
@@ -425,8 +423,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;
@@ -443,8 +441,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -458,8 +455,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => validate_patch_with_discovery_context(
@@ -470,8 +467,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -484,8 +481,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self.vfs.borrow_mut().validate_patch_with_discovery_context(
@@ -495,8 +492,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
         }
         .map_err(to_py_error)?;
@@ -514,8 +511,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
@@ -530,8 +526,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => validate_patch_with_discovery_context_at_position(
@@ -542,8 +538,8 @@ impl ArboristCore {
                 new_code,
                 bypass_reason.as_deref(),
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => {
                 let source =
@@ -556,8 +552,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (None, None) => self
@@ -570,8 +566,8 @@ impl ArboristCore {
                     new_code,
                     bypass_reason.as_deref(),
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;

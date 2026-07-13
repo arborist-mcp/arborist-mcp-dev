@@ -765,8 +765,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
@@ -796,8 +795,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
@@ -825,8 +823,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
@@ -856,8 +853,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
@@ -885,8 +881,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
@@ -916,8 +911,7 @@ impl ArboristCore {
             source,
             bypass_reason,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
         )
     }
