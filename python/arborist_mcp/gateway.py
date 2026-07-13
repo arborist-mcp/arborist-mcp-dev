@@ -14,7 +14,7 @@ from .gateway_cli import (
 )
 from .batch_tools import batch_tools
 from .jsonrpc import (
-    error_response as build_error_response,
+    error_response,
     _reject_duplicate_object_keys,
     _reject_nonstandard_json_constant,
     is_notification_request,
@@ -126,13 +126,13 @@ class ArboristGateway:
 
     def handle_request(self, request: Any) -> dict[str, Any]:
         if not isinstance(request, dict):
-            return self._error_response(None, -32600, "invalid request: expected object")
+            return error_response(None, -32600, "invalid request: expected object")
 
         request_id = request.get("id")
         response_id = request_id if is_valid_request_id(request_id) else None
         jsonrpc_version = request.get("jsonrpc")
         if jsonrpc_version != "2.0":
-            return self._error_response(
+            return error_response(
                 response_id,
                 -32600,
                 "invalid request: expected jsonrpc='2.0'",
@@ -142,13 +142,13 @@ class ArboristGateway:
         params = request.get("params", {})
 
         if "id" in request and not is_valid_request_id(request_id):
-            return self._error_response(None, -32600, "invalid request: invalid id")
+            return error_response(None, -32600, "invalid request: invalid id")
 
         if not isinstance(method, str) or not method:
-            return self._error_response(response_id, -32600, "invalid request: missing method")
+            return error_response(response_id, -32600, "invalid request: missing method")
 
         if not isinstance(params, dict):
-            return self._error_response(response_id, -32602, "invalid params: expected object")
+            return error_response(response_id, -32602, "invalid params: expected object")
 
         try:
             if method == "initialize":
@@ -169,23 +169,15 @@ class ArboristGateway:
                 handler = getattr(self, spec.handler)
                 result = handler(params)
             else:
-                return self._error_response(response_id, -32601, f"method not found: {method}")
+                return error_response(response_id, -32601, f"method not found: {method}")
 
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
         except JsonRpcError as exc:
-            return self._error_response(response_id, exc.code, str(exc))
+            return error_response(response_id, exc.code, str(exc))
         except ValueError as exc:
-            return self._error_response(response_id, -32602, str(exc))
+            return error_response(response_id, -32602, str(exc))
         except Exception as exc:  # noqa: BLE001
-            return self._error_response(response_id, -32000, str(exc))
-
-    @staticmethod
-    def _error_response(
-        request_id: Any,
-        code: int,
-        message: str,
-    ) -> dict[str, Any]:
-        return build_error_response(request_id, code, message)
+            return error_response(response_id, -32000, str(exc))
 
     @staticmethod
     def _require_file_path_for_source(
