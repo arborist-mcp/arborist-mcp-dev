@@ -23,6 +23,7 @@ from .jsonrpc import (
     serialize_response as _serialize_response,
     write_response as _write_response,
 )
+from .mcp_tools import tools_call, tools_list
 from .resources import resources_list, resources_read
 from .tool_manifest import (
     build_resource_catalog,
@@ -42,8 +43,6 @@ from .tool_specs import (
     MCP_INITIALIZE_MARKERS,
     MCP_INITIALIZE_PARAM_NAMES,
     MCP_PROTOCOL_VERSION,
-    MCP_TOOL_CALL_PARAM_NAMES,
-    MCP_TOOL_LIST_PARAM_NAMES,
     MUTATING_TOOLS,
     NON_MUTATING_STATE_TOOLS,
     OPTIONAL_TOOL_PARAMS,
@@ -265,11 +264,7 @@ class ArboristGateway:
         return {}
 
     def _tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._reject_unexpected_params(params, MCP_TOOL_LIST_PARAM_NAMES)
-        cursor = params.get("cursor")
-        if cursor is not None and not isinstance(cursor, str):
-            raise JsonRpcError(-32602, "invalid params: cursor must be a string")
-        return {"tools": build_tool_catalog()}
+        return tools_list(params)
 
     def _resources_list(self, params: dict[str, Any]) -> dict[str, Any]:
         return resources_list(params)
@@ -278,29 +273,12 @@ class ArboristGateway:
         return resources_read(params)
 
     def _tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
-        self._reject_unexpected_params(params, MCP_TOOL_CALL_PARAM_NAMES)
-        tool_name = params.get("name")
-        if not isinstance(tool_name, str) or not tool_name.strip():
-            raise JsonRpcError(-32602, "missing required string param: name")
-        if tool_name not in TOOL_SPECS_BY_NAME:
-            raise JsonRpcError(-32602, f"unknown tool: {tool_name}")
-        arguments = params.get("arguments", {})
-        if not isinstance(arguments, dict):
-            raise JsonRpcError(-32602, "invalid params: arguments must be an object")
+        return tools_call(params, self._execute_tool)
 
-        try:
-            spec = tool_spec(tool_name)
-            self._reject_unexpected_params(arguments, spec.params)
-            handler = getattr(self, spec.handler)
-            tool_result = handler(arguments)
-        except JsonRpcError as exc:
-            return self._mcp_tool_error(str(exc))
-        except ValueError as exc:
-            return self._mcp_tool_error(str(exc))
-        except Exception as exc:  # noqa: BLE001
-            return self._mcp_tool_error(str(exc))
-
-        return self._mcp_tool_result(tool_result)
+    def _execute_tool(self, tool_name: str, params: dict[str, Any]) -> Any:
+        spec = tool_spec(tool_name)
+        handler = getattr(self, spec.handler)
+        return handler(params)
 
     def _batch(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         calls = params.get("calls")
@@ -356,31 +334,6 @@ class ArboristGateway:
         return {
             "name": "arborist-mcp",
             "version": __version__,
-        }
-
-    @staticmethod
-    def _mcp_tool_result(tool_result: Any) -> dict[str, Any]:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": json.dumps(tool_result, ensure_ascii=False, allow_nan=False),
-                }
-            ],
-            "structuredContent": {"result": tool_result},
-            "isError": False,
-        }
-
-    @staticmethod
-    def _mcp_tool_error(message: str) -> dict[str, Any]:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": message,
-                }
-            ],
-            "isError": True,
         }
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
