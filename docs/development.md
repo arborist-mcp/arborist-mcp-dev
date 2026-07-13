@@ -138,6 +138,7 @@ python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
 python -m arborist_mcp.gateway --version
 python scripts\tool_catalog.py --check
+python scripts\gateway_suite_manifest.py --plan gateway-fast
 ```
 
 The gateway smoke helper can run without loading the native extension unless

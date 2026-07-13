@@ -9,6 +9,7 @@ import unittest
 
 from tests import GROUP_MODULES, build_manifest_snapshot
 from tests.gateway_protocol import GROUP_MODULES as GATEWAY_GROUP_MODULES
+from tests.gateway_protocol import build_manifest_snapshot as build_gateway_manifest_snapshot
 
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
@@ -59,6 +60,17 @@ class TestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(completed.stdout), build_manifest_snapshot())
 
+    def test_gateway_suite_manifest_cli_emits_snapshot(self) -> None:
+        script_path = self.repo_root / "scripts" / "gateway_suite_manifest.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path)],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(json.loads(completed.stdout), build_gateway_manifest_snapshot())
+
     def test_python_suite_manifest_cli_emits_deduplicated_execution_plan(self) -> None:
         script_path = self.repo_root / "scripts" / "python_suite_manifest.py"
         completed = subprocess.run(
@@ -82,6 +94,65 @@ class TestWorkflowTests(unittest.TestCase):
             list(GROUP_MODULES["python-fast"]),
         )
         self.assertFalse(plan["steps"][1]["requires_extension"])
+
+    def test_gateway_suite_manifest_cli_emits_deduplicated_execution_plan(self) -> None:
+        script_path = self.repo_root / "scripts" / "gateway_suite_manifest.py"
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script_path),
+                "--plan",
+                "gateway",
+                "gateway-fast",
+                "gateway-runtime",
+            ],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        plan = json.loads(completed.stdout)
+        self.assertEqual(
+            plan["selection_names"],
+            ["gateway", "gateway-fast", "gateway-runtime"],
+        )
+        self.assertEqual([step["kind"] for step in plan["steps"]], ["python"])
+        self.assertEqual(
+            plan["steps"][0]["selection_names"],
+            ["gateway", "gateway-fast", "gateway-runtime"],
+        )
+        self.assertEqual(
+            plan["steps"][0]["module_names"],
+            list(GATEWAY_GROUP_MODULES["gateway"]),
+        )
+        self.assertTrue(plan["steps"][0]["requires_extension"])
+        self.assertEqual(
+            plan["steps"][0]["module_count"],
+            len(GATEWAY_GROUP_MODULES["gateway"]),
+        )
+
+    def test_gateway_suite_manifest_cli_emits_descriptions(self) -> None:
+        script_path = self.repo_root / "scripts" / "gateway_suite_manifest.py"
+        completed = subprocess.run(
+            [sys.executable, str(script_path), "--descriptions"],
+            cwd=self.repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        descriptions = json.loads(completed.stdout)
+        snapshot = build_gateway_manifest_snapshot()
+        expected = [
+            {"name": group_name, "description": metadata["description"]}
+            for group_name, metadata in snapshot["groups"].items()
+        ]
+        expected.extend(
+            {"name": suite_name, "description": metadata["description"]}
+            for suite_name, metadata in snapshot["suites"].items()
+        )
+        self.assertEqual(descriptions, expected)
 
     @unittest.skipUnless(POWERSHELL, "PowerShell is required for test.ps1 contract checks")
     def test_test_script_lists_suites_from_snapshot(self) -> None:
