@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from .mcp_validation import reject_unexpected_params
 from .tool_manifest import build_resource_catalog
 from .tool_result_schemas import JsonRpcError
 from .tool_specs import (
@@ -25,7 +26,7 @@ def initialize(
     supported_languages: Callable[[], Sequence[str]],
 ) -> dict[str, Any]:
     if not is_mcp_initialize(params):
-        _reject_unexpected_params(params, ())
+        reject_unexpected_params(params, ())
         return {
             "serverInfo": server_info,
             "capabilities": {
@@ -35,7 +36,7 @@ def initialize(
             "supportedLanguages": list(supported_languages()),
         }
 
-    _reject_unexpected_params(params, MCP_INITIALIZE_PARAM_NAMES)
+    reject_unexpected_params(params, MCP_INITIALIZE_PARAM_NAMES)
     _optional_string(
         params,
         "protocolVersion",
@@ -69,7 +70,7 @@ def initialize(
 
 
 def initialized(params: dict[str, Any]) -> dict[str, Any]:
-    _reject_unexpected_params(params, MCP_INITIALIZED_PARAM_NAMES)
+    reject_unexpected_params(params, MCP_INITIALIZED_PARAM_NAMES)
     return {}
 
 
@@ -94,10 +95,3 @@ def _optional_string(
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
         raise JsonRpcError(-32602, f"invalid string param: {key}")
     return value
-
-
-def _reject_unexpected_params(params: dict[str, Any], allowed_keys: tuple[str, ...]) -> None:
-    unexpected_keys = set(params) - set(allowed_keys)
-    if unexpected_keys:
-        key = sorted(unexpected_keys)[0]
-        raise JsonRpcError(-32602, f"unexpected param: {key}")

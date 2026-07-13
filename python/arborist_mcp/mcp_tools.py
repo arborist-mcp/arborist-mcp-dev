@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from .mcp_validation import reject_unexpected_params
 from .tool_manifest import build_tool_catalog
 from .tool_result_schemas import JsonRpcError
 from .tool_specs import (
@@ -17,7 +18,7 @@ ToolExecutor = Callable[[str, dict[str, Any]], Any]
 
 
 def tools_list(params: dict[str, Any]) -> dict[str, Any]:
-    _reject_unexpected_params(params, MCP_TOOL_LIST_PARAM_NAMES)
+    reject_unexpected_params(params, MCP_TOOL_LIST_PARAM_NAMES)
     cursor = params.get("cursor")
     if cursor is not None and not isinstance(cursor, str):
         raise JsonRpcError(-32602, "invalid params: cursor must be a string")
@@ -25,7 +26,7 @@ def tools_list(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tools_call(params: dict[str, Any], execute_tool: ToolExecutor) -> dict[str, Any]:
-    _reject_unexpected_params(params, MCP_TOOL_CALL_PARAM_NAMES)
+    reject_unexpected_params(params, MCP_TOOL_CALL_PARAM_NAMES)
     tool_name = params.get("name")
     if not isinstance(tool_name, str) or not tool_name.strip():
         raise JsonRpcError(-32602, "missing required string param: name")
@@ -37,7 +38,7 @@ def tools_call(params: dict[str, Any], execute_tool: ToolExecutor) -> dict[str, 
 
     try:
         spec = tool_spec(tool_name)
-        _reject_unexpected_params(arguments, spec.params)
+        reject_unexpected_params(arguments, spec.params)
         tool_result = execute_tool(tool_name, arguments)
     except JsonRpcError as exc:
         return mcp_tool_error(str(exc))
@@ -72,10 +73,3 @@ def mcp_tool_error(message: str) -> dict[str, Any]:
         ],
         "isError": True,
     }
-
-
-def _reject_unexpected_params(params: dict[str, Any], allowed_keys: tuple[str, ...]) -> None:
-    unexpected_keys = set(params) - set(allowed_keys)
-    if unexpected_keys:
-        key = sorted(unexpected_keys)[0]
-        raise JsonRpcError(-32602, f"unexpected param: {key}")
