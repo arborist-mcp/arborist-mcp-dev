@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use arborist_core::{
-    Position, trace_symbol_graph_at_position_from_index,
+    trace_symbol_graph_at_position_from_index,
     trace_symbol_graph_at_position_from_index_with_source,
     trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
     trace_symbol_graph_from_index_with_source, trace_symbol_graph_with_source,
@@ -12,7 +12,10 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
-use crate::{ArboristCore, parse_direction, require_source_file_path, to_json_result, to_py_error};
+use crate::{
+    ArboristCore, parse_direction, require_source_file_path, source_position, to_json_result,
+    to_py_error,
+};
 
 impl ArboristCore {
     pub(crate) fn trace_symbol_graph_json_impl(
@@ -120,7 +123,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_graph_at_position_from_index_with_source(
@@ -170,7 +173,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_at_position_from_index_with_source(

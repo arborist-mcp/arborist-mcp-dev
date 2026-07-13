@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use arborist_core::{
-    Position, read_symbol_at_position_from_index, read_symbol_at_position_from_index_with_source,
+    read_symbol_at_position_from_index, read_symbol_at_position_from_index_with_source,
     read_symbol_at_position_with_source, read_symbol_context_at_position_from_index,
     read_symbol_context_at_position_from_index_with_source,
     read_symbol_context_at_position_with_source, read_symbol_context_from_index,
@@ -20,7 +20,10 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
-use crate::{ArboristCore, parse_direction, require_source_file_path, to_json_result, to_py_error};
+use crate::{
+    ArboristCore, parse_direction, require_source_file_path, source_position, to_json_result,
+    to_py_error,
+};
 
 impl ArboristCore {
     pub(crate) fn read_symbol_json_impl(
@@ -66,7 +69,7 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => read_symbol_at_position_from_index_with_source(
                 Path::new(&index_db_path),
@@ -147,7 +150,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_context_at_position_from_index_with_source(
@@ -251,7 +254,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_at_position_from_index_with_source(
@@ -366,7 +369,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_at_position_from_index_with_source(

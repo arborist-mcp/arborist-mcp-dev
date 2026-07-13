@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use arborist_core::{
-    Position, validate_patch_with_discovery_context,
-    validate_patch_with_discovery_context_at_position,
+    validate_patch_with_discovery_context, validate_patch_with_discovery_context_at_position,
     validate_patch_with_discovery_context_at_position_from_index,
     validate_patch_with_discovery_context_from_index, validate_patch_with_graph_context,
     validate_patch_with_graph_context_at_position,
@@ -17,7 +16,7 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
-use crate::{ArboristCore, parse_direction, to_json_result, to_py_error};
+use crate::{ArboristCore, parse_direction, source_position, to_json_result, to_py_error};
 
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
@@ -92,7 +91,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 validate_patch_with_trace_context_at_position_from_index(
@@ -227,7 +226,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 validate_patch_with_graph_context_at_position_from_index(
@@ -375,7 +374,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 validate_patch_with_neighborhood_context_at_position_from_index(
@@ -520,7 +519,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
                 validate_patch_with_discovery_context_at_position_from_index(

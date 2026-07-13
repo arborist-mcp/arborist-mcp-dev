@@ -1,13 +1,13 @@
 use std::path::Path;
 
 use arborist_core::{
-    Position, patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
+    patch_ast_node, patch_ast_node_at_position, preview_patch_ast_node,
     preview_patch_ast_node_at_position, preview_patch_ast_node_at_position_from_path,
     preview_patch_ast_node_from_path,
 };
 use pyo3::prelude::*;
 
-use crate::{ArboristCore, to_json_result, to_py_error};
+use crate::{ArboristCore, source_position, to_json_result, to_py_error};
 
 impl ArboristCore {
     pub(super) fn patch_ast_node_json_impl(
@@ -56,7 +56,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
     ) -> PyResult<String> {
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match source {
             Some(source) => patch_ast_node_at_position(
                 Path::new(file_path),
@@ -123,7 +123,7 @@ impl ArboristCore {
         source: Option<String>,
         bypass_reason: Option<String>,
     ) -> PyResult<String> {
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = match source {
             Some(source) => preview_patch_ast_node_at_position(
                 Path::new(file_path),
@@ -173,7 +173,7 @@ impl ArboristCore {
         new_code: &str,
         bypass_reason: Option<String>,
     ) -> PyResult<String> {
-        let position = Position { row, column };
+        let position = source_position(row, column);
         let result = self
             .vfs
             .borrow_mut()
