@@ -10,8 +10,9 @@ completed item can land in its own commit unless two changes are inseparable.
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
 - The largest production files are still large enough to slow review:
-  `python/arborist_mcp/gateway.py` is now about 1686 lines after the first
-  protocol-helper splits and validation consolidation, and
+  `python/arborist_mcp/gateway.py` is now about 1595 lines after the first
+  protocol-helper splits, batch dispatch extraction, and validation
+  consolidation, and
   `crates/arborist-py/src/lib.rs` is about 990 lines.
 - The README already names the main strategic gaps: Rust module splits, PyO3
   wrapper repetition, durable schema migrations, full C++ grammar support,
@@ -47,6 +48,8 @@ completed item can land in its own commit unless two changes are inseparable.
   changing public response shapes.
 - [x] Move MCP initialize and initialized handling into a focused helper module
   without changing core loading or response shapes.
+- [x] Move batch tool dispatch into a focused helper module without changing
+  batch validation or per-tool response shapes.
 - [ ] Introduce shared PyO3 argument/context structs where wrappers repeatedly
   validate the same `workspace_root`, `file_path`, `index_db_path`, `source`,
   `symbol_path`, `direction`, `max_depth`, and `max_nodes` patterns.
@@ -97,10 +100,11 @@ completed item can land in its own commit unless two changes are inseparable.
 4. `refactor(gateway): extract tool dispatch helpers`
 5. `refactor(gateway): extract lifecycle handlers`
 6. `refactor(gateway): share mcp param validation`
-7. `refactor(pyo3): consolidate shared wrapper arguments`
-8. `feat(index): add schema migration scaffolding`
-9. `feat(index): add watch-mode refresh loop`
-10. `feat(core): add cpp grammar support`
+7. `refactor(gateway): extract batch tool dispatch`
+8. `refactor(pyo3): consolidate shared wrapper arguments`
+9. `feat(index): add schema migration scaffolding`
+10. `feat(index): add watch-mode refresh loop`
+11. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
