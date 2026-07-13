@@ -219,8 +219,7 @@ impl ArboristCore {
             workspace_root,
             symbol_path,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             index_db_path,
             file_path,
             source,
@@ -351,8 +350,7 @@ impl ArboristCore {
             row,
             column,
             direction,
-            max_depth,
-            max_nodes,
+            NeighborhoodBounds::new(max_depth, max_nodes),
             source,
             index_db_path,
         )
@@ -1037,6 +1035,21 @@ fn require_source_file_path(file_path: Option<&str>) -> PyResult<&Path> {
 
 fn source_position(row: usize, column: usize) -> arborist_core::Position {
     arborist_core::Position { row, column }
+}
+
+#[derive(Clone, Copy)]
+struct NeighborhoodBounds {
+    max_depth: usize,
+    max_nodes: usize,
+}
+
+impl NeighborhoodBounds {
+    fn new(max_depth: usize, max_nodes: usize) -> Self {
+        Self {
+            max_depth,
+            max_nodes,
+        }
+    }
 }
 
 fn parse_direction(direction: &str) -> PyResult<TraceDirection> {
