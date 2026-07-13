@@ -55,6 +55,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `symbol_path`, `direction`, `max_depth`, and `max_nodes` patterns.
 - [x] Introduce a shared PyO3 source-position helper as the first small step
   toward consolidated wrapper arguments.
+- [x] Group PyO3 neighborhood/query/patch context `max_depth` and `max_nodes`
+  arguments behind a shared bounds object for internal wrapper calls.
 
 ### P2: Core Architecture Improvements
 
@@ -103,11 +105,12 @@ completed item can land in its own commit unless two changes are inseparable.
 7. `refactor(gateway): extract batch tool dispatch`
 8. `refactor(gateway): use shared error responses`
 9. `refactor(pyo3): consolidate shared wrapper arguments`
-10. `perf(scripts): broaden benchmark workflows`
-11. `ci(gateway): smoke installed console script`
-12. `feat(index): add schema migration scaffolding`
-13. `feat(index): add watch-mode refresh loop`
-14. `feat(core): add cpp grammar support`
+10. `refactor(pyo3): group context bounds`
+11. `perf(scripts): broaden benchmark workflows`
+12. `ci(gateway): smoke installed console script`
+13. `feat(index): add schema migration scaffolding`
+14. `feat(index): add watch-mode refresh loop`
+15. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
