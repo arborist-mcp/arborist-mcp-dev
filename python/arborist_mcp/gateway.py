@@ -25,6 +25,7 @@ from .jsonrpc import (
 )
 from .mcp_lifecycle import initialized, initialize, server_info
 from .mcp_tools import tools_call, tools_list
+from .mcp_validation import reject_unexpected_params
 from .resources import resources_list, resources_read
 from .tool_manifest import (
     build_resource_catalog,
@@ -1707,10 +1708,7 @@ class ArboristGateway:
     def _reject_unexpected_params(
         params: dict[str, Any], allowed_keys: tuple[str, ...]
     ) -> None:
-        unexpected_keys = set(params) - set(allowed_keys)
-        if unexpected_keys:
-            key = sorted(unexpected_keys)[0]
-            raise JsonRpcError(-32602, f"unexpected param: {key}")
+        reject_unexpected_params(params, allowed_keys)
 
     @staticmethod
     def _encode_json_param(value: Any, key: str) -> str:
