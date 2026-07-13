@@ -67,7 +67,7 @@ completed item can land in its own commit unless two changes are inseparable.
   version gate.
 - [ ] Add timeout/cancellation boundaries for large workspace scans, broad raw
   Tree-sitter queries, and trace/neighborhood expansion.
-- [ ] Add benchmark baselines for index rebuild, refresh, trace, list, search,
+- [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
   and patch validation.
 
 ### P3: New Feature Opportunities
@@ -102,9 +102,10 @@ completed item can land in its own commit unless two changes are inseparable.
 6. `refactor(gateway): share mcp param validation`
 7. `refactor(gateway): extract batch tool dispatch`
 8. `refactor(pyo3): consolidate shared wrapper arguments`
-9. `feat(index): add schema migration scaffolding`
-10. `feat(index): add watch-mode refresh loop`
-11. `feat(core): add cpp grammar support`
+9. `perf(scripts): broaden benchmark workflows`
+10. `feat(index): add schema migration scaffolding`
+11. `feat(index): add watch-mode refresh loop`
+12. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
