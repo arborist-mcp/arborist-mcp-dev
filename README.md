@@ -130,6 +130,7 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 python scripts\tool_catalog.py --check
 python scripts\gateway_smoke.py --require-core
+python scripts\gateway_smoke.py --launcher console --require-core
 python -m unittest tests.gateway_protocol.request_validation
 python -m arborist_mcp.gateway --help
 ```
