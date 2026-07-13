@@ -21,8 +21,8 @@ use arborist_core::{
 use pyo3::prelude::*;
 
 use crate::{
-    ArboristCore, parse_direction, require_source_file_path, source_position, to_json_result,
-    to_py_error,
+    ArboristCore, NeighborhoodBounds, parse_direction, require_source_file_path, source_position,
+    to_json_result, to_py_error,
 };
 
 impl ArboristCore {
@@ -192,8 +192,7 @@ impl ArboristCore {
         workspace_root: &str,
         symbol_path: &str,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
@@ -207,8 +206,8 @@ impl ArboristCore {
                     &source,
                     symbol_path,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => read_symbol_neighborhood_context_with_source(
@@ -217,22 +216,22 @@ impl ArboristCore {
                 &source,
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_neighborhood_context_from_index(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_neighborhood_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
         }
         .map_err(to_py_error)?;
@@ -248,8 +247,7 @@ impl ArboristCore {
         row: usize,
         column: usize,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
@@ -263,8 +261,8 @@ impl ArboristCore {
                     &source,
                     &position,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => read_symbol_neighborhood_context_at_position_with_source(
@@ -273,16 +271,16 @@ impl ArboristCore {
                 &source,
                 &position,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_neighborhood_context_at_position_from_index(
                 Path::new(&index_db_path),
                 Path::new(file_path),
                 &position,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, None) => self
                 .vfs
@@ -292,8 +290,8 @@ impl ArboristCore {
                     Path::new(file_path),
                     &position,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;
@@ -307,8 +305,7 @@ impl ArboristCore {
         workspace_root: &str,
         symbol_path: &str,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
@@ -322,8 +319,8 @@ impl ArboristCore {
                     &source,
                     symbol_path,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => read_symbol_discovery_context_with_source(
@@ -332,22 +329,22 @@ impl ArboristCore {
                 &source,
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_discovery_context_from_index(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_discovery_context(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
         }
         .map_err(to_py_error)?;
@@ -363,8 +360,7 @@ impl ArboristCore {
         row: usize,
         column: usize,
         direction: &str,
-        max_depth: usize,
-        max_nodes: usize,
+        bounds: NeighborhoodBounds,
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
@@ -378,8 +374,8 @@ impl ArboristCore {
                     &source,
                     &position,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 )
             }
             (Some(source), None) => read_symbol_discovery_context_at_position_with_source(
@@ -388,16 +384,16 @@ impl ArboristCore {
                 &source,
                 &position,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_discovery_context_at_position_from_index(
                 Path::new(&index_db_path),
                 Path::new(file_path),
                 &position,
                 direction,
-                max_depth,
-                max_nodes,
+                bounds.max_depth,
+                bounds.max_nodes,
             ),
             (None, None) => self
                 .vfs
@@ -407,8 +403,8 @@ impl ArboristCore {
                     Path::new(file_path),
                     &position,
                     direction,
-                    max_depth,
-                    max_nodes,
+                    bounds.max_depth,
+                    bounds.max_nodes,
                 ),
         }
         .map_err(to_py_error)?;
