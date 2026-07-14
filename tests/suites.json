@@ -9,6 +9,11 @@
       "module": "tests.test_test_workflow",
       "description": "Run Python test-suite manifest and test.ps1 contract tests.",
       "requires_extension": false
+    },
+    "benchmark-workflow": {
+      "module": "tests.test_benchmark_workflow",
+      "description": "Run benchmark helper parsing and threshold contract tests.",
+      "requires_extension": false
     }
   },
   "groups": {
@@ -17,6 +22,7 @@
       "entries": [
         "check-workflow",
         "test-workflow",
+        "benchmark-workflow",
         "gateway-fast"
       ]
     },
@@ -31,6 +37,7 @@
       "entries": [
         "check-workflow",
         "test-workflow",
+        "benchmark-workflow",
         "gateway"
       ]
     }

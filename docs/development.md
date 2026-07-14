@@ -160,13 +160,16 @@ the core index and lookup workflows through the same gateway path used by MCP:
 ```powershell
 python scripts\benchmark_core.py --iterations 10 --warmup 2 --modules 50
 python scripts\benchmark_core.py --iterations 10 --json
+python scripts\benchmark_core.py --iterations 10 --max-median trace_symbol_graph=25
 ```
 
 The benchmark currently covers `rebuild_symbol_index`,
 `refresh_symbol_index_for_file`, `list_symbols`, `trace_symbol_graph`,
 `search_symbols`, and `validate_patch_with_trace_context`.
 It is intended for local regression checks and comparative profiling rather
-than CI pass/fail gating.
+than CI pass/fail gating. Use `--max-median WORKFLOW=MS` to turn one or more
+workflow medians into local pass/fail checks when you want a lightweight
+regression budget while iterating.
 
 ## Build And Release Artifacts
 

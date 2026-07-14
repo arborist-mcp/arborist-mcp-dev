@@ -27,6 +27,12 @@ class BenchmarkResult:
     mean_ms: float
 
 
+@dataclass(frozen=True)
+class MedianThreshold:
+    workflow: str
+    max_median_ms: float
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -68,6 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep the temporary workspace after the benchmark finishes.",
     )
+    parser.add_argument(
+        "--max-median",
+        action="append",
+        type=parse_max_median_threshold,
+        default=[],
+        metavar="WORKFLOW=MS",
+        help=(
+            "Fail if a workflow median exceeds the provided millisecond threshold. "
+            "Repeat this flag to check multiple workflows."
+        ),
+    )
     return parser
 
 
@@ -83,6 +100,27 @@ def nonnegative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must not be negative")
     return parsed
+
+
+def parse_max_median_threshold(value: str) -> MedianThreshold:
+    workflow, separator, raw_limit = value.partition("=")
+    workflow = workflow.strip()
+    raw_limit = raw_limit.strip()
+    if separator != "=" or not workflow or not raw_limit:
+        raise argparse.ArgumentTypeError(
+            "thresholds must use the form WORKFLOW=MS, for example trace_symbol_graph=25"
+        )
+
+    try:
+        limit = float(raw_limit)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"threshold for {workflow!r} must be a number"
+        ) from exc
+    if limit <= 0:
+        raise argparse.ArgumentTypeError("threshold milliseconds must be greater than zero")
+
+    return MedianThreshold(workflow=workflow, max_median_ms=limit)
 
 
 def write_workspace(workspace: Path, modules: int, revision: int) -> Path:
@@ -304,6 +342,30 @@ def print_results(
         print_table(results, workspace, modules)
 
 
+def evaluate_thresholds(
+    results: list[BenchmarkResult],
+    thresholds: list[MedianThreshold],
+) -> list[str]:
+    if not thresholds:
+        return []
+
+    by_name = {result.name: result for result in results}
+    failures: list[str] = []
+    for threshold in thresholds:
+        result = by_name.get(threshold.workflow)
+        if result is None:
+            failures.append(
+                f"unknown workflow in --max-median: {threshold.workflow}"
+            )
+            continue
+        if result.median_ms > threshold.max_median_ms:
+            failures.append(
+                f"{result.name} median {result.median_ms:.2f}ms exceeded "
+                f"limit {threshold.max_median_ms:.2f}ms"
+            )
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -321,6 +383,12 @@ def main(argv: list[str] | None = None) -> int:
                     path.replace(kept / path.name)
                 workspace = kept
             print_results(results, workspace, args.modules, args.json)
+
+    failures = evaluate_thresholds(results, args.max_median)
+    if failures:
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        return 1
     return 0
 
 

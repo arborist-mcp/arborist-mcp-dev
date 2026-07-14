@@ -96,7 +96,7 @@ completed item can land in its own commit unless two changes are inseparable.
   ordering, and VFS commit/discard idempotence.
 - [ ] Add fuzz targets for JSON request validation, Tree-sitter query limits,
   patch replacement boundaries, and persisted-index loading.
-- [ ] Add benchmark regression thresholds once local benchmark variance is
+- [x] Add benchmark regression thresholds once local benchmark variance is
   understood.
 - [x] Add cross-platform smoke coverage for repo-root gateway startup and
   package-installed gateway startup.
@@ -119,8 +119,9 @@ completed item can land in its own commit unless two changes are inseparable.
 14. `refactor(index): type migration recommendation actions`
 15. `refactor(index): route schema version migration actions`
 16. `feat(index): add schema migration scaffolding`
-17. `feat(index): add watch-mode refresh loop`
-18. `feat(core): add cpp grammar support`
+17. `test(scripts): add benchmark threshold coverage`
+18. `feat(index): add watch-mode refresh loop`
+19. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
