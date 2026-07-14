@@ -94,18 +94,6 @@ def required_tool_params(tool_name: str) -> tuple[str, ...]:
     )
 
 
-def required_tool_params(tool_name: str) -> tuple[str, ...]:
-    return tuple(
-        param_name
-        for param_name in tool_spec(tool_name).params
-        if not tool_param_spec(param_name).optional
-        and not (
-            param_name == "file_path"
-            and tool_name in tool_param_spec("file_path").source_anchored_optional_tools
-        )
-    )
-
-
 def tool_param_default(tool_name: str, param_name: str) -> Any:
     default = tool_param_spec(param_name).default
     if isinstance(default, dict):
