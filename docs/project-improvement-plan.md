@@ -93,7 +93,9 @@ completed item can land in its own commit unless two changes are inseparable.
 ### P4: Testing And Hardening
 
 - [ ] Add property tests for path normalization, byte/position conversion, edit
-  ordering, and VFS commit/discard idempotence.
+  ordering, and VFS commit/discard idempotence. Started with generated invariant
+  coverage for path normalization and round-trip coverage for UTF-8
+  byte/position helpers.
 - [ ] Add fuzz targets for JSON request validation, Tree-sitter query limits,
   patch replacement boundaries, and persisted-index loading.
 - [x] Add benchmark regression thresholds once local benchmark variance is
@@ -122,6 +124,7 @@ completed item can land in its own commit unless two changes are inseparable.
 17. `test(scripts): add benchmark threshold coverage`
 18. `feat(index): add watch-mode refresh loop`
 19. `feat(core): add cpp grammar support`
+20. `test(core): harden language helper invariants`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.

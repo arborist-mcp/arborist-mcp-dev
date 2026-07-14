@@ -37,6 +37,7 @@ use super::{
 mod c_patching;
 mod c_symbol_graph;
 mod index_refresh;
+mod language_invariants;
 mod patch_bindings;
 mod patch_replay;
 mod path_entrypoints;
