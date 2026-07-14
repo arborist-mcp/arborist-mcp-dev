@@ -129,7 +129,7 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                     "db_path": "symbols.db",
                 },
                 "payload": {
-                    "response_schema_version": "2",
+                    "response_schema_version": "3",
                     "db_path": "symbols.db",
                     "exists": True,
                     "ok": True,
@@ -148,6 +148,7 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                     "stale_files": [],
                     "missing_files": [],
                     "unreadable_files": [],
+                    "unindexed_files": [],
                     "issues": [],
                 },
                 "expected_call": ("symbols.db",),

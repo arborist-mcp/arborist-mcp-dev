@@ -2304,6 +2304,15 @@
                           "minLength": 1
                         }
                       },
+                      "unindexed_files": {
+                        "type": "array",
+                        "description": "Workspace source files that are absent from the persisted index.",
+                        "items": {
+                          "type": "string",
+                          "description": "Unindexed workspace source file path.",
+                          "minLength": 1
+                        }
+                      },
                       "issues": {
                         "type": "array",
                         "description": "Human-readable health issues. Empty when ok is true.",
@@ -2330,6 +2339,7 @@
                       "stale_files",
                       "missing_files",
                       "unreadable_files",
+                      "unindexed_files",
                       "issues"
                     ],
                     "additionalProperties": false
@@ -36342,6 +36352,15 @@
                 "minLength": 1
               }
             },
+            "unindexed_files": {
+              "type": "array",
+              "description": "Workspace source files that are absent from the persisted index.",
+              "items": {
+                "type": "string",
+                "description": "Unindexed workspace source file path.",
+                "minLength": 1
+              }
+            },
             "issues": {
               "type": "array",
               "description": "Human-readable health issues. Empty when ok is true.",
@@ -36368,6 +36387,7 @@
             "stale_files",
             "missing_files",
             "unreadable_files",
+            "unindexed_files",
             "issues"
           ],
           "additionalProperties": false

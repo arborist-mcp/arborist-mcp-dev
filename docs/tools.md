@@ -161,7 +161,10 @@ its schema and metadata are healthy, the response schema version, the expected
 index schema version, a machine-readable migration recommendation, the stored
 workspace root, indexed file/symbol counts, file-state row count, fresh indexed
 file count, stale indexed files whose fingerprints no longer match disk,
-missing indexed files, unreadable indexed files, and diagnostic issues. The
+missing indexed files, unreadable indexed files, source files that are not yet
+indexed, and diagnostic issues. Persisted index queries fail closed when a new
+workspace source file has not been indexed, preventing silently incomplete
+search and trace results. The
 migration recommendation is intentionally advisory: Arborist does not rewrite
 unrecognized SQLite databases during inspection.
 

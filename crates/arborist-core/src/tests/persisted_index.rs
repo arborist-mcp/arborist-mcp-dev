@@ -608,7 +608,7 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "2");
+    assert_eq!(health.response_schema_version, "3");
     assert!(health.exists);
     assert!(health.ok);
     assert_eq!(health.schema_version.as_deref(), Some("1"));
@@ -626,7 +626,47 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
     assert!(health.stale_files.is_empty());
     assert!(health.missing_files.is_empty());
     assert!(health.unreadable_files.is_empty());
+    assert!(health.unindexed_files.is_empty());
     assert!(health.issues.is_empty());
+}
+
+#[test]
+fn inspect_and_queries_reject_unindexed_workspace_files() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let added = dir.join("added.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(&added, "def added() -> int:\n    return 2\n").unwrap();
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+
+    assert!(!health.ok);
+    assert_eq!(health.unindexed_files, vec![normalize_path(&added)]);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("workspace source file is not indexed"))
+    );
+
+    for error in [
+        read_symbol_from_index(&db_path, "helper")
+            .expect_err("read_symbol should reject incomplete persisted indexes")
+            .to_string(),
+        search_symbols_from_index(&db_path, "helper", 10)
+            .expect_err("search_symbols should reject incomplete persisted indexes")
+            .to_string(),
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("trace_symbol_graph should reject incomplete persisted indexes")
+            .to_string(),
+    ] {
+        assert!(error.contains("symbol index"));
+        assert!(error.contains("is stale"));
+        assert!(error.contains("workspace source file is not indexed"));
+        assert!(error.contains("added.py"));
+    }
 }
 
 #[test]
@@ -715,7 +755,7 @@ fn inspect_symbol_index_reports_missing_database_without_creating_it() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "2");
+    assert_eq!(health.response_schema_version, "3");
     assert!(!health.exists);
     assert!(!health.ok);
     assert!(health.migration.required);

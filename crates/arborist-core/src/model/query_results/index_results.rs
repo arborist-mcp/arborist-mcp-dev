@@ -38,6 +38,7 @@ pub struct SymbolIndexHealth {
     pub stale_files: Vec<String>,
     pub missing_files: Vec<String>,
     pub unreadable_files: Vec<String>,
+    pub unindexed_files: Vec<String>,
     pub issues: Vec<String>,
 }
 
@@ -106,7 +107,8 @@ impl SymbolIndexHealth {
                 || self.fresh_file_count.is_some()
                 || !self.stale_files.is_empty()
                 || !self.missing_files.is_empty()
-                || !self.unreadable_files.is_empty())
+                || !self.unreadable_files.is_empty()
+                || !self.unindexed_files.is_empty())
         {
             bail!("invalid symbol_index_health: missing indexes must not report loaded metadata");
         }
@@ -143,6 +145,12 @@ impl SymbolIndexHealth {
             ensure_nonblank(
                 file_path,
                 &format!("symbol_index_health.unreadable_files[{index}]"),
+            )?;
+        }
+        for (index, file_path) in self.unindexed_files.iter().enumerate() {
+            ensure_nonblank(
+                file_path,
+                &format!("symbol_index_health.unindexed_files[{index}]"),
             )?;
         }
         for (index, issue) in self.issues.iter().enumerate() {

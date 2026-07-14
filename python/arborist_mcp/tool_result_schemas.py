@@ -956,6 +956,11 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
             "description": "Indexed files that exist but could not be read during freshness inspection.",
             "items": _schema("string", "Unreadable indexed file path."),
         },
+        "unindexed_files": {
+            "type": "array",
+            "description": "Workspace source files that are absent from the persisted index.",
+            "items": _schema("string", "Unindexed workspace source file path."),
+        },
         "issues": {
             "type": "array",
             "description": "Human-readable health issues. Empty when ok is true.",
@@ -978,6 +983,7 @@ SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
         "stale_files",
         "missing_files",
         "unreadable_files",
+        "unindexed_files",
         "issues",
     ],
     "additionalProperties": False,
@@ -1037,6 +1043,5 @@ class JsonRpcError(ValueError):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
         self.code = code
-
 
 

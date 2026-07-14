@@ -24,7 +24,10 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
-use crate::workspace_scan::should_skip_index_path;
+use crate::workspace_scan::{
+    DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanLimits, collect_source_files_with_limits,
+    should_skip_index_path,
+};
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     let db_path = normalize_absolute_path(db_path)?;
@@ -45,6 +48,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         stale_files: Vec::new(),
         missing_files: Vec::new(),
         unreadable_files: Vec::new(),
+        unindexed_files: Vec::new(),
         issues: Vec::new(),
     };
 
@@ -101,10 +105,16 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         );
     }
 
-    match load_symbol_index_workspace_root(&connection, &db_path) {
-        Ok(workspace_root) => health.workspace_root = Some(normalize_path(&workspace_root)),
-        Err(error) => health.issues.push(error.to_string()),
-    }
+    let workspace_root = match load_symbol_index_workspace_root(&connection, &db_path) {
+        Ok(workspace_root) => {
+            health.workspace_root = Some(normalize_path(&workspace_root));
+            Some(workspace_root)
+        }
+        Err(error) => {
+            health.issues.push(error.to_string());
+            None
+        }
+    };
 
     match load_indexed_files_metadata(&connection) {
         Ok(indexed_files) => health.indexed_files = Some(indexed_files),
@@ -125,7 +135,24 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     }
 
     match load_file_states(&connection) {
-        Ok(file_states) => inspect_symbol_index_freshness(&mut health, &file_states),
+        Ok(file_states) => {
+            inspect_symbol_index_freshness(&mut health, &file_states);
+            if let Some(workspace_root) = workspace_root {
+                match unindexed_workspace_files(&workspace_root, &file_states, None) {
+                    Ok(unindexed_files) => {
+                        for file_path in &unindexed_files {
+                            health
+                                .issues
+                                .push(format!("workspace source file is not indexed: {file_path}"));
+                        }
+                        health.unindexed_files = unindexed_files;
+                    }
+                    Err(error) => health.issues.push(format!(
+                        "failed to scan indexed workspace for unindexed files: {error}"
+                    )),
+                }
+            }
+        }
         Err(error) => health
             .issues
             .push(format!("failed to inspect persisted file states: {error}")),
@@ -152,8 +179,10 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
     validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
     let file_states = load_file_states(&connection)?;
-    ensure_symbol_index_fresh(db_path, &file_states, None)?;
-    load_resolved_symbols(&connection)
+    let resolved_symbols = load_resolved_symbols(&connection)?;
+    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
+    Ok(resolved_symbols)
 }
 
 pub(crate) fn load_symbol_index_with_overrides(
@@ -173,7 +202,12 @@ pub(crate) fn load_symbol_index_with_overrides(
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();
     let persisted_file_states = load_file_states(&connection)?;
-    ensure_symbol_index_fresh(db_path, &persisted_file_states, Some(file_overrides))?;
+    ensure_symbol_index_fresh(
+        db_path,
+        &workspace_root,
+        &persisted_file_states,
+        Some(file_overrides),
+    )?;
     let mut changed_file_paths = BTreeSet::new();
     let mut added_file_paths = BTreeSet::new();
 
@@ -275,10 +309,16 @@ fn inspect_symbol_index_freshness(
 
 fn ensure_symbol_index_fresh(
     db_path: &Path,
+    workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<()> {
-    let issues = symbol_index_freshness_issues(file_states, file_overrides);
+    let mut issues = symbol_index_freshness_issues(file_states, file_overrides);
+    issues.extend(
+        unindexed_workspace_files(workspace_root, file_states, file_overrides)?
+            .into_iter()
+            .map(|file_path| format!("workspace source file is not indexed: {file_path}")),
+    );
     if issues.is_empty() {
         return Ok(());
     }
@@ -288,6 +328,30 @@ fn ensure_symbol_index_fresh(
         db_path.display(),
         issues.join("; ")
     );
+}
+
+fn unindexed_workspace_files(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<Vec<String>> {
+    let max_files = file_states
+        .len()
+        .saturating_add(DEFAULT_WORKSPACE_MAX_FILES);
+    collect_source_files_with_limits(
+        workspace_root,
+        WorkspaceScanLimits::with_max_files(max_files),
+    )
+    .map(|paths| {
+        paths
+            .into_iter()
+            .map(|path| normalize_path(&path))
+            .filter(|path| {
+                !file_states.contains_key(path)
+                    && !file_overrides.is_some_and(|overrides| overrides.contains_key(path))
+            })
+            .collect()
+    })
 }
 
 fn symbol_index_freshness_issues(

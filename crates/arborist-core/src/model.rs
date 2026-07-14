@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Result, bail};
-pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "2";
+pub const SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION: &str = "3";
 
 mod patch_validation;
 mod primitives;

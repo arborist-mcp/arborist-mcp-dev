@@ -65,6 +65,8 @@ completed item can land in its own commit unless two changes are inseparable.
   focused facades over submodules.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
+- [x] Detect source files added after an index build during health inspection
+  and persisted queries so incomplete indexes do not silently appear healthy.
 - [ ] Add a durable SQLite migration path beyond the current fail-closed schema
   version gate.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust
