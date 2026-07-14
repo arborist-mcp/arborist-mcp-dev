@@ -32,10 +32,10 @@ pub(crate) fn missing_schema_version() -> SymbolIndexMigrationPlan {
     )
 }
 
-pub(crate) fn unsupported_schema_version() -> SymbolIndexMigrationPlan {
+pub(crate) fn unsupported_schema_version(stored_version: &str) -> SymbolIndexMigrationPlan {
     plan(
-        MigrationAction::Rebuild,
-        "stored schema_version is unsupported by this Arborist build; rebuild the symbol index",
+        schema_version_action(stored_version),
+        unsupported_schema_reason(),
     )
 }
 
@@ -61,6 +61,14 @@ fn plan(action: MigrationAction, reason: &str) -> SymbolIndexMigrationPlan {
     }
 }
 
+fn schema_version_action(_stored_version: &str) -> MigrationAction {
+    MigrationAction::Rebuild
+}
+
+fn unsupported_schema_reason() -> &'static str {
+    "stored schema_version is unsupported by this Arborist build; rebuild the symbol index"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +89,13 @@ mod tests {
         assert!(manual.required);
         assert_eq!(manual.action, "manual");
         assert_eq!(manual.reason, "inspect");
+    }
+
+    #[test]
+    fn unsupported_schema_versions_recommend_rebuild_until_migrations_exist() {
+        let plan = unsupported_schema_version("99");
+        assert!(plan.required);
+        assert_eq!(plan.action, "rebuild");
+        assert_eq!(plan.reason, unsupported_schema_reason());
     }
 }

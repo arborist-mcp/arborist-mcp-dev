@@ -96,7 +96,9 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             db_path.display(),
             SYMBOL_INDEX_SCHEMA_VERSION
         ));
-        health.migration = index_migration::unsupported_schema_version();
+        health.migration = index_migration::unsupported_schema_version(
+            health.schema_version.as_deref().unwrap_or_default(),
+        );
     }
 
     match load_symbol_index_workspace_root(&connection, &db_path) {
