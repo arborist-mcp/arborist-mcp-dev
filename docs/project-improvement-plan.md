@@ -69,6 +69,8 @@ completed item can land in its own commit unless two changes are inseparable.
   version gate.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust
   module so future migration actions are not scattered through inspection code.
+- [x] Type symbol-index migration recommendation actions internally while
+  preserving the current public `none` / `rebuild` / `manual` response shape.
 - [ ] Add timeout/cancellation boundaries for large workspace scans, broad raw
   Tree-sitter queries, and trace/neighborhood expansion.
 - [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
@@ -111,9 +113,10 @@ completed item can land in its own commit unless two changes are inseparable.
 11. `perf(scripts): broaden benchmark workflows`
 12. `ci(gateway): smoke installed console script`
 13. `refactor(index): centralize migration recommendations`
-14. `feat(index): add schema migration scaffolding`
-15. `feat(index): add watch-mode refresh loop`
-16. `feat(core): add cpp grammar support`
+14. `refactor(index): type migration recommendation actions`
+15. `feat(index): add schema migration scaffolding`
+16. `feat(index): add watch-mode refresh loop`
+17. `feat(core): add cpp grammar support`
 
 The first four items are intentionally low-risk and give quick maintainability
 wins before deeper Rust and protocol work.
