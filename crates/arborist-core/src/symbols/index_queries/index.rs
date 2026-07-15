@@ -21,7 +21,7 @@ use crate::symbol_dependency::{
     assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
 };
 use crate::symbol_extractor::index_symbols_from_document;
-use crate::symbol_index_state::source_fingerprint;
+use crate::symbol_index_state::{source_fingerprint, validate_persisted_index_paths};
 use crate::symbol_index_workspace::{
     expanded_refresh_file_paths, resolve_workspace_symbols_incremental_with_limits,
 };
@@ -119,6 +119,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     };
 
     let mut file_states = load_file_states(&connection)?;
+    validate_persisted_index_paths(&workspace_root, &file_states, &old_resolved_symbols)?;
     let mut old_changed_symbols = Vec::new();
     let mut changed_file_paths = BTreeSet::new();
     let mut rebuilt_files = 0;

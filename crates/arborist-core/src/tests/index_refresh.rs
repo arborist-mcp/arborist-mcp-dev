@@ -692,3 +692,37 @@ fn refresh_rejects_empty_persisted_file_state_path_without_rewrite() {
         .unwrap();
     assert_eq!(persisted_file_path, "");
 }
+
+#[test]
+fn refresh_rejects_persisted_symbol_paths_outside_workspace_without_rewrite() {
+    let root = temporary_dir();
+    let dir = root.join("workspace");
+    let helper = dir.join("helper.py");
+    let outside = root.join("outside.py");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&outside, "def outside() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let outside_path = normalize_path(&outside);
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET file_path = ?1 WHERE semantic_path = 'helper'",
+            [&outside_path],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+        .expect_err("refresh must reject persisted paths outside the workspace");
+    assert!(error.to_string().contains("symbols.file_path"));
+    assert!(error.to_string().contains("outside indexed workspace"));
+
+    let connection = Connection::open(&db_path).unwrap();
+    let persisted_path: String = connection
+        .query_row("SELECT file_path FROM symbols", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(persisted_path, outside_path);
+}

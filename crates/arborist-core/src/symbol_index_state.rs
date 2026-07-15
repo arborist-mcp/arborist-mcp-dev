@@ -134,28 +134,57 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             .push(format!("failed to count persisted file states: {error}")),
     }
 
-    match load_file_states(&connection) {
-        Ok(file_states) => {
-            inspect_symbol_index_freshness(&mut health, &file_states);
-            if let Some(workspace_root) = workspace_root {
-                match unindexed_workspace_files(&workspace_root, &file_states, None) {
-                    Ok(unindexed_files) => {
-                        for file_path in &unindexed_files {
-                            health
-                                .issues
-                                .push(format!("workspace source file is not indexed: {file_path}"));
-                        }
-                        health.unindexed_files = unindexed_files;
+    let file_states = match load_file_states(&connection) {
+        Ok(file_states) => Some(file_states),
+        Err(error) => {
+            health
+                .issues
+                .push(format!("failed to inspect persisted file states: {error}"));
+            None
+        }
+    };
+    let resolved_symbols = match load_resolved_symbols(&connection) {
+        Ok((symbols, _)) => Some(symbols),
+        Err(error) => {
+            health
+                .issues
+                .push(format!("failed to inspect persisted symbols: {error}"));
+            None
+        }
+    };
+
+    if let (Some(workspace_root), Some(file_states)) =
+        (workspace_root.as_deref(), file_states.as_ref())
+    {
+        let paths_valid = match validate_persisted_file_state_paths(workspace_root, file_states) {
+            Ok(()) => true,
+            Err(error) => {
+                health.issues.push(error.to_string());
+                false
+            }
+        };
+        if let Some(resolved_symbols) = resolved_symbols.as_deref()
+            && let Err(error) =
+                validate_persisted_symbol_paths(workspace_root, file_states, resolved_symbols)
+        {
+            health.issues.push(error.to_string());
+        }
+        if paths_valid {
+            inspect_symbol_index_freshness(&mut health, file_states);
+            match unindexed_workspace_files(workspace_root, file_states, None) {
+                Ok(unindexed_files) => {
+                    for file_path in &unindexed_files {
+                        health
+                            .issues
+                            .push(format!("workspace source file is not indexed: {file_path}"));
                     }
-                    Err(error) => health.issues.push(format!(
-                        "failed to scan indexed workspace for unindexed files: {error}"
-                    )),
+                    health.unindexed_files = unindexed_files;
                 }
+                Err(error) => health.issues.push(format!(
+                    "failed to scan indexed workspace for unindexed files: {error}"
+                )),
             }
         }
-        Err(error) => health
-            .issues
-            .push(format!("failed to inspect persisted file states: {error}")),
     }
 
     if let (Some(indexed_files), Some(file_state_entries)) =
@@ -189,6 +218,7 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
     let resolved_symbols = load_resolved_symbols(&connection)?;
     validate_indexed_file_count(indexed_files, file_states.len())?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    validate_persisted_index_paths(&workspace_root, &file_states, &resolved_symbols.0)?;
     ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
     Ok(resolved_symbols)
 }
@@ -212,6 +242,7 @@ pub(crate) fn load_symbol_index_with_overrides(
     let persisted_file_states = load_file_states(&connection)?;
     let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
     validate_indexed_file_count(persisted_indexed_files, persisted_file_states.len())?;
+    validate_persisted_index_paths(&workspace_root, &persisted_file_states, &resolved_symbols)?;
     ensure_symbol_index_fresh(
         db_path,
         &workspace_root,
@@ -344,6 +375,65 @@ fn validate_indexed_file_count(indexed_files: usize, file_state_entries: usize) 
         bail!(
             "indexed_files metadata {indexed_files} does not match file_state entries {file_state_entries}"
         );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_persisted_index_paths(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+    symbols: &[SymbolMeta],
+) -> Result<()> {
+    validate_persisted_file_state_paths(workspace_root, file_states)?;
+    validate_persisted_symbol_paths(workspace_root, file_states, symbols)
+}
+
+fn validate_persisted_file_state_paths(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+) -> Result<()> {
+    for file_path in file_states.keys() {
+        validate_persisted_source_path(workspace_root, file_path, "file_state.file_path")?;
+    }
+    Ok(())
+}
+
+fn validate_persisted_symbol_paths(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+    symbols: &[SymbolMeta],
+) -> Result<()> {
+    for symbol in symbols {
+        validate_persisted_source_path(workspace_root, &symbol.file_path, "symbols.file_path")?;
+        if !file_states.contains_key(&symbol.file_path) {
+            bail!(
+                "persisted symbol path {} has no matching file_state entry",
+                symbol.file_path
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_persisted_source_path(
+    workspace_root: &Path,
+    file_path: &str,
+    field_name: &str,
+) -> Result<()> {
+    let path = Path::new(file_path);
+    let normalized_path = normalize_absolute_path(path)?;
+    if normalize_path(&normalized_path) != file_path {
+        bail!("persisted {field_name} is not a normalized absolute path: {file_path}");
+    }
+    if !path_is_inside_workspace(workspace_root, &normalized_path)? {
+        bail!(
+            "persisted {field_name} {} is outside indexed workspace {}",
+            file_path,
+            workspace_root.display()
+        );
+    }
+    if detect_language(&normalized_path).is_err() {
+        bail!("persisted {field_name} is not a supported source file: {file_path}");
     }
     Ok(())
 }

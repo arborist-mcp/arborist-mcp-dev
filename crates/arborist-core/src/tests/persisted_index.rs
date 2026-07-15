@@ -713,6 +713,106 @@ fn inspect_and_queries_reject_inconsistent_indexed_file_counts() {
 }
 
 #[test]
+fn inspect_and_queries_reject_persisted_symbol_paths_outside_workspace() {
+    let root = temporary_dir();
+    let dir = root.join("workspace");
+    let outside = root.join("outside.py");
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&outside, "def outside() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET file_path = ?1 WHERE semantic_path = 'helper'",
+            [normalize_path(&outside)],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("symbols.file_path")
+                && issue.contains("outside indexed workspace"))
+    );
+
+    let error = read_symbol_from_index(&db_path, "helper")
+        .expect_err("persisted reads must reject symbol paths outside the workspace");
+    assert!(error.to_string().contains("symbols.file_path"));
+    assert!(error.to_string().contains("outside indexed workspace"));
+}
+
+#[test]
+fn inspect_and_queries_reject_persisted_file_states_outside_workspace() {
+    let root = temporary_dir();
+    let dir = root.join("workspace");
+    let outside = root.join("outside.py");
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&outside, "def outside() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE file_state SET file_path = ?1",
+            [normalize_path(&outside)],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert_eq!(health.fresh_file_count, None);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("file_state.file_path")
+                && issue.contains("outside indexed workspace"))
+    );
+
+    let error = read_symbol_from_index(&db_path, "helper")
+        .expect_err("persisted reads must reject file states outside the workspace");
+    assert!(error.to_string().contains("file_state.file_path"));
+    assert!(error.to_string().contains("outside indexed workspace"));
+}
+
+#[test]
+fn persisted_queries_reject_symbol_paths_for_unsupported_files() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let secret = dir.join("secret.txt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&secret, "not source data\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET file_path = ?1 WHERE semantic_path = 'helper'",
+            [normalize_path(&secret)],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = read_symbol_from_index(&db_path, "helper")
+        .expect_err("persisted reads must reject paths for unsupported source types");
+    assert!(error.to_string().contains("symbols.file_path"));
+    assert!(error.to_string().contains("not a supported source file"));
+}
+
+#[test]
 fn inspect_symbol_index_reports_stale_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
