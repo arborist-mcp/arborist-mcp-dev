@@ -15,7 +15,7 @@ use super::{
     read_symbol_discovery_context_at_position_with_source,
     read_symbol_discovery_context_from_index, read_symbol_from_index,
     read_symbol_neighborhood_context, read_symbol_neighborhood_context_from_index,
-    rebuild_symbol_index, search_symbols, search_symbols_context,
+    rebuild_symbol_index, refresh_symbol_index, search_symbols, search_symbols_context,
     search_symbols_context_from_index, search_symbols_discovery_context,
     search_symbols_discovery_context_from_index, search_symbols_filtered,
     search_symbols_from_index, search_symbols_from_index_filtered,
@@ -59,6 +59,54 @@ fn rebuilds_and_reads_persisted_symbol_index() {
             .callees
             .iter()
             .any(|symbol| symbol.parameters == vec!["value: int".to_string()])
+    );
+}
+
+#[test]
+fn refreshes_changed_added_and_deleted_workspace_files_incrementally() {
+    let dir = temporary_dir();
+    let changed = dir.join("changed.py");
+    let deleted = dir.join("deleted.py");
+    let added = dir.join("added.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&changed, "def before() -> int:\n    return 1\n").unwrap();
+    fs::write(&deleted, "def removed() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    fs::write(&changed, "def after() -> int:\n    return 3\n").unwrap();
+    fs::remove_file(&deleted).unwrap();
+    fs::write(&added, "def created() -> int:\n    return 4\n").unwrap();
+
+    let stats = refresh_symbol_index(&dir, &db_path).unwrap();
+
+    assert_eq!(stats.indexed_files, 2);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 0);
+    assert_eq!(
+        search_symbols_from_index(&db_path, "after", 10)
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+    assert_eq!(
+        search_symbols_from_index(&db_path, "created", 10)
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+    assert!(
+        search_symbols_from_index(&db_path, "before", 10)
+            .unwrap()
+            .matches
+            .is_empty()
+    );
+    assert!(
+        search_symbols_from_index(&db_path, "removed", 10)
+            .unwrap()
+            .matches
+            .is_empty()
     );
 }
 

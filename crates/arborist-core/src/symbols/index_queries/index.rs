@@ -35,6 +35,18 @@ pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<Sym
     rebuild_symbol_index_with_limits(workspace_root, db_path, WorkspaceScanLimits::default())
 }
 
+pub fn refresh_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
+    refresh_symbol_index_with_limits(workspace_root, db_path, WorkspaceScanLimits::default())
+}
+
+pub fn refresh_symbol_index_with_limits(
+    workspace_root: &Path,
+    db_path: &Path,
+    limits: WorkspaceScanLimits,
+) -> Result<SymbolIndexStats> {
+    rebuild_symbol_index_with_limits(workspace_root, db_path, limits)
+}
+
 pub fn rebuild_symbol_index_with_limits(
     workspace_root: &Path,
     db_path: &Path,

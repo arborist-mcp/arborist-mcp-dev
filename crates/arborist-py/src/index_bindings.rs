@@ -2,7 +2,7 @@ use std::path::Path;
 
 use arborist_core::{
     WorkspaceScanLimits, inspect_symbol_index, rebuild_symbol_index_with_limits,
-    refresh_symbol_index_for_file_with_limits,
+    refresh_symbol_index_for_file_with_limits, refresh_symbol_index_with_limits,
 };
 use pyo3::prelude::*;
 
@@ -31,6 +31,26 @@ impl ArboristCore {
 
     pub(super) fn inspect_symbol_index_json_impl(&self, db_path: &str) -> PyResult<String> {
         let result = inspect_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
+
+        to_json_result(&result)
+    }
+
+    pub(super) fn refresh_symbol_index_json_impl(
+        &self,
+        workspace_root: &str,
+        db_path: &str,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        let result = refresh_symbol_index_with_limits(
+            Path::new(workspace_root),
+            Path::new(db_path),
+            WorkspaceScanLimits {
+                max_files,
+                max_file_bytes,
+            },
+        )
+        .map_err(to_py_error)?;
 
         to_json_result(&result)
     }

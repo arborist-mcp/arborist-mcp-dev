@@ -931,6 +931,17 @@ impl ArboristCore {
         self.inspect_symbol_index_json_impl(db_path)
     }
 
+    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None))]
+    fn refresh_symbol_index_json(
+        &self,
+        workspace_root: &str,
+        db_path: &str,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        self.refresh_symbol_index_json_impl(workspace_root, db_path, max_files, max_file_bytes)
+    }
+
     #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000, max_file_bytes=None))]
     fn refresh_symbol_index_for_file_json(
         &self,
