@@ -172,10 +172,12 @@ Persisted trace reads and single-file refreshes fail closed on missing indexes,
 non-index databases, incomplete schema, missing or unsupported schema versions,
 metadata issues, indexed-file count mismatches, incompatible column types,
 damaged symbol identity fields, persisted paths outside the indexed workspace,
-unsupported persisted source paths,
-invalid byte ranges, invalid JSON graph/list columns, or empty persisted
-file-state paths. These checks avoid silently initializing or partially
-migrating unrelated SQLite databases.
+unsupported persisted source paths, invalid byte ranges, invalid JSON
+graph/list columns, or empty persisted file-state paths. These checks avoid
+silently initializing or partially
+migrating unrelated SQLite databases. Inspection and persisted query loading
+use read-only SQLite connections; schema creation and migration helpers are
+restricted to explicit index write paths.
 
 ## C Graph Behavior
 

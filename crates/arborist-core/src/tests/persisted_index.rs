@@ -956,6 +956,54 @@ fn trace_rejects_missing_schema_version_before_legacy_migration() {
 }
 
 #[test]
+fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    let connection = Connection::open(&db_path).unwrap();
+    create_legacy_symbol_index_schema_without_reference_names(
+        &connection,
+        Some(&normalize_path(&dir)),
+        Some("0"),
+    );
+    connection
+        .execute(
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '1')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert_eq!(health.migration.action, "manual");
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("reference_names_json"))
+    );
+
+    for error in [
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("queries must not add missing current-schema columns")
+            .to_string(),
+        refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("refresh must not add missing current-schema columns")
+            .to_string(),
+        rebuild_symbol_index(&dir, &db_path)
+            .expect_err("rebuild must not add missing current-schema columns")
+            .to_string(),
+    ] {
+        assert!(error.contains("missing required column `reference_names_json`"));
+    }
+
+    let connection = Connection::open(&db_path).unwrap();
+    assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+}
+
+#[test]
 fn trace_rejects_unsupported_schema_version() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

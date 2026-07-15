@@ -3,12 +3,12 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Result, anyhow, bail};
-use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    SYMBOL_INDEX_SCHEMA_VERSION, ensure_symbol_tables, load_indexed_files_metadata,
-    load_optional_metadata_value, load_symbol_index_workspace_root, require_symbol_index_tables,
+    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata, load_optional_metadata_value,
+    load_symbol_index_workspace_root, open_symbol_index_read_only,
+    require_current_symbol_index_schema, require_symbol_index_tables,
     validate_symbol_index_schema_version,
 };
 use crate::index_store::{
@@ -61,7 +61,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         return Ok(health);
     }
 
-    let connection = match Connection::open(&db_path) {
+    let connection = match open_symbol_index_read_only(&db_path) {
         Ok(connection) => connection,
         Err(error) => {
             health
@@ -103,6 +103,11 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         health.migration = index_migration::unsupported_schema_version(
             health.schema_version.as_deref().unwrap_or_default(),
         );
+    } else if let Err(error) = require_current_symbol_index_schema(&connection, &db_path) {
+        health.issues.push(error.to_string());
+        health.migration = index_migration::incomplete_or_foreign_database();
+        health.validate_public_output()?;
+        return Ok(health);
     }
 
     let workspace_root = match load_symbol_index_workspace_root(&connection, &db_path) {
@@ -209,11 +214,11 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
 
-    let connection = Connection::open(db_path)?;
+    let connection = open_symbol_index_read_only(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
     let indexed_files = load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
-    ensure_symbol_tables(&connection)?;
+    require_current_symbol_index_schema(&connection, db_path)?;
     let file_states = load_file_states(&connection)?;
     let resolved_symbols = load_resolved_symbols(&connection)?;
     validate_indexed_file_count(indexed_files, file_states.len())?;
@@ -231,11 +236,11 @@ pub(crate) fn load_symbol_index_with_overrides(
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
 
-    let connection = Connection::open(db_path)?;
+    let connection = open_symbol_index_read_only(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
-    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
-    ensure_symbol_tables(&connection)?;
+    require_current_symbol_index_schema(&connection, db_path)?;
+    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
 
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();

@@ -2,11 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 
 use crate::language::{normalize_absolute_path, normalize_path};
 
 pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+
+pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
+    Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
+}
 
 pub(crate) fn persist_symbol_index_metadata(
     tx: &Transaction<'_>,
@@ -153,6 +157,63 @@ pub(crate) fn require_symbol_index_tables(connection: &Connection, db_path: &Pat
         "file_state",
         &[("file_path", "TEXT"), ("fingerprint", "INTEGER")],
     )?;
+    Ok(())
+}
+
+pub(crate) fn require_current_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_table_columns(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            "symbol_id",
+            "semantic_path",
+            "scope_path",
+            "file_path",
+            "node_kind",
+            "start_byte",
+            "end_byte",
+            "signature",
+            "parameters_json",
+            "return_type",
+            "docstring",
+            "dependencies_json",
+            "references_json",
+            "reference_names_json",
+        ],
+    )?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            ("symbol_id", "TEXT"),
+            ("semantic_path", "TEXT"),
+            ("scope_path", "TEXT"),
+            ("file_path", "TEXT"),
+            ("node_kind", "TEXT"),
+            ("start_byte", "INTEGER"),
+            ("end_byte", "INTEGER"),
+            ("signature", "TEXT"),
+            ("parameters_json", "TEXT"),
+            ("return_type", "TEXT"),
+            ("docstring", "TEXT"),
+            ("dependencies_json", "TEXT"),
+            ("references_json", "TEXT"),
+            ("reference_names_json", "TEXT"),
+        ],
+    )?;
+    require_table_primary_key_layout(connection, db_path, "metadata", &[("key", 1)])?;
+    require_table_primary_key_layout(
+        connection,
+        db_path,
+        "symbols",
+        &[("semantic_path", 1), ("file_path", 2)],
+    )?;
+    require_table_primary_key_layout(connection, db_path, "file_state", &[("file_path", 1)])?;
     Ok(())
 }
 
@@ -331,6 +392,45 @@ fn table_column_types(
     Ok(types)
 }
 
+fn require_table_primary_key_layout(
+    connection: &Connection,
+    db_path: &Path,
+    table_name: &str,
+    expected_columns: &[(&str, i64)],
+) -> Result<()> {
+    let actual_columns = table_primary_key_layout(connection, table_name)?;
+    let expected_columns = expected_columns
+        .iter()
+        .map(|(name, order)| ((*name).to_string(), *order))
+        .collect::<BTreeMap<_, _>>();
+    if actual_columns != expected_columns {
+        return Err(anyhow!(
+            "symbol index table `{}` in {} has incompatible primary key layout",
+            table_name,
+            db_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn table_primary_key_layout(
+    connection: &Connection,
+    table_name: &str,
+) -> Result<BTreeMap<String, i64>> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+    })?;
+    let mut primary_key = BTreeMap::new();
+    for column in columns {
+        let (name, order) = column?;
+        if order > 0 {
+            primary_key.insert(name, order);
+        }
+    }
+    Ok(primary_key)
+}
+
 fn ensure_reference_names_column(connection: &Connection) -> Result<()> {
     let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
@@ -483,4 +583,40 @@ fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
         ",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use rusqlite::Connection;
+
+    use super::require_table_primary_key_layout;
+
+    #[test]
+    fn current_schema_validation_rejects_incompatible_primary_keys() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE symbols (
+                    semantic_path TEXT NOT NULL,
+                    file_path TEXT NOT NULL
+                );",
+            )
+            .unwrap();
+
+        let error = require_table_primary_key_layout(
+            &connection,
+            Path::new("symbols.db"),
+            "symbols",
+            &[("semantic_path", 1), ("file_path", 2)],
+        )
+        .expect_err("missing primary key columns should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("incompatible primary key layout")
+        );
+    }
 }

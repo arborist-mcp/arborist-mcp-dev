@@ -5,7 +5,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::index_schema::{
-    ensure_symbol_tables, load_indexed_files_metadata, require_symbol_index_tables,
+    load_indexed_files_metadata, require_current_symbol_index_schema, require_symbol_index_tables,
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::index_store::{
@@ -49,6 +49,7 @@ pub fn rebuild_symbol_index_with_limits(
         validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
         load_indexed_files_metadata(&connection)?;
         validate_symbol_index_schema_version(&connection, &db_path)?;
+        require_current_symbol_index_schema(&connection, &db_path)?;
     }
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
         resolve_workspace_symbols_incremental_with_limits(&workspace_root, &db_path, limits)?;
@@ -107,7 +108,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
     load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, &db_path)?;
-    ensure_symbol_tables(&connection)?;
+    require_current_symbol_index_schema(&connection, &db_path)?;
 
     let old_resolved_symbols = load_resolved_symbols(&connection)?.0;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);

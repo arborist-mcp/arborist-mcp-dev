@@ -71,6 +71,8 @@ completed item can land in its own commit unless two changes are inseparable.
   damaged counts cannot leak into query results or healthy diagnostics.
 - [x] Validate persisted symbol and file-state paths against the indexed
   workspace and supported source types before reading or refreshing them.
+- [x] Make current-schema validation cover every persisted column and primary
+  key layout, and keep query/inspection connections read-only.
 - [ ] Add a durable SQLite migration path beyond the current fail-closed schema
   version gate.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust
