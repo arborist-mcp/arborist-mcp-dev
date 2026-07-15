@@ -39002,6 +39002,101 @@
     }
   },
   {
+    "name": "arborist/refresh_symbol_index",
+    "title": "Refresh Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/refresh_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "workspace_root": {
+          "type": "string",
+          "description": "Workspace root for index, trace, and symbol operations.",
+          "default": ".",
+          "minLength": 1
+        },
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        },
+        "max_files": {
+          "type": "integer",
+          "description": "Maximum source files to scan while indexing a workspace. Must be greater than zero.",
+          "default": 20000,
+          "minimum": 1,
+          "maximum": 200000
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "description": "Optional maximum byte size for each source file read while indexing. Must be greater than zero when supplied.",
+          "minimum": 1,
+          "maximum": 67108864
+        }
+      },
+      "required": [
+        "db_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "Persisted symbol-index rebuild or refresh statistics.",
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            },
+            "indexed_files": {
+              "type": "integer",
+              "description": "Number of indexed files.",
+              "minimum": 0
+            },
+            "indexed_symbols": {
+              "type": "integer",
+              "description": "Number of indexed symbols.",
+              "minimum": 0
+            },
+            "rebuilt_files": {
+              "type": "integer",
+              "description": "Number of files rebuilt during this operation.",
+              "minimum": 0
+            },
+            "reused_files": {
+              "type": "integer",
+              "description": "Number of indexed files reused from prior state.",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "db_path",
+            "indexed_files",
+            "indexed_symbols",
+            "rebuilt_files",
+            "reused_files"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/refresh_symbol_index",
+      "mutatesState": true
+    }
+  },
+  {
     "name": "arborist/trace_symbol_graph",
     "title": "Trace Symbol Graph",
     "description": "Read trace, graph, or trace-backed validation context. Legacy JSON-RPC method: arborist/trace_symbol_graph.",

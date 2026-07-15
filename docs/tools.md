@@ -4,7 +4,7 @@ This guide summarizes Arborist's tool families and semantic behavior. The exact
 MCP schemas are generated from the gateway and checked in at
 [`docs/tool-catalog.json`](tool-catalog.json).
 
-As of this revision, `tools/list` returns 53 tools:
+As of this revision, `tools/list` returns 54 tools:
 
 - Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter
   queries, symbol reads, symbol list/search, and graph-backed read bundles.
@@ -12,8 +12,8 @@ As of this revision, `tools/list` returns 53 tools:
   `arborist/patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits,
   commit/discard, and virtual reads.
-- Index tools: 6, covering register, unregister, list, inspect, rebuild, and
-  file refresh for symbol indexes.
+- Index tools: 7, covering register, unregister, list, inspect, rebuild,
+  workspace refresh, and file refresh for symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay
   and validation.
 
@@ -142,12 +142,15 @@ a single allowed/status/reason decision.
 rebuilds an existing valid Arborist index for the same workspace. Existing
 non-index databases, incomplete schemas, unsupported schema versions, and
 indexes from other workspaces are rejected before any schema initialization or
-rewrite. `refresh_symbol_index_for_file` reparses one changed file, removes
-deleted file state when needed, reuses stored symbols for unchanged files, and
-persists a partial SQLite update. Workspace scans are bounded by `max_files`
-(default `20000`) on rebuilds and missing-index refresh fallbacks so
-unexpectedly large workspaces fail with an actionable limit error instead of
-scanning without bound. Rebuild and refresh calls can also provide
+rewrite. `refresh_symbol_index` incrementally synchronizes the complete
+workspace: unchanged files are reused by fingerprint, changed and new files are
+reparsed, and deleted files are removed. It is the preferred operation for
+polling or watch integrations. `refresh_symbol_index_for_file` reparses one
+changed file, removes deleted file state when needed, reuses stored symbols for
+unchanged files, and persists a partial SQLite update. Workspace scans are
+bounded by `max_files` (default `20000`) on rebuilds and missing-index refresh
+fallbacks so unexpectedly large workspaces fail with an actionable limit error
+instead of scanning without bound. Rebuild and refresh calls can also provide
 `max_file_bytes` to reject oversized source files before indexing reads them;
 this optional limit is capped at `67108864`. `max_files` is capped at `200000`;
 symbol list/search `limit` values are capped at `10000`.

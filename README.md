@@ -37,15 +37,15 @@ for C-like header/source families, but this is not full C++ support yet. See the
 
 ## Implemented Tool Families
 
-The MCP catalog currently returns 53 tools:
+The MCP catalog currently returns 54 tools:
 
 - Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter queries,
   symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,
   and virtual reads.
-- Index tools: 6, covering register, unregister, list, inspect, rebuild, and file refresh
-  for persisted symbol indexes.
+- Index tools: 7, covering register, unregister, list, inspect, rebuild,
+  workspace refresh, and file refresh for persisted symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read

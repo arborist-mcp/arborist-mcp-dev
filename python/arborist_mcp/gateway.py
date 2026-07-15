@@ -1298,17 +1298,25 @@ class ArboristGateway:
         return self._decode_core_object(payload)
 
     def _rebuild_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._run_workspace_index_scan(params, "rebuild_symbol_index_json")
+
+    def _refresh_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._run_workspace_index_scan(params, "refresh_symbol_index_json")
+
+    def _run_workspace_index_scan(
+        self,
+        params: dict[str, Any],
+        core_method_name: str,
+    ) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
         max_files = self._optional_positive_int(params, "max_files", default=20000)
         max_file_bytes = self._optional_positive_int_or_none(params, "max_file_bytes")
-        core = self._require_core()
+        core_method = getattr(self._require_core(), core_method_name)
         if max_file_bytes is None:
-            payload = core.rebuild_symbol_index_json(workspace_root, db_path, max_files)
+            payload = core_method(workspace_root, db_path, max_files)
         else:
-            payload = core.rebuild_symbol_index_json(
-                workspace_root, db_path, max_files, max_file_bytes
-            )
+            payload = core_method(workspace_root, db_path, max_files, max_file_bytes)
         return self._decode_core_object(payload)
 
     def _inspect_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:

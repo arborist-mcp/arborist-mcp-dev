@@ -1101,6 +1101,15 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 "max_file_bytes",
             ),
             (
+                "arborist/refresh_symbol_index",
+                {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_files": gateway_module.MAX_WORKSPACE_SCAN_FILES + 1,
+                },
+                "max_files",
+            ),
+            (
                 "arborist/execute_tree_query",
                 {
                     "file_path": "sample.py",

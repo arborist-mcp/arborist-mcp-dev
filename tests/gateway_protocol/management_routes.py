@@ -18,6 +18,7 @@ COVERED_TOOLS = (
     "arborist/commit_virtual_file",
     "arborist/discard_virtual_file",
     "arborist/rebuild_symbol_index",
+    "arborist/refresh_symbol_index",
 )
 
 
@@ -183,6 +184,44 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "core_method": "rebuild_symbol_index_json",
                 "rpc_method": "arborist/rebuild_symbol_index",
                 "request_id": 119,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_file_bytes": 4096,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 20000, 4096),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "refresh_symbol_index_json",
+                "rpc_method": "arborist/refresh_symbol_index",
+                "request_id": 120,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 20000),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "refresh_symbol_index_json",
+                "rpc_method": "arborist/refresh_symbol_index",
+                "request_id": 121,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_files": 17,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 17),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "refresh_symbol_index_json",
+                "rpc_method": "arborist/refresh_symbol_index",
+                "request_id": 122,
                 "params": {
                     "workspace_root": ".",
                     "db_path": "symbols.db",

@@ -13,12 +13,73 @@ COVERED_TOOLS = (
     "arborist/patch_ast_node_at_position",
     "arborist/preview_patch_ast_node",
     "arborist/preview_patch_ast_node_at_position",
+    "arborist/refresh_symbol_index",
     "arborist/replay_patch_evidence_against_trace",
     "arborist/validate_patch_with_trace_context_at_position",
 )
 
 
 class GatewayExecutionTests(GatewayProtocolTestCase):
+    def test_refresh_symbol_index_synchronizes_workspace_changes(self) -> None:
+        with self.temp_workspace(
+            {
+                "changed.py": "def before() -> int:\n    return 1\n",
+                "deleted.py": "def removed() -> int:\n    return 2\n",
+            }
+        ) as workspace:
+            db_path = workspace.joinpath("symbols.db")
+            gateway = self.make_live_gateway()
+            self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    gateway,
+                    "arborist/rebuild_symbol_index",
+                    {"workspace_root": str(workspace), "db_path": str(db_path)},
+                    request_id=501,
+                ),
+                request_id=501,
+            )
+
+            workspace.joinpath("changed.py").write_text(
+                "def after() -> int:\n    return 3\n", encoding="utf-8"
+            )
+            workspace.joinpath("deleted.py").unlink()
+            workspace.joinpath("added.py").write_text(
+                "def created() -> int:\n    return 4\n", encoding="utf-8"
+            )
+
+            stats = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    gateway,
+                    "arborist/refresh_symbol_index",
+                    {"workspace_root": str(workspace), "db_path": str(db_path)},
+                    request_id=502,
+                ),
+                request_id=502,
+            )
+            listed = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    gateway,
+                    "arborist/list_symbols",
+                    {
+                        "workspace_root": str(workspace),
+                        "index_db_path": str(db_path),
+                        "limit": 10,
+                    },
+                    request_id=503,
+                ),
+                request_id=503,
+            )
+
+            assert isinstance(stats, dict)
+            assert isinstance(listed, dict)
+            self.assertEqual(stats["indexed_files"], 2)
+            self.assertEqual(stats["rebuilt_files"], 2)
+            self.assertEqual(stats["reused_files"], 0)
+            self.assertEqual(
+                {symbol["semantic_path"] for symbol in listed["symbols"]},
+                {"after", "created"},
+            )
+
     def test_core_invalid_query_maps_to_invalid_params(self) -> None:
         response = self.call_gateway(
             self.make_live_gateway(),
