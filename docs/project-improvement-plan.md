@@ -67,6 +67,8 @@ completed item can land in its own commit unless two changes are inseparable.
   changing read/list/search/trace behavior.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
+- [x] Cross-check indexed-file metadata against persisted file-state rows so
+  damaged counts cannot leak into query results or healthy diagnostics.
 - [ ] Add a durable SQLite migration path beyond the current fail-closed schema
   version gate.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust

@@ -1,5 +1,7 @@
 use std::fs;
 
+use rusqlite::Connection;
+
 use super::support::{normalize_string_path, temporary_dir};
 use crate::{
     Position, SymbolQueryContext, TraceDirection, list_symbols_from_index_with_source_filtered,
@@ -399,6 +401,33 @@ fn index_overlay_accepts_new_disk_file_when_source_is_overridden() {
             .iter()
             .all(|symbol| symbol.semantic_path != "stale_alias")
     );
+}
+
+#[test]
+fn index_overlay_rejects_inconsistent_indexed_file_counts() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    let source = "def helper() -> int:\n    return 1\n";
+
+    fs::write(&helper, source).unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '2' WHERE key = 'indexed_files'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = search_symbols_from_index_with_source_filtered(
+        &db_path, &helper, source, "helper", 10, None, None,
+    )
+    .expect_err("source overlays should reject inconsistent persisted file counts");
+
+    assert!(error.to_string().contains("indexed_files metadata 2"));
+    assert!(error.to_string().contains("file_state entries 1"));
 }
 
 #[test]

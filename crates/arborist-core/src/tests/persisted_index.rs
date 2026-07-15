@@ -670,6 +670,49 @@ fn inspect_and_queries_reject_unindexed_workspace_files() {
 }
 
 #[test]
+fn inspect_and_queries_reject_inconsistent_indexed_file_counts() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '2' WHERE key = 'indexed_files'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+
+    assert!(!health.ok);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("does not match file_state entries"))
+    );
+
+    for error in [
+        read_symbol_from_index(&db_path, "helper")
+            .expect_err("read_symbol should reject inconsistent file counts")
+            .to_string(),
+        search_symbols_from_index(&db_path, "helper", 10)
+            .expect_err("search_symbols should reject inconsistent file counts")
+            .to_string(),
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .expect_err("trace_symbol_graph should reject inconsistent file counts")
+            .to_string(),
+    ] {
+        assert!(error.contains("indexed_files metadata 2"));
+        assert!(error.contains("file_state entries 1"));
+    }
+}
+
+#[test]
 fn inspect_symbol_index_reports_stale_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

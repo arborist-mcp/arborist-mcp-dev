@@ -158,6 +158,13 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             .push(format!("failed to inspect persisted file states: {error}")),
     }
 
+    if let (Some(indexed_files), Some(file_state_entries)) =
+        (health.indexed_files, health.file_state_entries)
+        && let Err(error) = validate_indexed_file_count(indexed_files, file_state_entries)
+    {
+        health.issues.push(error.to_string());
+    }
+
     health.ok = health.issues.is_empty();
     if health.ok {
         health.migration = index_migration::healthy_index();
@@ -175,11 +182,12 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
 
     let connection = Connection::open(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
-    load_indexed_files_metadata(&connection)?;
+    let indexed_files = load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     ensure_symbol_tables(&connection)?;
     let file_states = load_file_states(&connection)?;
     let resolved_symbols = load_resolved_symbols(&connection)?;
+    validate_indexed_file_count(indexed_files, file_states.len())?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
     ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
     Ok(resolved_symbols)
@@ -202,6 +210,8 @@ pub(crate) fn load_symbol_index_with_overrides(
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();
     let persisted_file_states = load_file_states(&connection)?;
+    let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
+    validate_indexed_file_count(persisted_indexed_files, persisted_file_states.len())?;
     ensure_symbol_index_fresh(
         db_path,
         &workspace_root,
@@ -236,7 +246,6 @@ pub(crate) fn load_symbol_index_with_overrides(
         .collect::<Vec<_>>();
     assign_symbol_ids(&mut raw_symbols)?;
 
-    let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);
     let old_changed_symbols = original_grouped_symbols
         .iter()
@@ -328,6 +337,15 @@ fn ensure_symbol_index_fresh(
         db_path.display(),
         issues.join("; ")
     );
+}
+
+fn validate_indexed_file_count(indexed_files: usize, file_state_entries: usize) -> Result<()> {
+    if indexed_files != file_state_entries {
+        bail!(
+            "indexed_files metadata {indexed_files} does not match file_state entries {file_state_entries}"
+        );
+    }
+    Ok(())
 }
 
 fn unindexed_workspace_files(
