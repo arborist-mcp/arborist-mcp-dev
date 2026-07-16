@@ -188,7 +188,9 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
                         | "class_specifier"
                         | "concept_definition"
                         | "enum_specifier"
+                        | "struct_specifier"
                         | "type_definition"
+                        | "union_specifier"
                 ) || candidate.kind() == "function_definition"
                     || c::c_is_callable_declaration(candidate)
             }

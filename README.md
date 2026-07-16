@@ -48,8 +48,11 @@ identities remain a follow-up. Basic operator methods use paths such as `Class::
 `Class::operator bool`. C++ `using` aliases are indexed with namespace and
 class scope, for example `api::Size` and `api::Config::Count`. See the [tool
 guide](docs/tools.md#language-support) for the current scope. C++20 concept
-definitions and named enum definitions are also indexed by qualified name, such
-as `api::Incrementable` and `api::Status`.
+definitions, named enum definitions, and named struct/union definitions are
+also indexed by qualified name, such as `api::Incrementable`, `api::Status`,
+`api::Counter`, and `api::Counter::Storage`. C definitions such as `struct
+Packet { ... };` and `union Payload { ... };` are indexed without a `typedef`
+alias.
 
 ## Implemented Tool Families
 

@@ -50,6 +50,10 @@ C++20 concept definitions are indexed by qualified name, such as
 `api::Incrementable`.
 Named enum definitions are indexed with namespace and enclosing-class scope,
 such as `api::Status` and `api::Task::State`.
+Named struct and union definitions are indexed with the same namespace and
+enclosing-type scope, such as `api::Counter` and `api::Counter::Storage`.
+Named C definitions such as `struct Packet { ... };` and `union Payload { ... };`
+are also available as patch and trace targets without requiring a `typedef`.
 
 ## Read And Discovery Tools
 

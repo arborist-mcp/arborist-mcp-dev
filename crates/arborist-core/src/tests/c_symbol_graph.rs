@@ -663,6 +663,92 @@ fn traces_cpp_class_definitions() {
 }
 
 #[test]
+fn traces_named_c_struct_and_union_definitions() {
+    let dir = temporary_dir();
+    let source = dir.join("protocol.c");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "struct Packet { int id; };\nunion Payload { int count; float ratio; };\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let packet = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Packet")
+        .expect("named C struct definition should be indexed");
+    assert_eq!(packet.node_kind, "struct_specifier");
+    assert_eq!(packet.scope_path, None);
+    let payload = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Payload")
+        .expect("named C union definition should be indexed");
+    assert_eq!(payload.node_kind, "union_specifier");
+    assert_eq!(payload.scope_path, None);
+
+    let trace = trace_symbol_graph(&dir, "Packet", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "Payload", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
+fn traces_cpp_struct_methods_and_nested_union_definitions() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nstruct Counter {\n    union Storage { int count; double ratio; };\n    int increment(int value) { return value + 1; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let counter = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Counter")
+        .expect("C++ struct definition should be indexed");
+    assert_eq!(counter.node_kind, "struct_specifier");
+    assert_eq!(counter.scope_path.as_deref(), Some("api"));
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::Storage")
+    );
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::increment")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::Storage", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.scope_path.as_deref(),
+        Some("api::Counter")
+    );
+}
+
+#[test]
 fn traces_cpp_enum_definitions() {
     let dir = temporary_dir();
     let source = dir.join("status.hpp");

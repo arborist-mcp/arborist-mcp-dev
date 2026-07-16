@@ -158,6 +158,28 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_struct_method_captures() {
+    let source = "namespace api {\nstruct Counter {\n    int increment(int value) { return value + 1; }\n};\n}\n";
+    let captures = execute_tree_query(
+        Path::new("counter.cpp"),
+        source,
+        "(field_identifier) @method",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].text, "increment");
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("api::Counter::increment")
+    );
+    assert_eq!(
+        captures[0].owner_scope_path.as_deref(),
+        Some("api::Counter")
+    );
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_definition() {
     let source = "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n";
     let captures =

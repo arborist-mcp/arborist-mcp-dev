@@ -193,9 +193,8 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
         .or(c_operator_cast_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
-            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier" => {
-                c_named_node_name(node, source)?
-            }
+            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
+            | "struct_specifier" | "union_specifier" => c_named_node_name(node, source)?,
             "declaration" | "field_declaration" | "function_definition" => {
                 first_identifier(node, source)?
             }
@@ -248,28 +247,49 @@ fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tr
             collect_c_scope_symbols(child, symbols);
         } else if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
-        } else if child.kind() == "class_specifier" {
-            symbols.push(child);
-            collect_cpp_class_method_symbols(child, symbols);
+        } else if is_cpp_type_scope(child) {
+            collect_cpp_type_scope_symbols(child, symbols);
+        } else if child.kind() == "declaration" {
+            collect_c_named_type_definition_symbols(child, symbols);
+            if is_c_symbol_node(child) {
+                symbols.push(child);
+            }
         } else if is_c_symbol_node(child) {
             symbols.push(child);
         }
     }
 }
 
-fn collect_cpp_class_method_symbols<'tree>(
-    class_node: Node<'tree>,
+fn is_cpp_type_scope(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "class_specifier" | "struct_specifier" | "union_specifier"
+    )
+}
+
+fn collect_c_named_type_definition_symbols<'tree>(
+    declaration: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
 ) {
-    let Some(body) = class_node.child_by_field_name("body") else {
+    let mut cursor = declaration.walk();
+    for child in declaration.named_children(&mut cursor) {
+        if is_cpp_type_scope(child) && child.child_by_field_name("body").is_some() {
+            collect_cpp_type_scope_symbols(child, symbols);
+        }
+    }
+}
+
+fn collect_cpp_type_scope_symbols<'tree>(type_node: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    symbols.push(type_node);
+
+    let Some(body) = type_node.child_by_field_name("body") else {
         return;
     };
     let mut cursor = body.walk();
 
     for child in body.named_children(&mut cursor) {
-        if child.kind() == "class_specifier" {
-            symbols.push(child);
-            collect_cpp_class_method_symbols(child, symbols);
+        if is_cpp_type_scope(child) {
+            collect_cpp_type_scope_symbols(child, symbols);
         } else if child.kind() == "field_declaration" {
             collect_cpp_nested_type_symbols(child, symbols);
             if c_is_callable_declaration(child) {
@@ -289,9 +309,8 @@ fn collect_cpp_nested_type_symbols<'tree>(
 ) {
     let mut cursor = declaration.walk();
     for child in declaration.named_children(&mut cursor) {
-        if child.kind() == "class_specifier" {
-            symbols.push(child);
-            collect_cpp_class_method_symbols(child, symbols);
+        if is_cpp_type_scope(child) {
+            collect_cpp_type_scope_symbols(child, symbols);
         } else if child.kind() == "enum_specifier" {
             symbols.push(child);
         }
@@ -304,9 +323,13 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
     for child in template_node.named_children(&mut cursor) {
         if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
-        } else if child.kind() == "class_specifier" {
-            symbols.push(child);
-            collect_cpp_class_method_symbols(child, symbols);
+        } else if is_cpp_type_scope(child) {
+            collect_cpp_type_scope_symbols(child, symbols);
+        } else if child.kind() == "declaration" {
+            collect_c_named_type_definition_symbols(child, symbols);
+            if is_c_symbol_node(child) {
+                symbols.push(child);
+            }
         } else if is_c_symbol_node(child) {
             symbols.push(child);
         }
@@ -320,7 +343,9 @@ fn is_c_symbol_node(node: Node<'_>) -> bool {
             | "class_specifier"
             | "concept_definition"
             | "enum_specifier"
+            | "struct_specifier"
             | "type_definition"
+            | "union_specifier"
             | "function_definition"
     ) || c_is_callable_declaration(node)
 }
@@ -339,7 +364,7 @@ fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
     let mut current = node.parent();
 
     while let Some(candidate) = current {
-        if matches!(candidate.kind(), "namespace_definition" | "class_specifier")
+        if (candidate.kind() == "namespace_definition" || is_cpp_type_scope(candidate))
             && let Some(name) = candidate.child_by_field_name("name")
         {
             scopes.push(node_text(name, source)?.trim().to_string());
@@ -373,7 +398,7 @@ pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result
 }
 
 pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
-    if has_class_ancestor(node) {
+    if has_type_scope_ancestor(node) {
         return false;
     }
 
@@ -392,10 +417,10 @@ pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
     false
 }
 
-fn has_class_ancestor(node: Node<'_>) -> bool {
+fn has_type_scope_ancestor(node: Node<'_>) -> bool {
     let mut current = node.parent();
     while let Some(candidate) = current {
-        if candidate.kind() == "class_specifier" {
+        if is_cpp_type_scope(candidate) {
             return true;
         }
         current = candidate.parent();
@@ -418,7 +443,7 @@ pub(crate) fn build_c_skeleton(
     for child in c_symbol_nodes(root) {
         match child.kind() {
             "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-            | "type_definition" => {
+            | "struct_specifier" | "type_definition" | "union_specifier" => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -562,9 +587,8 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier" => {
-            c_named_node_name(node, source)
-        }
+        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
+        | "struct_specifier" | "union_specifier" => c_named_node_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -584,7 +608,7 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
         "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "type_definition" => 20,
+        | "struct_specifier" | "type_definition" | "union_specifier" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

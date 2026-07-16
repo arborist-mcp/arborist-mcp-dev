@@ -390,6 +390,26 @@ fn patches_cpp_class_definition_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_named_c_struct_definition_targeted_by_path() {
+    let dir = temporary_dir();
+    let file = dir.join("packet.c");
+    fs::write(&file, "struct Packet { int id; };\n").unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "Packet",
+        "struct Packet { int id; int priority; };",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "Packet");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("priority"));
+}
+
+#[test]
 fn patches_cpp_enum_definition_targeted_by_qualified_path() {
     let dir = temporary_dir();
     let file = dir.join("status.hpp");
