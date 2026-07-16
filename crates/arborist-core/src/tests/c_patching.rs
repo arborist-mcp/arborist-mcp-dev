@@ -349,6 +349,31 @@ fn patches_cpp_class_method_defined_outside_class() {
 }
 
 #[test]
+fn patches_cpp_destructor_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("counter.cpp");
+    fs::write(&file, "api::Counter::~Counter() {}\n").unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Counter::~Counter",
+        "api::Counter::~Counter() { int value = 0; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Counter::~Counter");
+    assert_eq!(result.resolved_symbol_id, "api::Counter::~Counter");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("int value = 0;")
+    );
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

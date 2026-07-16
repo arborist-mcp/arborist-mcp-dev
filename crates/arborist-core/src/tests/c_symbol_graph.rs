@@ -341,6 +341,93 @@ fn traces_cpp_class_methods_defined_outside_the_class() {
 }
 
 #[test]
+fn indexes_cpp_constructors_and_destructors() {
+    let header_source = r#"
+namespace api {
+class Counter {
+public:
+    Counter(int value);
+    ~Counter();
+};
+}
+"#;
+    let source = r#"
+#include "counter.hpp"
+
+api::Counter::Counter(int value) {}
+api::Counter::~Counter() {}
+"#;
+
+    let header = get_semantic_skeleton(Path::new("counter.hpp"), header_source, 1, &[]).unwrap();
+    assert!(
+        header
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::Counter")
+    );
+    assert!(
+        header
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::~Counter")
+    );
+
+    let implementation = get_semantic_skeleton(Path::new("counter.cpp"), source, 1, &[]).unwrap();
+    assert!(
+        implementation
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::Counter")
+    );
+    assert!(
+        implementation
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::~Counter")
+    );
+}
+
+#[test]
+fn traces_cpp_constructors_and_destructors() {
+    let dir = temporary_dir();
+    let header = dir.join("counter.hpp");
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace api {\nclass Counter {\npublic:\n    Counter(int value);\n    ~Counter();\n};\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"counter.hpp\"\n\napi::Counter::Counter(int value) {}\napi::Counter::~Counter() {}\n",
+    )
+    .unwrap();
+
+    let constructor =
+        trace_symbol_graph(&dir, "api::Counter::Counter", TraceDirection::Both).unwrap();
+    assert_eq!(
+        constructor.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+    let destructor =
+        trace_symbol_graph(&dir, "api::Counter::~Counter", TraceDirection::Both).unwrap();
+    assert_eq!(
+        destructor.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_destructor =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::~Counter", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_destructor.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn traces_c_symbol_graph_across_uppercase_header_and_source_definition() {
     let dir = temporary_dir();
     let header = dir.join("helper.H");

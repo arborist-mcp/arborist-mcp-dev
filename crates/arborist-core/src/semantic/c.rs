@@ -39,14 +39,21 @@ fn c_function_declarator(node: Node<'_>) -> Option<Node<'_>> {
     find_first_descendant_by_kind(node, "function_declarator")
 }
 
-fn c_qualified_function_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(None);
     };
     let Some(declarator) = function_declarator.child_by_field_name("declarator") else {
         return Ok(None);
     };
-    if declarator.kind() != "qualified_identifier" {
+    if !matches!(
+        declarator.kind(),
+        "qualified_identifier"
+            | "identifier"
+            | "field_identifier"
+            | "type_identifier"
+            | "destructor_name"
+    ) {
         return Ok(None);
     }
 
@@ -88,7 +95,7 @@ pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<Strin
 }
 
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
-    let symbol_name = c_qualified_function_name(node, source)?.or(match node.kind() {
+    let symbol_name = c_function_declarator_name(node, source)?.or(match node.kind() {
         "type_definition" => last_type_identifier(node, source)?,
         "declaration" | "field_declaration" | "function_definition" => {
             first_identifier(node, source)?
@@ -386,8 +393,8 @@ pub(crate) fn find_c_semantic_node<'tree>(
 }
 
 fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
-    if let Some(qualified_name) = c_qualified_function_name(node, source)? {
-        return Ok(qualified_name.rsplit("::").next().map(ToString::to_string));
+    if let Some(function_name) = c_function_declarator_name(node, source)? {
+        return Ok(function_name.rsplit("::").next().map(ToString::to_string));
     }
 
     match node.kind() {

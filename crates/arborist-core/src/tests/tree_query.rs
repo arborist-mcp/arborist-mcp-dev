@@ -183,6 +183,28 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class()
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_destructor_definition() {
+    let source = "api::Counter::~Counter() {}\n";
+    let captures = execute_tree_query(
+        Path::new("counter.cpp"),
+        source,
+        "(destructor_name) @destructor",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].text, "~Counter");
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("api::Counter::~Counter")
+    );
+    assert_eq!(
+        captures[0].owner_scope_path.as_deref(),
+        Some("api::Counter")
+    );
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

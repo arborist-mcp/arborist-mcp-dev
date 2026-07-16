@@ -33,8 +33,10 @@ bodies, and header/source families. Symbols use qualified semantic paths, such
 as `outer::inner::function` and `outer::Class::method`; same-scope calls prefer
 matching symbols during graph resolution. Named methods defined outside their
 class are matched to the same semantic path as their class-body declarations.
-Constructors, templates, and overload-aware symbol identities are not yet
-modeled and should not be treated as full C++ semantic support.
+Explicit constructors and destructors use `Class::Class` and `Class::~Class`
+paths. Defaulted/deleted methods, templates, and overload-aware symbol
+identities are not yet modeled and should not be treated as full C++ semantic
+support.
 
 ## Read And Discovery Tools
 
