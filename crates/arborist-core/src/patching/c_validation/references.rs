@@ -36,11 +36,20 @@ pub(crate) fn collect_c_references(
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() == "identifier" {
+        if candidate.kind() == "identifier" && !is_c_enumerator_name(candidate) {
             let _ =
                 node_text(candidate, source).map(|text| references.insert(text.trim().to_string()));
         }
     };
     visit_tree(node, &mut callback);
     Ok(())
+}
+
+fn is_c_enumerator_name(node: Node<'_>) -> bool {
+    node.parent().is_some_and(|parent| {
+        parent.kind() == "enumerator"
+            && parent
+                .child_by_field_name("name")
+                .is_some_and(|name| name == node)
+    })
 }

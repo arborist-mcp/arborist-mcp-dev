@@ -663,6 +663,44 @@ fn traces_cpp_class_definitions() {
 }
 
 #[test]
+fn traces_cpp_enum_definitions() {
+    let dir = temporary_dir();
+    let source = dir.join("status.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nenum class Status : unsigned char { idle, busy };\n\nclass Task {\npublic:\n    enum class State { queued, running };\n};\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Status")
+    );
+    let state = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Task::State")
+        .expect("nested enum definition should be indexed");
+    assert_eq!(state.scope_path.as_deref(), Some("api::Task"));
+
+    let trace = trace_symbol_graph(&dir, "api::Status", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Status", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.symbol.scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn traces_cpp_explicit_function_template_specialization() {
     let dir = temporary_dir();
     let header = dir.join("templates.hpp");

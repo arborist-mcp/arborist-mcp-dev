@@ -48,6 +48,8 @@ C++ `using` aliases are indexed with their enclosing namespace and class scope,
 for example `api::Size` and `api::Config::Count`.
 C++20 concept definitions are indexed by qualified name, such as
 `api::Incrementable`.
+Named enum definitions are indexed with namespace and enclosing-class scope,
+such as `api::Status` and `api::Task::State`.
 
 ## Read And Discovery Tools
 

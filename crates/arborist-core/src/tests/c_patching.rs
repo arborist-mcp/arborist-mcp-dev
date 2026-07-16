@@ -390,6 +390,31 @@ fn patches_cpp_class_definition_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_enum_definition_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("status.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nenum class Status { idle, busy };\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Status",
+        "enum class Status { idle, busy, failed };",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Status");
+    assert_eq!(result.resolved_symbol_id, "api::Status");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("failed"));
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");
