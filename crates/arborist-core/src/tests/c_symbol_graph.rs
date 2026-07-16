@@ -571,6 +571,17 @@ fn traces_cpp_conversion_operator_methods() {
     )
     .unwrap();
 
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "config::Flag::operator bool"),
+        "{:#?}",
+        skeleton.available_symbols
+    );
+
     let trace =
         trace_symbol_graph(&dir, "config::Flag::operator bool", TraceDirection::Both).unwrap();
     assert_eq!(trace.symbol.semantic_path, "config::Flag::operator bool");
@@ -585,6 +596,43 @@ fn traces_cpp_conversion_operator_methods() {
     assert_eq!(
         persisted_trace.symbol.semantic_path,
         "config::Flag::operator bool"
+    );
+}
+
+#[test]
+fn traces_cpp_conversion_operator_defined_outside_class() {
+    let dir = temporary_dir();
+    let header = dir.join("flag.hpp");
+    let source = dir.join("flag.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace config {\nclass Flag {\npublic:\n    explicit operator bool() const;\n};\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"flag.hpp\"\n\nconfig::Flag::operator bool() const { return true; }\n",
+    )
+    .unwrap();
+
+    let trace =
+        trace_symbol_graph(&dir, "config::Flag::operator bool", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace = trace_symbol_graph_from_index(
+        &db_path,
+        "config::Flag::operator bool",
+        TraceDirection::Both,
+    )
+    .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
     );
 }
 

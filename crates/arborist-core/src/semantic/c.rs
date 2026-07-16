@@ -87,6 +87,25 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
 }
 
 fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if let Some(qualified_name) = find_qualified_operator_cast(node) {
+        let Some(operator_cast) = find_first_descendant_by_kind(qualified_name, "operator_cast")
+        else {
+            return Ok(None);
+        };
+        let Some(target_type) = operator_cast.child_by_field_name("type") else {
+            return Ok(None);
+        };
+        let qualifier = source[qualified_name.start_byte()..operator_cast.start_byte()].trim();
+        return Ok(Some(
+            format!(
+                "{qualifier}operator {}",
+                node_text(target_type, source)?.trim()
+            )
+            .trim_start_matches("::")
+            .to_string(),
+        ));
+    }
+
     let Some(declarator) = find_first_descendant_by_kind(node, "operator_cast") else {
         return Ok(None);
     };
@@ -98,6 +117,21 @@ fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> 
         "operator {}",
         node_text(target_type, source)?.trim()
     )))
+}
+
+fn find_qualified_operator_cast(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() == "qualified_identifier" && contains_kind(node, "operator_cast") {
+        return Some(node);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(qualified_name) = find_qualified_operator_cast(child) {
+            return Some(qualified_name);
+        }
+    }
+
+    None
 }
 
 pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
