@@ -42,8 +42,9 @@ constructors and destructors are supported as `Class::Class` and
 declaration signatures. Named function and class-method templates are indexed
 and traced with their template declaration text. Template parameter binding,
 specialization, and overload-aware symbol identities remain a follow-up. Basic
-operator methods use paths such as `Class::operator+`. See the
-[tool guide](docs/tools.md#language-support) for the current scope.
+operator methods use paths such as `Class::operator+` and
+`Class::operator bool`. See the [tool guide](docs/tools.md#language-support)
+for the current scope.
 
 ## Implemented Tool Families
 

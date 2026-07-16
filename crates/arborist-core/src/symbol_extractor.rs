@@ -4,13 +4,13 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::{ParsedDocument, contains_kind, node_text, normalize_path, visit_tree};
+use crate::language::{ParsedDocument, node_text, normalize_path, visit_tree};
 use crate::model::LanguageId;
 use crate::patching::{collect_c_references, collect_python_references};
 use crate::semantic::{
-    c_function_header, c_parameters, c_return_type, c_semantic_path, c_symbol_nodes,
-    python_display_byte_range, python_display_header, python_docstring, python_parameters,
-    python_return_type, semantic_parent_path, semantic_path,
+    c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
+    c_symbol_nodes, python_display_byte_range, python_display_header, python_docstring,
+    python_parameters, python_return_type, semantic_parent_path, semantic_path,
 };
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 
@@ -96,7 +96,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                     });
                 }
             }
-            "declaration" | "field_declaration" if contains_kind(child, "function_declarator") => {
+            "declaration" | "field_declaration" if c_is_callable_declaration(child) => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {

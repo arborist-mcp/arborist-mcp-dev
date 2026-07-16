@@ -86,6 +86,20 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
     ))
 }
 
+fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(declarator) = find_first_descendant_by_kind(node, "operator_cast") else {
+        return Ok(None);
+    };
+    let Some(target_type) = declarator.child_by_field_name("type") else {
+        return Ok(None);
+    };
+
+    Ok(Some(format!(
+        "operator {}",
+        node_text(target_type, source)?.trim()
+    )))
+}
+
 pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(Vec::new());
@@ -116,13 +130,15 @@ pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<Strin
 }
 
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
-    let symbol_name = c_function_declarator_name(node, source)?.or(match node.kind() {
-        "type_definition" => last_type_identifier(node, source)?,
-        "declaration" | "field_declaration" | "function_definition" => {
-            first_identifier(node, source)?
-        }
-        _ => None,
-    });
+    let symbol_name = c_function_declarator_name(node, source)?
+        .or(c_operator_cast_name(node, source)?)
+        .or(match node.kind() {
+            "type_definition" => last_type_identifier(node, source)?,
+            "declaration" | "field_declaration" | "function_definition" => {
+                first_identifier(node, source)?
+            }
+            _ => None,
+        });
 
     let scope_path = c_scope_path(node, source)?;
     Ok(symbol_name.map(|name| {
@@ -214,8 +230,12 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
 
 fn is_c_symbol_node(node: Node<'_>) -> bool {
     matches!(node.kind(), "type_definition" | "function_definition")
-        || matches!(node.kind(), "declaration" | "field_declaration")
-            && contains_kind(node, "function_declarator")
+        || c_is_callable_declaration(node)
+}
+
+pub(crate) fn c_is_callable_declaration(node: Node<'_>) -> bool {
+    matches!(node.kind(), "declaration" | "field_declaration")
+        && (contains_kind(node, "function_declarator") || contains_kind(node, "operator_cast"))
 }
 
 fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
@@ -324,7 +344,7 @@ pub(crate) fn build_c_skeleton(
                     });
                 }
             }
-            "declaration" | "field_declaration" if contains_kind(child, "function_declarator") => {
+            "declaration" | "field_declaration" if c_is_callable_declaration(child) => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -439,10 +459,13 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if let Some(function_name) = c_function_declarator_name(node, source)? {
         return Ok(function_name.rsplit("::").next().map(ToString::to_string));
     }
+    if let Some(operator_cast_name) = c_operator_cast_name(node, source)? {
+        return Ok(Some(operator_cast_name));
+    }
 
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
-        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
         "function_definition" => first_identifier(node, source),

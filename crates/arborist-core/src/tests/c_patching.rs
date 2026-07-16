@@ -421,6 +421,30 @@ fn patches_cpp_operator_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_conversion_operator_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("flag.cpp");
+    fs::write(
+        &file,
+        "namespace config {\nclass Flag {\npublic:\n    explicit operator bool() const { return true; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "config::Flag::operator bool",
+        "explicit operator bool() const { return false; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "config::Flag::operator bool");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("return false;"));
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

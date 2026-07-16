@@ -4,11 +4,12 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
-use crate::language::{contains_kind, contains_node, language_for_id, node_text, normalize_path};
+use crate::language::{contains_node, language_for_id, node_text, normalize_path};
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
 mod c;
 
+pub(crate) use c::c_is_callable_declaration;
 pub(crate) use c::c_symbol_nodes;
 pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
@@ -182,8 +183,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
             LanguageId::C | LanguageId::Cpp => {
                 candidate.kind() == "type_definition"
                     || candidate.kind() == "function_definition"
-                    || (matches!(candidate.kind(), "declaration" | "field_declaration")
-                        && contains_kind(candidate, "function_declarator"))
+                    || c::c_is_callable_declaration(candidate)
             }
         };
 

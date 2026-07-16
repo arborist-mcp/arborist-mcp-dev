@@ -262,6 +262,23 @@ fn execute_tree_query_reports_owner_for_cpp_operator_method() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_conversion_operator() {
+    let source = "namespace config {\nclass Flag {\npublic:\n    explicit operator bool() const { return true; }\n};\n}\n";
+    let captures =
+        execute_tree_query(Path::new("flag.cpp"), source, "(operator_cast) @conversion").unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("config::Flag::operator bool")
+    );
+    assert_eq!(
+        captures[0].owner_scope_path.as_deref(),
+        Some("config::Flag")
+    );
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

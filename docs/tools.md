@@ -39,8 +39,8 @@ Named function and class-method templates are indexed, traced, and exposed to
 raw query owner metadata with their `template <...>` declaration text. Template
 parameter binding, specializations, and overload-aware symbol identities are
 not yet modeled and should not be treated as full C++ semantic support.
-Basic operator methods use paths such as `Class::operator+`; same-name operator
-overloads are not distinguished.
+Basic operator and conversion methods use paths such as `Class::operator+` and
+`Class::operator bool`; same-name operator overloads are not distinguished.
 
 ## Read And Discovery Tools
 

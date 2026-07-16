@@ -537,6 +537,58 @@ public:
 }
 
 #[test]
+fn indexes_cpp_conversion_operator_methods() {
+    let source = r#"
+namespace config {
+class Flag {
+public:
+    explicit operator bool() const {
+        return true;
+    }
+};
+}
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("flag.cpp"), source, 1, &[]).unwrap();
+    let conversion = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "config::Flag::operator bool")
+        .expect("conversion operator should be indexed");
+    assert_eq!(conversion.scope_path.as_deref(), Some("config::Flag"));
+    assert!(conversion.parameters.is_empty());
+    assert_eq!(conversion.return_type, None);
+}
+
+#[test]
+fn traces_cpp_conversion_operator_methods() {
+    let dir = temporary_dir();
+    let source = dir.join("flag.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace config {\nclass Flag {\npublic:\n    explicit operator bool() const { return true; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let trace =
+        trace_symbol_graph(&dir, "config::Flag::operator bool", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "config::Flag::operator bool");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace = trace_symbol_graph_from_index(
+        &db_path,
+        "config::Flag::operator bool",
+        TraceDirection::Both,
+    )
+    .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.semantic_path,
+        "config::Flag::operator bool"
+    );
+}
+
+#[test]
 fn traces_cpp_operator_methods() {
     let dir = temporary_dir();
     let source = dir.join("number.cpp");

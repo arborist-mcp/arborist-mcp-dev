@@ -5,13 +5,13 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use crate::language::{
-    ParsedDocument, c_companion_source_path, c_include_targets, contains_kind, first_identifier,
-    node_text, normalize_path, parse_document, read_source, resolve_local_c_include,
+    ParsedDocument, c_companion_source_path, c_include_targets, first_identifier, node_text,
+    normalize_path, parse_document, read_source, resolve_local_c_include,
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
-    c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes,
-    has_c_internal_linkage, semantic_parent_path,
+    c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node,
+    c_symbol_nodes, has_c_internal_linkage, semantic_parent_path,
 };
 
 #[derive(Debug, Clone)]
@@ -246,7 +246,7 @@ fn collect_c_symbol_candidates_from_root(
 fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "type_definition" | "function_definition" => first_identifier(node, source),
-        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
         _ => Ok(None),
@@ -256,7 +256,7 @@ fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "function_definition" => Ok(Some(crate::semantic::c_function_header(node, source)?)),
-        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             Ok(Some(node_text(node, source)?.trim().to_string()))
         }
         "type_definition" => Ok(Some(node_text(node, source)?.trim().to_string())),
