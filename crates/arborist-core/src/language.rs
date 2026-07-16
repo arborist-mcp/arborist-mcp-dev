@@ -457,34 +457,26 @@ mod tests {
 
     #[test]
     fn detect_language_accepts_uppercase_extensions() {
-        assert_eq!(
-            detect_language(Path::new("sample.PY")).unwrap(),
-            LanguageId::Python
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.PYI")).unwrap(),
-            LanguageId::Python
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.C")).unwrap(),
-            LanguageId::C
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.H")).unwrap(),
-            LanguageId::C
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.HPP")).unwrap(),
-            LanguageId::Cpp
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.HH")).unwrap(),
-            LanguageId::Cpp
-        );
-        assert_eq!(
-            detect_language(Path::new("sample.CPP")).unwrap(),
-            LanguageId::Cpp
-        );
+        for (extension, expected_language) in [
+            ("PY", LanguageId::Python),
+            ("PYI", LanguageId::Python),
+            ("C", LanguageId::C),
+            ("H", LanguageId::C),
+            ("CC", LanguageId::Cpp),
+            ("CPP", LanguageId::Cpp),
+            ("CXX", LanguageId::Cpp),
+            ("C++", LanguageId::Cpp),
+            ("HPP", LanguageId::Cpp),
+            ("HH", LanguageId::Cpp),
+            ("HXX", LanguageId::Cpp),
+            ("H++", LanguageId::Cpp),
+        ] {
+            assert_eq!(
+                detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
+                expected_language,
+                "unexpected language for .{extension}",
+            );
+        }
     }
 
     #[test]
