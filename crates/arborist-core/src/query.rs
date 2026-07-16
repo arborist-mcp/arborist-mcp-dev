@@ -6,12 +6,14 @@ use anyhow::{Context, Result, bail};
 use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::language::{
-    contains_kind, contains_node, language_for_id, normalize_absolute_path, normalize_path,
-    parse_document, position_from, read_source,
+    contains_node, language_for_id, normalize_absolute_path, normalize_path, parse_document,
+    position_from, read_source,
 };
 use crate::model::LanguageId;
 use crate::model::QueryCaptureResult;
-use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_path, semantic_path};
+use crate::semantic::{
+    c_semantic_path, c_symbol_id_for_node, c_symbol_nodes, semantic_parent_path, semantic_path,
+};
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
 pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
@@ -197,15 +199,8 @@ fn c_capture_owner(
     root: tree_sitter::Node<'_>,
     node: tree_sitter::Node<'_>,
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
-    let mut cursor = root.walk();
-
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         if !contains_node(child, node) {
-            continue;
-        }
-        if !(matches!(child.kind(), "function_definition" | "type_definition")
-            || child.kind() == "declaration" && contains_kind(child, "function_declarator"))
-        {
             continue;
         }
 

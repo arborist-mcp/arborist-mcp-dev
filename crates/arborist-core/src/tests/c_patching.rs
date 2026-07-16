@@ -260,6 +260,37 @@ fn allows_c_patch_targeting_precise_symbol_id() {
 }
 
 #[test]
+fn patches_cpp_function_targeted_by_nested_namespace_path() {
+    let dir = temporary_dir();
+    let file = dir.join("api.cpp");
+
+    fs::write(
+        &file,
+        "namespace alpha::detail {\nint helper(int value) { return value + 1; }\n\nint orchestrate(int value) { return helper(value); }\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "alpha::detail::orchestrate",
+        "int orchestrate(int value) { return helper(value) + 2; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "alpha::detail::orchestrate");
+    assert_eq!(result.resolved_symbol_id, "alpha::detail::orchestrate");
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("return helper(value) + 2;")
+    );
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

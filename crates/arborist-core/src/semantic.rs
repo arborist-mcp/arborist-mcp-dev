@@ -9,6 +9,8 @@ use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
 mod c;
 
+pub(crate) use c::c_symbol_nodes;
+pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
 pub(crate) use c::{c_parameters, c_return_type};
 
@@ -79,13 +81,30 @@ pub(crate) fn python_display_header(node: Node<'_>, source: &str) -> Result<Stri
 }
 
 pub(crate) fn semantic_parent_path(path: &str) -> Option<String> {
-    if path.contains("::") {
+    if is_file_scoped_c_semantic_path(path) {
         return None;
     }
 
-    path.rsplit_once('.')
+    path.rsplit_once("::")
+        .or_else(|| path.rsplit_once('.'))
         .map(|(parent, _)| parent.to_string())
         .filter(|parent| !parent.is_empty())
+}
+
+fn is_file_scoped_c_semantic_path(path: &str) -> bool {
+    if path.contains('/') || path.contains('\\') {
+        return true;
+    }
+
+    path.rsplit_once("::")
+        .and_then(|(scope, _)| scope.rsplit_once('.').map(|(_, extension)| extension))
+        .is_some_and(|extension| {
+            [
+                "c", "h", "cc", "cpp", "cxx", "c++", "hpp", "hh", "hxx", "h++",
+            ]
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 pub(crate) fn python_docstring(node: Node<'_>, source: &str) -> Result<Option<String>> {

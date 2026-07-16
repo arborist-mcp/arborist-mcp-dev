@@ -109,6 +109,31 @@ fn execute_tree_query_reports_owner_for_c_body_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_namespace_function_captures() {
+    let source = "namespace alpha::detail {\nint helper(int value) { return value + 1; }\nint orchestrate(int value) { return helper(value); }\n}\n";
+    let query = "(identifier) @candidate";
+
+    let captures = execute_tree_query(Path::new("sample.cpp"), source, query).unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| {
+            capture.text == "orchestrate"
+                && capture.owner_semantic_path.as_deref() == Some("alpha::detail::orchestrate")
+        })
+        .expect("namespace function should report its semantic owner");
+
+    assert_eq!(
+        capture.owner_symbol_id.as_deref(),
+        Some("alpha::detail::orchestrate")
+    );
+    assert_eq!(
+        capture.owner_semantic_path.as_deref(),
+        Some("alpha::detail::orchestrate")
+    );
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("alpha::detail"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

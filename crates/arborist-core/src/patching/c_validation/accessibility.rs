@@ -10,7 +10,8 @@ use crate::language::{
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
-    c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node, semantic_parent_path,
+    c_parameters, c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes,
+    has_c_internal_linkage, semantic_parent_path,
 };
 
 #[derive(Debug, Clone)]
@@ -38,8 +39,7 @@ fn collect_c_top_level_names(
     source: &str,
     names: &mut BTreeSet<String>,
 ) -> Result<()> {
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         match child.kind() {
             "type_definition" | "function_definition" => {
                 if let Some(name) = first_identifier(child, source)? {
@@ -206,15 +206,14 @@ fn collect_c_symbol_candidates_from_root(
     symbols: &mut Vec<CAccessibleSymbol>,
 ) -> Result<()> {
     let normalized_path = normalize_path(path);
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         let Some(name) = c_candidate_name(child, source)? else {
             continue;
         };
         let Some(semantic_path) = c_semantic_path(path, child, source)? else {
             continue;
         };
-        if normalized_path != context_file && semantic_path.contains("::") {
+        if normalized_path != context_file && has_c_internal_linkage(child, source) {
             continue;
         }
         let Some(symbol_id) = c_symbol_id_for_node(path, child, source)? else {

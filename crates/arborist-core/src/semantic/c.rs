@@ -75,13 +75,67 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
         _ => None,
     };
 
+    let namespace_path = c_namespace_path(node, source)?;
     Ok(symbol_name.map(|name| {
+        let name = if namespace_path.is_empty() {
+            name
+        } else {
+            format!("{namespace_path}::{name}")
+        };
         if has_c_internal_linkage(node, source) {
             format!("{}::{name}", normalize_path(path))
         } else {
             name
         }
     }))
+}
+
+pub(crate) fn c_symbol_nodes(root: Node<'_>) -> Vec<Node<'_>> {
+    let mut symbols = Vec::new();
+    collect_c_symbol_nodes(root, &mut symbols);
+    symbols
+}
+
+fn collect_c_symbol_nodes<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    let scope = if scope.kind() == "namespace_definition" {
+        match scope.child_by_field_name("body") {
+            Some(body) => body,
+            None => return,
+        }
+    } else {
+        scope
+    };
+    let mut cursor = scope.walk();
+
+    for child in scope.named_children(&mut cursor) {
+        if child.kind() == "namespace_definition" {
+            collect_c_symbol_nodes(child, symbols);
+        } else if is_c_symbol_node(child) {
+            symbols.push(child);
+        }
+    }
+}
+
+fn is_c_symbol_node(node: Node<'_>) -> bool {
+    matches!(node.kind(), "type_definition" | "function_definition")
+        || node.kind() == "declaration" && contains_kind(node, "function_declarator")
+}
+
+fn c_namespace_path(node: Node<'_>, source: &str) -> Result<String> {
+    let mut namespaces = Vec::new();
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "namespace_definition"
+            && let Some(name) = candidate.child_by_field_name("name")
+        {
+            namespaces.push(node_text(name, source)?.trim().to_string());
+        }
+        current = candidate.parent();
+    }
+
+    namespaces.reverse();
+    Ok(namespaces.join("::"))
 }
 
 pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -128,13 +182,12 @@ pub(crate) fn build_c_skeleton(
     expand_nodes: &[String],
 ) -> Result<SemanticSkeleton> {
     let root = tree.root_node();
-    let mut cursor = root.walk();
     let mut skeleton_items = Vec::new();
     let mut available_paths = Vec::new();
     let mut available_symbols = Vec::new();
     let expand_set: BTreeSet<_> = expand_nodes.iter().map(String::as_str).collect();
 
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         match child.kind() {
             "type_definition" => {
                 let text = node_text(child, source)?.trim().to_string();
@@ -232,13 +285,12 @@ pub(crate) fn find_c_semantic_node<'tree>(
     target_path: &str,
 ) -> Result<Option<Node<'tree>>> {
     let root = tree.root_node();
-    let mut cursor = root.walk();
     let target_requires_symbol_id =
         target_path.contains("::") || target_path.contains('/') || target_path.contains('\\');
     let mut best_match = None;
     let mut best_rank = 0usize;
 
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         let symbol = c_semantic_path(path, child, source)?;
         let base_name = c_symbol_base_name(child, source)?;
         let symbol_id = if target_requires_symbol_id {

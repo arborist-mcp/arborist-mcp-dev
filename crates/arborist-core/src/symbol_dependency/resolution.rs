@@ -205,6 +205,7 @@ fn resolve_reference_path(
         .max_by_key(|index| {
             indexed_symbol_candidate_rank(
                 &raw_symbols[*index],
+                source_symbol,
                 Some(&source_symbol.file_path),
                 include_context.as_ref(),
             )
@@ -241,6 +242,7 @@ fn python_symbol_matches_module_hint(
 
 fn indexed_symbol_candidate_rank(
     symbol: &IndexedSymbol,
+    source_symbol: &IndexedSymbol,
     context_file: Option<&str>,
     include_context: Option<&CIncludeContext>,
 ) -> usize {
@@ -252,6 +254,10 @@ fn indexed_symbol_candidate_rank(
         } else if symbol.semantic_path.contains("::") {
             rank = rank.saturating_sub(100);
         }
+    }
+
+    if source_symbol_scope_matches(source_symbol, symbol) {
+        rank += 500;
     }
 
     if let Some(include_context) = include_context {
@@ -267,4 +273,10 @@ fn indexed_symbol_candidate_rank(
     }
 
     rank
+}
+
+fn source_symbol_scope_matches(source_symbol: &IndexedSymbol, candidate: &IndexedSymbol) -> bool {
+    detect_language(Path::new(&source_symbol.file_path)).ok() == Some(LanguageId::Cpp)
+        && source_symbol.scope_path.is_some()
+        && source_symbol.scope_path == candidate.scope_path
 }

@@ -8,9 +8,9 @@ use crate::language::{ParsedDocument, contains_kind, node_text, normalize_path, 
 use crate::model::LanguageId;
 use crate::patching::{collect_c_references, collect_python_references};
 use crate::semantic::{
-    c_function_header, c_parameters, c_return_type, c_semantic_path, python_display_byte_range,
-    python_display_header, python_docstring, python_parameters, python_return_type,
-    semantic_parent_path, semantic_path,
+    c_function_header, c_parameters, c_return_type, c_semantic_path, c_symbol_nodes,
+    python_display_byte_range, python_display_header, python_docstring, python_parameters,
+    python_return_type, semantic_parent_path, semantic_path,
 };
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 
@@ -76,9 +76,7 @@ fn python_reference_node(node: Node<'_>) -> Node<'_> {
 fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
     let normalized_path = normalize_path(path);
     let mut symbols = Vec::new();
-    let mut cursor = root.walk();
-
-    for child in root.named_children(&mut cursor) {
+    for child in c_symbol_nodes(root) {
         match child.kind() {
             "type_definition" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
