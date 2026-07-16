@@ -37,7 +37,7 @@ pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 3,
         "class_definition" => 3,
-        "type_definition" => 2,
+        "alias_declaration" | "type_definition" => 2,
         "declaration" | "field_declaration" => 1,
         _ => 0,
     }

@@ -43,6 +43,8 @@ identities are not yet modeled and should not be treated as full C++ semantic
 support.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; same-name operator overloads are not distinguished.
+C++ `using` aliases are indexed with their enclosing namespace and class scope,
+for example `api::Size` and `api::Config::Count`.
 
 ## Read And Discovery Tools
 

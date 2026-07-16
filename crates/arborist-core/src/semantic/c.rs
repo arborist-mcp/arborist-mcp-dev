@@ -87,6 +87,14 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
     ))
 }
 
+pub(crate) fn c_alias_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
+
+    Ok(Some(node_text(name, source)?.trim().to_string()))
+}
+
 fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if let Some(qualified_name) = find_qualified_operator_cast(node) {
         let Some(operator_cast) = find_first_descendant_by_kind(qualified_name, "operator_cast")
@@ -169,6 +177,7 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
         .or(c_operator_cast_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
+            "alias_declaration" => c_alias_name(node, source)?,
             "declaration" | "field_declaration" | "function_definition" => {
                 first_identifier(node, source)?
             }
@@ -264,8 +273,10 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
 }
 
 fn is_c_symbol_node(node: Node<'_>) -> bool {
-    matches!(node.kind(), "type_definition" | "function_definition")
-        || c_is_callable_declaration(node)
+    matches!(
+        node.kind(),
+        "alias_declaration" | "type_definition" | "function_definition"
+    ) || c_is_callable_declaration(node)
 }
 
 pub(crate) fn c_is_callable_declaration(node: Node<'_>) -> bool {
@@ -356,7 +367,7 @@ pub(crate) fn build_c_skeleton(
 
     for child in c_symbol_nodes(root) {
         match child.kind() {
-            "type_definition" => {
+            "alias_declaration" | "type_definition" => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -500,6 +511,7 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
+        "alias_declaration" => c_alias_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -518,7 +530,7 @@ fn c_callable_base_name(name: &str) -> String {
 fn c_symbol_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
-        "type_definition" => 20,
+        "alias_declaration" | "type_definition" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

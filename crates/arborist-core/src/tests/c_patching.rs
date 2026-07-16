@@ -320,6 +320,26 @@ fn patches_cpp_class_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_using_alias_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("aliases.hpp");
+    fs::write(&file, "namespace api {\nusing Size = unsigned long;\n}\n").unwrap();
+
+    let result =
+        patch_ast_node_from_path(&file, "api::Size", "using Size = unsigned int;", None).unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Size");
+    assert_eq!(result.resolved_symbol_id, "api::Size");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("using Size = unsigned int;")
+    );
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");

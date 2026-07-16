@@ -547,6 +547,48 @@ int increment<int>(int value) {
 }
 
 #[test]
+fn traces_cpp_using_aliases() {
+    let dir = temporary_dir();
+    let source = dir.join("aliases.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nusing Size = unsigned long;\n\nclass Config {\npublic:\n    using Count = int;\n};\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Size")
+    );
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Config::Count")
+    );
+
+    let trace = trace_symbol_graph(&dir, "api::Config::Count", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Config::Count", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn traces_cpp_explicit_function_template_specialization() {
     let dir = temporary_dir();
     let header = dir.join("templates.hpp");

@@ -44,8 +44,9 @@ and traced with their template declaration text. Explicit function template
 specializations have distinct paths such as `increment<int>`. Template
 parameter binding, class/method specializations, and overload-aware symbol
 identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
-`Class::operator bool`. See the [tool guide](docs/tools.md#language-support)
-for the current scope.
+`Class::operator bool`. C++ `using` aliases are indexed with namespace and
+class scope, for example `api::Size` and `api::Config::Count`. See the [tool
+guide](docs/tools.md#language-support) for the current scope.
 
 ## Implemented Tool Families
 
