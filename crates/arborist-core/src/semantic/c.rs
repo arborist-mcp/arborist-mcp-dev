@@ -74,6 +74,7 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
             | "type_identifier"
             | "destructor_name"
             | "operator_name"
+            | "template_function"
     ) {
         return Ok(None);
     }
@@ -491,7 +492,7 @@ pub(crate) fn find_c_semantic_node<'tree>(
 
 fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if let Some(function_name) = c_function_declarator_name(node, source)? {
-        return Ok(function_name.rsplit("::").next().map(ToString::to_string));
+        return Ok(function_name.rsplit("::").next().map(c_callable_base_name));
     }
     if let Some(operator_cast_name) = c_operator_cast_name(node, source)? {
         return Ok(Some(operator_cast_name));
@@ -505,6 +506,13 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         "function_definition" => first_identifier(node, source),
         _ => Ok(None),
     }
+}
+
+fn c_callable_base_name(name: &str) -> String {
+    name.split_once('<')
+        .map(|(base_name, _)| base_name)
+        .unwrap_or(name)
+        .to_string()
 }
 
 fn c_symbol_node_rank(node_kind: &str) -> usize {

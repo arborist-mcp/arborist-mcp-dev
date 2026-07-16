@@ -40,9 +40,10 @@ defined outside the class are also matched to their declarations. Explicit
 constructors and destructors are supported as `Class::Class` and
 `Class::~Class`; defaulted/deleted methods are indexed with their full
 declaration signatures. Named function and class-method templates are indexed
-and traced with their template declaration text. Template parameter binding,
-specialization, and overload-aware symbol identities remain a follow-up. Basic
-operator methods use paths such as `Class::operator+` and
+and traced with their template declaration text. Explicit function template
+specializations have distinct paths such as `increment<int>`. Template
+parameter binding, class/method specializations, and overload-aware symbol
+identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
 `Class::operator bool`. See the [tool guide](docs/tools.md#language-support)
 for the current scope.
 

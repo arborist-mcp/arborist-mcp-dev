@@ -514,6 +514,71 @@ public:
 }
 
 #[test]
+fn indexes_cpp_explicit_function_template_specializations() {
+    let source = r#"
+template <typename T>
+T increment(T value) {
+    return value + 1;
+}
+
+template <>
+int increment<int>(int value) {
+    return value + 2;
+}
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("templates.cpp"), source, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "increment"),
+        "{:#?}",
+        skeleton.available_symbols
+    );
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "increment<int>"),
+        "{:#?}",
+        skeleton.available_symbols
+    );
+}
+
+#[test]
+fn traces_cpp_explicit_function_template_specialization() {
+    let dir = temporary_dir();
+    let header = dir.join("templates.hpp");
+    let source = dir.join("templates.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "template <typename T>\nT increment(T value);\n\ntemplate <>\nint increment<int>(int value);\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"templates.hpp\"\n\ntemplate <>\nint increment<int>(int value) { return value + 2; }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "increment<int>", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "increment<int>", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn indexes_cpp_operator_methods() {
     let source = r#"
 namespace math {
