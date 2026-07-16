@@ -8,6 +8,21 @@ use pyo3::prelude::*;
 
 use crate::{ArboristCore, to_json_result, to_py_error};
 
+struct WorkspaceIndexScan {
+    limits: WorkspaceScanLimits,
+}
+
+impl WorkspaceIndexScan {
+    fn new(max_files: usize, max_file_bytes: Option<u64>) -> Self {
+        Self {
+            limits: WorkspaceScanLimits {
+                max_files,
+                max_file_bytes,
+            },
+        }
+    }
+}
+
 impl ArboristCore {
     pub(super) fn rebuild_symbol_index_json_impl(
         &self,
@@ -16,13 +31,11 @@ impl ArboristCore {
         max_files: usize,
         max_file_bytes: Option<u64>,
     ) -> PyResult<String> {
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
         let result = rebuild_symbol_index_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
-            WorkspaceScanLimits {
-                max_files,
-                max_file_bytes,
-            },
+            scan.limits,
         )
         .map_err(to_py_error)?;
 
@@ -42,13 +55,11 @@ impl ArboristCore {
         max_files: usize,
         max_file_bytes: Option<u64>,
     ) -> PyResult<String> {
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
         let result = refresh_symbol_index_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
-            WorkspaceScanLimits {
-                max_files,
-                max_file_bytes,
-            },
+            scan.limits,
         )
         .map_err(to_py_error)?;
 
@@ -63,14 +74,12 @@ impl ArboristCore {
         max_files: usize,
         max_file_bytes: Option<u64>,
     ) -> PyResult<String> {
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
         let result = refresh_symbol_index_for_file_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
             Path::new(file_path),
-            WorkspaceScanLimits {
-                max_files,
-                max_file_bytes,
-            },
+            scan.limits,
         )
         .map_err(to_py_error)?;
 
