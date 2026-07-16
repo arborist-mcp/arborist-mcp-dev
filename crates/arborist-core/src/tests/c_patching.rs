@@ -374,6 +374,30 @@ fn patches_cpp_destructor_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_defaulted_cpp_method_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("lifecycle.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nclass Defaulted {\npublic:\n    Defaulted() = default;\n};\n}\n",
+    )
+    .unwrap();
+
+    let result =
+        patch_ast_node_from_path(&file, "api::Defaulted::Defaulted", "Defaulted() {}", None)
+            .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Defaulted::Defaulted");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Defaulted() {}")
+    );
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

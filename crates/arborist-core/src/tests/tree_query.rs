@@ -205,6 +205,27 @@ fn execute_tree_query_reports_owner_for_cpp_destructor_definition() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_defaulted_cpp_method() {
+    let source = "namespace api {\nclass Defaulted {\npublic:\n    Defaulted() = default;\n};\n}\n";
+    let captures = execute_tree_query(
+        Path::new("lifecycle.hpp"),
+        source,
+        "(function_definition) @method",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("api::Defaulted::Defaulted")
+    );
+    assert_eq!(
+        captures[0].owner_scope_path.as_deref(),
+        Some("api::Defaulted")
+    );
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

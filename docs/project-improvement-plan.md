@@ -97,10 +97,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
 - [x] Model named-namespace free functions and named class methods, including
-  class out-of-line definitions plus explicit constructors/destructors, in C++
-  skeletons, indexes, traces, patch targets, and raw-query owner metadata.
-- [ ] Extend C++ semantic support to defaulted/deleted methods, templates, and
-  overload-aware symbol identities.
+  class out-of-line definitions plus explicit/defaulted/deleted
+  constructors/destructors, in C++ skeletons, indexes, traces, patch targets,
+  and raw-query owner metadata.
+- [ ] Extend C++ semantic support to templates and overload-aware symbol
+  identities.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
 - [ ] Add richer impact summaries for trace-backed patch validation, including

@@ -38,9 +38,10 @@ namespaces plus named methods declared or defined in class bodies, with
 qualified semantic paths such as `outer::Class::method`. Named class methods
 defined outside the class are also matched to their declarations. Explicit
 constructors and destructors are supported as `Class::Class` and
-`Class::~Class`; defaulted/deleted methods, templates, and overload-aware
-symbol identities remain a follow-up. See the
-[tool guide](docs/tools.md#language-support) for the current scope.
+`Class::~Class`; defaulted/deleted methods are indexed with their full
+declaration signatures. Templates and overload-aware symbol identities remain
+a follow-up. See the [tool guide](docs/tools.md#language-support) for the
+current scope.
 
 ## Implemented Tool Families
 
@@ -236,8 +237,7 @@ Remaining larger work includes:
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Adding a durable migration strategy beyond the current schema-version gate.
-- Extending C++ semantic support beyond explicit constructors/destructors and
-  named methods to defaulted/deleted methods, templates, and overload-aware
-  symbol identities.
+- Extending C++ semantic support beyond named methods to templates and
+  overload-aware symbol identities.
 - Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime
   controls such as operation timeouts/cancellation for very large workspaces.

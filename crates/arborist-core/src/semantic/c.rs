@@ -13,9 +13,14 @@ use crate::language::{
 use crate::model::{SemanticSkeleton, SemanticSkeletonSymbol};
 
 pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
-    let body = node
-        .child_by_field_name("body")
-        .ok_or_else(|| anyhow!("function_definition missing body"))?;
+    let Some(body) = node.child_by_field_name("body") else {
+        if contains_kind(node, "default_method_clause")
+            || contains_kind(node, "delete_method_clause")
+        {
+            return Ok(node_text(node, source)?.trim().to_string());
+        }
+        return Err(anyhow!("function_definition missing body"));
+    };
     let prefix = source[node.start_byte()..body.start_byte()].trim_end();
     Ok(format!("{prefix};"))
 }

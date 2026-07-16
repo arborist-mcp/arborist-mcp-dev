@@ -388,6 +388,76 @@ api::Counter::~Counter() {}
 }
 
 #[test]
+fn indexes_defaulted_and_deleted_cpp_methods() {
+    let source = r#"
+namespace api {
+class Defaulted {
+public:
+    Defaulted() = default;
+};
+
+class Deleted {
+public:
+    Deleted() = delete;
+};
+}
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("lifecycle.hpp"), source, 1, &[]).unwrap();
+    let defaulted = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Defaulted::Defaulted")
+        .expect("defaulted constructor should be indexed");
+    assert_eq!(
+        defaulted.signature.as_deref(),
+        Some("Defaulted() = default;")
+    );
+
+    let deleted = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Deleted::Deleted")
+        .expect("deleted constructor should be indexed");
+    assert_eq!(deleted.signature.as_deref(), Some("Deleted() = delete;"));
+}
+
+#[test]
+fn traces_defaulted_cpp_methods() {
+    let dir = temporary_dir();
+    let source = dir.join("lifecycle.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Defaulted {\npublic:\n    Defaulted() = default;\n};\n\nclass Deleted {\npublic:\n    Deleted() = delete;\n};\n}\n",
+    )
+    .unwrap();
+
+    let trace =
+        trace_symbol_graph(&dir, "api::Defaulted::Defaulted", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "api::Defaulted::Defaulted");
+    let deleted_trace =
+        trace_symbol_graph(&dir, "api::Deleted::Deleted", TraceDirection::Both).unwrap();
+    assert_eq!(deleted_trace.symbol.semantic_path, "api::Deleted::Deleted");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Defaulted::Defaulted", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.semantic_path,
+        "api::Defaulted::Defaulted"
+    );
+    let persisted_deleted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Deleted::Deleted", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_deleted_trace.symbol.semantic_path,
+        "api::Deleted::Deleted"
+    );
+}
+
+#[test]
 fn traces_cpp_constructors_and_destructors() {
     let dir = temporary_dir();
     let header = dir.join("counter.hpp");
