@@ -458,6 +458,82 @@ fn traces_defaulted_cpp_methods() {
 }
 
 #[test]
+fn indexes_cpp_template_functions_and_class_methods() {
+    let source = r#"
+template <typename T>
+T increment(T value) {
+    return value + 1;
+}
+
+template <typename T>
+class Box {
+public:
+    T identity(T value) {
+        return value;
+    }
+};
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("templates.cpp"), source, 1, &[]).unwrap();
+    let increment = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "increment")
+        .expect("template function should be indexed");
+    assert!(
+        increment
+            .signature
+            .as_deref()
+            .is_some_and(|signature| signature.starts_with("template <typename T>"))
+    );
+
+    let identity = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Box::identity")
+        .expect("template class method should be indexed");
+    assert!(
+        identity
+            .signature
+            .as_deref()
+            .is_some_and(|signature| signature.starts_with("template <typename T>"))
+    );
+
+    let expanded = get_semantic_skeleton(
+        Path::new("templates.cpp"),
+        source,
+        1,
+        &["increment".to_string()],
+    )
+    .unwrap();
+    assert!(
+        expanded
+            .skeleton
+            .contains("template <typename T>\nT increment(T value)")
+    );
+}
+
+#[test]
+fn traces_cpp_template_functions() {
+    let dir = temporary_dir();
+    let source = dir.join("templates.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "template <typename T>\nT increment(T value) {\n    return value + 1;\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "increment", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "increment", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.symbol.semantic_path, "increment");
+}
+
+#[test]
 fn traces_cpp_constructors_and_destructors() {
     let dir = temporary_dir();
     let header = dir.join("counter.hpp");

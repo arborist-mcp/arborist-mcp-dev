@@ -35,8 +35,10 @@ matching symbols during graph resolution. Named methods defined outside their
 class are matched to the same semantic path as their class-body declarations.
 Explicit constructors and destructors use `Class::Class` and `Class::~Class`
 paths. Defaulted/deleted methods retain their full declaration signature.
-Templates and overload-aware symbol identities are not yet modeled and should
-not be treated as full C++ semantic support.
+Named function and class-method templates are indexed, traced, and exposed to
+raw query owner metadata with their `template <...>` declaration text. Template
+parameter binding, specializations, and overload-aware symbol identities are
+not yet modeled and should not be treated as full C++ semantic support.
 
 ## Read And Discovery Tools
 

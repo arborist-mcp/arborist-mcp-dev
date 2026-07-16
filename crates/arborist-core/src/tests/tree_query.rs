@@ -226,6 +226,24 @@ fn execute_tree_query_reports_owner_for_defaulted_cpp_method() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_template_function() {
+    let source = "template <typename T>\nT increment(T value) { return value + 1; }\n";
+    let captures = execute_tree_query(
+        Path::new("templates.cpp"),
+        source,
+        "(function_definition) @function",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("increment")
+    );
+    assert_eq!(captures[0].owner_scope_path, None);
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

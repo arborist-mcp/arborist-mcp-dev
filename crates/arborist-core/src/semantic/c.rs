@@ -13,16 +13,31 @@ use crate::language::{
 use crate::model::{SemanticSkeleton, SemanticSkeletonSymbol};
 
 pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
+    let display_node = c_function_display_node(node);
     let Some(body) = node.child_by_field_name("body") else {
         if contains_kind(node, "default_method_clause")
             || contains_kind(node, "delete_method_clause")
         {
-            return Ok(node_text(node, source)?.trim().to_string());
+            return Ok(node_text(display_node, source)?.trim().to_string());
         }
         return Err(anyhow!("function_definition missing body"));
     };
-    let prefix = source[node.start_byte()..body.start_byte()].trim_end();
+    let prefix = source[display_node.start_byte()..body.start_byte()].trim_end();
     Ok(format!("{prefix};"))
+}
+
+fn c_function_display_node(node: Node<'_>) -> Node<'_> {
+    let mut display_node = node;
+    let mut current = node.parent();
+
+    while let Some(candidate) = current {
+        if candidate.kind() == "template_declaration" {
+            display_node = candidate;
+        }
+        current = candidate.parent();
+    }
+
+    display_node
 }
 
 fn find_first_descendant_by_kind<'tree>(node: Node<'tree>, kind: &str) -> Option<Node<'tree>> {
@@ -152,6 +167,8 @@ fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tr
     for child in scope.named_children(&mut cursor) {
         if child.kind() == "namespace_definition" {
             collect_c_scope_symbols(child, symbols);
+        } else if child.kind() == "template_declaration" {
+            collect_cpp_template_symbols(child, symbols);
         } else if child.kind() == "class_specifier" {
             collect_cpp_class_method_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
@@ -171,6 +188,22 @@ fn collect_cpp_class_method_symbols<'tree>(
 
     for child in body.named_children(&mut cursor) {
         if child.kind() == "class_specifier" {
+            collect_cpp_class_method_symbols(child, symbols);
+        } else if child.kind() == "template_declaration" {
+            collect_cpp_template_symbols(child, symbols);
+        } else if is_c_symbol_node(child) {
+            symbols.push(child);
+        }
+    }
+}
+
+fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    let mut cursor = template_node.walk();
+
+    for child in template_node.named_children(&mut cursor) {
+        if child.kind() == "template_declaration" {
+            collect_cpp_template_symbols(child, symbols);
+        } else if child.kind() == "class_specifier" {
             collect_cpp_class_method_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
             symbols.push(child);
@@ -324,7 +357,11 @@ pub(crate) fn build_c_skeleton(
                     if expand_set.contains(symbol.as_str())
                         || expand_set.contains(symbol_id.as_str())
                     {
-                        skeleton_items.push(node_text(child, source)?.trim().to_string());
+                        skeleton_items.push(
+                            node_text(c_function_display_node(child), source)?
+                                .trim()
+                                .to_string(),
+                        );
                     } else {
                         skeleton_items.push(signature.clone());
                     }

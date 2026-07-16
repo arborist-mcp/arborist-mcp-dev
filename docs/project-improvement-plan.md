@@ -100,8 +100,11 @@ completed item can land in its own commit unless two changes are inseparable.
   class out-of-line definitions plus explicit/defaulted/deleted
   constructors/destructors, in C++ skeletons, indexes, traces, patch targets,
   and raw-query owner metadata.
-- [ ] Extend C++ semantic support to templates and overload-aware symbol
-  identities.
+- [x] Model named function and class-method templates in C++ skeletons,
+  indexes, traces, and raw-query owner metadata while preserving template
+  declaration text.
+- [ ] Extend C++ semantic support to template parameter binding,
+  specializations, and overload-aware symbol identities.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
 - [ ] Add richer impact summaries for trace-backed patch validation, including
