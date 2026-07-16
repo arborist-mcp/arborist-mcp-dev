@@ -300,6 +300,47 @@ fn traces_inline_cpp_class_method_dependencies() {
 }
 
 #[test]
+fn traces_cpp_class_methods_defined_outside_the_class() {
+    let dir = temporary_dir();
+    let header = dir.join("counter.hpp");
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace api {\nclass Counter {\npublic:\n    int increment(int value);\n    int next(int value);\n};\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"counter.hpp\"\n\nnamespace api {\nint Counter::increment(int value) { return value + 1; }\n\nint Counter::next(int value) { return increment(value); }\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::increment")
+    );
+
+    let trace = trace_symbol_graph(&dir, "api::Counter::next", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "api::Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::next", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(
+        persisted_trace.callees[0].semantic_path,
+        "api::Counter::increment"
+    );
+}
+
+#[test]
 fn traces_c_symbol_graph_across_uppercase_header_and_source_definition() {
     let dir = temporary_dir();
     let header = dir.join("helper.H");

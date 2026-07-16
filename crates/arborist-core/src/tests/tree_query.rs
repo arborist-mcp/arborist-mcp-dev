@@ -158,6 +158,31 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class() {
+    let source = "int api::Counter::increment(int value) { return value + 1; }\n";
+    let captures = execute_tree_query(
+        Path::new("counter.cpp"),
+        source,
+        "(qualified_identifier) @method",
+    )
+    .unwrap();
+
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "api::Counter::increment")
+        .expect("fully qualified method name should be captured");
+    assert_eq!(
+        capture.owner_symbol_id.as_deref(),
+        Some("api::Counter::increment")
+    );
+    assert_eq!(
+        capture.owner_semantic_path.as_deref(),
+        Some("api::Counter::increment")
+    );
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api::Counter"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

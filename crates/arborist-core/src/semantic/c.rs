@@ -39,6 +39,25 @@ fn c_function_declarator(node: Node<'_>) -> Option<Node<'_>> {
     find_first_descendant_by_kind(node, "function_declarator")
 }
 
+fn c_qualified_function_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(function_declarator) = c_function_declarator(node) else {
+        return Ok(None);
+    };
+    let Some(declarator) = function_declarator.child_by_field_name("declarator") else {
+        return Ok(None);
+    };
+    if declarator.kind() != "qualified_identifier" {
+        return Ok(None);
+    }
+
+    Ok(Some(
+        node_text(declarator, source)?
+            .trim()
+            .trim_start_matches("::")
+            .to_string(),
+    ))
+}
+
 pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(Vec::new());
@@ -69,27 +88,36 @@ pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<Strin
 }
 
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
-    let symbol_name = match node.kind() {
+    let symbol_name = c_qualified_function_name(node, source)?.or(match node.kind() {
         "type_definition" => last_type_identifier(node, source)?,
         "declaration" | "field_declaration" | "function_definition" => {
             first_identifier(node, source)?
         }
         _ => None,
-    };
+    });
 
     let scope_path = c_scope_path(node, source)?;
     Ok(symbol_name.map(|name| {
-        let name = if scope_path.is_empty() {
-            name
-        } else {
-            format!("{scope_path}::{name}")
-        };
+        let name = c_qualified_name_in_scope(&scope_path, &name);
         if has_c_internal_linkage(node, source) {
             format!("{}::{name}", normalize_path(path))
         } else {
             name
         }
     }))
+}
+
+fn c_qualified_name_in_scope(scope_path: &str, name: &str) -> String {
+    if scope_path.is_empty()
+        || name == scope_path
+        || name
+            .strip_prefix(scope_path)
+            .is_some_and(|suffix| suffix.starts_with("::"))
+    {
+        name.to_string()
+    } else {
+        format!("{scope_path}::{name}")
+    }
 }
 
 pub(crate) fn c_symbol_nodes(root: Node<'_>) -> Vec<Node<'_>> {
@@ -358,6 +386,10 @@ pub(crate) fn find_c_semantic_node<'tree>(
 }
 
 fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if let Some(qualified_name) = c_qualified_function_name(node, source)? {
+        return Ok(qualified_name.rsplit("::").next().map(ToString::to_string));
+    }
+
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
         "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
