@@ -22,7 +22,7 @@ pub fn get_semantic_skeleton(
 ) -> Result<SemanticSkeleton> {
     match language_id {
         LanguageId::Python => build_python_skeleton(path, source, tree, depth_limit, expand_nodes),
-        LanguageId::C => c::build_c_skeleton(path, source, tree, expand_nodes),
+        LanguageId::C | LanguageId::Cpp => c::build_c_skeleton(path, source, tree, expand_nodes),
     }
 }
 
@@ -139,7 +139,7 @@ pub fn find_semantic_node<'tree>(
 ) -> Result<Option<Node<'tree>>> {
     match language_id {
         LanguageId::Python => find_python_semantic_node(tree, source, target_path),
-        LanguageId::C => c::find_c_semantic_node(path, tree, source, target_path),
+        LanguageId::C | LanguageId::Cpp => c::find_c_semantic_node(path, tree, source, target_path),
     }
 }
 
@@ -160,7 +160,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
             LanguageId::Python => {
                 matches!(candidate.kind(), "class_definition" | "function_definition")
             }
-            LanguageId::C => {
+            LanguageId::C | LanguageId::Cpp => {
                 candidate.kind() == "type_definition"
                     || candidate.kind() == "function_definition"
                     || (candidate.kind() == "declaration"

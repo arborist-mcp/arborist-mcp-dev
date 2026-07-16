@@ -18,6 +18,15 @@ COVERED_TOOLS = (
 
 
 class GatewayRuntimeTests(GatewayProtocolTestCase):
+    def test_live_initialize_reports_cpp_support(self) -> None:
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(self.make_live_gateway(), "initialize", {}, request_id=0),
+            request_id=0,
+        )
+
+        assert isinstance(result, dict)
+        self.assertEqual(result["supportedLanguages"], ["python", "c", "cpp"])
+
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
             def supported_languages(self) -> list[str]:
@@ -171,7 +180,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             gateway_module.TEXT_PARAM_MAX_LENGTH,
         )
         self.assertIn(
-            "not full C++ parsing",
+            "Tree-sitter C++ grammar",
             skeleton["inputSchema"]["properties"]["file_path"]["description"],
         )
         list_indexes = by_name["arborist/list_symbol_indexes"]

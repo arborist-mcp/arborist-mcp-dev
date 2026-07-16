@@ -18,7 +18,10 @@ pub(crate) struct CIncludeContext {
 
 pub(crate) fn c_include_context_for_file(file_path: &str) -> Result<CIncludeContext> {
     let path = Path::new(file_path);
-    if detect_language(path).ok() != Some(LanguageId::C) {
+    if !matches!(
+        detect_language(path).ok(),
+        Some(LanguageId::C | LanguageId::Cpp)
+    ) {
         return Ok(CIncludeContext::default());
     }
 

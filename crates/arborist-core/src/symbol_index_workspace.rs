@@ -36,7 +36,7 @@ pub(crate) fn expanded_refresh_file_paths(
     let mut refresh_paths = BTreeSet::new();
     refresh_paths.insert(file_path.to_path_buf());
 
-    if matches!(detect_language(file_path)?, LanguageId::C) {
+    if matches!(detect_language(file_path)?, LanguageId::C | LanguageId::Cpp) {
         refresh_paths.extend(transitive_c_include_dependents(workspace_root, file_path)?);
     }
 
@@ -180,7 +180,7 @@ fn reverse_local_c_include_index(
     let mut reverse_index = BTreeMap::new();
 
     for path in collect_source_files(workspace_root)? {
-        if !matches!(detect_language(&path), Ok(LanguageId::C)) {
+        if !matches!(detect_language(&path), Ok(LanguageId::C | LanguageId::Cpp)) {
             continue;
         }
 

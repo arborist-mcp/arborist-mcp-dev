@@ -7,6 +7,7 @@ use super::{ensure_nonblank, ensure_nonblank_strings, point_is_after};
 pub enum LanguageId {
     Python,
     C,
+    Cpp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

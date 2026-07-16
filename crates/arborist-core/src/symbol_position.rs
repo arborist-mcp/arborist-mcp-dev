@@ -49,7 +49,7 @@ pub(crate) fn resolve_symbol_at_position<'a>(
             let byte_range = python_display_byte_range(symbol_node);
             (semantic_path.clone(), semantic_path, byte_range)
         }
-        LanguageId::C => {
+        LanguageId::C | LanguageId::Cpp => {
             let semantic_path = c_semantic_path(file_path, symbol_node, &source)?
                 .ok_or_else(|| anyhow!("position does not resolve to a C semantic symbol"))?;
             let symbol_id = c_symbol_id_for_node(file_path, symbol_node, &source)?

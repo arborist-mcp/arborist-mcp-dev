@@ -123,7 +123,11 @@ pub(super) fn indexed_symbol_rank(symbol: &IndexedSymbol) -> usize {
 fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
-    if detect_language(path).ok() != Some(LanguageId::C) || symbol.semantic_path.contains("::") {
+    if !matches!(
+        detect_language(path).ok(),
+        Some(LanguageId::C | LanguageId::Cpp)
+    ) || symbol.semantic_path.contains("::")
+    {
         return Ok(symbol.semantic_path.clone());
     }
 

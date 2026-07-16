@@ -19,16 +19,18 @@ As of this revision, `tools/list` returns 54 tools:
 
 ## Language Support
 
-Arborist currently supports Python and C source files. Language routing is based
-on case-insensitive file extensions:
+Arborist currently supports Python, C, and C++ source files. Language routing
+is based on case-insensitive file extensions:
 
 - Python: `.py`, `.pyi`
-- C grammar: `.c`, `.h`, `.hpp`, `.hh`
+- C grammar: `.c`, `.h`
+- C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`
 
-Important C++ caveat: `.hpp` and `.hh` are currently parsed with the C grammar.
-This supports C-like header/source families, but it is not full C++ semantic
-support. Real C++ projects may expose grammar and symbol-resolution gaps until a
-dedicated `tree-sitter-cpp` integration is added.
+C++ files use the dedicated `tree-sitter-cpp` grammar. Current C-family symbol
+indexing, tracing, and patch validation cover free functions and header/source
+families. Class members, namespaces, templates, and overload-aware symbol
+identities are not yet modeled and should not be treated as full C++ semantic
+support.
 
 ## Read And Discovery Tools
 

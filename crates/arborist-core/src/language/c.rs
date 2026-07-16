@@ -6,14 +6,28 @@ use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
 
-pub const C_HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hh"];
+pub const C_HEADER_EXTENSIONS: &[&str] = &["h"];
 pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
+pub const CPP_HEADER_EXTENSIONS: &[&str] = &["hpp", "hh", "hxx", "h++"];
+pub const CPP_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++"];
+
+pub const C_FAMILY_HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hh", "hxx", "h++"];
 
 pub fn is_c_header_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            C_HEADER_EXTENSIONS
+            C_FAMILY_HEADER_EXTENSIONS
+                .iter()
+                .any(|header_extension| extension.eq_ignore_ascii_case(header_extension))
+        })
+}
+
+fn is_cpp_header_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            CPP_HEADER_EXTENSIONS
                 .iter()
                 .any(|header_extension| extension.eq_ignore_ascii_case(header_extension))
         })
@@ -47,8 +61,19 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
         return None;
     }
 
-    let candidates = extension_case_candidates(include_path, C_SOURCE_EXTENSIONS)
+    let preferred_extensions = if is_cpp_header_path(include_path) {
+        CPP_SOURCE_EXTENSIONS
+    } else {
+        C_SOURCE_EXTENSIONS
+    };
+    let fallback_extensions = if is_cpp_header_path(include_path) {
+        C_SOURCE_EXTENSIONS
+    } else {
+        CPP_SOURCE_EXTENSIONS
+    };
+    let candidates = extension_case_candidates(include_path, preferred_extensions)
         .into_iter()
+        .chain(extension_case_candidates(include_path, fallback_extensions))
         .map(|source_extension| include_path.with_extension(source_extension))
         .collect::<Vec<_>>();
 

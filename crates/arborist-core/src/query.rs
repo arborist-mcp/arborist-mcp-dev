@@ -151,7 +151,7 @@ fn capture_owner(
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
     match language_id {
         LanguageId::Python => python_capture_owner(source, node),
-        LanguageId::C => c_capture_owner(path, source, root, node),
+        LanguageId::C | LanguageId::Cpp => c_capture_owner(path, source, root, node),
     }
 }
 

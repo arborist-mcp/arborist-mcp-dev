@@ -6,7 +6,7 @@ use tree_sitter::{Node, Tree};
 
 use super::semantic_parent_path;
 use crate::language::{
-    C_HEADER_EXTENSIONS, c_include_targets, contains_kind, extension_case_candidates,
+    C_FAMILY_HEADER_EXTENSIONS, c_include_targets, contains_kind, extension_case_candidates,
     first_identifier, is_c_header_path, last_type_identifier, node_text, normalize_path,
     parse_document, read_source, resolve_local_c_include,
 };
@@ -369,7 +369,7 @@ fn c_file_declares_symbol(path: &Path, symbol_name: &str) -> Result<bool> {
 }
 
 fn sibling_header_candidates(path: &Path) -> Vec<PathBuf> {
-    extension_case_candidates(path, C_HEADER_EXTENSIONS)
+    extension_case_candidates(path, C_FAMILY_HEADER_EXTENSIONS)
         .into_iter()
         .map(|extension| path.with_extension(extension))
         .collect()

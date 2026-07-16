@@ -21,7 +21,7 @@ pub(crate) fn index_symbols_from_document(
 ) -> Result<Vec<IndexedSymbol>> {
     match document.language_id {
         LanguageId::Python => index_python_symbols(path, source, document.tree.root_node()),
-        LanguageId::C => index_c_symbols(path, source, document.tree.root_node()),
+        LanguageId::C | LanguageId::Cpp => index_c_symbols(path, source, document.tree.root_node()),
     }
 }
 

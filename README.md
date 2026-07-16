@@ -25,15 +25,17 @@ Current layers:
 
 ## Language Support
 
-Arborist currently supports Python and C source files. Language routing is
-extension-based:
+Arborist currently supports Python, C, and C++ source files. Language routing
+is extension-based:
 
 - Python: `.py`, `.pyi`
-- C grammar: `.c`, `.h`, `.hpp`, `.hh`
+- C grammar: `.c`, `.h`
+- C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`
 
-`.hpp` and `.hh` files are routed through the C grammar today. They are useful
-for C-like header/source families, but this is not full C++ support yet. See the
-[tool guide](docs/tools.md#language-support) for the current C++ caveat.
+C++ files use the dedicated Tree-sitter C++ grammar. C-family indexing and
+patch validation currently cover free functions and header/source families;
+class members, namespaces, and overload-aware symbols remain a follow-up. See
+the [tool guide](docs/tools.md#language-support) for the current scope.
 
 ## Implemented Tool Families
 
@@ -229,7 +231,7 @@ Remaining larger work includes:
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Adding a durable migration strategy beyond the current schema-version gate.
-- Adding full C++ support via a dedicated grammar instead of routing `.hpp` and
-  `.hh` through the C grammar.
+- Extending C++ semantic support beyond free functions and header/source
+  families to class members, namespaces, and overload-aware symbols.
 - Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime
   controls such as operation timeouts/cancellation for very large workspaces.

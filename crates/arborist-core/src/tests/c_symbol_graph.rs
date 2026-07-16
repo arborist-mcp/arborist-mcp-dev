@@ -143,6 +143,46 @@ fn traces_c_symbol_graph_across_header_declaration_and_source_definition() {
 }
 
 #[test]
+fn traces_cpp_symbol_graph_across_header_declaration_and_source_definition() {
+    let dir = temporary_dir();
+    let header = dir.join("helper.hpp");
+    let helper = dir.join("helper.cpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&header, "int helper(int value);\n").unwrap();
+    fs::write(
+        &helper,
+        "#include \"helper.hpp\"\n\nint helper(int value) {\n    return value + 1;\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"helper.hpp\"\n\nint orchestrate(int value) {\n    return helper(value);\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+    assert!(
+        trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper")
+    );
+
+    let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+    assert!(
+        persisted_trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper")
+    );
+}
+
+#[test]
 fn traces_c_symbol_graph_across_uppercase_header_and_source_definition() {
     let dir = temporary_dir();
     let header = dir.join("helper.H");

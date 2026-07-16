@@ -102,7 +102,7 @@ pub fn semantic_target_at_position(
 
     match document.language_id {
         LanguageId::Python => semantic_path(symbol_node, source),
-        LanguageId::C => c_symbol_id_for_node(&path, symbol_node, source)?
+        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
             .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
     }
 }
@@ -148,7 +148,7 @@ pub(crate) fn prepare_patch_replacement(
             target.end_byte,
             new_code,
         ),
-        LanguageId::C => new_code.to_string(),
+        LanguageId::C | LanguageId::Cpp => new_code.to_string(),
     };
     let mut validation_issues = Vec::new();
     if target.language_id == LanguageId::Python
@@ -343,7 +343,7 @@ fn resolve_symbol_path(
 ) -> Result<String> {
     match language_id {
         LanguageId::Python => semantic_path(node, source),
-        LanguageId::C => c_semantic_path(path, node, source)?
+        LanguageId::C | LanguageId::Cpp => c_semantic_path(path, node, source)?
             .ok_or_else(|| anyhow!("failed to resolve patched C symbol path")),
     }
 }
@@ -356,7 +356,7 @@ fn resolve_symbol_id(
 ) -> Result<String> {
     match language_id {
         LanguageId::Python => semantic_path(node, source),
-        LanguageId::C => c_symbol_id_for_node(path, node, source)?
+        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
             .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
     }
 }
@@ -685,7 +685,9 @@ fn collect_reference_validation(
         LanguageId::Python => {
             python_references::collect_python_reference_validation(path, source, symbol_node)
         }
-        LanguageId::C => collect_c_reference_validation(path, document, source, symbol_node),
+        LanguageId::C | LanguageId::Cpp => {
+            collect_c_reference_validation(path, document, source, symbol_node)
+        }
     }
 }
 

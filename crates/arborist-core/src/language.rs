@@ -11,8 +11,9 @@ mod c;
 
 pub(crate) use c::extension_case_candidates;
 pub use c::{
-    C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, c_companion_source_path, c_include_targets,
-    c_local_include_targets, is_c_header_path, resolve_local_c_include,
+    C_FAMILY_HEADER_EXTENSIONS, C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS,
+    CPP_SOURCE_EXTENSIONS, c_companion_source_path, c_include_targets, c_local_include_targets,
+    is_c_header_path, resolve_local_c_include,
 };
 
 pub struct ParsedDocument {
@@ -21,7 +22,7 @@ pub struct ParsedDocument {
 }
 
 pub fn supported_languages() -> Vec<&'static str> {
-    vec!["python", "c"]
+    vec!["python", "c", "cpp"]
 }
 
 pub fn read_source(path: &Path) -> Result<String> {
@@ -258,6 +259,16 @@ pub fn detect_language(path: &Path) -> Result<LanguageId> {
         {
             Ok(LanguageId::C)
         }
+        Some(ext)
+            if CPP_SOURCE_EXTENSIONS
+                .iter()
+                .any(|extension| ext.eq_ignore_ascii_case(extension))
+                || CPP_HEADER_EXTENSIONS
+                    .iter()
+                    .any(|extension| ext.eq_ignore_ascii_case(extension)) =>
+        {
+            Ok(LanguageId::Cpp)
+        }
         other => bail!(
             "unsupported file extension {:?} for {}",
             other,
@@ -270,6 +281,7 @@ pub fn language_for_id(language_id: LanguageId) -> Language {
     match language_id {
         LanguageId::Python => tree_sitter_python::LANGUAGE.into(),
         LanguageId::C => tree_sitter_c::LANGUAGE.into(),
+        LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
     }
 }
 
@@ -439,7 +451,7 @@ mod tests {
 
     use super::{
         c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
-        offset_for_position, point_for_offset,
+        offset_for_position, parse_document, point_for_offset, supported_languages,
     };
     use crate::model::{LanguageId, Position};
 
@@ -463,12 +475,21 @@ mod tests {
         );
         assert_eq!(
             detect_language(Path::new("sample.HPP")).unwrap(),
-            LanguageId::C
+            LanguageId::Cpp
         );
         assert_eq!(
             detect_language(Path::new("sample.HH")).unwrap(),
-            LanguageId::C
+            LanguageId::Cpp
         );
+        assert_eq!(
+            detect_language(Path::new("sample.CPP")).unwrap(),
+            LanguageId::Cpp
+        );
+    }
+
+    #[test]
+    fn supported_languages_reports_cpp() {
+        assert_eq!(supported_languages(), vec!["python", "c", "cpp"]);
     }
 
     #[test]
@@ -486,6 +507,15 @@ mod tests {
         assert!(is_c_header_path(Path::new("sample.HPP")));
         assert!(is_c_header_path(Path::new("sample.HH")));
         assert!(!is_c_header_path(Path::new("sample.c")));
+    }
+
+    #[test]
+    fn parse_document_uses_cpp_grammar_for_cpp_extensions() {
+        let source = "class Counter { public: int value() const { return 1; } };";
+        let document = parse_document(Path::new("counter.hpp"), source).unwrap();
+
+        assert_eq!(document.language_id, LanguageId::Cpp);
+        assert!(!document.tree.root_node().has_error());
     }
 
     #[test]

@@ -297,7 +297,7 @@ TOOL_PARAM_SPECS = {
     "file_path": ToolParamSpec(
         _schema(
             "string",
-            "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+            "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
         ),
         source_anchored_optional_tools=_SOURCE_ANCHORED_FILE_PATH_TOOLS,
     ),

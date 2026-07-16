@@ -29617,7 +29617,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "depth_limit": {
@@ -29810,7 +29810,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -30836,7 +30836,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -31878,7 +31878,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -32884,7 +32884,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -33906,7 +33906,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -34907,7 +34907,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -35999,7 +35999,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "max_files": {
@@ -36417,7 +36417,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -36501,7 +36501,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "edits": {
@@ -37535,7 +37535,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "persist": {
@@ -37690,7 +37690,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         }
       },
@@ -37769,7 +37769,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "start_byte": {
@@ -38757,7 +38757,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         }
       },
@@ -38836,7 +38836,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         }
       },
@@ -39132,7 +39132,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -39654,7 +39654,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -40051,7 +40051,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -40576,7 +40576,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -41035,7 +41035,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -41267,7 +41267,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -41547,7 +41547,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -42229,7 +42229,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -42984,7 +42984,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -43580,7 +43580,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -44263,7 +44263,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -45494,7 +45494,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -46799,7 +46799,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -47017,7 +47017,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -47459,7 +47459,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -48265,7 +48265,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -49241,7 +49241,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -49509,7 +49509,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -50001,7 +50001,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -50857,7 +50857,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "source": {
@@ -52146,7 +52146,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -53783,7 +53783,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -55436,7 +55436,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -57444,7 +57444,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -59468,7 +59468,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -61675,7 +61675,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -63898,7 +63898,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "semantic_path": {
@@ -66297,7 +66297,7 @@
         },
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "position": {
@@ -68706,7 +68706,7 @@
       "properties": {
         "file_path": {
           "type": "string",
-          "description": "Source file path. Python (.py, .pyi) and C extensions are supported; .hpp and .hh use the C grammar, not full C++ parsing.",
+          "description": "Source file path. Python (.py, .pyi), C (.c, .h), and C++ extensions are supported; C++ uses the Tree-sitter C++ grammar.",
           "minLength": 1
         },
         "query": {
