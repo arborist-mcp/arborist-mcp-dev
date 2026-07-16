@@ -398,6 +398,29 @@ fn patches_defaulted_cpp_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_operator_method_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("number.cpp");
+    fs::write(
+        &file,
+        "namespace math {\nclass Number {\npublic:\n    Number operator+(const Number& other) const { return *this; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "math::Number::operator+",
+        "Number operator+(const Number& other) const { return *this; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "math::Number::operator+");
+    assert!(result.validation.commit_gate.allowed);
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

@@ -514,6 +514,53 @@ public:
 }
 
 #[test]
+fn indexes_cpp_operator_methods() {
+    let source = r#"
+namespace math {
+class Number {
+public:
+    Number operator+(const Number& other) const {
+        return *this;
+    }
+};
+}
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("number.cpp"), source, 1, &[]).unwrap();
+    let operator = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "math::Number::operator+")
+        .expect("operator method should be indexed");
+    assert_eq!(operator.scope_path.as_deref(), Some("math::Number"));
+    assert_eq!(operator.parameters, vec!["const Number& other".to_string()]);
+}
+
+#[test]
+fn traces_cpp_operator_methods() {
+    let dir = temporary_dir();
+    let source = dir.join("number.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace math {\nclass Number {\npublic:\n    Number operator+(const Number& other) const { return *this; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "math::Number::operator+", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "math::Number::operator+");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "math::Number::operator+", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.semantic_path,
+        "math::Number::operator+"
+    );
+}
+
+#[test]
 fn traces_cpp_template_functions() {
     let dir = temporary_dir();
     let source = dir.join("templates.cpp");

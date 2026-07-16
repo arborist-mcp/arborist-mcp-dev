@@ -103,6 +103,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Model named function and class-method templates in C++ skeletons,
   indexes, traces, and raw-query owner metadata while preserving template
   declaration text.
+- [x] Model basic C++ operator methods with stable operator-name paths while
+  preserving the current non-overload-aware identity model.
 - [ ] Extend C++ semantic support to template parameter binding,
   specializations, and overload-aware symbol identities.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing

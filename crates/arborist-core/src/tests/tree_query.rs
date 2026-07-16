@@ -244,6 +244,24 @@ fn execute_tree_query_reports_owner_for_cpp_template_function() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_operator_method() {
+    let source = "namespace math {\nclass Number {\npublic:\n    Number operator+(const Number& other) const { return *this; }\n};\n}\n";
+    let captures =
+        execute_tree_query(Path::new("number.cpp"), source, "(operator_name) @operator").unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].text, "operator+");
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("math::Number::operator+")
+    );
+    assert_eq!(
+        captures[0].owner_scope_path.as_deref(),
+        Some("math::Number")
+    );
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

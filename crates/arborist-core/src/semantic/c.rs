@@ -73,6 +73,7 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
             | "field_identifier"
             | "type_identifier"
             | "destructor_name"
+            | "operator_name"
     ) {
         return Ok(None);
     }
