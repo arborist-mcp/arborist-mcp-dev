@@ -45,6 +45,8 @@ Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; same-name operator overloads are not distinguished.
 C++ `using` aliases are indexed with their enclosing namespace and class scope,
 for example `api::Size` and `api::Config::Count`.
+C++20 concept definitions are indexed by qualified name, such as
+`api::Incrementable`.
 
 ## Read And Discovery Tools
 

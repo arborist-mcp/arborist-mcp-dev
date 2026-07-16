@@ -9,8 +9,8 @@ use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
 mod c;
 
-pub(crate) use c::c_alias_name;
 pub(crate) use c::c_is_callable_declaration;
+pub(crate) use c::c_named_declaration_name;
 pub(crate) use c::c_symbol_nodes;
 pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
@@ -182,8 +182,10 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
                 matches!(candidate.kind(), "class_definition" | "function_definition")
             }
             LanguageId::C | LanguageId::Cpp => {
-                matches!(candidate.kind(), "alias_declaration" | "type_definition")
-                    || candidate.kind() == "function_definition"
+                matches!(
+                    candidate.kind(),
+                    "alias_declaration" | "concept_definition" | "type_definition"
+                ) || candidate.kind() == "function_definition"
                     || c::c_is_callable_declaration(candidate)
             }
         };

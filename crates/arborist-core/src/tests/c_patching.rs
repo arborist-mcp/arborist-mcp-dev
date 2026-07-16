@@ -340,6 +340,31 @@ fn patches_cpp_using_alias_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_concept_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("concepts.hpp");
+    fs::write(
+        &file,
+        "namespace api {\ntemplate <typename T>\nconcept Incrementable = requires(T value) { value + 1; };\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Incrementable",
+        "concept Incrementable = requires(T value) { value + 2; };",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Incrementable");
+    assert_eq!(result.resolved_symbol_id, "api::Incrementable");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("value + 2"));
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");
