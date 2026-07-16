@@ -96,7 +96,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                     });
                 }
             }
-            "declaration" if contains_kind(child, "function_declarator") => {
+            "declaration" | "field_declaration" if contains_kind(child, "function_declarator") => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {

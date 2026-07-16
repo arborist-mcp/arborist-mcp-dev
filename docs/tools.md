@@ -28,11 +28,12 @@ is based on case-insensitive file extensions:
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
-free functions in named namespaces as well as header/source families. Namespace
-symbols use qualified semantic paths, such as `outer::inner::function`, and
-same-namespace calls prefer matching symbols during graph resolution. Class
-members, templates, and overload-aware symbol identities are not yet modeled
-and should not be treated as full C++ semantic support.
+free functions in named namespaces, named methods declared or defined in class
+bodies, and header/source families. Symbols use qualified semantic paths, such
+as `outer::inner::function` and `outer::Class::method`; same-scope calls prefer
+matching symbols during graph resolution. Class out-of-line definitions,
+constructors, templates, and overload-aware symbol identities are not yet
+modeled and should not be treated as full C++ semantic support.
 
 ## Read And Discovery Tools
 

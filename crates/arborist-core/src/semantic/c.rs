@@ -71,16 +71,18 @@ pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<Strin
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
     let symbol_name = match node.kind() {
         "type_definition" => last_type_identifier(node, source)?,
-        "declaration" | "function_definition" => first_identifier(node, source)?,
+        "declaration" | "field_declaration" | "function_definition" => {
+            first_identifier(node, source)?
+        }
         _ => None,
     };
 
-    let namespace_path = c_namespace_path(node, source)?;
+    let scope_path = c_scope_path(node, source)?;
     Ok(symbol_name.map(|name| {
-        let name = if namespace_path.is_empty() {
+        let name = if scope_path.is_empty() {
             name
         } else {
-            format!("{namespace_path}::{name}")
+            format!("{scope_path}::{name}")
         };
         if has_c_internal_linkage(node, source) {
             format!("{}::{name}", normalize_path(path))
@@ -92,11 +94,11 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
 
 pub(crate) fn c_symbol_nodes(root: Node<'_>) -> Vec<Node<'_>> {
     let mut symbols = Vec::new();
-    collect_c_symbol_nodes(root, &mut symbols);
+    collect_c_scope_symbols(root, &mut symbols);
     symbols
 }
 
-fn collect_c_symbol_nodes<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
     let scope = if scope.kind() == "namespace_definition" {
         match scope.child_by_field_name("body") {
             Some(body) => body,
@@ -109,7 +111,27 @@ fn collect_c_symbol_nodes<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tre
 
     for child in scope.named_children(&mut cursor) {
         if child.kind() == "namespace_definition" {
-            collect_c_symbol_nodes(child, symbols);
+            collect_c_scope_symbols(child, symbols);
+        } else if child.kind() == "class_specifier" {
+            collect_cpp_class_method_symbols(child, symbols);
+        } else if is_c_symbol_node(child) {
+            symbols.push(child);
+        }
+    }
+}
+
+fn collect_cpp_class_method_symbols<'tree>(
+    class_node: Node<'tree>,
+    symbols: &mut Vec<Node<'tree>>,
+) {
+    let Some(body) = class_node.child_by_field_name("body") else {
+        return;
+    };
+    let mut cursor = body.walk();
+
+    for child in body.named_children(&mut cursor) {
+        if child.kind() == "class_specifier" {
+            collect_cpp_class_method_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
             symbols.push(child);
         }
@@ -118,24 +140,25 @@ fn collect_c_symbol_nodes<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tre
 
 fn is_c_symbol_node(node: Node<'_>) -> bool {
     matches!(node.kind(), "type_definition" | "function_definition")
-        || node.kind() == "declaration" && contains_kind(node, "function_declarator")
+        || matches!(node.kind(), "declaration" | "field_declaration")
+            && contains_kind(node, "function_declarator")
 }
 
-fn c_namespace_path(node: Node<'_>, source: &str) -> Result<String> {
-    let mut namespaces = Vec::new();
+fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
+    let mut scopes = Vec::new();
     let mut current = node.parent();
 
     while let Some(candidate) = current {
-        if candidate.kind() == "namespace_definition"
+        if matches!(candidate.kind(), "namespace_definition" | "class_specifier")
             && let Some(name) = candidate.child_by_field_name("name")
         {
-            namespaces.push(node_text(name, source)?.trim().to_string());
+            scopes.push(node_text(name, source)?.trim().to_string());
         }
         current = candidate.parent();
     }
 
-    namespaces.reverse();
-    Ok(namespaces.join("::"))
+    scopes.reverse();
+    Ok(scopes.join("::"))
 }
 
 pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -160,6 +183,10 @@ pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result
 }
 
 pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
+    if has_class_ancestor(node) {
+        return false;
+    }
+
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if child.kind() != "storage_class_specifier" {
@@ -171,6 +198,17 @@ pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
         {
             return true;
         }
+    }
+    false
+}
+
+fn has_class_ancestor(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "class_specifier" {
+            return true;
+        }
+        current = candidate.parent();
     }
     false
 }
@@ -212,7 +250,7 @@ pub(crate) fn build_c_skeleton(
                     });
                 }
             }
-            "declaration" if contains_kind(child, "function_declarator") => {
+            "declaration" | "field_declaration" if contains_kind(child, "function_declarator") => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -322,7 +360,7 @@ pub(crate) fn find_c_semantic_node<'tree>(
 fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
-        "declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
             first_identifier(node, source)
         }
         "function_definition" => first_identifier(node, source),
@@ -334,7 +372,7 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
         "type_definition" => 20,
-        "declaration" => 10,
+        "declaration" | "field_declaration" => 10,
         _ => 0,
     }
 }

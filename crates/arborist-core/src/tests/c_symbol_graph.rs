@@ -237,6 +237,69 @@ fn traces_nested_cpp_namespace_functions_with_scope_aware_resolution() {
 }
 
 #[test]
+fn indexes_inline_cpp_class_methods_with_qualified_paths() {
+    let source = r#"
+namespace api {
+class Counter {
+public:
+    int increment(int value) { return value + 1; }
+    static int make(int value) { return value; }
+    int current() const;
+};
+}
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("counter.cpp"), source, 1, &[]).unwrap();
+
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::increment")
+    );
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Counter::make")
+    );
+    let current = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Counter::current")
+        .expect("class method declaration should be indexed");
+    assert_eq!(current.scope_path.as_deref(), Some("api::Counter"));
+    assert_eq!(current.node_kind, "field_declaration");
+}
+
+#[test]
+fn traces_inline_cpp_class_method_dependencies() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n    int next(int value) { return increment(value); }\n};\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "api::Counter::next", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "api::Counter::next");
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "api::Counter::increment");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::next", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(
+        persisted_trace.callees[0].semantic_path,
+        "api::Counter::increment"
+    );
+}
+
+#[test]
 fn traces_c_symbol_graph_across_uppercase_header_and_source_definition() {
     let dir = temporary_dir();
     let header = dir.join("helper.H");

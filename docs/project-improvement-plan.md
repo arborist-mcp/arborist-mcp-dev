@@ -96,10 +96,10 @@ completed item can land in its own commit unless two changes are inseparable.
   index, including a one-shot reconciliation mode for CI and supervisor probes.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
-- [x] Model named-namespace free functions in C++ skeletons, indexes, traces,
-  and raw-query owner metadata.
-- [ ] Extend C++ semantic support to class members, templates, and
-  overload-aware symbol identities.
+- [x] Model named-namespace free functions and named class-body methods in C++
+  skeletons, indexes, traces, patch targets, and raw-query owner metadata.
+- [ ] Extend C++ semantic support to class out-of-line definitions,
+  constructors, templates, and overload-aware symbol identities.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
 - [ ] Add richer impact summaries for trace-backed patch validation, including

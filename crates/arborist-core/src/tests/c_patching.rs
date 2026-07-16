@@ -291,6 +291,35 @@ fn patches_cpp_function_targeted_by_nested_namespace_path() {
 }
 
 #[test]
+fn patches_cpp_class_method_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("counter.cpp");
+    fs::write(
+        &file,
+        "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Counter::increment",
+        "int increment(int value) { return value + 2; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Counter::increment");
+    assert_eq!(result.resolved_symbol_id, "api::Counter::increment");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("return value + 2;")
+    );
+}
+
+#[test]
 fn reports_ambiguous_c_identifier_bindings() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

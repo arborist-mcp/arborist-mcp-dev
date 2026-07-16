@@ -33,10 +33,12 @@ is extension-based:
 - C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`
 
 C++ files use the dedicated Tree-sitter C++ grammar. C-family indexing,
-tracing, and query ownership support free functions in named namespaces, with
-qualified semantic paths such as `outer::inner::function`. Class members,
-templates, and overload-aware symbol identities remain a follow-up. See the
-[tool guide](docs/tools.md#language-support) for the current scope.
+tracing, query ownership, and patch targets support free functions in named
+namespaces plus named methods declared or defined in class bodies, with
+qualified semantic paths such as `outer::Class::method`. Class-out-of-line
+definitions, constructors, templates, and overload-aware symbol identities
+remain a follow-up. See the [tool guide](docs/tools.md#language-support) for
+the current scope.
 
 ## Implemented Tool Families
 
@@ -232,7 +234,8 @@ Remaining larger work includes:
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Adding a durable migration strategy beyond the current schema-version gate.
-- Extending C++ semantic support beyond free functions and named namespaces to
-  class members, templates, and overload-aware symbol identities.
+- Extending C++ semantic support beyond named class-body methods to class
+  out-of-line definitions, constructors, templates, and overload-aware symbol
+  identities.
 - Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime
   controls such as operation timeouts/cancellation for very large workspaces.

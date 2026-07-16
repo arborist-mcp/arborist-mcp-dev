@@ -134,6 +134,30 @@ fn execute_tree_query_reports_owner_for_cpp_namespace_function_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
+    let source = "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n";
+    let captures = execute_tree_query(
+        Path::new("counter.cpp"),
+        source,
+        "[(identifier) @candidate (field_identifier) @candidate]",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| {
+            capture.text == "increment"
+                && capture.owner_semantic_path.as_deref() == Some("api::Counter::increment")
+        })
+        .expect("class method should report its semantic owner");
+
+    assert_eq!(
+        capture.owner_symbol_id.as_deref(),
+        Some("api::Counter::increment")
+    );
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api::Counter"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_c_declaration_captures() {
     let source = "int helper(int value);\n";
     let query = "(function_declarator declarator: (identifier) @name)";

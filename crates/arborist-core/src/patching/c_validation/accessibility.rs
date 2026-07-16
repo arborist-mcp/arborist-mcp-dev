@@ -46,7 +46,7 @@ fn collect_c_top_level_names(
                     names.insert(name);
                 }
             }
-            "declaration" => {
+            "declaration" | "field_declaration" => {
                 if let Some(name) = first_identifier(child, source)? {
                     names.insert(name);
                 }
@@ -246,7 +246,7 @@ fn collect_c_symbol_candidates_from_root(
 fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "type_definition" | "function_definition" => first_identifier(node, source),
-        "declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
             first_identifier(node, source)
         }
         _ => Ok(None),
@@ -256,7 +256,7 @@ fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "function_definition" => Ok(Some(crate::semantic::c_function_header(node, source)?)),
-        "declaration" if contains_kind(node, "function_declarator") => {
+        "declaration" | "field_declaration" if contains_kind(node, "function_declarator") => {
             Ok(Some(node_text(node, source)?.trim().to_string()))
         }
         "type_definition" => Ok(Some(node_text(node, source)?.trim().to_string())),
@@ -268,7 +268,7 @@ fn c_candidate_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
         "type_definition" => 20,
-        "declaration" => 10,
+        "declaration" | "field_declaration" => 10,
         _ => 0,
     }
 }

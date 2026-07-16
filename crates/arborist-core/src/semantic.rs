@@ -182,7 +182,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
             LanguageId::C | LanguageId::Cpp => {
                 candidate.kind() == "type_definition"
                     || candidate.kind() == "function_definition"
-                    || (candidate.kind() == "declaration"
+                    || (matches!(candidate.kind(), "declaration" | "field_declaration")
                         && contains_kind(candidate, "function_declarator"))
             }
         };
