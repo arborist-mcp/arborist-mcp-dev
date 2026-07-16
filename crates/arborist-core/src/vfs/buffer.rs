@@ -173,7 +173,7 @@ impl VirtualFileSystem {
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
         let (path, normalized) = normalized_virtual_path(path)?;
         self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
+        let mut source_changed = self.refresh_if_clean(&normalized)?;
 
         let committed_path = {
             let entry = self
@@ -186,12 +186,15 @@ impl VirtualFileSystem {
                     .with_context(|| format!("failed to write {}", entry.path.display()))?;
                 entry.disk_source = entry.source.clone();
                 entry.dirty = false;
+                source_changed = true;
             }
 
             entry.path.clone()
         };
 
-        self.sync_registered_indexes(&committed_path)?;
+        if source_changed {
+            self.sync_registered_indexes(&committed_path)?;
+        }
 
         let entry = self
             .entries
@@ -210,6 +213,9 @@ impl VirtualFileSystem {
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
         let disk_source = read_virtual_disk_source(&entry.path)?;
+        if entry.source == disk_source && entry.disk_source == disk_source {
+            return snapshot_from_entry(&normalized, entry);
+        }
         let document = parse_document(&entry.path, &disk_source)?;
         entry.language_id = document.language_id;
         entry.disk_source = disk_source.clone();
@@ -348,17 +354,17 @@ impl VirtualFileSystem {
         Ok(())
     }
 
-    pub(super) fn refresh_if_clean(&mut self, normalized: &str) -> Result<()> {
+    pub(super) fn refresh_if_clean(&mut self, normalized: &str) -> Result<bool> {
         let Some(entry) = self.entries.get_mut(normalized) else {
-            return Ok(());
+            return Ok(false);
         };
         if entry.dirty {
-            return Ok(());
+            return Ok(false);
         }
 
         let disk_source = read_virtual_disk_source(&entry.path)?;
         if disk_source == entry.disk_source {
-            return Ok(());
+            return Ok(false);
         }
 
         let document = parse_document(&entry.path, &disk_source)?;
@@ -367,7 +373,7 @@ impl VirtualFileSystem {
         entry.source = disk_source;
         entry.tree = document.tree;
         entry.version += 1;
-        Ok(())
+        Ok(true)
     }
 
     fn sync_registered_indexes(&self, file_path: &Path) -> Result<()> {

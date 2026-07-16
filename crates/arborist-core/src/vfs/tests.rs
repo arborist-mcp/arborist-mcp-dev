@@ -74,6 +74,19 @@ fn discards_virtual_changes() {
 }
 
 #[test]
+fn discarding_unchanged_file_is_idempotent() {
+    let file = temp_file("def value() -> int:\n    return 1\n");
+    let mut vfs = VirtualFileSystem::new();
+    let initial = vfs.read_file(&file).unwrap();
+
+    let first = vfs.discard_file(&file).unwrap();
+    let second = vfs.discard_file(&file).unwrap();
+
+    assert_eq!(first, initial);
+    assert_eq!(second, initial);
+}
+
+#[test]
 fn rejects_byte_edit_inside_utf8_character() {
     let file = temp_file("def value() -> str:\n    return 'é'\n");
     let mut vfs = VirtualFileSystem::new();
