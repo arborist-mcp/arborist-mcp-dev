@@ -92,6 +92,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Add watch mode that refreshes registered symbol indexes when files change.
 - [x] Expose a full-workspace incremental refresh operation that reuses the
   existing fingerprint-based rebuild path as the foundation for watch mode.
+- [x] Add a fail-closed polling console watch command for a specified persisted
+  index, including a one-shot reconciliation mode for CI and supervisor probes.
 - [ ] Add full C++ support with `tree-sitter-cpp` instead of routing `.hpp` and
   `.hh` through the C grammar.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing

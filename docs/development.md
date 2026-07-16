@@ -149,7 +149,25 @@ Linux/macOS validation to exercise the compiled PyO3 extension path:
 python scripts\gateway_smoke.py
 python scripts\gateway_smoke.py --require-core
 python scripts\gateway_smoke.py --launcher console --require-core
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 ```
+
+## Index Watch
+
+`arborist-index-watch` polls `inspect_symbol_index` and only calls the
+incremental full-workspace refresh when the index is missing or has
+current-schema freshness issues. It is suitable for a supervisor or editor
+integration that wants a simple no-dependency watch loop:
+
+```powershell
+arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-seconds 1
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once
+```
+
+The command emits one JSON object per initial or refreshed state. It exits
+fail-closed for foreign, incomplete, or unsupported schemas rather than
+attempting to rewrite them. `--max-files` and `--max-file-bytes` use the same
+limits as the gateway index tools.
 
 ## Lightweight Benchmarks
 

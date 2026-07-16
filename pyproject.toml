@@ -18,6 +18,7 @@ classifiers = [
 
 [project.scripts]
 arborist-mcp = "arborist_mcp.gateway:main"
+arborist-index-watch = "arborist_mcp.index_watch:main"
 
 [tool.maturin]
 python-source = "python"

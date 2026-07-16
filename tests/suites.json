@@ -14,6 +14,16 @@
       "module": "tests.test_benchmark_workflow",
       "description": "Run benchmark helper parsing and threshold contract tests.",
       "requires_extension": false
+    },
+    "index-watch": {
+      "module": "tests.test_index_watch",
+      "description": "Run pure-Python index watch reconciliation and CLI tests.",
+      "requires_extension": false
+    },
+    "index-watch-native": {
+      "module": "tests.test_index_watch_native",
+      "description": "Run index watch --once tests against the synced native extension.",
+      "requires_extension": true
     }
   },
   "groups": {
@@ -23,12 +33,14 @@
         "check-workflow",
         "test-workflow",
         "benchmark-workflow",
+        "index-watch",
         "gateway-fast"
       ]
     },
     "python-native": {
       "description": "Run the Python suites that execute against the synced native extension.",
       "entries": [
+        "index-watch-native",
         "gateway-native"
       ]
     },
@@ -38,6 +50,8 @@
         "check-workflow",
         "test-workflow",
         "benchmark-workflow",
+        "index-watch",
+        "index-watch-native",
         "gateway"
       ]
     }

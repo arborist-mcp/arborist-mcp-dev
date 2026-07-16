@@ -73,6 +73,21 @@ Or run:
 .\scripts\bootstrap.ps1
 ```
 
+## Index Watch
+
+Use the polling watch command to keep one persisted index synchronized without
+rewriting it while it is healthy:
+
+```powershell
+arborist-index-watch --workspace-root . --db-path .\symbols.db
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once
+```
+
+The watcher refreshes missing indexes and current-schema freshness issues
+through the incremental workspace refresh path. It exits without writing when
+inspection requires manual intervention, such as an unsupported or foreign
+SQLite schema.
+
 On Linux or macOS:
 
 ```bash
@@ -216,5 +231,5 @@ Remaining larger work includes:
 - Adding a durable migration strategy beyond the current schema-version gate.
 - Adding full C++ support via a dedicated grammar instead of routing `.hpp` and
   `.hh` through the C grammar.
-- Adding watch mode, benchmarks, fuzz/property tests, and deeper runtime
+- Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime
   controls such as operation timeouts/cancellation for very large workspaces.

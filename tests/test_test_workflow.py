@@ -25,6 +25,8 @@ class TestWorkflowTests(unittest.TestCase):
         self.assertIn("check-workflow", snapshot["suites"])
         self.assertIn("test-workflow", snapshot["suites"])
         self.assertIn("benchmark-workflow", snapshot["suites"])
+        self.assertIn("index-watch", snapshot["suites"])
+        self.assertIn("index-watch-native", snapshot["suites"])
         self.assertIn("gateway-request-validation", snapshot["suites"])
         self.assertIn("python-fast", snapshot["groups"])
         self.assertIn("python-native", snapshot["groups"])
@@ -37,6 +39,7 @@ class TestWorkflowTests(unittest.TestCase):
                 "tests.test_check_workflow",
                 "tests.test_test_workflow",
                 "tests.test_benchmark_workflow",
+                "tests.test_index_watch",
                 *GATEWAY_GROUP_MODULES["gateway-fast"],
             ),
         )
@@ -48,6 +51,8 @@ class TestWorkflowTests(unittest.TestCase):
                 "tests.test_check_workflow",
                 "tests.test_test_workflow",
                 "tests.test_benchmark_workflow",
+                "tests.test_index_watch",
+                "tests.test_index_watch_native",
                 *GATEWAY_GROUP_MODULES["gateway"],
             ),
         )
@@ -204,7 +209,7 @@ class TestWorkflowTests(unittest.TestCase):
         )
         lines = [line.rstrip() for line in completed.stdout.splitlines() if line.strip()]
         self.assertEqual(lines[0], "rust    <- rust")
-        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 6 module(s)]")
+        self.assertEqual(lines[1], "python  <- python-fast, gateway-fast [pure-python; 7 module(s)]")
         self.assertEqual(
             lines[2:],
             [f"          {module_name}" for module_name in GROUP_MODULES["python-fast"]],
