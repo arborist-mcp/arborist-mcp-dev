@@ -60,6 +60,10 @@ fn c_function_declarator(node: Node<'_>) -> Option<Node<'_>> {
 }
 
 fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if !is_c_callable_node(node) {
+        return Ok(None);
+    }
+
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(None);
     };
@@ -87,7 +91,7 @@ fn c_function_declarator_name(node: Node<'_>, source: &str) -> Result<Option<Str
     ))
 }
 
-pub(crate) fn c_named_declaration_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+pub(crate) fn c_named_node_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(name) = node.child_by_field_name("name") else {
         return Ok(None);
     };
@@ -96,6 +100,10 @@ pub(crate) fn c_named_declaration_name(node: Node<'_>, source: &str) -> Result<O
 }
 
 fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if !is_c_callable_node(node) {
+        return Ok(None);
+    }
+
     if let Some(qualified_name) = find_qualified_operator_cast(node) {
         let Some(operator_cast) = find_first_descendant_by_kind(qualified_name, "operator_cast")
         else {
@@ -144,6 +152,10 @@ fn find_qualified_operator_cast(node: Node<'_>) -> Option<Node<'_>> {
 }
 
 pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> {
+    if !is_c_callable_node(node) {
+        return Ok(Vec::new());
+    }
+
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(Vec::new());
     };
@@ -160,6 +172,10 @@ pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> 
 }
 
 pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if !is_c_callable_node(node) {
+        return Ok(None);
+    }
+
     let Some(function_declarator) = c_function_declarator(node) else {
         return Ok(None);
     };
@@ -177,7 +193,9 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
         .or(c_operator_cast_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
-            "alias_declaration" | "concept_definition" => c_named_declaration_name(node, source)?,
+            "alias_declaration" | "class_specifier" | "concept_definition" => {
+                c_named_node_name(node, source)?
+            }
             "declaration" | "field_declaration" | "function_definition" => {
                 first_identifier(node, source)?
             }
@@ -231,6 +249,7 @@ fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tr
         } else if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
         } else if child.kind() == "class_specifier" {
+            symbols.push(child);
             collect_cpp_class_method_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
             symbols.push(child);
@@ -249,11 +268,30 @@ fn collect_cpp_class_method_symbols<'tree>(
 
     for child in body.named_children(&mut cursor) {
         if child.kind() == "class_specifier" {
+            symbols.push(child);
             collect_cpp_class_method_symbols(child, symbols);
+        } else if child.kind() == "field_declaration" {
+            collect_cpp_nested_class_symbols(child, symbols);
+            if c_is_callable_declaration(child) {
+                symbols.push(child);
+            }
         } else if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
             symbols.push(child);
+        }
+    }
+}
+
+fn collect_cpp_nested_class_symbols<'tree>(
+    declaration: Node<'tree>,
+    symbols: &mut Vec<Node<'tree>>,
+) {
+    let mut cursor = declaration.walk();
+    for child in declaration.named_children(&mut cursor) {
+        if child.kind() == "class_specifier" {
+            symbols.push(child);
+            collect_cpp_class_method_symbols(child, symbols);
         }
     }
 }
@@ -265,6 +303,7 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
         if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
         } else if child.kind() == "class_specifier" {
+            symbols.push(child);
             collect_cpp_class_method_symbols(child, symbols);
         } else if is_c_symbol_node(child) {
             symbols.push(child);
@@ -275,13 +314,21 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
 fn is_c_symbol_node(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "alias_declaration" | "concept_definition" | "type_definition" | "function_definition"
+        "alias_declaration"
+            | "class_specifier"
+            | "concept_definition"
+            | "type_definition"
+            | "function_definition"
     ) || c_is_callable_declaration(node)
 }
 
 pub(crate) fn c_is_callable_declaration(node: Node<'_>) -> bool {
     matches!(node.kind(), "declaration" | "field_declaration")
         && (contains_kind(node, "function_declarator") || contains_kind(node, "operator_cast"))
+}
+
+fn is_c_callable_node(node: Node<'_>) -> bool {
+    node.kind() == "function_definition" || c_is_callable_declaration(node)
 }
 
 fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
@@ -367,7 +414,7 @@ pub(crate) fn build_c_skeleton(
 
     for child in c_symbol_nodes(root) {
         match child.kind() {
-            "alias_declaration" | "concept_definition" | "type_definition" => {
+            "alias_declaration" | "class_specifier" | "concept_definition" | "type_definition" => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -511,7 +558,9 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
-        "alias_declaration" | "concept_definition" => c_named_declaration_name(node, source),
+        "alias_declaration" | "class_specifier" | "concept_definition" => {
+            c_named_node_name(node, source)
+        }
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -530,7 +579,7 @@ fn c_callable_base_name(name: &str) -> String {
 fn c_symbol_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
-        "alias_declaration" | "concept_definition" | "type_definition" => 20,
+        "alias_declaration" | "class_specifier" | "concept_definition" | "type_definition" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

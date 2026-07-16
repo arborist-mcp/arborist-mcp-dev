@@ -365,6 +365,31 @@ fn patches_cpp_concept_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_class_definition_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("config.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nclass Config {\npublic:\n    int value() const { return 1; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Config",
+        "class Config {\npublic:\n    int value() const { return 2; }\n};",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Config");
+    assert_eq!(result.resolved_symbol_id, "api::Config");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");

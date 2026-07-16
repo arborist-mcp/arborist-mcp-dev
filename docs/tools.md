@@ -33,6 +33,7 @@ bodies, and header/source families. Symbols use qualified semantic paths, such
 as `outer::inner::function` and `outer::Class::method`; same-scope calls prefer
 matching symbols during graph resolution. Named methods defined outside their
 class are matched to the same semantic path as their class-body declarations.
+Class definitions are indexed with their namespace and enclosing-class scope.
 Explicit constructors and destructors use `Class::Class` and `Class::~Class`
 paths. Defaulted/deleted methods retain their full declaration signature.
 Named function and class-method templates are indexed, traced, and exposed to

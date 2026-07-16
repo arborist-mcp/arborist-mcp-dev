@@ -96,8 +96,8 @@ completed item can land in its own commit unless two changes are inseparable.
   index, including a one-shot reconciliation mode for CI and supervisor probes.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
-- [x] Model named-namespace free functions and named class methods, including
-  class out-of-line definitions plus explicit/defaulted/deleted
+- [x] Model named-namespace free functions, class definitions, and named class
+  methods, including class out-of-line definitions plus explicit/defaulted/deleted
   constructors/destructors, in C++ skeletons, indexes, traces, patch targets,
   and raw-query owner metadata.
 - [x] Model named function and class-method templates in C++ skeletons,

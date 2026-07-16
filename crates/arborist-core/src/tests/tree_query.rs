@@ -158,6 +158,21 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_class_definition() {
+    let source = "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n";
+    let captures =
+        execute_tree_query(Path::new("counter.cpp"), source, "(type_identifier) @class").unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "Counter")
+        .expect("class name should be captured");
+
+    assert_eq!(capture.owner_symbol_id.as_deref(), Some("api::Counter"));
+    assert_eq!(capture.owner_semantic_path.as_deref(), Some("api::Counter"));
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class() {
     let source = "int api::Counter::increment(int value) { return value + 1; }\n";
     let captures = execute_tree_query(

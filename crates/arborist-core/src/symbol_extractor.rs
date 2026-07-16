@@ -78,13 +78,14 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
     let mut symbols = Vec::new();
     for child in c_symbol_nodes(root) {
         match child.kind() {
-            "alias_declaration" | "concept_definition" | "type_definition" => {
+            "alias_declaration" | "class_specifier" | "concept_definition" | "type_definition" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
+                    let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
                         symbol_id: String::new(),
                         base_name: symbol_base_name(&name),
                         semantic_path: name,
-                        scope_path: None,
+                        scope_path,
                         file_path: normalized_path.clone(),
                         node_kind: child.kind().to_string(),
                         byte_range: (child.start_byte(), child.end_byte()),

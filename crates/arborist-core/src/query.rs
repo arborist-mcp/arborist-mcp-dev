@@ -199,19 +199,26 @@ fn c_capture_owner(
     root: tree_sitter::Node<'_>,
     node: tree_sitter::Node<'_>,
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+    let mut owner_node = None;
     for child in c_symbol_nodes(root) {
-        if !contains_node(child, node) {
-            continue;
+        if contains_node(child, node)
+            && owner_node.is_none_or(|current: tree_sitter::Node<'_>| {
+                child.end_byte() - child.start_byte() < current.end_byte() - current.start_byte()
+            })
+        {
+            owner_node = Some(child);
         }
-
-        let Some(owner_semantic_path) = c_semantic_path(path, child, source)? else {
-            continue;
-        };
-        let owner_scope_path = semantic_parent_path(&owner_semantic_path);
-        let owner_symbol_id = c_symbol_id_for_node(path, child, source)?
-            .or_else(|| Some(owner_semantic_path.clone()));
-        return Ok((owner_symbol_id, Some(owner_semantic_path), owner_scope_path));
     }
 
-    Ok((None, None, None))
+    let Some(owner_node) = owner_node else {
+        return Ok((None, None, None));
+    };
+    let Some(owner_semantic_path) = c_semantic_path(path, owner_node, source)? else {
+        return Ok((None, None, None));
+    };
+    let owner_scope_path = semantic_parent_path(&owner_semantic_path);
+    let owner_symbol_id = c_symbol_id_for_node(path, owner_node, source)?
+        .or_else(|| Some(owner_semantic_path.clone()));
+
+    Ok((owner_symbol_id, Some(owner_semantic_path), owner_scope_path))
 }

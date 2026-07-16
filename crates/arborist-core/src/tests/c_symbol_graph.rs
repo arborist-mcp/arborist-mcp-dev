@@ -625,6 +625,44 @@ fn traces_cpp_concept_definitions() {
 }
 
 #[test]
+fn traces_cpp_class_definitions() {
+    let dir = temporary_dir();
+    let source = dir.join("config.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T>\nclass Config {\npublic:\n    class State {};\n    T value(T input) { return input; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let config = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Config")
+        .expect("class definition should be indexed");
+    assert_eq!(config.scope_path.as_deref(), Some("api"));
+    let state = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::Config::State")
+        .expect("nested class definition should be indexed");
+    assert_eq!(state.scope_path.as_deref(), Some("api::Config"));
+
+    let trace = trace_symbol_graph(&dir, "api::Config", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Config", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.symbol.scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn traces_cpp_explicit_function_template_specialization() {
     let dir = temporary_dir();
     let header = dir.join("templates.hpp");

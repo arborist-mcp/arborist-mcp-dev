@@ -35,7 +35,8 @@ is extension-based:
 C++ files use the dedicated Tree-sitter C++ grammar. C-family indexing,
 tracing, query ownership, and patch targets support free functions in named
 namespaces plus named methods declared or defined in class bodies, with
-qualified semantic paths such as `outer::Class::method`. Named class methods
+qualified semantic paths such as `outer::Class::method`. Class definitions are
+also indexed with their namespace and enclosing-class scope. Named class methods
 defined outside the class are also matched to their declarations. Explicit
 constructors and destructors are supported as `Class::Class` and
 `Class::~Class`; defaulted/deleted methods are indexed with their full
