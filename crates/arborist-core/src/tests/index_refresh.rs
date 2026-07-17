@@ -56,6 +56,40 @@ fn refreshes_single_file_symbol_index() {
 }
 
 #[test]
+fn refreshes_unqualified_cpp_using_call_dependencies() {
+    let dir = temporary_dir();
+    let definitions = dir.join("definitions.cpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &definitions,
+        "namespace api { namespace base { int convert(int value) { return value + 1; } } }\n",
+    )
+    .unwrap();
+    fs::write(&caller, "namespace api { int caller() { return 0; } }\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &caller,
+        "namespace api { using base::convert; int caller() { return convert(1); } }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &caller).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    let trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::base::convert(int)"]
+    );
+}
+
+#[test]
 fn refreshes_c_include_dependents_for_header_change() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");
