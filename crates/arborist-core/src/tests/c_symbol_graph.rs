@@ -705,6 +705,55 @@ int increment<int>(int value) {
 }
 
 #[test]
+fn indexes_cpp_explicit_class_template_specializations() {
+    let source = r#"
+template <typename T>
+class Box {
+public:
+    T value() { return T{}; }
+};
+
+template <>
+class Box<int> {
+public:
+    int value() { return 1; }
+};
+"#;
+
+    let skeleton = get_semantic_skeleton(Path::new("templates.cpp"), source, 1, &[]).unwrap();
+    for path in ["Box", "Box::value", "Box<int>", "Box<int>::value"] {
+        assert!(
+            skeleton
+                .available_symbols
+                .iter()
+                .any(|symbol| symbol.semantic_path == path),
+            "missing {path} in {:#?}",
+            skeleton.available_symbols
+        );
+    }
+}
+
+#[test]
+fn traces_cpp_explicit_class_template_specializations() {
+    let dir = temporary_dir();
+    let source = dir.join("templates.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "template <typename T>\nclass Box {\npublic:\n    T value() { return T{}; }\n};\n\ntemplate <>\nclass Box<int> {\npublic:\n    int value() { return 1; }\n};\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "Box<int>::value", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "Box<int>::value");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "Box<int>::value", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.symbol.semantic_path, "Box<int>::value");
+}
+
+#[test]
 fn traces_cpp_using_aliases() {
     let dir = temporary_dir();
     let source = dir.join("aliases.hpp");

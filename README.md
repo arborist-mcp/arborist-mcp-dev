@@ -42,9 +42,9 @@ constructors and destructors are supported as `Class::Class` and
 `Class::~Class`; defaulted/deleted methods are indexed with their full
 declaration signatures. Named function and class-method templates are indexed
 and traced with their template declaration text. Explicit function template
-specializations have distinct paths such as `increment<int>`. Non-type template
-parameters are treated as local bindings during patch validation and reference tracing.
-Class/method specializations and overload-aware symbol identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
+specializations have distinct paths such as `increment<int>` and `Box<int>::value`.
+Non-type template parameters are treated as local bindings during patch validation
+and reference tracing. Overload-aware symbol identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
 `Class::operator bool`. C++ `using` aliases and declarations are indexed with namespace and
 class scope, for example `api::Size`, `api::Config::Count`, and `api::convert`. When multiple
 declarations introduce the same local name, Arborist represents the overload set as one symbol

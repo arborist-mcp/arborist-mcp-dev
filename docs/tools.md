@@ -38,10 +38,10 @@ Explicit constructors and destructors use `Class::Class` and `Class::~Class`
 paths. Defaulted/deleted methods retain their full declaration signature.
 Named function and class-method templates are indexed, traced, and exposed to
 raw query owner metadata with their `template <...>` declaration text. Template
-function specializations have distinct paths such as `increment<int>`. Non-type
-template parameters are local bindings during patch validation and reference
-tracing. Class/method specializations and overload-aware symbol identities are
-not yet modeled and should not be treated as full C++ semantic
+function and class/method specializations have distinct paths such as
+`increment<int>` and `Box<int>::value`. Non-type template parameters are local
+bindings during patch validation and reference tracing. Overload-aware symbol
+identities are not yet modeled and should not be treated as full C++ semantic
 support.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; same-name operator overloads are not distinguished.

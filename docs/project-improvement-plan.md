@@ -105,9 +105,11 @@ completed item can land in its own commit unless two changes are inseparable.
   declaration text.
 - [x] Model basic C++ operator and conversion methods with stable operator-name
   paths while preserving the current non-overload-aware identity model.
-- [ ] Extend C++ semantic support beyond explicit function specializations to
-  template parameter binding, class/method specializations, and overload-aware
-  symbol identities.
+- [ ] Extend C++ semantic support beyond non-type template parameter binding and
+  explicit function/class/method specializations to overload-aware symbol
+  identities.
+- [x] Verify explicit C++ class/method specializations across skeletons, live
+  and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch
   validation and reference tracing.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
