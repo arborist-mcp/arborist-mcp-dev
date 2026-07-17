@@ -1028,6 +1028,14 @@ class ArboristGateway:
         )
         return self._decode_core_object(payload)
 
+    def _export_patch_diagnostics_sarif(self, params: dict[str, Any]) -> dict[str, Any]:
+        patch = params.get("patch")
+        if not isinstance(patch, dict):
+            raise JsonRpcError(-32602, "missing required object param: patch")
+        patch_json = self._encode_json_param(patch, "patch")
+        payload = self._require_core().export_patch_diagnostics_sarif_json(patch_json)
+        return self._decode_core_object(payload)
+
     def _validate_patch_commit_with_trace(
         self, params: dict[str, Any]
     ) -> dict[str, Any]:

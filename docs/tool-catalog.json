@@ -13581,6 +13581,33 @@
                   },
                   {
                     "type": "object",
+                    "description": "SARIF 2.1.0 diagnostic log generated from a patch validation result.",
+                    "properties": {
+                      "version": {
+                        "type": "string",
+                        "description": "SARIF format version.",
+                        "minLength": 1
+                      },
+                      "$schema": {
+                        "type": "string",
+                        "description": "SARIF JSON schema URI.",
+                        "minLength": 1
+                      },
+                      "runs": {
+                        "type": "array",
+                        "description": "SARIF analysis runs.",
+                        "minItems": 1
+                      }
+                    },
+                    "required": [
+                      "version",
+                      "$schema",
+                      "runs"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
                     "description": "Patch commit decision against trace evidence.",
                     "properties": {
                       "allowed": {
@@ -53227,6 +53254,70 @@
     "metadata": {
       "category": "trace",
       "legacyMethod": "arborist/replay_patch_evidence_against_trace",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/export_patch_diagnostics_sarif",
+    "title": "Export Patch Diagnostics Sarif",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/export_patch_diagnostics_sarif.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "patch": {
+          "type": "object",
+          "description": "JSON object returned by a prior Arborist patch or trace call.",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "patch"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "SARIF 2.1.0 diagnostic log generated from a patch validation result.",
+          "properties": {
+            "version": {
+              "type": "string",
+              "description": "SARIF format version.",
+              "minLength": 1
+            },
+            "$schema": {
+              "type": "string",
+              "description": "SARIF JSON schema URI.",
+              "minLength": 1
+            },
+            "runs": {
+              "type": "array",
+              "description": "SARIF analysis runs.",
+              "minItems": 1
+            }
+          },
+          "required": [
+            "version",
+            "$schema",
+            "runs"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/export_patch_diagnostics_sarif",
       "mutatesState": false
     }
   },

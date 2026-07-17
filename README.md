@@ -67,9 +67,9 @@ specialized paths, such as `api::Vector<int>` and `api::increment<int>`.
 
 ## Implemented Tool Families
 
-The MCP catalog currently returns 55 tools:
+The MCP catalog currently returns 56 tools:
 
-- Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter queries,
+- Read tools: 28, including batch reads, semantic skeletons, patch previews, raw Tree-sitter queries,
   symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,

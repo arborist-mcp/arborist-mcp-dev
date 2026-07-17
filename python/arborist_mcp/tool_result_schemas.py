@@ -692,6 +692,17 @@ TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA = {
     "required": ["consistent", "matched_items", "blocked_items", "items"],
     "additionalProperties": False,
 }
+SARIF_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "SARIF 2.1.0 diagnostic log generated from a patch validation result.",
+    "properties": {
+        "version": _schema("string", "SARIF format version."),
+        "$schema": _schema("string", "SARIF JSON schema URI."),
+        "runs": {"type": "array", "description": "SARIF analysis runs.", "minItems": 1},
+    },
+    "required": ["version", "$schema", "runs"],
+    "additionalProperties": True,
+}
 PATCH_TRACE_VALIDATION_RESULT_SCHEMA = {
     "type": "object",
     "description": "Patch commit decision against trace evidence.",
@@ -1044,6 +1055,7 @@ TOOL_RESULT_SCHEMAS = {
         "patch_ast_node": PATCH_AST_NODE_RESULT_SCHEMA,
         "patch_preview": PATCH_PREVIEW_RESULT_SCHEMA,
         "trace_patch_evidence_replay": TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA,
+        "sarif": SARIF_RESULT_SCHEMA,
         "patch_trace_validation": PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
         "trace_backed_patch": TRACE_BACKED_PATCH_RESULT_SCHEMA,
         "graph_backed_patch": GRAPH_BACKED_PATCH_RESULT_SCHEMA,

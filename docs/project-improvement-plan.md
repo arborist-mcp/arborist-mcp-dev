@@ -116,7 +116,7 @@ completed item can land in its own commit unless two changes are inseparable.
   symbol graph and patch validation machinery.
 - [x] Add direct caller/callee change summaries and distinct affected-symbol
   counts for live and persisted trace-backed patch validation.
-- [ ] Add optional SARIF or JSON diagnostics export for CI integrations.
+- [x] Add optional SARIF 2.1.0 diagnostics export for patch validation CI integrations.
 
 ### P4: Testing And Hardening
 

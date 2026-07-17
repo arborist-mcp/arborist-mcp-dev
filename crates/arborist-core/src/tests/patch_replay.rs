@@ -2,13 +2,14 @@ use std::fs;
 
 use super::support::temporary_dir;
 use super::{
-    TraceDirection, patch_ast_node_from_path, replay_patch_evidence_against_trace,
-    trace_symbol_graph, validate_patch_commit_with_trace, validate_patch_trace_validation_result,
-    validate_patch_with_discovery_context, validate_patch_with_discovery_context_from_path,
-    validate_patch_with_graph_context, validate_patch_with_graph_context_from_path,
-    validate_patch_with_neighborhood_context, validate_patch_with_neighborhood_context_from_path,
-    validate_patch_with_trace_context, validate_patch_with_trace_context_from_path,
-    validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
+    TraceDirection, export_patch_diagnostics_sarif, patch_ast_node_from_path,
+    replay_patch_evidence_against_trace, trace_symbol_graph, validate_patch_commit_with_trace,
+    validate_patch_trace_validation_result, validate_patch_with_discovery_context,
+    validate_patch_with_discovery_context_from_path, validate_patch_with_graph_context,
+    validate_patch_with_graph_context_from_path, validate_patch_with_neighborhood_context,
+    validate_patch_with_neighborhood_context_from_path, validate_patch_with_trace_context,
+    validate_patch_with_trace_context_from_path, validate_trace_backed_patch_result,
+    validate_trace_patch_evidence_replay_result,
 };
 #[test]
 fn keeps_blocked_replay_items_for_ambiguous_patch_evidence() {
@@ -55,6 +56,75 @@ fn keeps_blocked_replay_items_for_ambiguous_patch_evidence() {
     assert!(!replay.items[0].matched_in_trace);
     assert_eq!(replay.items[0].trace_match_scope, "none");
     assert_eq!(replay.items[0].candidate_evidence_keys.len(), 2);
+}
+
+#[test]
+fn exports_patch_validation_diagnostics_as_sarif() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.c");
+    fs::write(
+        &caller,
+        "int orchestrate(int value) {\n    return value + 1;\n}\n",
+    )
+    .unwrap();
+
+    let patch = patch_ast_node_from_path(
+        &caller,
+        "orchestrate",
+        "int orchestrate(int value) {\n    return value + 1\n}\n",
+        None,
+    )
+    .unwrap();
+    let sarif = export_patch_diagnostics_sarif(&patch).unwrap();
+
+    assert_eq!(sarif["version"], "2.1.0");
+    assert_eq!(sarif["runs"][0]["columnKind"], "utf8CodeUnits");
+    let results = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("SARIF results should be an array");
+    assert!(results.iter().any(|result| {
+        result["ruleId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("arborist.syntax."))
+            && result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                == format!("file:///{}", patch.file.replace('\\', "/"))
+    }));
+    assert!(
+        results
+            .iter()
+            .any(|result| result["ruleId"] == "arborist.patch-gate")
+    );
+}
+
+#[test]
+fn exports_unresolved_binding_diagnostics_as_sarif() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.py");
+    fs::write(
+        &caller,
+        "def orchestrate(value: int) -> int:\n    return value + 1\n",
+    )
+    .unwrap();
+
+    let patch = patch_ast_node_from_path(
+        &caller,
+        "orchestrate",
+        "def orchestrate(value: int) -> int:\n    return missing_helper(value)\n",
+        None,
+    )
+    .unwrap();
+    let sarif = export_patch_diagnostics_sarif(&patch).unwrap();
+    let results = sarif["runs"][0]["results"]
+        .as_array()
+        .expect("SARIF results should be an array");
+
+    assert!(results.iter().any(|result| {
+        result["ruleId"] == "arborist.binding.unresolved"
+            && result["level"] == "error"
+            && result["message"]["text"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing_helper"))
+    }));
 }
 
 #[test]
@@ -384,6 +454,14 @@ fn rejects_tampered_syntax_error_details_during_replay() {
 
     let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
     patch.validation.syntax_errors[0].message = "manually tampered".to_string();
+
+    let export_error = export_patch_diagnostics_sarif(&patch)
+        .expect_err("SARIF export must reject tampered syntax diagnostics");
+    assert!(
+        export_error
+            .to_string()
+            .contains("patch.validation.syntax_errors")
+    );
 
     let replay = replay_patch_evidence_against_trace(&patch, &trace)
         .expect_err("tampered syntax error details should be rejected");

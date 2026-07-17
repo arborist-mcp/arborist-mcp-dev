@@ -238,6 +238,11 @@ foreign or incomplete schemas, missing required metadata, current indexes, and
 unknown versions without rewriting them. Its result is the same complete health
 report returned by `inspect_symbol_index` after the attempted migration.
 
+`export_patch_diagnostics_sarif` converts a prior `patch_ast_node` result into
+a SARIF 2.1.0 log for CI systems. Syntax issues retain UTF-8 byte-column source
+locations; unresolved or ambiguous bindings and non-allowed commit-gate states
+are emitted as Arborist rules in the SARIF run.
+
 Persisted trace reads and single-file refreshes fail closed on missing indexes,
 non-index databases, incomplete schema, missing or unsupported schema versions,
 metadata issues, indexed-file count mismatches, incompatible column types,

@@ -12,6 +12,7 @@ COVERED_TOOLS = (
     "arborist/list_symbol_indexes",
     "arborist/inspect_symbol_index",
     "arborist/migrate_symbol_index",
+    "arborist/export_patch_diagnostics_sarif",
     "arborist/did_open",
     "arborist/did_close",
     "arborist/list_virtual_files",
@@ -188,6 +189,15 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 },
                 "expected_call": ("symbols.db",),
                 "check": lambda result: self.assertTrue(result["ok"]),
+            },
+            {
+                "core_method": "export_patch_diagnostics_sarif_json",
+                "rpc_method": "arborist/export_patch_diagnostics_sarif",
+                "request_id": 124,
+                "params": {"patch": {}},
+                "payload": {"version": "2.1.0", "runs": []},
+                "expected_call": ("{}",),
+                "check": lambda result: self.assertEqual(result["version"], "2.1.0"),
             },
             {
                 "core_method": "rebuild_symbol_index_json",
