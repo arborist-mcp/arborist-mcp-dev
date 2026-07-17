@@ -184,7 +184,9 @@ fn resolve_reference_path(
     };
     let qualified_cpp_reference =
         language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
-    let candidates = if qualified_cpp_reference {
+    let scoped_cpp_direct_call =
+        language_id == Some(LanguageId::Cpp) && call_arity.is_some() && !qualified_cpp_reference;
+    let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
         cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols)
             .into_iter()
             .find_map(|qualified_paths| {
@@ -201,14 +203,40 @@ fn resolve_reference_path(
                     .collect::<Vec<_>>();
                 (!candidates.is_empty()).then_some(candidates)
             })
+            .map(|candidates| (candidates, false))
             .unwrap_or_default()
+    } else if scoped_cpp_direct_call {
+        let scoped_candidates =
+            cpp_unqualified_call_candidate_groups(lookup_name, source_symbol, raw_symbols)
+                .into_iter()
+                .find_map(|paths| {
+                    let candidates = paths
+                        .iter()
+                        .flat_map(|path| {
+                            raw_symbols
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(index, candidate)| {
+                                    (candidate.semantic_path == *path).then_some(index)
+                                })
+                        })
+                        .collect::<Vec<_>>();
+                    (!candidates.is_empty()).then_some(candidates)
+                });
+        match scoped_candidates {
+            Some(candidates) => (candidates, true),
+            None => (
+                name_index.get(lookup_name).cloned().unwrap_or_default(),
+                false,
+            ),
+        }
     } else {
-        name_index.get(lookup_name)?.clone()
+        (name_index.get(lookup_name)?.clone(), false)
     };
     if candidates.is_empty() {
         return None;
     }
-    let visible_candidates = if qualified_cpp_reference {
+    let visible_candidates = if qualified_cpp_reference || scoped_cpp_candidates {
         candidates.clone()
     } else {
         candidates
@@ -300,6 +328,56 @@ fn cpp_qualified_reference_path_groups(
     cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
         .into_iter()
         .map(|reference_path| cpp_qualified_reference_path_group(reference_path, raw_symbols))
+        .collect()
+}
+
+fn cpp_unqualified_call_candidate_groups(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<Vec<String>> {
+    let scopes = source_symbol
+        .scope_path
+        .as_deref()
+        .map(|scope_path| {
+            let components = scope_path.split("::").collect::<Vec<_>>();
+            (1..=components.len())
+                .rev()
+                .map(|length| components[..length].join("::"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![String::new()]);
+    scopes
+        .into_iter()
+        .map(|length| {
+            let scope = length;
+            let mut paths = if scope.is_empty() {
+                vec![reference_name.to_string()]
+            } else {
+                vec![format!("{scope}::{reference_name}")]
+            };
+            for directive in raw_symbols.iter().filter(|symbol| {
+                symbol.node_kind == "using_declaration"
+                    && if scope.is_empty() {
+                        symbol.scope_path.is_none()
+                    } else {
+                        symbol.scope_path.as_deref() == Some(scope.as_str())
+                    }
+                    && symbol.file_path == source_symbol.file_path
+                    && symbol.byte_range.0 < source_symbol.byte_range.0
+            }) {
+                let Some(target) = cpp_using_namespace_target(directive) else {
+                    continue;
+                };
+                paths.extend(
+                    cpp_lexical_qualified_reference_paths(&target, directive)
+                        .into_iter()
+                        .flat_map(|path| cpp_qualified_reference_path_group(path, raw_symbols))
+                        .map(|path| format!("{path}::{reference_name}")),
+                );
+            }
+            paths
+        })
         .collect()
 }
 
@@ -398,6 +476,13 @@ fn cpp_using_declaration_target(declaration: &IndexedSymbol) -> Option<String> {
     let target = declaration.strip_prefix("using")?.trim();
     let target = target.trim_end_matches(';').trim();
     (target.contains("::") && !target.starts_with("namespace ")).then_some(target.to_string())
+}
+
+fn cpp_using_namespace_target(declaration: &IndexedSymbol) -> Option<String> {
+    let declaration = declaration.signature.as_deref()?.trim();
+    let target = declaration.strip_prefix("using namespace")?.trim();
+    let target = target.trim_end_matches(';').trim();
+    (!target.is_empty()).then_some(target.to_string())
 }
 
 fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {

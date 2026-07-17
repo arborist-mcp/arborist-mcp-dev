@@ -62,6 +62,8 @@ alias chains are expanded transitively.
 Qualified calls through `using api::function;` declarations resolve to
 the imported callables rather than the declaration symbols themselves; local
 and imported overloads remain part of the same argument-count-filtered set.
+Direct unqualified C++ calls also honor `using namespace vendor;` imports from
+the enclosing namespace scopes before falling back to global candidates.
 C++ `using` aliases and declarations are indexed with namespace and class scope,
 for example `api::Size`, `api::Config::Count`, and `api::convert`. Namespace
 aliases are indexed at their definition scope, for example `api::vendor`. See the [tool

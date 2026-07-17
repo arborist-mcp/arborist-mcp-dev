@@ -1123,6 +1123,93 @@ fn retains_unindexed_cpp_using_declaration_noncall_references() {
 }
 
 #[test]
+fn resolves_cpp_using_namespace_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let definitions = dir.join("definitions.cpp");
+    let caller = dir.join("caller.cpp");
+    let global_caller = dir.join("global_caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &definitions,
+        "double convert(double left, double right) { return left + right; }\nnamespace api { namespace vendor { int convert(int value) { return value + 1; } } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &global_caller,
+        "using namespace api::vendor;\nint global_caller() { return convert(1); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace api {\nusing namespace vendor;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return convert(1); }\ndouble decimal_caller() { return convert(1.0, 2.0); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::vendor::convert(int)";
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+    let decimal_trace =
+        trace_symbol_graph(&dir, "api::decimal_caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        decimal_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::convert(double,double)"]
+    );
+    let global_trace = trace_symbol_graph(&dir, "global_caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        global_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+    let persisted_decimal_trace =
+        trace_symbol_graph_from_index(&db_path, "api::decimal_caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_decimal_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::convert(double,double)"]
+    );
+    let persisted_global_trace =
+        trace_symbol_graph_from_index(&db_path, "global_caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_global_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
 fn traces_cpp_concept_definitions() {
     let dir = temporary_dir();
     let source = dir.join("concepts.hpp");

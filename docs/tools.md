@@ -60,6 +60,8 @@ Direct qualified calls also expand indexed namespace aliases, so
 Qualified calls through `using api::function;` declarations resolve to
 the imported callables rather than the declaration symbols themselves; local
 and imported overloads remain part of the same argument-count-filtered set.
+Direct unqualified C++ calls also honor `using namespace vendor;` imports from
+the enclosing namespace scopes before falling back to global candidates.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace
