@@ -183,6 +183,7 @@ def reconcile_index(
     max_files: int,
     max_file_bytes: int | None,
     timeout_ms: int | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     try:
         if timeout_ms is None:
@@ -213,6 +214,12 @@ def reconcile_index(
         and schema_version != expected_schema_version
     )
     if action == "migrate":
+        if dry_run:
+            return {
+                "status": "would_migrate",
+                "db_path": db_path,
+                "health": _health_summary(health),
+            }
         try:
             migrated_health = _decode_object(
                 core.migrate_symbol_index_json(db_path), "migrate_symbol_index"
@@ -235,6 +242,13 @@ def reconcile_index(
             issues = health.get("issues")
             reason = issues[0] if isinstance(issues, list) and issues else "index is unhealthy"
         raise IndexWatchError(f"index watch cannot repair this index: {reason}")
+
+    if dry_run:
+        return {
+            "status": "would_refresh",
+            "db_path": db_path,
+            "health": _health_summary(health),
+        }
 
     try:
         if timeout_ms is None:
@@ -272,6 +286,7 @@ def run_watch(
     max_files: int,
     max_file_bytes: int | None,
     once: bool,
+    dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     emit: Callable[[dict[str, Any]], None] = lambda event: print(
@@ -285,6 +300,7 @@ def run_watch(
         max_files=max_files,
         max_file_bytes=max_file_bytes,
         timeout_ms=timeout_ms,
+        dry_run=dry_run,
         once=once,
         sleep=sleep,
         emit=emit,
@@ -300,6 +316,7 @@ def run_watch_targets(
     max_files: int,
     max_file_bytes: int | None,
     once: bool,
+    dry_run: bool = False,
     timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     emit: Callable[[dict[str, Any]], None] = lambda event: print(
@@ -323,6 +340,7 @@ def run_watch_targets(
                 max_files=max_files,
                 max_file_bytes=max_file_bytes,
                 timeout_ms=timeout_ms,
+                dry_run=dry_run,
             )
             if include_workspace_root:
                 event["workspace_root"] = target.workspace_root
@@ -408,6 +426,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Inspect and reconcile once, then exit.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report refresh or migration actions without writing the index.",
+    )
     return parser
 
 
@@ -453,6 +476,7 @@ def run_cli(
             max_file_bytes=args.max_file_bytes,
             timeout_ms=args.timeout_ms,
             once=args.once,
+            dry_run=args.dry_run,
             sleep=sleep,
             emit=emit,
             include_workspace_root=args.config_path is not None,

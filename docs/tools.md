@@ -241,6 +241,8 @@ SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
 index with freshness issues, and migrates a supported v1 index in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
+`--dry-run` follows the same inspection and fail-closed decisions but reports
+`would_refresh` or `would_migrate` without changing an index.
 `inspect_symbol_index` and the watch command accept the optional cooperative
 `timeout_ms` / `--timeout-ms` budget for indexed-file freshness reads and the
 unindexed workspace scan.

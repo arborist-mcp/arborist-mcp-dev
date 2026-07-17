@@ -108,6 +108,8 @@ completed item can land in its own commit unless two changes are inseparable.
   existing fingerprint-based rebuild path as the foundation for watch mode.
 - [x] Add a fail-closed polling console watch command for a specified persisted
   index, including a one-shot reconciliation mode for CI and supervisor probes.
+- [x] Add a no-write `--dry-run` index-watch mode that reports planned refresh
+  or migration actions for single-index and manifest-based checks.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
 - [x] Model named-namespace free functions, class definitions, and named class

@@ -10,6 +10,31 @@ from tests.gateway_protocol.helpers import temp_workspace
 
 
 class IndexWatchNativeTests(unittest.TestCase):
+    def test_once_dry_run_reports_missing_index_without_creating_it(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            db_path = workspace.joinpath("symbols.db")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "arborist_mcp.index_watch",
+                    "--workspace-root",
+                    str(workspace),
+                    "--db-path",
+                    str(db_path),
+                    "--once",
+                    "--dry-run",
+                ],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(json.loads(completed.stdout)["status"], "would_refresh")
+            self.assertFalse(db_path.exists())
+
     def test_once_rebuilds_missing_index_then_reports_healthy(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:

@@ -115,6 +115,7 @@ rewriting it while it is healthy:
 arborist-index-watch --workspace-root . --db-path .\symbols.db
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once --timeout-ms 5000
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once --dry-run
 ```
 
 The watcher refreshes missing indexes and current-schema freshness issues
@@ -122,6 +123,8 @@ through the incremental workspace refresh path. It exits without writing when
 inspection requires manual intervention, such as an unsupported or foreign
 SQLite schema. `--timeout-ms` bounds health freshness reads and workspace
 reconciliation scans as well as refresh indexing work.
+`--dry-run` reports `would_refresh` or `would_migrate` without changing an
+index, which is useful for CI and deployment checks.
 
 To watch several registered workspace/index pairs, provide a JSON manifest:
 

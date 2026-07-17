@@ -162,6 +162,7 @@ integration that wants a simple no-dependency watch loop:
 ```powershell
 arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-seconds 1
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once --dry-run
 ```
 
 For multiple registered workspace/index pairs, use a JSON manifest relative to
@@ -192,6 +193,8 @@ foreign, incomplete, or unknown schemas rather than attempting to rewrite
 them. `--max-files`, `--max-file-bytes`, and `--timeout-ms` use the same limits
 as the gateway index tools; `--timeout-ms` bounds health freshness reads,
 cooperative traversal, and per-file indexing work.
+`--dry-run` uses the same safety decisions but reports `would_refresh` or
+`would_migrate` instead of writing the index.
 
 ## Lightweight Benchmarks
 

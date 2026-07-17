@@ -101,6 +101,24 @@ class IndexWatchTests(unittest.TestCase):
             [("workspace", "symbols.db", 20, 4096)],
         )
 
+    def test_reconcile_dry_run_reports_refresh_without_writing(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="rebuild", reason="indexed file is stale")
+        )
+
+        event = reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+            dry_run=True,
+        )
+
+        self.assertEqual(event["status"], "would_refresh")
+        self.assertEqual(core.refresh_calls, [])
+        self.assertEqual(core.migrate_calls, [])
+
     def test_reconcile_passes_optional_timeout_to_refresh(self) -> None:
         core = StubCore(
             health_payload(ok=False, action="rebuild", reason="indexed file is stale")
@@ -139,6 +157,24 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual(core.migrate_calls, ["symbols.db"])
         self.assertEqual(core.refresh_calls, [])
         self.assertEqual(event["migrated_health"]["ok"], True)
+
+    def test_reconcile_dry_run_reports_migration_without_writing(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="migrate", reason="schema v1 can migrate")
+        )
+
+        event = reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+            dry_run=True,
+        )
+
+        self.assertEqual(event["status"], "would_migrate")
+        self.assertEqual(core.refresh_calls, [])
+        self.assertEqual(core.migrate_calls, [])
 
     def test_reconcile_fails_closed_for_manual_action(self) -> None:
         core = StubCore(
@@ -322,6 +358,61 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(json.loads(stdout.getvalue())["status"], "refreshed")
+
+    def test_cli_dry_run_emits_planned_action_without_writing(self) -> None:
+        core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        result = run_cli(
+            [
+                "--workspace-root",
+                "workspace",
+                "--db-path",
+                "symbols.db",
+                "--once",
+                "--dry-run",
+            ],
+            core_factory=lambda: core,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "would_refresh")
+        self.assertEqual(core.refresh_calls, [])
+
+    def test_cli_config_dry_run_preserves_target_context_without_writing(self) -> None:
+        core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": "workspace", "db_path": "symbols.db"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = run_cli(
+                ["--config", str(config_path), "--once", "--dry-run"],
+                core_factory=lambda: core,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        event = json.loads(stdout.getvalue())
+        self.assertEqual(event["status"], "would_refresh")
+        self.assertEqual(event["workspace_root"], str(config_path.parent.joinpath("workspace").resolve()))
+        self.assertEqual(core.refresh_calls, [])
 
     def test_cli_once_reads_multi_index_watch_config(self) -> None:
         core = StubCore(health_payload(ok=True, action="none"))
