@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use arborist_core::{
     read_symbol_at_position_from_index, read_symbol_at_position_from_index_with_source,
     read_symbol_at_position_with_source, read_symbol_context_at_position_from_index,
@@ -20,9 +18,9 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
+use super::SymbolQueryContext;
 use crate::{
-    ArboristCore, NeighborhoodBounds, parse_direction, require_source_file_path, source_position,
-    to_json_result, to_py_error,
+    ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
 
 impl ArboristCore {
@@ -34,26 +32,25 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => read_symbol_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                index_db_path,
+                context.source_file_path()?,
+                source,
                 symbol_path,
             ),
             (Some(source), None) => read_symbol_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
             ),
-            (None, Some(index_db_path)) => {
-                read_symbol_from_index(Path::new(&index_db_path), symbol_path)
-            }
+            (None, Some(index_db_path)) => read_symbol_from_index(index_db_path, symbol_path),
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .read_symbol(Path::new(workspace_root), symbol_path),
+                .read_symbol(context.workspace_root(), symbol_path),
         }
         .map_err(to_py_error)?;
 
@@ -69,28 +66,34 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => read_symbol_at_position_from_index_with_source(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &source,
+                index_db_path,
+                context.position_file_path(),
+                source,
                 &position,
             ),
             (Some(source), None) => read_symbol_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
             ),
             (None, Some(index_db_path)) => read_symbol_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
+                index_db_path,
+                context.position_file_path(),
                 &position,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
+                context.workspace_root(),
+                context.position_file_path(),
                 &position,
             ),
         }
@@ -108,27 +111,28 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => read_symbol_context_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                index_db_path,
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
             ),
             (Some(source), None) => read_symbol_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
             ),
             (None, Some(index_db_path)) => {
-                read_symbol_context_from_index(Path::new(&index_db_path), symbol_path, direction)
+                read_symbol_context_from_index(index_db_path, symbol_path, direction)
             }
             (None, None) => self.vfs.borrow_mut().read_symbol_context(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 symbol_path,
                 direction,
             ),
@@ -149,34 +153,40 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
+                    index_db_path,
+                    context.position_file_path(),
+                    source,
                     &position,
                     direction,
                 )
             }
             (Some(source), None) => read_symbol_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
                 direction,
             ),
             (None, Some(index_db_path)) => read_symbol_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
+                index_db_path,
+                context.position_file_path(),
                 &position,
                 direction,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_context_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
+                context.workspace_root(),
+                context.position_file_path(),
                 &position,
                 direction,
             ),
@@ -197,13 +207,14 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_from_index_with_source(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     symbol_path,
                     direction,
                     bounds.max_depth,
@@ -211,23 +222,23 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => read_symbol_neighborhood_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_neighborhood_context_from_index(
-                Path::new(&index_db_path),
+                index_db_path,
                 symbol_path,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_neighborhood_context(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 symbol_path,
                 direction,
                 bounds.max_depth,
@@ -251,14 +262,20 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
+                    index_db_path,
+                    context.position_file_path(),
+                    source,
                     &position,
                     direction,
                     bounds.max_depth,
@@ -266,17 +283,17 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => read_symbol_neighborhood_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_neighborhood_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
+                index_db_path,
+                context.position_file_path(),
                 &position,
                 direction,
                 bounds.max_depth,
@@ -286,8 +303,8 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .read_symbol_neighborhood_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
+                    context.workspace_root(),
+                    context.position_file_path(),
                     &position,
                     direction,
                     bounds.max_depth,
@@ -310,13 +327,14 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_from_index_with_source(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     symbol_path,
                     direction,
                     bounds.max_depth,
@@ -324,23 +342,23 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => read_symbol_discovery_context_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_discovery_context_from_index(
-                Path::new(&index_db_path),
+                index_db_path,
                 symbol_path,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_discovery_context(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 symbol_path,
                 direction,
                 bounds.max_depth,
@@ -364,14 +382,20 @@ impl ArboristCore {
         source: Option<String>,
         index_db_path: Option<String>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_at_position_from_index_with_source(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
+                    index_db_path,
+                    context.position_file_path(),
+                    source,
                     &position,
                     direction,
                     bounds.max_depth,
@@ -379,17 +403,17 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => read_symbol_discovery_context_at_position_with_source(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
             ),
             (None, Some(index_db_path)) => read_symbol_discovery_context_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
+                index_db_path,
+                context.position_file_path(),
                 &position,
                 direction,
                 bounds.max_depth,
@@ -399,8 +423,8 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .read_symbol_discovery_context_at_position(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
+                    context.workspace_root(),
+                    context.position_file_path(),
                     &position,
                     direction,
                     bounds.max_depth,

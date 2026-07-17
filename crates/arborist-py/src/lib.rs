@@ -1103,12 +1103,6 @@ fn to_json_result<T: Serialize>(result: &T) -> PyResult<String> {
     serde_json::to_string(result).map_err(to_runtime_error)
 }
 
-fn require_source_file_path(file_path: Option<&str>) -> PyResult<&Path> {
-    file_path
-        .map(Path::new)
-        .ok_or_else(|| PyValueError::new_err("file_path is required when source is provided"))
-}
-
 fn source_position(row: usize, column: usize) -> arborist_core::Position {
     arborist_core::Position { row, column }
 }

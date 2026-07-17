@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use arborist_core::{
     list_symbols_context_from_index_filtered, list_symbols_context_from_index_with_source_filtered,
     list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
@@ -12,10 +10,8 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
-use crate::{
-    ArboristCore, NeighborhoodBounds, parse_direction, require_source_file_path, to_json_result,
-    to_py_error,
-};
+use super::SymbolQueryContext;
+use crate::{ArboristCore, NeighborhoodBounds, parse_direction, to_json_result, to_py_error};
 
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
@@ -29,31 +25,32 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => list_symbols_from_index_with_source_filtered(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                index_db_path,
+                context.source_file_path()?,
+                source,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
             (Some(source), None) => list_symbols_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
             (None, Some(index_db_path)) => list_symbols_from_index_filtered(
-                Path::new(&index_db_path),
+                index_db_path,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
             (None, None) => self.vfs.borrow_mut().list_symbols_filtered(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
@@ -75,33 +72,34 @@ impl ArboristCore {
         file_path: Option<String>,
         source: Option<String>,
     ) -> PyResult<String> {
-        let result = match (source, index_db_path) {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     limit,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
                 )
             }
             (Some(source), None) => list_symbols_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
             (None, Some(index_db_path)) => list_symbols_context_from_index_filtered(
-                Path::new(&index_db_path),
+                index_db_path,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
             ),
             (None, None) => self.vfs.borrow_mut().list_symbols_context_filtered(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
@@ -126,12 +124,13 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_neighborhood_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     limit,
                     direction,
                     bounds.max_depth,
@@ -141,9 +140,9 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => list_symbols_neighborhood_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 limit,
                 direction,
                 bounds.max_depth,
@@ -152,7 +151,7 @@ impl ArboristCore {
                 node_kind.as_deref(),
             ),
             (None, Some(index_db_path)) => list_symbols_neighborhood_context_from_index_filtered(
-                Path::new(&index_db_path),
+                index_db_path,
                 limit,
                 direction,
                 bounds.max_depth,
@@ -164,7 +163,7 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .list_symbols_neighborhood_context_filtered(
-                    Path::new(workspace_root),
+                    context.workspace_root(),
                     limit,
                     direction,
                     bounds.max_depth,
@@ -192,12 +191,13 @@ impl ArboristCore {
         source: Option<String>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 list_symbols_discovery_context_from_index_with_source_filtered(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     limit,
                     direction,
                     bounds.max_depth,
@@ -207,9 +207,9 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => list_symbols_discovery_context_with_source_filtered(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 limit,
                 direction,
                 bounds.max_depth,
@@ -218,7 +218,7 @@ impl ArboristCore {
                 node_kind.as_deref(),
             ),
             (None, Some(index_db_path)) => list_symbols_discovery_context_from_index_filtered(
-                Path::new(&index_db_path),
+                index_db_path,
                 limit,
                 direction,
                 bounds.max_depth,
@@ -230,7 +230,7 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .list_symbols_discovery_context_filtered(
-                    Path::new(workspace_root),
+                    context.workspace_root(),
                     limit,
                     direction,
                     bounds.max_depth,
