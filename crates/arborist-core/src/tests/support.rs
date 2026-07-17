@@ -51,7 +51,8 @@ pub(super) fn create_minimal_symbol_index_schema(connection: &Connection) {
                     file_path TEXT PRIMARY KEY,
                     fingerprint INTEGER NOT NULL
                 );
-                INSERT INTO metadata(key, value) VALUES('schema_version', '1');
+                CREATE INDEX idx_symbols_file_path ON symbols(file_path);
+                INSERT INTO metadata(key, value) VALUES('schema_version', '2');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
                 ",
         )
@@ -107,7 +108,7 @@ pub(super) fn create_symbol_index_schema_with_text_byte_columns(connection: &Con
                     file_path TEXT PRIMARY KEY,
                     fingerprint INTEGER NOT NULL
                 );
-                INSERT INTO metadata(key, value) VALUES('schema_version', '1');
+                INSERT INTO metadata(key, value) VALUES('schema_version', '2');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '0');
                 ",
         )

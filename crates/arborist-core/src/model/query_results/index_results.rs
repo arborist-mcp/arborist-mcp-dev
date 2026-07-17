@@ -177,6 +177,14 @@ impl SymbolIndexMigrationPlan {
         }
     }
 
+    pub(crate) fn migrate(reason: &str) -> Self {
+        Self {
+            required: true,
+            action: "migrate".to_string(),
+            reason: reason.to_string(),
+        }
+    }
+
     pub(crate) fn manual(reason: &str) -> Self {
         Self {
             required: true,
@@ -189,7 +197,7 @@ impl SymbolIndexMigrationPlan {
         ensure_nonblank(&self.action, "symbol_index_health.migration.action")?;
         ensure_nonblank(&self.reason, "symbol_index_health.migration.reason")?;
         match self.action.as_str() {
-            "none" | "rebuild" | "manual" => {}
+            "none" | "migrate" | "rebuild" | "manual" => {}
             action => {
                 bail!("invalid symbol_index_health.migration.action: unsupported action `{action}`")
             }

@@ -10,10 +10,10 @@ use super::support::{
 };
 use crate::language::normalize_path;
 use crate::{
-    TraceDirection, WorkspaceScanLimits, inspect_symbol_index, read_symbol_from_index,
-    rebuild_symbol_index, rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
-    refresh_symbol_index_for_file_with_limits, search_symbols_from_index,
-    trace_symbol_graph_from_index,
+    TraceDirection, WorkspaceScanLimits, inspect_symbol_index, migrate_symbol_index,
+    read_symbol_from_index, rebuild_symbol_index, rebuild_symbol_index_with_limits,
+    refresh_symbol_index_for_file, refresh_symbol_index_for_file_with_limits,
+    search_symbols_from_index, trace_symbol_graph_from_index,
 };
 
 #[test]
@@ -595,7 +595,7 @@ fn rebuilt_symbol_index_writes_schema_version_metadata() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(schema_version, "1");
+    assert_eq!(schema_version, "2");
 }
 
 #[test]
@@ -608,11 +608,11 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "3");
+    assert_eq!(health.response_schema_version, "4");
     assert!(health.exists);
     assert!(health.ok);
-    assert_eq!(health.schema_version.as_deref(), Some("1"));
-    assert_eq!(health.expected_schema_version, "1");
+    assert_eq!(health.schema_version.as_deref(), Some("2"));
+    assert_eq!(health.expected_schema_version, "2");
     assert!(!health.migration.required);
     assert_eq!(health.migration.action, "none");
     assert_eq!(
@@ -898,7 +898,7 @@ fn inspect_symbol_index_reports_missing_database_without_creating_it() {
 
     let health = inspect_symbol_index(&db_path).unwrap();
 
-    assert_eq!(health.response_schema_version, "3");
+    assert_eq!(health.response_schema_version, "4");
     assert!(!health.exists);
     assert!(!health.ok);
     assert!(health.migration.required);
@@ -968,7 +968,7 @@ fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
     );
     connection
         .execute(
-            "INSERT INTO metadata(key, value) VALUES('schema_version', '1')",
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '2')",
             [],
         )
         .unwrap();
@@ -1025,7 +1025,192 @@ fn trace_rejects_unsupported_schema_version() {
             .to_string()
             .contains("unsupported symbol index schema_version")
     );
-    assert!(error.to_string().contains("expected `1`"));
+    assert!(error.to_string().contains("expected `2`"));
+}
+
+#[test]
+fn migrates_previous_symbol_index_schema_in_place() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let pending = inspect_symbol_index(&db_path).unwrap();
+    assert!(!pending.ok);
+    assert_eq!(pending.migration.action, "migrate");
+
+    let migrated = migrate_symbol_index(&db_path).unwrap();
+    assert!(migrated.ok, "{:#?}", migrated.issues);
+    assert_eq!(migrated.schema_version.as_deref(), Some("2"));
+    assert_eq!(migrated.migration.action, "none");
+
+    let connection = Connection::open(&db_path).unwrap();
+    let index_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_symbols_file_path')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(index_exists);
+    drop(connection);
+    assert_eq!(
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both)
+            .unwrap()
+            .symbol
+            .semantic_path,
+        "helper"
+    );
+}
+
+#[test]
+fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER reject_schema_version_upgrade
+            BEFORE UPDATE OF value ON metadata
+            WHEN OLD.key = 'schema_version' AND NEW.value = '2'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced schema_version update failure');
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = migrate_symbol_index(&db_path)
+        .expect_err("a failed schema version update must roll back the migration");
+    assert!(
+        error
+            .to_string()
+            .contains("forced schema_version update failure")
+    );
+
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "1");
+    let index_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_symbols_file_path')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!index_exists);
+}
+
+#[test]
+fn migration_rejects_unknown_schema_versions_without_rewrite() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let connection = Connection::open(&db_path).unwrap();
+    create_minimal_symbol_index_schema(&connection);
+    connection
+        .execute(
+            "UPDATE metadata SET value = '99' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let error =
+        migrate_symbol_index(&db_path).expect_err("unknown schema versions must not be migrated");
+    assert!(error.to_string().contains("cannot be migrated"));
+
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "99");
+}
+
+#[test]
+fn migration_rejects_invalid_v1_persisted_paths_without_rewrite() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute("UPDATE file_state SET file_path = ''", [])
+        .unwrap();
+    drop(connection);
+
+    let error = migrate_symbol_index(&db_path)
+        .expect_err("invalid persisted paths must prevent schema migration");
+    assert!(
+        error.to_string().contains("empty file_state.file_path"),
+        "{error}"
+    );
+
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "1");
+    let index_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_symbols_file_path')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!index_exists);
 }
 
 #[test]

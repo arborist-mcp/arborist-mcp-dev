@@ -73,8 +73,8 @@ completed item can land in its own commit unless two changes are inseparable.
   workspace and supported source types before reading or refreshing them.
 - [x] Make current-schema validation cover every persisted column and primary
   key layout, and keep query/inspection connections read-only.
-- [ ] Add a durable SQLite migration path beyond the current fail-closed schema
-  version gate.
+- [x] Add a durable SQLite v1-to-v2 migration path with transactional schema
+  updates and a fail-closed public migration operation.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust
   module so future migration actions are not scattered through inspection code.
 - [x] Type symbol-index migration recommendation actions internally while

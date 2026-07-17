@@ -916,7 +916,7 @@ SYMBOL_INDEX_MIGRATION_PLAN_RESULT_SCHEMA = {
         "action": _schema(
             "string",
             "Recommended action for the inspected symbol index.",
-            enum=("none", "rebuild", "manual"),
+            enum=("none", "migrate", "rebuild", "manual"),
         ),
         "reason": _schema("string", "Why this migration action was selected."),
     },
@@ -925,7 +925,7 @@ SYMBOL_INDEX_MIGRATION_PLAN_RESULT_SCHEMA = {
 }
 SYMBOL_INDEX_HEALTH_RESULT_SCHEMA = {
     "type": "object",
-    "description": "Read-only diagnostic summary for a persisted symbol index.",
+    "description": "Health summary for a persisted symbol index after inspection or migration.",
     "properties": {
         "response_schema_version": _schema(
             "string", "Version of the inspect_symbol_index response schema."
@@ -1043,5 +1043,3 @@ class JsonRpcError(ValueError):
     def __init__(self, code: int, message: str) -> None:
         super().__init__(message)
         self.code = code
-
-

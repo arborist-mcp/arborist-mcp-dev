@@ -3,13 +3,14 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Result, anyhow, bail};
+use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata, load_optional_metadata_value,
-    load_symbol_index_workspace_root, open_symbol_index_read_only,
-    require_current_symbol_index_schema, require_symbol_index_tables,
-    validate_symbol_index_schema_version,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root, open_symbol_index_read_only,
+    require_current_symbol_index_schema, require_legacy_symbol_index_schema,
+    require_symbol_index_tables, validate_symbol_index_schema_version,
 };
 use crate::index_store::{
     count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
@@ -93,6 +94,22 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             db_path.display()
         ));
         health.migration = index_migration::missing_schema_version();
+    } else if health.schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
+        health.issues.push(format!(
+            "unsupported symbol index schema_version `{}` in {}; expected `{}`",
+            health.schema_version.as_deref().unwrap_or_default(),
+            db_path.display(),
+            SYMBOL_INDEX_SCHEMA_VERSION
+        ));
+        health.migration = index_migration::unsupported_schema_version(
+            health.schema_version.as_deref().unwrap_or_default(),
+        );
+        if let Err(error) = require_legacy_symbol_index_schema(&connection, &db_path) {
+            health.issues.push(error.to_string());
+            health.migration = index_migration::incomplete_or_foreign_database();
+            health.validate_public_output()?;
+            return Ok(health);
+        }
     } else if health.schema_version.as_deref() != Some(SYMBOL_INDEX_SCHEMA_VERSION) {
         health.issues.push(format!(
             "unsupported symbol index schema_version `{}` in {}; expected `{}`",
@@ -207,6 +224,29 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     }
     health.validate_public_output()?;
     Ok(health)
+}
+
+pub fn migrate_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
+    let db_path = normalize_absolute_path(db_path)?;
+    if !db_path.exists() {
+        bail!("symbol index {} does not exist", db_path.display());
+    }
+
+    let mut connection = Connection::open(&db_path)?;
+    if load_optional_metadata_value(&connection, "schema_version")?.as_deref()
+        == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION)
+    {
+        require_symbol_index_tables(&connection, &db_path)?;
+        require_legacy_symbol_index_schema(&connection, &db_path)?;
+        let workspace_root = load_symbol_index_workspace_root(&connection, &db_path)?;
+        let file_states = load_file_states(&connection)?;
+        let (symbols, indexed_files) = load_resolved_symbols(&connection)?;
+        validate_indexed_file_count(indexed_files, file_states.len())?;
+        validate_persisted_index_paths(&workspace_root, &file_states, &symbols)?;
+    }
+    index_migration::migrate_symbol_index(&mut connection, &db_path)?;
+    drop(connection);
+    inspect_symbol_index(&db_path)
 }
 
 pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {

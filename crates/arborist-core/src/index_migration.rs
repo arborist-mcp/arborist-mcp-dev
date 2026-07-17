@@ -1,8 +1,20 @@
+use std::path::Path;
+
+use anyhow::{Result, anyhow, bail};
+use rusqlite::Connection;
+
+use crate::index_schema::{
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root,
+    migrate_symbol_index_schema_v1_to_v2, require_legacy_symbol_index_schema,
+    require_symbol_index_tables,
+};
 use crate::model::SymbolIndexMigrationPlan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MigrationAction {
     None,
+    Migrate,
     Rebuild,
     Manual,
 }
@@ -33,10 +45,36 @@ pub(crate) fn missing_schema_version() -> SymbolIndexMigrationPlan {
 }
 
 pub(crate) fn unsupported_schema_version(stored_version: &str) -> SymbolIndexMigrationPlan {
-    plan(
-        schema_version_action(stored_version),
-        unsupported_schema_reason(),
-    )
+    let action = schema_version_action(stored_version);
+    let reason = if action == MigrationAction::Migrate {
+        supported_schema_migration_reason()
+    } else {
+        unsupported_schema_reason()
+    };
+    plan(action, reason)
+}
+
+pub(crate) fn migrate_symbol_index(connection: &mut Connection, db_path: &Path) -> Result<()> {
+    require_symbol_index_tables(connection, db_path)?;
+    let stored_version =
+        load_optional_metadata_value(connection, "schema_version")?.ok_or_else(|| {
+            anyhow!(
+                "missing schema_version metadata in symbol index {}",
+                db_path.display()
+            )
+        })?;
+
+    if stored_version != PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
+        bail!(
+            "symbol index schema_version `{stored_version}` in {} cannot be migrated by this Arborist build; expected `{PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION}`",
+            db_path.display()
+        );
+    }
+
+    require_legacy_symbol_index_schema(connection, db_path)?;
+    load_symbol_index_workspace_root(connection, db_path)?;
+    load_indexed_files_metadata(connection)?;
+    migrate_symbol_index_schema_v1_to_v2(connection)
 }
 
 pub(crate) fn healthy_index() -> SymbolIndexMigrationPlan {
@@ -56,17 +94,26 @@ pub(crate) fn failed_health_checks() -> SymbolIndexMigrationPlan {
 fn plan(action: MigrationAction, reason: &str) -> SymbolIndexMigrationPlan {
     match action {
         MigrationAction::None => SymbolIndexMigrationPlan::none(reason),
+        MigrationAction::Migrate => SymbolIndexMigrationPlan::migrate(reason),
         MigrationAction::Rebuild => SymbolIndexMigrationPlan::rebuild(reason),
         MigrationAction::Manual => SymbolIndexMigrationPlan::manual(reason),
     }
 }
 
-fn schema_version_action(_stored_version: &str) -> MigrationAction {
-    MigrationAction::Rebuild
+fn schema_version_action(stored_version: &str) -> MigrationAction {
+    if stored_version == PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
+        MigrationAction::Migrate
+    } else {
+        MigrationAction::Rebuild
+    }
 }
 
 fn unsupported_schema_reason() -> &'static str {
     "stored schema_version is unsupported by this Arborist build; rebuild the symbol index"
+}
+
+fn supported_schema_migration_reason() -> &'static str {
+    "stored schema_version 1 can migrate in place to schema_version 2"
 }
 
 #[cfg(test)]
@@ -85,6 +132,11 @@ mod tests {
         assert_eq!(rebuild.action, "rebuild");
         assert_eq!(rebuild.reason, "refresh");
 
+        let migrate = plan(MigrationAction::Migrate, "upgrade");
+        assert!(migrate.required);
+        assert_eq!(migrate.action, "migrate");
+        assert_eq!(migrate.reason, "upgrade");
+
         let manual = plan(MigrationAction::Manual, "inspect");
         assert!(manual.required);
         assert_eq!(manual.action, "manual");
@@ -97,5 +149,13 @@ mod tests {
         assert!(plan.required);
         assert_eq!(plan.action, "rebuild");
         assert_eq!(plan.reason, unsupported_schema_reason());
+    }
+
+    #[test]
+    fn previous_schema_version_recommends_in_place_migration() {
+        let plan = unsupported_schema_version(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION);
+        assert!(plan.required);
+        assert_eq!(plan.action, "migrate");
+        assert_eq!(plan.reason, supported_schema_migration_reason());
     }
 }

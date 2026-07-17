@@ -94,9 +94,10 @@ Minimal legacy messages:
 {"jsonrpc":"2.0","id":5,"method":"arborist/register_symbol_index","params":{"workspace_root":"tests/fixtures","db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":6,"method":"arborist/list_symbol_indexes","params":{}}
 {"jsonrpc":"2.0","id":7,"method":"arborist/inspect_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":8,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":9,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":10,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":8,"method":"arborist/migrate_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":9,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":10,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":11,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db"}}
 ```
 
 ## Request Validation

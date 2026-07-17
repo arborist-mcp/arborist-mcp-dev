@@ -26,11 +26,18 @@ def health_payload(*, ok: bool, action: str, reason: str = "current") -> str:
 
 
 class StubCore:
-    def __init__(self, health: str, refresh: str = '{"indexed_files": 1}') -> None:
+    def __init__(
+        self,
+        health: str,
+        refresh: str = '{"indexed_files": 1}',
+        migrate: str = '{"ok": true, "issues": []}',
+    ) -> None:
         self.health = health
         self.refresh = refresh
+        self.migrate = migrate
         self.inspect_calls: list[str] = []
         self.refresh_calls: list[tuple[object, ...]] = []
+        self.migrate_calls: list[str] = []
 
     def inspect_symbol_index_json(self, db_path: str) -> str:
         self.inspect_calls.append(db_path)
@@ -39,6 +46,10 @@ class StubCore:
     def refresh_symbol_index_json(self, *args: object) -> str:
         self.refresh_calls.append(args)
         return self.refresh
+
+    def migrate_symbol_index_json(self, db_path: str) -> str:
+        self.migrate_calls.append(db_path)
+        return self.migrate
 
 
 class IndexWatchTests(unittest.TestCase):
@@ -77,6 +88,25 @@ class IndexWatchTests(unittest.TestCase):
             core.refresh_calls,
             [("workspace", "symbols.db", 20, 4096)],
         )
+
+    def test_reconcile_migrates_supported_schema_version(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="migrate", reason="schema v1 can migrate"),
+            migrate=health_payload(ok=True, action="none"),
+        )
+
+        event = reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+        )
+
+        self.assertEqual(event["status"], "migrated")
+        self.assertEqual(core.migrate_calls, ["symbols.db"])
+        self.assertEqual(core.refresh_calls, [])
+        self.assertEqual(event["migrated_health"]["ok"], True)
 
     def test_reconcile_fails_closed_for_manual_action(self) -> None:
         core = StubCore(

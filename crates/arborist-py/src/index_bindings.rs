@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use arborist_core::{
-    WorkspaceScanLimits, inspect_symbol_index, rebuild_symbol_index_with_limits,
-    refresh_symbol_index_for_file_with_limits, refresh_symbol_index_with_limits,
+    WorkspaceScanLimits, inspect_symbol_index, migrate_symbol_index,
+    rebuild_symbol_index_with_limits, refresh_symbol_index_for_file_with_limits,
+    refresh_symbol_index_with_limits,
 };
 use pyo3::prelude::*;
 
@@ -44,6 +45,12 @@ impl ArboristCore {
 
     pub(super) fn inspect_symbol_index_json_impl(&self, db_path: &str) -> PyResult<String> {
         let result = inspect_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
+
+        to_json_result(&result)
+    }
+
+    pub(super) fn migrate_symbol_index_json_impl(&self, db_path: &str) -> PyResult<String> {
+        let result = migrate_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
 
         to_json_result(&result)
     }

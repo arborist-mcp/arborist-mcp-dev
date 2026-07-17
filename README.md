@@ -67,15 +67,15 @@ specialized paths, such as `api::Vector<int>` and `api::increment<int>`.
 
 ## Implemented Tool Families
 
-The MCP catalog currently returns 54 tools:
+The MCP catalog currently returns 55 tools:
 
 - Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter queries,
   symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,
   and virtual reads.
-- Index tools: 7, covering register, unregister, list, inspect, rebuild,
-  workspace refresh, and file refresh for persisted symbol indexes.
+- Index tools: 8, covering register, unregister, list, inspect, migrate,
+  rebuild, workspace refresh, and file refresh for persisted symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
@@ -240,10 +240,11 @@ for response shapes, error behavior, and examples.
   and incremental Tree-sitter edits.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, and bounded neighborhood context.
-- SQLite-backed persisted symbol indexes with schema-version checks, health
-  inspection, response schema versioning, stale/missing/unreadable/unindexed
-  file diagnostics, bounded workspace scans, optional per-file byte limits,
-  partial refresh, and fail-closed handling for damaged or unrelated databases.
+- SQLite-backed persisted symbol indexes with transactional v1-to-v2 schema
+  migration, health inspection, response schema versioning,
+  stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
+  optional per-file byte limits, partial refresh, and fail-closed handling for
+  damaged or unrelated databases.
 - C include-family tracing and patch disambiguation for header/source projects,
   including duplicate globals and file-local `static` symbols.
 
@@ -258,7 +259,6 @@ Remaining larger work includes:
 
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
-- Adding a durable migration strategy beyond the current schema-version gate.
 - Extending C++ semantic support beyond named template declarations to template
   parameter binding, specializations, and overload-aware symbol identities.
 - Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime

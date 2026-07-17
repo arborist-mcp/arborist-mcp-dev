@@ -164,10 +164,11 @@ arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-second
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 ```
 
-The command emits one JSON object per initial or refreshed state. It exits
-fail-closed for foreign, incomplete, or unsupported schemas rather than
-attempting to rewrite them. `--max-files` and `--max-file-bytes` use the same
-limits as the gateway index tools.
+The command emits one JSON object per initial, migrated, or refreshed state. It
+migrates the supported v1 schema transactionally, then exits fail-closed for
+foreign, incomplete, or unknown schemas rather than attempting to rewrite
+them. `--max-files` and `--max-file-bytes` use the same limits as the gateway
+index tools.
 
 ## Lightweight Benchmarks
 

@@ -2149,7 +2149,7 @@
                   },
                   {
                     "type": "object",
-                    "description": "Read-only diagnostic summary for a persisted symbol index.",
+                    "description": "Health summary for a persisted symbol index after inspection or migration.",
                     "properties": {
                       "response_schema_version": {
                         "type": "string",
@@ -2199,6 +2199,7 @@
                             "description": "Recommended action for the inspected symbol index.",
                             "enum": [
                               "none",
+                              "migrate",
                               "rebuild",
                               "manual"
                             ],
@@ -36197,7 +36198,7 @@
       "properties": {
         "result": {
           "type": "object",
-          "description": "Read-only diagnostic summary for a persisted symbol index.",
+          "description": "Health summary for a persisted symbol index after inspection or migration.",
           "properties": {
             "response_schema_version": {
               "type": "string",
@@ -36247,6 +36248,7 @@
                   "description": "Recommended action for the inspected symbol index.",
                   "enum": [
                     "none",
+                    "migrate",
                     "rebuild",
                     "manual"
                   ],
@@ -36406,6 +36408,241 @@
       "category": "index",
       "legacyMethod": "arborist/inspect_symbol_index",
       "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/migrate_symbol_index",
+    "title": "Migrate Symbol Index",
+    "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/migrate_symbol_index.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "db_path": {
+          "type": "string",
+          "description": "SQLite symbol-index database path.",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "db_path"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "Health summary for a persisted symbol index after inspection or migration.",
+          "properties": {
+            "response_schema_version": {
+              "type": "string",
+              "description": "Version of the inspect_symbol_index response schema.",
+              "minLength": 1
+            },
+            "db_path": {
+              "type": "string",
+              "description": "Normalized SQLite symbol-index database path.",
+              "minLength": 1
+            },
+            "exists": {
+              "type": "boolean",
+              "description": "Whether the database file exists."
+            },
+            "ok": {
+              "type": "boolean",
+              "description": "Whether the index passed all inspected health checks."
+            },
+            "schema_version": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "String value.",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "expected_schema_version": {
+              "type": "string",
+              "description": "Schema version supported by this Arborist build.",
+              "minLength": 1
+            },
+            "migration": {
+              "type": "object",
+              "description": "Machine-readable recommendation for making an inspected symbol index usable.",
+              "properties": {
+                "required": {
+                  "type": "boolean",
+                  "description": "Whether a migration, rebuild, or manual action is required."
+                },
+                "action": {
+                  "type": "string",
+                  "description": "Recommended action for the inspected symbol index.",
+                  "enum": [
+                    "none",
+                    "migrate",
+                    "rebuild",
+                    "manual"
+                  ],
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Why this migration action was selected.",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "required",
+                "action",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            "workspace_root": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "String value.",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "indexed_files": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "indexed_symbols": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "file_state_entries": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "fresh_file_count": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "description": "Integer value.",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stale_files": {
+              "type": "array",
+              "description": "Indexed files whose current content no longer matches persisted fingerprints.",
+              "items": {
+                "type": "string",
+                "description": "Stale indexed file path.",
+                "minLength": 1
+              }
+            },
+            "missing_files": {
+              "type": "array",
+              "description": "Indexed files that no longer exist on disk.",
+              "items": {
+                "type": "string",
+                "description": "Missing indexed file path.",
+                "minLength": 1
+              }
+            },
+            "unreadable_files": {
+              "type": "array",
+              "description": "Indexed files that exist but could not be read during freshness inspection.",
+              "items": {
+                "type": "string",
+                "description": "Unreadable indexed file path.",
+                "minLength": 1
+              }
+            },
+            "unindexed_files": {
+              "type": "array",
+              "description": "Workspace source files that are absent from the persisted index.",
+              "items": {
+                "type": "string",
+                "description": "Unindexed workspace source file path.",
+                "minLength": 1
+              }
+            },
+            "issues": {
+              "type": "array",
+              "description": "Human-readable health issues. Empty when ok is true.",
+              "items": {
+                "type": "string",
+                "description": "Health issue.",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "response_schema_version",
+            "db_path",
+            "exists",
+            "ok",
+            "schema_version",
+            "expected_schema_version",
+            "migration",
+            "workspace_root",
+            "indexed_files",
+            "indexed_symbols",
+            "file_state_entries",
+            "fresh_file_count",
+            "stale_files",
+            "missing_files",
+            "unreadable_files",
+            "unindexed_files",
+            "issues"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "index",
+      "legacyMethod": "arborist/migrate_symbol_index",
+      "mutatesState": true
     }
   },
   {

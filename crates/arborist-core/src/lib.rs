@@ -61,7 +61,7 @@ pub use query::{
     execute_tree_query_from_path, execute_tree_query_from_path_with_limit,
     execute_tree_query_with_limit,
 };
-pub use symbol_index_state::inspect_symbol_index;
+pub use symbol_index_state::{inspect_symbol_index, migrate_symbol_index};
 pub use symbol_query::SymbolQueryContext;
 pub use symbols::{
     list_symbols, list_symbols_context, list_symbols_context_filtered,

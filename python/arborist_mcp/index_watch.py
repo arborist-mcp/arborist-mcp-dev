@@ -13,6 +13,8 @@ from .tool_specs import MAX_WORKSPACE_SCAN_FILE_BYTES, MAX_WORKSPACE_SCAN_FILES
 class IndexWatchCore(Protocol):
     def inspect_symbol_index_json(self, db_path: str) -> str: ...
 
+    def migrate_symbol_index_json(self, db_path: str) -> str: ...
+
     def refresh_symbol_index_json(
         self,
         workspace_root: str,
@@ -105,6 +107,23 @@ def reconcile_index(
         and isinstance(expected_schema_version, str)
         and schema_version != expected_schema_version
     )
+    if action == "migrate":
+        try:
+            migrated_health = _decode_object(
+                core.migrate_symbol_index_json(db_path), "migrate_symbol_index"
+            )
+        except IndexWatchError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise IndexWatchError(f"failed to migrate symbol index: {exc}") from exc
+
+        return {
+            "status": "migrated",
+            "db_path": db_path,
+            "health": _health_summary(health),
+            "migrated_health": _health_summary(migrated_health),
+        }
+
     if action != "rebuild" or has_unsupported_schema:
         reason = migration.get("reason") if isinstance(migration, dict) else None
         if not isinstance(reason, str) or not reason.strip():

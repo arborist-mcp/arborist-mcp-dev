@@ -6,7 +6,8 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 
 use crate::language::{normalize_absolute_path, normalize_path};
 
-pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
+pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
     Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
@@ -164,6 +165,18 @@ pub(crate) fn require_current_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
+    require_symbol_index_schema_structure(connection, db_path)?;
+    require_symbols_file_path_index(connection, db_path)
+}
+
+pub(crate) fn require_legacy_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure(connection, db_path)
+}
+
+fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path) -> Result<()> {
     require_table_columns(
         connection,
         db_path,
@@ -255,6 +268,21 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     ensure_return_type_column(connection)?;
     ensure_docstring_column(connection)?;
     ensure_symbols_primary_key_layout(connection)?;
+    ensure_symbols_file_path_index(connection)?;
+    Ok(())
+}
+
+pub(crate) fn migrate_symbol_index_schema_v1_to_v2(connection: &mut Connection) -> Result<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "CREATE INDEX idx_symbols_file_path ON symbols(file_path)",
+        [],
+    )?;
+    transaction.execute(
+        "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
+        [SYMBOL_INDEX_SCHEMA_VERSION],
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -411,6 +439,29 @@ fn require_table_primary_key_layout(
         ));
     }
     Ok(())
+}
+
+fn require_symbols_file_path_index(connection: &Connection, db_path: &Path) -> Result<()> {
+    let mut statement = connection.prepare("PRAGMA index_list(symbols)")?;
+    let indexes = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for index in indexes {
+        if index? != "idx_symbols_file_path" {
+            continue;
+        }
+
+        let mut columns = connection.prepare("PRAGMA index_info(idx_symbols_file_path)")?;
+        let names = columns.query_map([], |row| row.get::<_, String>(2))?;
+        let names = names.collect::<rusqlite::Result<Vec<_>>>()?;
+        if names == ["file_path"] {
+            return Ok(());
+        }
+        break;
+    }
+
+    Err(anyhow!(
+        "symbol index table `symbols` in {} is missing required index `idx_symbols_file_path` on `file_path`",
+        db_path.display()
+    ))
 }
 
 fn table_primary_key_layout(
@@ -581,6 +632,14 @@ fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
         FROM symbols_legacy;
         DROP TABLE symbols_legacy;
         ",
+    )?;
+    Ok(())
+}
+
+fn ensure_symbols_file_path_index(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path)",
+        [],
     )?;
     Ok(())
 }

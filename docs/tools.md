@@ -4,7 +4,7 @@ This guide summarizes Arborist's tool families and semantic behavior. The exact
 MCP schemas are generated from the gateway and checked in at
 [`docs/tool-catalog.json`](tool-catalog.json).
 
-As of this revision, `tools/list` returns 54 tools:
+As of this revision, `tools/list` returns 55 tools:
 
 - Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter
   queries, symbol reads, symbol list/search, and graph-backed read bundles.
@@ -12,8 +12,8 @@ As of this revision, `tools/list` returns 54 tools:
   `arborist/patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits,
   commit/discard, and virtual reads.
-- Index tools: 7, covering register, unregister, list, inspect, rebuild,
-  workspace refresh, and file refresh for symbol indexes.
+- Index tools: 8, covering register, unregister, list, inspect, migrate,
+  rebuild, workspace refresh, and file refresh for symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay
   and validation.
 
@@ -204,8 +204,8 @@ symbol list/search `limit` values are capped at `10000`.
 uses `inspect_symbol_index` between refreshes, so healthy indexes do not incur
 SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
-index with freshness issues; foreign, incomplete, and unsupported schemas are
-reported and left unchanged.
+index with freshness issues, and migrates a supported v1 index in place;
+foreign, incomplete, and unknown schemas are reported and left unchanged.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when
@@ -222,6 +222,14 @@ workspace source file has not been indexed, preventing silently incomplete
 search and trace results. The
 migration recommendation is intentionally advisory: Arborist does not rewrite
 unrecognized SQLite databases during inspection.
+
+`migrate_symbol_index` applies the migration only when inspection recommends
+`action: "migrate"`. The current v1-to-v2 migration creates the
+`symbols(file_path)` index used by partial file refreshes and updates
+`schema_version` in the same SQLite transaction. It rejects missing databases,
+foreign or incomplete schemas, missing required metadata, current indexes, and
+unknown versions without rewriting them. Its result is the same complete health
+report returned by `inspect_symbol_index` after the attempted migration.
 
 Persisted trace reads and single-file refreshes fail closed on missing indexes,
 non-index databases, incomplete schema, missing or unsupported schema versions,

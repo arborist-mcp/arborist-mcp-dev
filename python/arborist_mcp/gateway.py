@@ -1324,6 +1324,11 @@ class ArboristGateway:
         payload = self._require_core().inspect_symbol_index_json(db_path)
         return self._decode_core_object(payload)
 
+    def _migrate_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
+        db_path = self._require_string(params, "db_path")
+        payload = self._require_core().migrate_symbol_index_json(db_path)
+        return self._decode_core_object(payload)
+
     def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         db_path = self._require_string(params, "db_path")
