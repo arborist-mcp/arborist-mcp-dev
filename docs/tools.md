@@ -44,8 +44,11 @@ identities are not yet modeled and should not be treated as full C++ semantic
 support.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; same-name operator overloads are not distinguished.
-C++ `using` aliases are indexed with their enclosing namespace and class scope,
-for example `api::Size` and `api::Config::Count`.
+C++ `using` aliases and declarations are indexed with their enclosing namespace
+and class scope, for example `api::Size`, `api::Config::Count`, and
+`api::convert` for `using vendor::convert;` inside `namespace api`.
+When multiple declarations introduce the same local name, Arborist represents
+the overload set as one symbol using the first declaration in source order.
 Namespace aliases are indexed at their definition scope, for example
 `api::vendor` for `namespace vendor = third_party::vendor;` inside `namespace api`.
 C++20 concept definitions are indexed by qualified name, such as

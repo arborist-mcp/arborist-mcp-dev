@@ -747,6 +747,97 @@ fn traces_cpp_using_aliases() {
 }
 
 #[test]
+fn traces_cpp_using_declarations() {
+    let dir = temporary_dir();
+    let source = dir.join("imports.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace base { int convert(int value) { return value + 1; } }\nusing base::convert;\n\nclass Base { protected: void reset() {} };\nclass Derived : Base { public: using Base::reset; };\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let imported_function = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::convert")
+        .expect("namespace using declaration should be indexed");
+    assert_eq!(imported_function.node_kind, "using_declaration");
+    assert_eq!(imported_function.scope_path.as_deref(), Some("api"));
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Derived::reset")
+    );
+
+    let trace = trace_symbol_graph(&dir, "api::convert", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.node_kind, "using_declaration");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Derived::reset", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(persisted_trace.symbol.node_kind, "using_declaration");
+    assert_eq!(
+        persisted_trace.symbol.scope_path.as_deref(),
+        Some("api::Derived")
+    );
+}
+
+#[test]
+fn indexes_cpp_using_declaration_overload_sets_once_per_scope() {
+    let dir = temporary_dir();
+    let source = dir.join("imports.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace integral { int convert(int value) { return value; } }\nnamespace decimal { double convert(double value) { return value; } }\nusing integral::convert;\nusing decimal::convert;\n\nclass IntegerReset { public: void reset(int value) {} };\nclass DecimalReset { public: void reset(double value) {} };\nclass Resettable : IntegerReset, DecimalReset { public: using IntegerReset::reset; using DecimalReset::reset; };\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let imported_symbols = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "api::convert")
+        .collect::<Vec<_>>();
+    assert_eq!(imported_symbols.len(), 1, "{imported_symbols:#?}");
+    assert_eq!(
+        imported_symbols[0].signature.as_deref(),
+        Some("using integral::convert;")
+    );
+    let imported_methods = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "api::Resettable::reset")
+        .collect::<Vec<_>>();
+    assert_eq!(imported_methods.len(), 1, "{imported_methods:#?}");
+    assert_eq!(
+        imported_methods[0].signature.as_deref(),
+        Some("using IntegerReset::reset;")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::convert", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace.symbol.signature.as_deref(),
+        Some("using integral::convert;")
+    );
+    let persisted_method =
+        trace_symbol_graph_from_index(&db_path, "api::Resettable::reset", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_method.symbol.signature.as_deref(),
+        Some("using IntegerReset::reset;")
+    );
+}
+
+#[test]
 fn traces_cpp_namespace_aliases() {
     let dir = temporary_dir();
     let source = dir.join("aliases.hpp");

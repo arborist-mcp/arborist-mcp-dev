@@ -200,7 +200,7 @@ fn c_capture_owner(
     node: tree_sitter::Node<'_>,
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
     let mut owner_node = None;
-    for child in c_symbol_nodes(root) {
+    for child in c_symbol_nodes(path, root, source)? {
         if contains_node(child, node)
             && owner_node.is_none_or(|current: tree_sitter::Node<'_>| {
                 child.end_byte() - child.start_byte() < current.end_byte() - current.start_byte()

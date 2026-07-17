@@ -293,6 +293,25 @@ fn execute_tree_query_reports_owner_for_cpp_namespace_alias() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_using_declaration() {
+    let source = "namespace api {\nusing vendor::convert;\n}\n";
+    let captures = execute_tree_query(
+        Path::new("imports.hpp"),
+        source,
+        "(qualified_identifier) @import",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "vendor::convert")
+        .expect("using declaration target should be captured");
+
+    assert_eq!(capture.owner_symbol_id.as_deref(), Some("api::convert"));
+    assert_eq!(capture.owner_semantic_path.as_deref(), Some("api::convert"));
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class() {
     let source = "int api::Counter::increment(int value) { return value + 1; }\n";
     let captures = execute_tree_query(

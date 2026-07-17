@@ -45,7 +45,8 @@ pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
         | "struct_specifier"
         | "template_instantiation"
         | "type_definition"
-        | "union_specifier" => 2,
+        | "union_specifier"
+        | "using_declaration" => 2,
         "declaration" | "field_declaration" => 1,
         _ => 0,
     }

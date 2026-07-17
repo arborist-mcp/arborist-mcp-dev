@@ -99,6 +99,19 @@ pub(crate) fn c_named_node_name(node: Node<'_>, source: &str) -> Result<Option<S
     Ok(Some(node_text(name, source)?.trim().to_string()))
 }
 
+pub(crate) fn c_using_declaration_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() != "using_declaration" {
+        return Ok(None);
+    }
+
+    let mut cursor = node.walk();
+    let Some(target) = node.named_children(&mut cursor).next() else {
+        return Ok(None);
+    };
+    let target_name = node_text(target, source)?.trim();
+    Ok(target_name.rsplit("::").next().map(ToOwned::to_owned))
+}
+
 fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if !is_c_callable_node(node) {
         return Ok(None);
@@ -232,6 +245,7 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
             | "namespace_alias_definition"
             | "struct_specifier"
             | "union_specifier" => c_named_node_name(node, source)?,
+            "using_declaration" => c_using_declaration_name(node, source)?,
             "declaration" | "field_declaration" | "function_definition" => {
                 first_identifier(node, source)?
             }
@@ -262,10 +276,45 @@ fn c_qualified_name_in_scope(scope_path: &str, name: &str) -> String {
     }
 }
 
-pub(crate) fn c_symbol_nodes(root: Node<'_>) -> Vec<Node<'_>> {
+pub(crate) fn c_symbol_nodes<'tree>(
+    path: &Path,
+    root: Node<'tree>,
+    source: &str,
+) -> Result<Vec<Node<'tree>>> {
     let mut symbols = Vec::new();
     collect_c_scope_symbols(root, &mut symbols);
-    symbols
+    if !symbols
+        .iter()
+        .any(|node| node.kind() == "using_declaration")
+    {
+        return Ok(symbols);
+    }
+
+    let mut non_using_paths = BTreeSet::new();
+    for node in &symbols {
+        if node.kind() != "using_declaration"
+            && let Some(symbol_path) = c_semantic_path(path, *node, source)?
+        {
+            non_using_paths.insert(symbol_path);
+        }
+    }
+
+    let mut using_paths = BTreeSet::new();
+    let mut deduplicated = Vec::new();
+    for node in symbols {
+        if node.kind() != "using_declaration" {
+            deduplicated.push(node);
+            continue;
+        }
+        let Some(symbol_path) = c_semantic_path(path, node, source)? else {
+            continue;
+        };
+        if !non_using_paths.contains(&symbol_path) && using_paths.insert(symbol_path) {
+            deduplicated.push(node);
+        }
+    }
+
+    Ok(deduplicated)
 }
 
 fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
@@ -445,6 +494,7 @@ fn is_c_symbol_node(node: Node<'_>) -> bool {
             | "template_instantiation"
             | "type_definition"
             | "union_specifier"
+            | "using_declaration"
             | "function_definition"
     ) || c_is_callable_declaration(node)
 }
@@ -571,7 +621,7 @@ pub(crate) fn build_c_skeleton(
     let mut available_symbols = Vec::new();
     let expand_set: BTreeSet<_> = expand_nodes.iter().map(String::as_str).collect();
 
-    for child in c_symbol_nodes(root) {
+    for child in c_symbol_nodes(path, root, source)? {
         match child.kind() {
             "alias_declaration"
             | "class_specifier"
@@ -581,7 +631,8 @@ pub(crate) fn build_c_skeleton(
             | "struct_specifier"
             | "template_instantiation"
             | "type_definition"
-            | "union_specifier" => {
+            | "union_specifier"
+            | "using_declaration" => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -686,7 +737,7 @@ pub(crate) fn find_c_semantic_node<'tree>(
     let mut best_match = None;
     let mut best_rank = 0usize;
 
-    for child in c_symbol_nodes(root) {
+    for child in c_symbol_nodes(path, root, source)? {
         let symbol = c_semantic_path(path, child, source)?;
         let base_name = c_symbol_base_name(child, source)?;
         let symbol_id = if target_requires_symbol_id {
@@ -732,6 +783,7 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         | "namespace_alias_definition"
         | "struct_specifier"
         | "union_specifier" => c_named_node_name(node, source),
+        "using_declaration" => c_using_declaration_name(node, source),
         "template_instantiation" => c_template_instantiation_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
@@ -759,7 +811,8 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
         | "struct_specifier"
         | "template_instantiation"
         | "type_definition"
-        | "union_specifier" => 20,
+        | "union_specifier"
+        | "using_declaration" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

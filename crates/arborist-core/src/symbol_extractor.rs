@@ -76,7 +76,7 @@ fn python_reference_node(node: Node<'_>) -> Node<'_> {
 fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
     let normalized_path = normalize_path(path);
     let mut symbols = Vec::new();
-    for child in c_symbol_nodes(root) {
+    for child in c_symbol_nodes(path, root, source)? {
         match child.kind() {
             "alias_declaration"
             | "class_specifier"
@@ -86,7 +86,8 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
             | "struct_specifier"
             | "template_instantiation"
             | "type_definition"
-            | "union_specifier" => {
+            | "union_specifier"
+            | "using_declaration" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
