@@ -351,6 +351,11 @@ fn cpp_unqualified_call_candidate_groups(
         .into_iter()
         .map(|length| {
             let scope = length;
+            let scoped_reference_path = if scope.is_empty() {
+                reference_name.to_string()
+            } else {
+                format!("{scope}::{reference_name}")
+            };
             let mut paths = if scope.is_empty() {
                 vec![reference_name.to_string()]
             } else {
@@ -367,6 +372,23 @@ fn cpp_unqualified_call_candidate_groups(
                     && symbol.byte_range.0 < source_symbol.byte_range.0
             }) {
                 let Some(target) = cpp_using_namespace_target(directive) else {
+                    if directive.semantic_path != scoped_reference_path {
+                        continue;
+                    }
+                    let Some(target) = cpp_using_declaration_target(directive) else {
+                        continue;
+                    };
+                    paths.extend(
+                        cpp_lexical_qualified_reference_paths(&target, directive)
+                            .into_iter()
+                            .flat_map(|path| {
+                                cpp_qualified_reference_path_group(
+                                    path,
+                                    raw_symbols,
+                                    Some(directive),
+                                )
+                            }),
+                    );
                     continue;
                 };
                 paths.extend(

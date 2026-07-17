@@ -62,6 +62,8 @@ alias chains are expanded transitively.
 Qualified calls through `using api::function;` declarations resolve to
 the imported callables rather than the declaration symbols themselves; local
 and imported overloads remain part of the same argument-count-filtered set.
+Unqualified direct calls also resolve through scoped `using api::function;`
+declarations before global fallback candidates are considered.
 Direct unqualified C++ calls also honor `using namespace vendor;` imports from
 the enclosing namespace scopes before falling back to global candidates, including
 namespace-alias targets such as `using namespace alias;` when the alias is
