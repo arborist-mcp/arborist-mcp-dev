@@ -118,6 +118,23 @@ through the incremental workspace refresh path. It exits without writing when
 inspection requires manual intervention, such as an unsupported or foreign
 SQLite schema.
 
+To watch several registered workspace/index pairs, provide a JSON manifest:
+
+```json
+{
+  "indexes": [
+    {"workspace_root": "./workspace-a", "db_path": "./indexes/a.db"},
+    {"workspace_root": "./workspace-b", "db_path": "./indexes/b.db"}
+  ]
+}
+```
+
+Run it with `arborist-index-watch --config .\watch.json`. Relative paths in
+the manifest are resolved from the manifest directory. Each target is
+inspected and reconciled in deterministic workspace order; an unsupported or
+foreign index stops the command without rewriting it. Duplicate workspace or
+database paths are rejected before the first refresh.
+
 On Linux or macOS:
 
 ```bash
@@ -261,5 +278,5 @@ Remaining larger work includes:
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond named template declarations to template
   parameter binding, specializations, and overload-aware symbol identities.
-- Adding registered-index watch mode, benchmarks, fuzz/property tests, and deeper runtime
-  controls such as operation timeouts/cancellation for very large workspaces.
+- Adding benchmarks, fuzz/property tests, and deeper runtime controls such as
+  operation timeouts/cancellation for very large workspaces.

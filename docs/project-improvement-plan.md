@@ -89,9 +89,9 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P3: New Feature Opportunities
 
-- [ ] Add watch mode that refreshes registered symbol indexes when files change.
+- [x] Add watch mode that refreshes registered symbol indexes when files change.
 - [x] Expose a registered-index incremental refresh primitive for polling and
-  future watch integrations.
+  watch integrations.
 - [x] Expose a full-workspace incremental refresh operation that reuses the
   existing fingerprint-based rebuild path as the foundation for watch mode.
 - [x] Add a fail-closed polling console watch command for a specified persisted

@@ -4,9 +4,18 @@ from contextlib import redirect_stderr
 import io
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
-from arborist_mcp.index_watch import IndexWatchError, reconcile_index, run_cli, run_watch
+from arborist_mcp.index_watch import (
+    IndexWatchError,
+    IndexWatchTarget,
+    load_watch_config,
+    reconcile_index,
+    run_cli,
+    run_watch,
+    run_watch_targets,
+)
 
 
 def health_payload(*, ok: bool, action: str, reason: str = "current") -> str:
@@ -158,6 +167,116 @@ class IndexWatchTests(unittest.TestCase):
         )
 
         self.assertEqual([event["status"] for event in events], ["healthy"])
+        self.assertNotIn("workspace_root", events[0])
+
+    def test_run_watch_targets_emits_deterministic_workspace_order(self) -> None:
+        core = StubCore(health_payload(ok=True, action="none"))
+        events: list[dict[str, object]] = []
+
+        run_watch_targets(
+            core,
+            targets=(
+                IndexWatchTarget("workspace-z", "z.db"),
+                IndexWatchTarget("workspace-a", "a.db"),
+            ),
+            interval_seconds=1,
+            max_files=20,
+            max_file_bytes=None,
+            once=True,
+            emit=events.append,
+        )
+
+        self.assertEqual(
+            [event["workspace_root"] for event in events],
+            ["workspace-a", "workspace-z"],
+        )
+        self.assertEqual(core.inspect_calls, ["a.db", "z.db"])
+
+    def test_load_watch_config_resolves_and_orders_targets(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": "z", "db_path": "z/symbols.db"},
+                            {"workspace_root": "a", "db_path": "a/symbols.db"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            targets = load_watch_config(config_path)
+
+            self.assertEqual(
+                targets,
+                (
+                    IndexWatchTarget(
+                        str(config_path.parent.joinpath("a").resolve()),
+                        str(config_path.parent.joinpath("a", "symbols.db").resolve()),
+                    ),
+                    IndexWatchTarget(
+                        str(config_path.parent.joinpath("z").resolve()),
+                        str(config_path.parent.joinpath("z", "symbols.db").resolve()),
+                    ),
+                ),
+            )
+
+    def test_load_watch_config_rejects_unknown_fields_and_duplicate_workspaces(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {
+                                "workspace_root": ".",
+                                "db_path": "symbols.db",
+                                "extra": True,
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(IndexWatchError, "unexpected field `extra`"):
+                load_watch_config(config_path)
+
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": ".", "db_path": "a.db"},
+                            {"workspace_root": ".", "db_path": "b.db"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(IndexWatchError, "duplicate workspace_root"):
+                load_watch_config(config_path)
+
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": "a", "db_path": "symbols.db"},
+                            {"workspace_root": "b", "db_path": "symbols.db"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(IndexWatchError, "duplicate db_path"):
+                load_watch_config(config_path)
+
+            config_path.write_text(
+                '{"indexes":[{"workspace_root":"a","workspace_root":"b","db_path":"a.db"}]}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(IndexWatchError, "duplicate object key"):
+                load_watch_config(config_path)
 
     def test_cli_once_emits_json_event(self) -> None:
         core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
@@ -180,6 +299,41 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(json.loads(stdout.getvalue())["status"], "refreshed")
+
+    def test_cli_once_reads_multi_index_watch_config(self) -> None:
+        core = StubCore(health_payload(ok=True, action="none"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": "workspace-b", "db_path": "b.db"},
+                            {"workspace_root": "workspace-a", "db_path": "a.db"},
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = run_cli(
+                ["--config", str(config_path), "--once"],
+                core_factory=lambda: core,
+                stdout=stdout,
+                stderr=stderr,
+            )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(stderr.getvalue(), "")
+        events = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([event["status"] for event in events], ["healthy", "healthy"])
+        self.assertEqual([event["db_path"] for event in events], [
+            str(config_path.parent.joinpath("a.db").resolve()),
+            str(config_path.parent.joinpath("b.db").resolve()),
+        ])
 
     def test_cli_reports_manual_action_without_refreshing(self) -> None:
         core = StubCore(

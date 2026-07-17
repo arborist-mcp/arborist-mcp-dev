@@ -164,6 +164,28 @@ arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-second
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 ```
 
+For multiple registered workspace/index pairs, use a JSON manifest relative to
+the manifest file:
+
+```json
+{
+  "indexes": [
+    {"workspace_root": "./workspace-a", "db_path": "./indexes/a.db"},
+    {"workspace_root": "./workspace-b", "db_path": "./indexes/b.db"}
+  ]
+}
+```
+
+```powershell
+arborist-index-watch --config .\watch.json
+arborist-index-watch --config .\watch.json --once
+```
+
+The manifest parser rejects unknown fields, duplicate JSON keys, empty target
+lists, duplicate workspace roots, and duplicate database paths. Targets are
+inspected in deterministic workspace order, and any unsupported or foreign
+index fails closed without rewriting it.
+
 The command emits one JSON object per initial, migrated, or refreshed state. It
 migrates the supported v1 schema transactionally, then exits fail-closed for
 foreign, incomplete, or unknown schemas rather than attempting to rewrite

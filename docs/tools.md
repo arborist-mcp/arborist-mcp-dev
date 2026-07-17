@@ -214,12 +214,17 @@ instead of scanning without bound. Rebuild and refresh calls can also provide
 this optional limit is capped at `67108864`. `max_files` is capped at `200000`;
 symbol list/search `limit` values are capped at `10000`.
 
-`arborist-index-watch` is a polling console command for one index database. It
-uses `inspect_symbol_index` between refreshes, so healthy indexes do not incur
+`arborist-index-watch` is a polling console command for one index database or a
+JSON manifest of multiple registered workspace/index pairs. It uses
+`inspect_symbol_index` between refreshes, so healthy indexes do not incur
 SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
 index with freshness issues, and migrates a supported v1 index in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
+Manifest paths are resolved relative to the manifest file, targets are ordered
+by workspace root, and unknown fields, duplicate keys, empty target lists,
+duplicate workspace roots, or duplicate database paths are rejected before the
+first refresh.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when

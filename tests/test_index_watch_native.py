@@ -78,6 +78,44 @@ class IndexWatchNativeTests(unittest.TestCase):
             self.assertEqual(refreshed[0]["rebuilt_files"], 1)
             self.assertEqual(refreshed[0]["reused_files"], 0)
 
+    def test_once_reconciles_watch_config(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            db_path = workspace.joinpath("symbols.db")
+            config_path = workspace.joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {
+                                "workspace_root": str(workspace),
+                                "db_path": str(db_path),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "arborist_mcp.index_watch",
+                    "--config",
+                    str(config_path),
+                    "--once",
+                ],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            event = json.loads(completed.stdout)
+            self.assertEqual(event["status"], "refreshed")
+            self.assertEqual(event["workspace_root"], str(workspace))
+            self.assertTrue(db_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

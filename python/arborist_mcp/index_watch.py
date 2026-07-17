@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -26,6 +28,12 @@ class IndexWatchCore(Protocol):
 
 class IndexWatchError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class IndexWatchTarget:
+    workspace_root: str
+    db_path: str
 
 
 def _reject_constant(value: str) -> None:
@@ -53,6 +61,93 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"duplicate object key: {key}")
         result[key] = value
     return result
+
+
+def _config_path(value: str, config_path: Path) -> str:
+    path = Path(value)
+    if not path.is_absolute():
+        path = config_path.parent / path
+    return str(path.resolve(strict=False))
+
+
+def _target_sort_key(target: IndexWatchTarget) -> tuple[str, str, str, str]:
+    return (
+        os.path.normcase(target.workspace_root),
+        target.workspace_root,
+        os.path.normcase(target.db_path),
+        target.db_path,
+    )
+
+
+def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
+    try:
+        payload = config_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise IndexWatchError(
+            f"failed to read watch config {config_path}: {exc}"
+        ) from exc
+
+    config = _decode_object(payload, f"watch config {config_path}")
+    if set(config) != {"indexes"}:
+        unexpected = sorted(set(config) - {"indexes"})
+        missing = "indexes" not in config
+        if missing:
+            raise IndexWatchError("invalid watch config: missing `indexes`")
+        raise IndexWatchError(
+            f"invalid watch config: unexpected field `{unexpected[0]}`"
+        )
+
+    raw_indexes = config["indexes"]
+    if not isinstance(raw_indexes, list) or not raw_indexes:
+        raise IndexWatchError(
+            "invalid watch config: `indexes` must be a non-empty list"
+        )
+
+    targets: list[IndexWatchTarget] = []
+    seen_workspaces: set[str] = set()
+    seen_databases: set[str] = set()
+    for index, raw_index in enumerate(raw_indexes):
+        if not isinstance(raw_index, dict):
+            raise IndexWatchError(
+                f"invalid watch config: indexes[{index}] must be an object"
+            )
+        if set(raw_index) != {"workspace_root", "db_path"}:
+            unexpected = sorted(set(raw_index) - {"workspace_root", "db_path"})
+            if unexpected:
+                raise IndexWatchError(
+                    f"invalid watch config: indexes[{index}] has unexpected field `{unexpected[0]}`"
+                )
+            missing = sorted({"workspace_root", "db_path"} - set(raw_index))[0]
+            raise IndexWatchError(
+                f"invalid watch config: indexes[{index}] is missing `{missing}`"
+            )
+
+        values: dict[str, str] = {}
+        for key in ("workspace_root", "db_path"):
+            value = raw_index[key]
+            if not isinstance(value, str) or not value.strip():
+                raise IndexWatchError(
+                    f"invalid watch config: indexes[{index}].{key} must be a non-empty string"
+                )
+            values[key] = _config_path(value, config_path)
+
+        target = IndexWatchTarget(values["workspace_root"], values["db_path"])
+        workspace_key = os.path.normcase(target.workspace_root)
+        if workspace_key in seen_workspaces:
+            raise IndexWatchError(
+                f"invalid watch config: duplicate workspace_root `{target.workspace_root}`"
+            )
+        database_key = os.path.normcase(target.db_path)
+        if database_key in seen_databases:
+            raise IndexWatchError(
+                f"invalid watch config: duplicate db_path `{target.db_path}`"
+            )
+        seen_workspaces.add(workspace_key)
+        seen_databases.add(database_key)
+        targets.append(target)
+
+    targets.sort(key=_target_sort_key)
+    return tuple(targets)
 
 
 def _health_summary(health: dict[str, Any]) -> dict[str, Any]:
@@ -165,17 +260,53 @@ def run_watch(
         json.dumps(event, ensure_ascii=False, allow_nan=False)
     ),
 ) -> None:
+    run_watch_targets(
+        core,
+        targets=(IndexWatchTarget(workspace_root, db_path),),
+        interval_seconds=interval_seconds,
+        max_files=max_files,
+        max_file_bytes=max_file_bytes,
+        once=once,
+        sleep=sleep,
+        emit=emit,
+        include_workspace_root=False,
+    )
+
+
+def run_watch_targets(
+    core: IndexWatchCore,
+    *,
+    targets: tuple[IndexWatchTarget, ...],
+    interval_seconds: float,
+    max_files: int,
+    max_file_bytes: int | None,
+    once: bool,
+    sleep: Callable[[float], None] = time.sleep,
+    emit: Callable[[dict[str, Any]], None] = lambda event: print(
+        json.dumps(event, ensure_ascii=False, allow_nan=False)
+    ),
+    include_workspace_root: bool = True,
+) -> None:
+    if not targets:
+        raise IndexWatchError("index watch requires at least one target")
+
+    ordered_targets = tuple(
+        sorted(targets, key=_target_sort_key)
+    )
     first_cycle = True
     while True:
-        event = reconcile_index(
-            core,
-            workspace_root=workspace_root,
-            db_path=db_path,
-            max_files=max_files,
-            max_file_bytes=max_file_bytes,
-        )
-        if first_cycle or event["status"] != "healthy":
-            emit(event)
+        for target in ordered_targets:
+            event = reconcile_index(
+                core,
+                workspace_root=target.workspace_root,
+                db_path=target.db_path,
+                max_files=max_files,
+                max_file_bytes=max_file_bytes,
+            )
+            if include_workspace_root:
+                event["workspace_root"] = target.workspace_root
+            if first_cycle or event["status"] != "healthy":
+                emit(event)
         first_cycle = False
         if once:
             return
@@ -213,11 +344,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("."),
         help="Workspace root to scan (default: current directory).",
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--db-path",
         type=Path,
-        required=True,
-        help="SQLite symbol-index database path.",
+        help="SQLite symbol-index database path for single-index watch mode.",
+    )
+    source.add_argument(
+        "--config",
+        type=Path,
+        dest="config_path",
+        help="JSON watch manifest containing multiple workspace/index pairs.",
     )
     parser.add_argument(
         "--interval-seconds",
@@ -270,16 +407,27 @@ def run_cli(
         print(json.dumps(event, ensure_ascii=False, allow_nan=False), file=output)
 
     try:
-        run_watch(
+        if args.config_path is not None:
+            if args.workspace_root != Path("."):
+                raise IndexWatchError(
+                    "--workspace-root cannot be combined with --config"
+                )
+            targets = load_watch_config(args.config_path)
+        else:
+            targets = (
+                IndexWatchTarget(str(args.workspace_root), str(args.db_path)),
+            )
+
+        run_watch_targets(
             core_factory(),
-            workspace_root=str(args.workspace_root),
-            db_path=str(args.db_path),
+            targets=targets,
             interval_seconds=args.interval_seconds,
             max_files=args.max_files,
             max_file_bytes=args.max_file_bytes,
             once=args.once,
             sleep=sleep,
             emit=emit,
+            include_workspace_root=args.config_path is not None,
         )
     except KeyboardInterrupt:
         return 0
