@@ -62,6 +62,8 @@ Functions declared or defined through `extern "C"` linkage specifications are
 indexed, traceable, query-ownable, and patchable like ordinary free functions.
 Declarations in `#if`/`#else` branches are indexed without evaluating
 preprocessor conditions, including class methods in conditional branches.
+Inline friend functions are indexed in their enclosing namespace, so a friend
+inside `api::Token` has a path such as `api::inspect` rather than a class method path.
 
 ## Read And Discovery Tools
 

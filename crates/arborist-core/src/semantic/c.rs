@@ -338,6 +338,8 @@ fn collect_cpp_type_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Nod
         for nested_child in child.named_children(&mut cursor) {
             collect_cpp_type_scope_child(nested_child, symbols);
         }
+    } else if child.kind() == "friend_declaration" {
+        collect_cpp_friend_function_symbols(child, symbols);
     } else if is_cpp_type_scope(child) {
         collect_cpp_type_scope_symbols(child, symbols);
     } else if child.kind() == "field_declaration" {
@@ -349,6 +351,18 @@ fn collect_cpp_type_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Nod
         collect_cpp_template_symbols(child, symbols);
     } else if is_c_symbol_node(child) {
         symbols.push(child);
+    }
+}
+
+fn collect_cpp_friend_function_symbols<'tree>(
+    friend_declaration: Node<'tree>,
+    symbols: &mut Vec<Node<'tree>>,
+) {
+    let mut cursor = friend_declaration.walk();
+    for child in friend_declaration.named_children(&mut cursor) {
+        if child.kind() == "function_definition" || c_is_callable_declaration(child) {
+            symbols.push(child);
+        }
     }
 }
 
@@ -412,9 +426,11 @@ fn is_c_callable_node(node: Node<'_>) -> bool {
 fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
     let mut scopes = Vec::new();
     let mut current = node.parent();
+    let skip_enclosing_type_scopes = has_friend_declaration_ancestor(node);
 
     while let Some(candidate) = current {
-        if (candidate.kind() == "namespace_definition" || is_cpp_type_scope(candidate))
+        if (candidate.kind() == "namespace_definition"
+            || (!skip_enclosing_type_scopes && is_cpp_type_scope(candidate)))
             && let Some(name) = candidate.child_by_field_name("name")
         {
             scopes.push(node_text(name, source)?.trim().to_string());
@@ -424,6 +440,17 @@ fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
 
     scopes.reverse();
     Ok(scopes.join("::"))
+}
+
+fn has_friend_declaration_ancestor(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "friend_declaration" {
+            return true;
+        }
+        current = candidate.parent();
+    }
+    false
 }
 
 pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {

@@ -425,6 +425,43 @@ fn traces_cpp_class_methods_defined_outside_the_class() {
 }
 
 #[test]
+fn traces_cpp_inline_friend_functions_in_enclosing_namespace() {
+    let dir = temporary_dir();
+    let source = dir.join("token.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Token {\n    friend int inspect(const Token&) { return 1; }\n};\n\nint orchestrate(const Token& token) { return inspect(token); }\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::inspect")
+    );
+    assert!(
+        !skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Token::inspect")
+    );
+
+    let trace = trace_symbol_graph(&dir, "api::orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "api::inspect");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(persisted_trace.callees[0].semantic_path, "api::inspect");
+}
+
+#[test]
 fn indexes_cpp_constructors_and_destructors() {
     let header_source = r#"
 namespace api {

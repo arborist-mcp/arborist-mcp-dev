@@ -320,6 +320,30 @@ fn patches_cpp_class_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_inline_friend_function_targeted_by_namespace_path() {
+    let dir = temporary_dir();
+    let file = dir.join("token.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nclass Token {\n    friend int inspect(const Token&) { return 1; }\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::inspect",
+        "int inspect(const Token&) { return 2; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::inspect");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
+}
+
+#[test]
 fn patches_cpp_extern_c_function_targeted_by_path() {
     let dir = temporary_dir();
     let file = dir.join("bridge.cpp");

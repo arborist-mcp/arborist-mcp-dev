@@ -198,6 +198,24 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_inline_friend_function() {
+    let source = "namespace api {\nclass Token {\n    friend int inspect(const Token&) { return 1; }\n};\n}\n";
+    let captures = execute_tree_query(
+        Path::new("token.hpp"),
+        source,
+        "[(identifier) @function (field_identifier) @function]",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "inspect")
+        .expect("friend function name should be captured");
+
+    assert_eq!(capture.owner_semantic_path.as_deref(), Some("api::inspect"));
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_struct_method_captures() {
     let source = "namespace api {\nstruct Counter {\n    int increment(int value) { return value + 1; }\n};\n}\n";
     let captures = execute_tree_query(
