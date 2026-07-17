@@ -348,6 +348,66 @@ fn patches_cpp_explicit_function_template_instantiation() {
 }
 
 #[test]
+fn validates_non_type_cpp_template_parameters_as_local_bindings() {
+    let dir = temporary_dir();
+    let file = dir.join("templates.cpp");
+    fs::write(
+        &file,
+        "template <int Offset>\nint adjust(int value) { return value; }\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "adjust",
+        "int adjust(int value) { return value + Offset; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert!(result.validation.commit_gate.allowed);
+    assert!(result.validation.unresolved_identifiers.is_empty());
+    assert!(result.validation.binding_decisions.is_empty());
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("return value + Offset;")
+    );
+}
+
+#[test]
+fn validates_defaulted_and_variadic_non_type_cpp_template_parameters_as_local_bindings() {
+    let dir = temporary_dir();
+    let file = dir.join("templates.cpp");
+    fs::write(
+        &file,
+        "template <int Offset = 1>\nint adjust(int value) { return value; }\n\ntemplate <int... Offsets>\nint count() { return 0; }\n",
+    )
+    .unwrap();
+
+    let defaulted = patch_ast_node_from_path(
+        &file,
+        "adjust",
+        "int adjust(int value) { return value + Offset; }",
+        None,
+    )
+    .unwrap();
+    assert!(defaulted.applied);
+    assert!(defaulted.validation.unresolved_identifiers.is_empty());
+
+    let variadic = patch_ast_node_from_path(
+        &file,
+        "count",
+        "int count() { return sizeof...(Offsets); }",
+        None,
+    )
+    .unwrap();
+    assert!(variadic.applied);
+    assert!(variadic.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn patches_cpp_inline_friend_function_targeted_by_namespace_path() {
     let dir = temporary_dir();
     let file = dir.join("token.hpp");

@@ -1384,6 +1384,52 @@ fn traces_cpp_template_functions() {
 }
 
 #[test]
+fn does_not_trace_non_type_cpp_template_parameters_as_global_references() {
+    let dir = temporary_dir();
+    let source = dir.join("templates.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "int Offset() { return 1; }\n\ntemplate <int Offset>\nint adjust(int value) { return value + Offset; }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "adjust", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty(), "{:#?}", trace.callees);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "adjust", TraceDirection::Both).unwrap();
+    assert!(
+        persisted_trace.callees.is_empty(),
+        "{:#?}",
+        persisted_trace.callees
+    );
+}
+
+#[test]
+fn traces_qualified_references_named_like_cpp_template_parameters() {
+    let dir = temporary_dir();
+    let source = dir.join("templates.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace config { int Offset() { return 1; } }\n\ntemplate <int Offset>\nint adjust() { return config::Offset(); }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "adjust", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "config::Offset");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "adjust", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(persisted_trace.callees[0].semantic_path, "config::Offset");
+}
+
+#[test]
 fn traces_cpp_constructors_and_destructors() {
     let dir = temporary_dir();
     let header = dir.join("counter.hpp");

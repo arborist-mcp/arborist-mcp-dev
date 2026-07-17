@@ -108,6 +108,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Extend C++ semantic support beyond explicit function specializations to
   template parameter binding, class/method specializations, and overload-aware
   symbol identities.
+- [x] Treat non-type C++ template parameters as local bindings during patch
+  validation and reference tracing.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
 - [ ] Add richer impact summaries for trace-backed patch validation, including
