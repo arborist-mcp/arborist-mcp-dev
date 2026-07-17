@@ -135,10 +135,9 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P4: Testing And Hardening
 
-- [ ] Add property tests for path normalization, byte/position conversion, edit
-  ordering, and VFS commit/discard idempotence. Started with generated invariant
-  coverage for path normalization and round-trip coverage for UTF-8
-  byte/position helpers.
+- [x] Add generated invariant coverage for path normalization, byte/position
+  conversion, edit ordering, and VFS commit/discard idempotence, including
+  multi-byte edit cases.
 - [ ] Add fuzz targets for JSON request validation, Tree-sitter query limits,
   patch replacement boundaries, and persisted-index loading.
 - [x] Add benchmark regression thresholds once local benchmark variance is

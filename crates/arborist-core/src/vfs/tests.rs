@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::VirtualFileSystem;
+use crate::language::{point_for_offset, position_from};
 use crate::{Position, PositionEdit, TraceDirection, trace_symbol_graph_from_index};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -84,6 +85,50 @@ fn discarding_unchanged_file_is_idempotent() {
 
     assert_eq!(first, initial);
     assert_eq!(second, initial);
+}
+
+#[test]
+fn generated_position_edits_preserve_order_and_vfs_idempotence() {
+    for (left, right, updated_left, updated_right) in generated_edit_cases() {
+        let source = format!("def value() -> str:\n    return \"{left}:{right}\"\n");
+        let file = temp_file(&source);
+        let mut vfs = VirtualFileSystem::new();
+
+        let left_start = source.find(left).unwrap();
+        let after_left = source.replacen(left, updated_left, 1);
+        let right_start = after_left.rfind(right).unwrap();
+        let expected = after_left.replacen(right, updated_right, 1);
+        let edits = [
+            PositionEdit {
+                start: position_at(&source, left_start),
+                end: position_at(&source, left_start + left.len()),
+                new_text: updated_left.to_string(),
+            },
+            PositionEdit {
+                start: position_at(&after_left, right_start),
+                end: position_at(&after_left, right_start + right.len()),
+                new_text: updated_right.to_string(),
+            },
+        ];
+
+        let edited = vfs.apply_position_edits(&file, &edits).unwrap();
+        assert_eq!(edited.source, expected, "edit order failed for {source:?}");
+        assert!(edited.dirty);
+
+        let committed = vfs.commit_file(&file).unwrap();
+        let repeated_commit = vfs.commit_file(&file).unwrap();
+        assert_eq!(committed, repeated_commit, "commit must be idempotent");
+        assert_eq!(fs::read_to_string(&file).unwrap(), expected);
+
+        let revert_start = expected.find(updated_left).unwrap();
+        vfs.apply_edit(&file, revert_start, revert_start + updated_left.len(), left)
+            .unwrap();
+        let discarded = vfs.discard_file(&file).unwrap();
+        let repeated_discard = vfs.discard_file(&file).unwrap();
+        assert_eq!(discarded, repeated_discard, "discard must be idempotent");
+        assert_eq!(discarded.source, expected);
+        assert!(!discarded.dirty);
+    }
 }
 
 #[test]
@@ -970,6 +1015,18 @@ fn temp_file(contents: &str) -> std::path::PathBuf {
     let file = dir.join(Path::new("buffer.py"));
     fs::write(&file, contents).unwrap();
     file
+}
+
+fn generated_edit_cases() -> [(&'static str, &'static str, &'static str, &'static str); 3] {
+    [
+        ("alpha", "beta", "first", "second"),
+        ("é", "茅", "ß", "文"),
+        ("🙂", "尾", "星", "末"),
+    ]
+}
+
+fn position_at(source: &str, byte_offset: usize) -> Position {
+    position_from(point_for_offset(source, byte_offset).unwrap())
 }
 
 fn temp_workspace() -> std::path::PathBuf {
