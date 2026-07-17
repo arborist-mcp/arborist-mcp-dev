@@ -30,7 +30,8 @@ is extension-based:
 
 - Python: `.py`, `.pyi`
 - C grammar: `.c`, `.h`
-- C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.h++`
+- C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.tpp`, `.tcc`, `.ipp`, `.inl`,
+  `.hpp`, `.hh`, `.hxx`, `.h++`
 
 C++ files use the dedicated Tree-sitter C++ grammar. C-family indexing,
 tracing, query ownership, and patch targets support free functions in named

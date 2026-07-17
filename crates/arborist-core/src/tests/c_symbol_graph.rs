@@ -1505,6 +1505,41 @@ fn distinguishes_cpp_function_overloads_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn indexes_cpp_template_implementation_file_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("algorithms.tpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T>\nT increment(T value) { return value + 1; }\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.symbol_id == "api::increment(T)")
+    );
+
+    let live = list_symbols(&dir, 20).unwrap();
+    assert!(
+        live.symbols
+            .iter()
+            .any(|symbol| symbol.symbol_id == "api::increment(T)")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = read_symbol_from_index(&db_path, "api::increment(T)").unwrap();
+    assert_eq!(
+        persisted.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn keeps_cpp_overload_identity_stable_between_unnamed_template_parameters_and_definitions() {
     let dir = temporary_dir();
     let header = dir.join("convert.hpp");

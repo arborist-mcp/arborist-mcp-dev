@@ -112,6 +112,8 @@ completed item can land in its own commit unless two changes are inseparable.
   or migration actions for single-index and manifest-based checks.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
+- [x] Route common C++ template and inline implementation extensions (`.tpp`,
+  `.tcc`, `.ipp`, and `.inl`) through workspace scans and persisted indexes.
 - [x] Model named-namespace free functions, class definitions, and named class
   methods, including class out-of-line definitions plus explicit/defaulted/deleted
   constructors/destructors, in C++ skeletons, indexes, traces, patch targets,

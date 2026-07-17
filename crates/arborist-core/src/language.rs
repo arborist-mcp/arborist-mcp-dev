@@ -466,6 +466,10 @@ mod tests {
             ("CPP", LanguageId::Cpp),
             ("CXX", LanguageId::Cpp),
             ("C++", LanguageId::Cpp),
+            ("TPP", LanguageId::Cpp),
+            ("TCC", LanguageId::Cpp),
+            ("IPP", LanguageId::Cpp),
+            ("INL", LanguageId::Cpp),
             ("HPP", LanguageId::Cpp),
             ("HH", LanguageId::Cpp),
             ("HXX", LanguageId::Cpp),
@@ -504,10 +508,13 @@ mod tests {
     #[test]
     fn parse_document_uses_cpp_grammar_for_cpp_extensions() {
         let source = "class Counter { public: int value() const { return 1; } };";
-        let document = parse_document(Path::new("counter.hpp"), source).unwrap();
+        for extension in ["hpp", "tpp", "tcc", "ipp", "inl"] {
+            let document =
+                parse_document(Path::new(&format!("counter.{extension}")), source).unwrap();
 
-        assert_eq!(document.language_id, LanguageId::Cpp);
-        assert!(!document.tree.root_node().has_error());
+            assert_eq!(document.language_id, LanguageId::Cpp);
+            assert!(!document.tree.root_node().has_error());
+        }
     }
 
     #[test]
@@ -546,6 +553,21 @@ mod tests {
             c_companion_source_path(&mixed_header).unwrap(),
             lowercase_source
         );
+
+        let template_header = dir.join("template.hpp");
+        let template_implementation = dir.join("template.tpp");
+        std::fs::write(
+            &template_header,
+            "template <typename T> T value(T input);\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &template_implementation,
+            "template <typename T> T value(T input) { return input; }\n",
+        )
+        .unwrap();
+
+        assert_eq!(c_companion_source_path(&template_header), None);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

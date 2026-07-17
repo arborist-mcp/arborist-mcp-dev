@@ -9,7 +9,9 @@ use super::{node_text, normalize_absolute_path};
 pub const C_HEADER_EXTENSIONS: &[&str] = &["h"];
 pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
 pub const CPP_HEADER_EXTENSIONS: &[&str] = &["hpp", "hh", "hxx", "h++"];
-pub const CPP_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++"];
+pub const CPP_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl"];
+
+const CPP_COMPANION_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++"];
 
 pub const C_FAMILY_HEADER_EXTENSIONS: &[&str] = &["h", "hpp", "hh", "hxx", "h++"];
 
@@ -62,14 +64,14 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
     }
 
     let preferred_extensions = if is_cpp_header_path(include_path) {
-        CPP_SOURCE_EXTENSIONS
+        CPP_COMPANION_SOURCE_EXTENSIONS
     } else {
         C_SOURCE_EXTENSIONS
     };
     let fallback_extensions = if is_cpp_header_path(include_path) {
         C_SOURCE_EXTENSIONS
     } else {
-        CPP_SOURCE_EXTENSIONS
+        CPP_COMPANION_SOURCE_EXTENSIONS
     };
     let candidates = extension_case_candidates(include_path, preferred_extensions)
         .into_iter()
