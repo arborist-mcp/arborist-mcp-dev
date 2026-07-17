@@ -47,10 +47,11 @@ their stable `symbol_id` values use normalized parameter types and member
 qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
 `api::Counter::value() const`. Use the precise ID to read, trace, patch, or
 expand one overload; the semantic path remains a compatibility selector.
-For direct, unqualified C++ function calls, graph resolution filters callable
-overloads by argument count before applying its existing scope ranking. Defaulted
-and variadic parameters are included in that check. Qualified calls retain the
-existing name-and-scope behavior.
+For direct C++ function calls, graph resolution filters callable overloads by
+argument count before applying its existing scope ranking. Defaulted and
+variadic parameters are included in that check. Namespace-qualified calls such
+as `api::convert(value)` first resolve through enclosing namespaces, then use
+the same overload filtering.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace

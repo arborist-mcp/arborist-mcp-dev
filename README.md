@@ -50,10 +50,10 @@ paths, while exact `symbol_id` values include normalized parameter types and
 member qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
 `api::Counter::value() const`. Basic operator methods use paths such as
 `Class::operator+` and `Class::operator bool` with the same exact-ID convention.
-C++ graph resolution filters direct, unqualified function calls by argument
-count before choosing an overload; defaulted and variadic parameters are
-considered when matching candidates. Qualified calls retain the existing
-name-and-scope resolution behavior.
+C++ graph resolution filters direct function calls by argument count before
+choosing an overload; defaulted and variadic parameters are considered when
+matching candidates. Namespace-qualified calls such as `api::convert(value)`
+are resolved relative to enclosing namespaces before overload filtering.
 C++ `using` aliases and declarations are indexed with namespace and class scope,
 for example `api::Size`, `api::Config::Count`, and `api::convert`. Namespace
 aliases are indexed at their definition scope, for example `api::vendor`. See the [tool

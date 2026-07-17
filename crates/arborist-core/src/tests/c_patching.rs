@@ -753,6 +753,31 @@ fn allows_bare_unscoped_enum_member_during_patch_validation() {
 }
 
 #[test]
+fn rejects_unresolved_cpp_qualified_calls_during_patch_validation() {
+    let dir = temporary_dir();
+    let file = dir.join("caller.cpp");
+    fs::write(&file, "int caller() { return 0; }\n").unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "caller",
+        "int caller() { return missing::convert(1); }",
+        None,
+    )
+    .unwrap();
+
+    assert!(!result.applied);
+    assert_eq!(result.validation.commit_gate.status, "rejected");
+    assert!(
+        result
+            .validation
+            .unresolved_identifiers
+            .iter()
+            .any(|identifier| identifier == "missing" || identifier == "convert")
+    );
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");

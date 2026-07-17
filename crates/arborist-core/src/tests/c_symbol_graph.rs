@@ -1595,6 +1595,41 @@ fn resolves_cpp_defaulted_and_variadic_direct_calls_across_live_and_persisted_qu
 }
 
 #[test]
+fn resolves_cpp_qualified_overload_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("qualified_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace alpha {\nint convert(int value) { return value; }\nnamespace beta {\nint convert(int value) { return value + 1; }\nint convert(int left, int right) { return left + right; }\n}\nint caller() { return beta::convert(1); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "alpha::beta::convert(int)";
+    let trace = trace_symbol_graph(&dir, "alpha::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "alpha::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
 fn indexes_cpp_template_implementation_file_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("algorithms.tpp");

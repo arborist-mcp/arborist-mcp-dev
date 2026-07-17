@@ -182,20 +182,45 @@ fn resolve_reference_path(
     } else {
         (reference_name, None)
     };
-    let candidates = name_index.get(lookup_name)?;
-    let visible_candidates: Vec<usize> = candidates
-        .iter()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                || !candidate.semantic_path.contains("::")
-        })
-        .collect();
-    let candidate_slice = if visible_candidates.is_empty() {
-        candidates.as_slice()
+    let qualified_cpp_reference =
+        language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
+    let candidates = if qualified_cpp_reference {
+        cpp_qualified_reference_paths(lookup_name, source_symbol)
+            .into_iter()
+            .find_map(|qualified_path| {
+                let candidates = raw_symbols
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, candidate)| {
+                        (candidate.semantic_path == qualified_path).then_some(index)
+                    })
+                    .collect::<Vec<_>>();
+                (!candidates.is_empty()).then_some(candidates)
+            })
+            .unwrap_or_default()
     } else {
-        visible_candidates.as_slice()
+        name_index.get(lookup_name)?.clone()
+    };
+    if candidates.is_empty() {
+        return None;
+    }
+    let visible_candidates = if qualified_cpp_reference {
+        candidates.clone()
+    } else {
+        candidates
+            .iter()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.file_path == source_symbol.file_path
+                    || !candidate.semantic_path.contains("::")
+            })
+            .collect()
+    };
+    let candidate_slice = if visible_candidates.is_empty() {
+        candidates
+    } else {
+        visible_candidates
     };
     let hinted_candidates = if let Some(module_hint) = module_hint {
         let imported_summary = resolve_local_python_imported_symbol(
@@ -220,12 +245,12 @@ fn resolve_reference_path(
             })
             .collect::<Vec<_>>();
         if filtered.is_empty() {
-            candidate_slice.to_vec()
+            candidate_slice.clone()
         } else {
             filtered
         }
     } else {
-        candidate_slice.to_vec()
+        candidate_slice
     };
     let arity_candidates = if let Some(call_arity) = call_arity {
         let callable_candidates = hinted_candidates
@@ -258,6 +283,30 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn cpp_qualified_reference_paths(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+) -> Vec<String> {
+    let absolute = reference_name.starts_with("::");
+    let reference_name = reference_name.trim_start_matches("::");
+    if absolute {
+        return vec![reference_name.to_string()];
+    }
+
+    let mut paths = Vec::new();
+    if let Some(scope_path) = &source_symbol.scope_path {
+        let scope_components = scope_path.split("::").collect::<Vec<_>>();
+        for length in (1..=scope_components.len()).rev() {
+            paths.push(format!(
+                "{}::{reference_name}",
+                scope_components[..length].join("::")
+            ));
+        }
+    }
+    paths.push(reference_name.to_string());
+    paths
 }
 
 fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {

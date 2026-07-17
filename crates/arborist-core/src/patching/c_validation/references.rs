@@ -67,10 +67,31 @@ pub(crate) fn collect_c_references(
     source: &str,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
+    collect_c_references_with_options(node, source, references, false)
+}
+
+pub(crate) fn collect_c_graph_references(
+    node: Node<'_>,
+    source: &str,
+    references: &mut BTreeSet<String>,
+) -> Result<()> {
+    collect_c_references_with_options(node, source, references, true)
+}
+
+fn collect_c_references_with_options(
+    node: Node<'_>,
+    source: &str,
+    references: &mut BTreeSet<String>,
+    suppress_direct_qualified_call_components: bool,
+) -> Result<()> {
     let mut template_parameters = BTreeSet::new();
     collect_cpp_template_parameter_definitions(node, source, &mut template_parameters)?;
     let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() == "identifier" && !is_c_enumerator_name(candidate) {
+        if candidate.kind() == "identifier"
+            && !is_c_enumerator_name(candidate)
+            && (!suppress_direct_qualified_call_components
+                || !is_direct_qualified_call_component(candidate))
+        {
             let _ = node_text(candidate, source).map(|text| {
                 let name = text.trim().to_string();
                 if !template_parameters.contains(&name)
@@ -97,7 +118,7 @@ pub(crate) fn collect_c_call_arities(
         let Some(function) = candidate.child_by_field_name("function") else {
             return;
         };
-        if function.kind() != "identifier" {
+        if !matches!(function.kind(), "identifier" | "qualified_identifier") {
             return;
         }
         let Some(arguments) = candidate.child_by_field_name("arguments") else {
@@ -121,6 +142,21 @@ pub(crate) fn collect_c_call_arities(
 fn is_qualified_identifier_component(node: Node<'_>) -> bool {
     node.parent()
         .is_some_and(|parent| parent.kind() == "qualified_identifier")
+}
+
+fn is_direct_qualified_call_component(node: Node<'_>) -> bool {
+    let Some(qualified_identifier) = node.parent() else {
+        return false;
+    };
+    if qualified_identifier.kind() != "qualified_identifier" {
+        return false;
+    }
+    qualified_identifier.parent().is_some_and(|parent| {
+        parent.kind() == "call_expression"
+            && parent
+                .child_by_field_name("function")
+                .is_some_and(|function| function == qualified_identifier)
+    })
 }
 
 fn is_c_enumerator_name(node: Node<'_>) -> bool {

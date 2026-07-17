@@ -8,7 +8,7 @@ mod python_references;
 mod python_visibility;
 
 pub(crate) use c_validation::{
-    collect_c_call_arities, collect_c_reference_validation, collect_c_references,
+    collect_c_call_arities, collect_c_graph_references, collect_c_reference_validation,
 };
 pub(crate) use commit_gate::evaluate_patch_commit_gate;
 pub(crate) use python_imports::{

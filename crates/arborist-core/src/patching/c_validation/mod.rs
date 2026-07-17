@@ -94,4 +94,4 @@ pub(crate) fn collect_c_reference_validation(
     Ok(validation)
 }
 
-pub(crate) use references::{collect_c_call_arities, collect_c_references};
+pub(crate) use references::{collect_c_call_arities, collect_c_graph_references};
