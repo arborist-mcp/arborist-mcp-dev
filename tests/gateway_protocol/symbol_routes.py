@@ -780,6 +780,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     None,
                     "graph_b.py",
                     source,
+                    None,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
@@ -799,7 +800,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                 },
                 "payload": helper_trace,
-                "expected_call": (".", "helper", "callers", "symbols.db"),
+                "expected_call": (".", "helper", "callers", "symbols.db", None, None, None),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(
@@ -827,6 +828,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     None,
                     "symbols.db",
+                    None,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
@@ -848,7 +850,17 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                 },
                 "payload": helper_context["neighborhood"],
-                "expected_call": (".", "helper", "callers", 2, 10, "symbols.db"),
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    None,
+                ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
                     self.assertEqual(result["direction"], "callers"),
@@ -882,6 +894,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     10,
                     None,
                     "symbols.db",
+                    None,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["symbol"]["semantic_path"], "helper"),
@@ -1218,6 +1231,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "callers",
                     source,
                     None,
+                    None,
                 ),
             },
             {
@@ -1243,6 +1257,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     2,
                     10,
                     source,
+                    None,
                     None,
                 ),
             },

@@ -256,7 +256,8 @@ for response shapes, error behavior, and examples.
 - Session-scoped VFS with open/change/close, virtual patching, commit/discard,
   and incremental Tree-sitter edits.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
-  tracing, and bounded neighborhood context.
+  tracing, bounded neighborhood context, and optional cooperative budgets for
+  direct trace expansion.
 - SQLite-backed persisted symbol indexes with transactional v1-to-v2 schema
   migration, health inspection, response schema versioning,
   stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
@@ -278,5 +279,5 @@ Remaining larger work includes:
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond named template declarations to template
   parameter binding, specializations, and overload-aware symbol identities.
-- Adding benchmarks, fuzz/property tests, and deeper runtime controls such as
-  operation timeouts/cancellation for very large workspaces.
+- Adding benchmarks, fuzz/property tests, raw Tree-sitter query budgets, and
+  broader cancellation boundaries for very large operations.

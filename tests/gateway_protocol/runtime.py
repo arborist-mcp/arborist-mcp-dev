@@ -396,6 +396,18 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             ]["maximum"],
             gateway_module.MAX_GRAPH_DEPTH,
         )
+        self.assertEqual(
+            by_name["arborist/trace_symbol_graph"]["inputSchema"]["properties"][
+                "timeout_ms"
+            ]["minimum"],
+            1,
+        )
+        self.assertEqual(
+            by_name["arborist/trace_symbol_neighborhood_at_position"]["inputSchema"][
+                "properties"
+            ]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         self.assertIn("nodes", trace_neighborhood["required"])
         self.assertEqual(
             trace_neighborhood["properties"]["nodes"]["items"]["properties"]["depth"]["type"],
@@ -550,7 +562,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         assert isinstance(result, dict)
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"symbol": "top_level"})
-        self.assertEqual(core.calls_for("trace_symbol_graph_json"), [(".", "top_level", "both", None)])
+        self.assertEqual(
+            core.calls_for("trace_symbol_graph_json"),
+            [(".", "top_level", "both", None, None, None, None)],
+        )
 
     def test_tools_call_invokes_read_only_batch(self) -> None:
         core = make_recording_json_core(
@@ -601,7 +616,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             ],
         )
         self.assertEqual(core.calls_for("get_semantic_skeleton_json"), [("sample.py", None, 2, None)])
-        self.assertEqual(core.calls_for("trace_symbol_graph_json"), [(".", "top_level", "both", None)])
+        self.assertEqual(
+            core.calls_for("trace_symbol_graph_json"),
+            [(".", "top_level", "both", None, None, None, None)],
+        )
 
     def test_batch_rejects_write_tool(self) -> None:
         result = self.assert_jsonrpc_ok(

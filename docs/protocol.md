@@ -127,4 +127,6 @@ Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during
 workspace traversal, per-file indexing, C include dependency expansion, and
 before persistence, then fails without writing a new snapshot when the budget
-has expired.
+has expired. The direct graph and neighborhood trace tools accept the same
+budget for expansion phases; loading an index or parsing a source overlay is
+still a non-preemptible boundary.

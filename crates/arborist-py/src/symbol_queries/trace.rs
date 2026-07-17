@@ -1,14 +1,17 @@
 use std::path::Path;
 
 use arborist_core::{
-    trace_symbol_graph_at_position_from_index,
-    trace_symbol_graph_at_position_from_index_with_source,
-    trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
-    trace_symbol_graph_from_index_with_source, trace_symbol_graph_with_source,
-    trace_symbol_neighborhood_at_position_from_index,
-    trace_symbol_neighborhood_at_position_from_index_with_source,
-    trace_symbol_neighborhood_at_position_with_source, trace_symbol_neighborhood_from_index,
-    trace_symbol_neighborhood_from_index_with_source, trace_symbol_neighborhood_with_source,
+    trace_symbol_graph_at_position_from_index_with_source_and_timeout,
+    trace_symbol_graph_at_position_from_index_with_timeout,
+    trace_symbol_graph_at_position_with_source_and_timeout,
+    trace_symbol_graph_from_index_with_source_and_timeout,
+    trace_symbol_graph_from_index_with_timeout, trace_symbol_graph_with_source_and_timeout,
+    trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout,
+    trace_symbol_neighborhood_at_position_from_index_with_timeout,
+    trace_symbol_neighborhood_at_position_with_source_and_timeout,
+    trace_symbol_neighborhood_from_index_with_source_and_timeout,
+    trace_symbol_neighborhood_from_index_with_timeout,
+    trace_symbol_neighborhood_with_source_and_timeout,
 };
 use pyo3::prelude::*;
 
@@ -18,6 +21,7 @@ use crate::{
 };
 
 impl ArboristCore {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn trace_symbol_graph_json_impl(
         &self,
         workspace_root: &str,
@@ -26,30 +30,39 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let result = match (source, index_db_path) {
-            (Some(source), Some(index_db_path)) => trace_symbol_graph_from_index_with_source(
-                Path::new(&index_db_path),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (Some(source), None) => trace_symbol_graph_with_source(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
-                symbol_path,
-                direction,
-            ),
-            (None, Some(index_db_path)) => {
-                trace_symbol_graph_from_index(Path::new(&index_db_path), symbol_path, direction)
+            (Some(source), Some(index_db_path)) => {
+                trace_symbol_graph_from_index_with_source_and_timeout(
+                    Path::new(&index_db_path),
+                    require_source_file_path(file_path.as_deref())?,
+                    &source,
+                    symbol_path,
+                    direction,
+                    timeout_ms,
+                )
             }
-            (None, None) => self.vfs.borrow_mut().trace_symbol_graph(
+            (Some(source), None) => trace_symbol_graph_with_source_and_timeout(
+                Path::new(workspace_root),
+                require_source_file_path(file_path.as_deref())?,
+                &source,
+                symbol_path,
+                direction,
+                timeout_ms,
+            ),
+            (None, Some(index_db_path)) => trace_symbol_graph_from_index_with_timeout(
+                Path::new(&index_db_path),
+                symbol_path,
+                direction,
+                timeout_ms,
+            ),
+            (None, None) => self.vfs.borrow_mut().trace_symbol_graph_with_timeout(
                 Path::new(workspace_root),
                 symbol_path,
                 direction,
+                timeout_ms,
             ),
         }
         .map_err(to_py_error)?;
@@ -67,11 +80,12 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
-                trace_symbol_neighborhood_from_index_with_source(
+                trace_symbol_neighborhood_from_index_with_source_and_timeout(
                     Path::new(&index_db_path),
                     require_source_file_path(file_path.as_deref())?,
                     &source,
@@ -79,9 +93,10 @@ impl ArboristCore {
                     direction,
                     bounds.max_depth,
                     bounds.max_nodes,
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => trace_symbol_neighborhood_with_source(
+            (Some(source), None) => trace_symbol_neighborhood_with_source_and_timeout(
                 Path::new(workspace_root),
                 require_source_file_path(file_path.as_deref())?,
                 &source,
@@ -89,21 +104,27 @@ impl ArboristCore {
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
+                timeout_ms,
             ),
-            (None, Some(index_db_path)) => trace_symbol_neighborhood_from_index(
+            (None, Some(index_db_path)) => trace_symbol_neighborhood_from_index_with_timeout(
                 Path::new(&index_db_path),
                 symbol_path,
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
+                timeout_ms,
             ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_neighborhood(
-                Path::new(workspace_root),
-                symbol_path,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .trace_symbol_neighborhood_with_timeout(
+                    Path::new(workspace_root),
+                    symbol_path,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    timeout_ms,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -120,38 +141,46 @@ impl ArboristCore {
         direction: &str,
         source: Option<String>,
         index_db_path: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
-                trace_symbol_graph_at_position_from_index_with_source(
+                trace_symbol_graph_at_position_from_index_with_source_and_timeout(
                     Path::new(&index_db_path),
                     Path::new(file_path),
                     &source,
                     &position,
                     direction,
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => trace_symbol_graph_at_position_with_source(
+            (Some(source), None) => trace_symbol_graph_at_position_with_source_and_timeout(
                 Path::new(workspace_root),
                 Path::new(file_path),
                 &source,
                 &position,
                 direction,
+                timeout_ms,
             ),
-            (None, Some(index_db_path)) => trace_symbol_graph_at_position_from_index(
+            (None, Some(index_db_path)) => trace_symbol_graph_at_position_from_index_with_timeout(
                 Path::new(&index_db_path),
                 Path::new(file_path),
                 &position,
                 direction,
+                timeout_ms,
             ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_graph_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                direction,
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .trace_symbol_graph_at_position_with_timeout(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    direction,
+                    timeout_ms,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -169,12 +198,13 @@ impl ArboristCore {
         bounds: NeighborhoodBounds,
         source: Option<String>,
         index_db_path: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
         let result = match (source, index_db_path) {
             (Some(source), Some(index_db_path)) => {
-                trace_symbol_neighborhood_at_position_from_index_with_source(
+                trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout(
                     Path::new(&index_db_path),
                     Path::new(file_path),
                     &source,
@@ -182,9 +212,10 @@ impl ArboristCore {
                     direction,
                     bounds.max_depth,
                     bounds.max_nodes,
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => trace_symbol_neighborhood_at_position_with_source(
+            (Some(source), None) => trace_symbol_neighborhood_at_position_with_source_and_timeout(
                 Path::new(workspace_root),
                 Path::new(file_path),
                 &source,
@@ -192,23 +223,31 @@ impl ArboristCore {
                 direction,
                 bounds.max_depth,
                 bounds.max_nodes,
+                timeout_ms,
             ),
-            (None, Some(index_db_path)) => trace_symbol_neighborhood_at_position_from_index(
-                Path::new(&index_db_path),
-                Path::new(file_path),
-                &position,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-            ),
-            (None, None) => self.vfs.borrow_mut().trace_symbol_neighborhood_at_position(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &position,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-            ),
+            (None, Some(index_db_path)) => {
+                trace_symbol_neighborhood_at_position_from_index_with_timeout(
+                    Path::new(&index_db_path),
+                    Path::new(file_path),
+                    &position,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    timeout_ms,
+                )
+            }
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .trace_symbol_neighborhood_at_position_with_timeout(
+                    Path::new(workspace_root),
+                    Path::new(file_path),
+                    &position,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    timeout_ms,
+                ),
         }
         .map_err(to_py_error)?;
 

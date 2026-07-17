@@ -361,6 +361,7 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -371,6 +372,7 @@ class ArboristGateway:
                 index_db_path,
                 file_path,
                 source,
+                timeout_ms,
             )
         else:
             payload = core.trace_symbol_graph_json(
@@ -378,6 +380,9 @@ class ArboristGateway:
                 symbol_path,
                 direction,
                 index_db_path,
+                None,
+                None,
+                timeout_ms,
             )
         return self._decode_core_object(payload)
 
@@ -395,6 +400,7 @@ class ArboristGateway:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -407,6 +413,7 @@ class ArboristGateway:
                 index_db_path,
                 file_path,
                 source,
+                timeout_ms,
             )
         else:
             payload = core.trace_symbol_neighborhood_json(
@@ -416,6 +423,9 @@ class ArboristGateway:
                 max_depth,
                 max_nodes,
                 index_db_path,
+                None,
+                None,
+                timeout_ms,
             )
         return self._decode_core_object(payload)
 
@@ -431,6 +441,7 @@ class ArboristGateway:
         )
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         payload = self._require_core().trace_symbol_graph_at_position_json(
             workspace_root,
             file_path,
@@ -439,6 +450,7 @@ class ArboristGateway:
             direction,
             source,
             index_db_path,
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -458,6 +470,7 @@ class ArboristGateway:
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         payload = self._require_core().trace_symbol_neighborhood_at_position_json(
             workspace_root,
             file_path,
@@ -468,6 +481,7 @@ class ArboristGateway:
             max_nodes,
             source,
             index_db_path,
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 

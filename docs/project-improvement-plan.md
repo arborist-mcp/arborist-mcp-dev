@@ -86,6 +86,8 @@ completed item can land in its own commit unless two changes are inseparable.
   Tree-sitter queries, and trace/neighborhood expansion.
 - [x] Add optional cooperative timeout budgets to workspace scans and persisted
   index rebuild/refresh operations.
+- [x] Add optional cooperative timeout budgets to direct trace graph and
+  neighborhood expansion while preserving existing call signatures.
 - [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
   and patch validation.
 

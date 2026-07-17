@@ -1535,6 +1535,37 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 
+    def test_rejects_invalid_direct_trace_timeout_bounds(self) -> None:
+        methods = (
+            "arborist/trace_symbol_graph",
+            "arborist/trace_symbol_neighborhood",
+            "arborist/trace_symbol_graph_at_position",
+            "arborist/trace_symbol_neighborhood_at_position",
+        )
+        for method in methods:
+            for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+                with self.subTest(method=method, timeout_ms=timeout_ms):
+                    params: dict[str, Any] = {
+                        "workspace_root": ".",
+                        "timeout_ms": timeout_ms,
+                    }
+                    if method.endswith("_at_position"):
+                        params.update(
+                            {
+                                "file_path": "graph_b.py",
+                                "position": {"row": 0, "column": 5},
+                            }
+                        )
+                    else:
+                        params["symbol_path"] = "orchestrate"
+
+                    response = self.make_gateway().handle_request(
+                        self.request(method, params, request_id=100 + timeout_ms)
+                    )
+
+                    self.assertEqual(response["error"]["code"], -32602)
+                    self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_read_symbol_context_direction_as_invalid_params(self) -> None:
         gateway = self.make_gateway()
 
@@ -1697,8 +1728,9 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "direction": "callers",
                     "source": source,
                     "index_db_path": "symbols.db",
+                    "timeout_ms": 5000,
                 },
-                (".", "graph_a.py", 1, 2, "callers", source, "symbols.db"),
+                (".", "graph_a.py", 1, 2, "callers", source, "symbols.db", 5000),
             ),
             (
                 "trace_symbol_neighborhood_at_position_json",
@@ -1712,8 +1744,9 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "max_nodes": 10,
                     "source": source,
                     "index_db_path": "symbols.db",
+                    "timeout_ms": 5000,
                 },
-                (".", "graph_a.py", 1, 2, "callers", 2, 10, source, "symbols.db"),
+                (".", "graph_a.py", 1, 2, "callers", 2, 10, source, "symbols.db", 5000),
             ),
         ]
 
@@ -1913,8 +1946,13 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             (
                 "trace_symbol_graph_json",
                 "arborist/trace_symbol_graph",
-                {**shared, "symbol_path": "helper", "direction": "callers"},
-                (".", "helper", "callers", "symbols.db", "graph_a.py", source),
+                {
+                    **shared,
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "timeout_ms": 5000,
+                },
+                (".", "helper", "callers", "symbols.db", "graph_a.py", source, 5000),
             ),
             (
                 "trace_symbol_neighborhood_json",
@@ -1925,6 +1963,7 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "direction": "callers",
                     "max_depth": 2,
                     "max_nodes": 10,
+                    "timeout_ms": 5000,
                 },
                 (
                     ".",
@@ -1935,6 +1974,7 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     "symbols.db",
                     "graph_a.py",
                     source,
+                    5000,
                 ),
             ),
             (

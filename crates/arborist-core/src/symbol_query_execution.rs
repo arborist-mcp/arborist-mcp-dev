@@ -27,9 +27,9 @@ pub(crate) use search::{
     search_neighborhood_context_from_symbols,
 };
 pub(crate) use trace::{
-    trace_from_symbols, trace_neighborhood_from_symbols,
-    trace_symbol_graph_at_position_from_symbols,
-    trace_symbol_neighborhood_at_position_from_symbols,
+    trace_from_symbols_with_timeout, trace_neighborhood_from_symbols_with_timeout,
+    trace_symbol_graph_at_position_from_symbols_with_timeout,
+    trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
 };
 
 pub(crate) fn read_symbol_from_meta(

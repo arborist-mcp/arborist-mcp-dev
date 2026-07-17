@@ -12,8 +12,26 @@ pub fn trace_symbol_graph_from_index_with_source(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
+    trace_symbol_graph_from_index_with_source_and_timeout(
+        db_path,
+        path,
+        source,
+        symbol_path,
+        direction,
+        None,
+    )
+}
+
+pub fn trace_symbol_graph_from_index_with_source_and_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    timeout_ms: Option<u64>,
+) -> Result<TraceSymbolGraphResult> {
     with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.trace_symbol_graph(symbol_path, direction)
+        context.trace_symbol_graph_with_timeout(symbol_path, direction, timeout_ms)
     })
 }
 
@@ -27,8 +45,37 @@ pub fn trace_symbol_neighborhood_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
+    trace_symbol_neighborhood_from_index_with_source_and_timeout(
+        db_path,
+        path,
+        source,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn trace_symbol_neighborhood_from_index_with_source_and_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    timeout_ms: Option<u64>,
+) -> Result<TraceSymbolNeighborhoodResult> {
     with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.trace_symbol_neighborhood(symbol_path, direction, max_depth, max_nodes)
+        context.trace_symbol_neighborhood_with_timeout(
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            timeout_ms,
+        )
     })
 }
 
@@ -39,8 +86,21 @@ pub fn trace_symbol_graph_at_position_from_index_with_source(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<TraceSymbolGraphResult> {
+    trace_symbol_graph_at_position_from_index_with_source_and_timeout(
+        db_path, path, source, position, direction, None,
+    )
+}
+
+pub fn trace_symbol_graph_at_position_from_index_with_source_and_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    timeout_ms: Option<u64>,
+) -> Result<TraceSymbolGraphResult> {
     with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.trace_symbol_graph_at_position(path, position, direction)
+        context.trace_symbol_graph_at_position_with_timeout(path, position, direction, timeout_ms)
     })
 }
 
@@ -54,9 +114,26 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_source(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<TraceSymbolNeighborhoodResult> {
+    trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout(
+        db_path, path, source, position, direction, max_depth, max_nodes, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    timeout_ms: Option<u64>,
+) -> Result<TraceSymbolNeighborhoodResult> {
     with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context
-            .trace_symbol_neighborhood_at_position(path, position, direction, max_depth, max_nodes)
+        context.trace_symbol_neighborhood_at_position_with_timeout(
+            path, position, direction, max_depth, max_nodes, timeout_ms,
+        )
     })
 }
 

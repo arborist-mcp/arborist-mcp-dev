@@ -67,6 +67,7 @@ pub use query::{
 };
 pub use symbol_index_state::{inspect_symbol_index, migrate_symbol_index};
 pub use symbol_query::SymbolQueryContext;
+pub use symbol_trace::MAX_TRACE_TIMEOUT_MS;
 pub use symbols::{
     list_symbols, list_symbols_context, list_symbols_context_filtered,
     list_symbols_context_from_index, list_symbols_context_from_index_filtered,
@@ -95,9 +96,14 @@ pub use symbols::{
     search_symbols_neighborhood_context_from_index,
     search_symbols_neighborhood_context_from_index_filtered, trace_symbol_graph,
     trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
-    trace_symbol_graph_from_index, trace_symbol_neighborhood,
-    trace_symbol_neighborhood_at_position, trace_symbol_neighborhood_at_position_from_index,
-    trace_symbol_neighborhood_from_index,
+    trace_symbol_graph_at_position_from_index_with_timeout,
+    trace_symbol_graph_at_position_with_timeout, trace_symbol_graph_from_index,
+    trace_symbol_graph_from_index_with_timeout, trace_symbol_graph_with_timeout,
+    trace_symbol_neighborhood, trace_symbol_neighborhood_at_position,
+    trace_symbol_neighborhood_at_position_from_index,
+    trace_symbol_neighborhood_at_position_from_index_with_timeout,
+    trace_symbol_neighborhood_at_position_with_timeout, trace_symbol_neighborhood_from_index,
+    trace_symbol_neighborhood_from_index_with_timeout, trace_symbol_neighborhood_with_timeout,
 };
 pub use vfs::VirtualFileSystem;
 pub use workspace_edit_preview::preview_workspace_position_edits;

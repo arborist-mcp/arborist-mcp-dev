@@ -169,6 +169,11 @@ returns the traced symbol, callers, callees, and `evidence_keys`.
 control `direction`, `max_depth`, and `max_nodes`; `truncated` indicates the
 bounded expansion omitted reachable symbols. `max_depth` is capped at `64`, and
 `max_nodes` is capped at `10000` across trace, context, and patch-impact tools.
+The four direct trace tools also accept an optional `timeout_ms` cooperative
+budget for graph summarization and neighborhood expansion, capped at `300000`
+milliseconds. The budget is checked between expansion phases and BFS edges;
+index loading, source parsing, and a single blocking operation remain
+non-preemptible.
 
 `read_symbol_context`, `read_symbol_neighborhood_context`, and
 `read_symbol_discovery_context` combine source reads with trace and neighborhood
@@ -211,9 +216,9 @@ bounded by `max_files` (default `20000`) on rebuilds and missing-index refresh
 fallbacks so unexpectedly large workspaces fail with an actionable limit error
 instead of scanning without bound. Rebuild and refresh calls can also provide
 `max_file_bytes` to reject oversized source files before indexing reads them;
-this optional limit is capped at `67108864`. `timeout_ms` adds an optional
-cooperative budget for directory traversal and per-file indexing, capped at
-`300000` milliseconds. `max_files` is capped at `200000`; symbol list/search
+this optional limit is capped at `67108864`. Index `timeout_ms` adds an
+optional cooperative budget for directory traversal and per-file indexing,
+capped at `300000` milliseconds. `max_files` is capped at `200000`; symbol list/search
 `limit` values are capped at `10000`. When a budget expires, the operation
 returns an error before persisting a new index snapshot.
 

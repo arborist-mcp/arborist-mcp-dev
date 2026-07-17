@@ -183,7 +183,8 @@ impl ArboristCore {
         )
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None, timeout_ms=None))]
+    #[allow(clippy::too_many_arguments)]
     fn trace_symbol_graph_json(
         &self,
         workspace_root: &str,
@@ -192,6 +193,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.trace_symbol_graph_json_impl(
             workspace_root,
@@ -200,10 +202,11 @@ impl ArboristCore {
             index_db_path,
             file_path,
             source,
+            timeout_ms,
         )
     }
 
-    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn trace_symbol_neighborhood_json(
         &self,
@@ -215,6 +218,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.trace_symbol_neighborhood_json_impl(
             workspace_root,
@@ -224,6 +228,7 @@ impl ArboristCore {
             index_db_path,
             file_path,
             source,
+            timeout_ms,
         )
     }
 
@@ -308,7 +313,7 @@ impl ArboristCore {
         )
     }
 
-    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", source=None, index_db_path=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn trace_symbol_graph_at_position_json(
         &self,
@@ -319,6 +324,7 @@ impl ArboristCore {
         direction: &str,
         source: Option<String>,
         index_db_path: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.trace_symbol_graph_at_position_json_impl(
             workspace_root,
@@ -328,10 +334,11 @@ impl ArboristCore {
             direction,
             source,
             index_db_path,
+            timeout_ms,
         )
     }
 
-    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None))]
+    #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn trace_symbol_neighborhood_at_position_json(
         &self,
@@ -344,6 +351,7 @@ impl ArboristCore {
         max_nodes: usize,
         source: Option<String>,
         index_db_path: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.trace_symbol_neighborhood_at_position_json_impl(
             workspace_root,
@@ -354,6 +362,7 @@ impl ArboristCore {
             NeighborhoodBounds::new(max_depth, max_nodes),
             source,
             index_db_path,
+            timeout_ms,
         )
     }
 

@@ -130,6 +130,22 @@ class IndexWatchNativeTests(unittest.TestCase):
                     0,
                 )
 
+    def test_native_direct_trace_timeout_rejects_zero_budget(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            with self.assertRaisesRegex(Exception, "timeout_ms"):
+                core.trace_symbol_graph_json(
+                    str(workspace),
+                    "helper",
+                    "both",
+                    None,
+                    None,
+                    None,
+                    0,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
