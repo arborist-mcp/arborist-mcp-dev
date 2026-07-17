@@ -55,7 +55,7 @@ completed item can land in its own commit unless two changes are inseparable.
   list, read, search, and trace wrappers.
 - [x] Extend the shared PyO3 context to patch-validation selector and position
   wrappers while preserving their source/index/VFS dispatch branches.
-- [ ] Apply shared context structs to the remaining patch AST, index, and VFS
+- [x] Apply shared context structs to the remaining patch AST, index, and VFS
   wrappers where their repeated parameter patterns warrant it.
 - [x] Introduce a shared PyO3 source-position helper as the first small step
   toward consolidated wrapper arguments.

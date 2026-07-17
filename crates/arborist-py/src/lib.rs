@@ -2,6 +2,7 @@ mod index_bindings;
 mod json_args;
 mod patch_bindings;
 mod patch_validation;
+mod path_context;
 mod symbol_queries;
 mod vfs_bindings;
 

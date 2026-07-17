@@ -1,5 +1,6 @@
 use super::{ArboristCore, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg};
 use arborist_core::PositionEdit;
+use serde_json::Value;
 use std::sync::Once;
 
 fn prepare_python() {
@@ -50,6 +51,54 @@ fn parse_json_arg_accepts_valid_payloads() {
 
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "x");
+}
+
+#[test]
+fn virtual_file_and_source_preview_dispatch_preserve_results() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let source = "def target() -> int:\n    return 1\n";
+    let replacement = "def target() -> int:\n    return 2\n";
+    let expected_virtual_source = "def target() -> int:\n    return 2\n\n";
+    let opened: Value = serde_json::from_str(
+        &core
+            .open_virtual_file_json_impl("memory.py", Some(source.to_string()))
+            .expect("virtual file should open"),
+    )
+    .expect("virtual file result should be valid JSON");
+    let patched: Value = serde_json::from_str(
+        &core
+            .patch_virtual_ast_node_json_impl("memory.py", "target", replacement, None)
+            .expect("virtual patch should apply"),
+    )
+    .expect("virtual patch result should be valid JSON");
+    let read: Value = serde_json::from_str(
+        &core
+            .read_virtual_file_json_impl("memory.py")
+            .expect("virtual file should be readable"),
+    )
+    .expect("virtual file read should be valid JSON");
+    let preview: Value = serde_json::from_str(
+        &core
+            .preview_patch_ast_node_json_impl(
+                "memory.py",
+                "target",
+                replacement,
+                Some(source.to_string()),
+                None,
+            )
+            .expect("source-backed patch preview should succeed"),
+    )
+    .expect("patch preview result should be valid JSON");
+
+    assert_eq!(opened["source"], source);
+    assert_eq!(patched["applied"], true);
+    assert_eq!(read["source"], expected_virtual_source);
+    assert_eq!(read["dirty"], true);
+    assert_eq!(preview["changed"], true);
+    assert_eq!(preview["patch"]["applied"], true);
+    assert_eq!(preview["patch"]["updated_source"], expected_virtual_source);
 }
 
 #[test]
