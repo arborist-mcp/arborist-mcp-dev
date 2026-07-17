@@ -327,7 +327,7 @@ fn cpp_qualified_reference_path_groups(
 ) -> Vec<Vec<String>> {
     cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
         .into_iter()
-        .map(|reference_path| cpp_qualified_reference_path_group(reference_path, raw_symbols))
+        .map(|reference_path| cpp_qualified_reference_path_group(reference_path, raw_symbols, None))
         .collect()
 }
 
@@ -372,7 +372,9 @@ fn cpp_unqualified_call_candidate_groups(
                 paths.extend(
                     cpp_lexical_qualified_reference_paths(&target, directive)
                         .into_iter()
-                        .flat_map(|path| cpp_qualified_reference_path_group(path, raw_symbols))
+                        .flat_map(|path| {
+                            cpp_qualified_reference_path_group(path, raw_symbols, Some(directive))
+                        })
                         .map(|path| format!("{path}::{reference_name}")),
                 );
             }
@@ -384,6 +386,7 @@ fn cpp_unqualified_call_candidate_groups(
 fn cpp_qualified_reference_path_group(
     reference_path: String,
     raw_symbols: &[IndexedSymbol],
+    visibility_source: Option<&IndexedSymbol>,
 ) -> Vec<String> {
     let mut pending = VecDeque::from([reference_path]);
     let mut paths = Vec::new();
@@ -400,7 +403,7 @@ fn cpp_qualified_reference_path_group(
         {
             pending.push_front(using_path);
         }
-        for alias_path in cpp_namespace_alias_paths(&path, raw_symbols)
+        for alias_path in cpp_namespace_alias_paths(&path, raw_symbols, visibility_source)
             .into_iter()
             .rev()
         {
@@ -435,13 +438,22 @@ fn cpp_lexical_qualified_reference_paths(
     paths
 }
 
-fn cpp_namespace_alias_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]) -> Vec<String> {
+fn cpp_namespace_alias_paths(
+    reference_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    visibility_source: Option<&IndexedSymbol>,
+) -> Vec<String> {
     let components = reference_path.split("::").collect::<Vec<_>>();
-    for length in (1..components.len()).rev() {
+    for length in (1..=components.len()).rev() {
         let alias_path = components[..length].join("::");
         let suffix = components[length..].join("::");
         let Some(alias) = raw_symbols.iter().find(|symbol| {
-            symbol.node_kind == "namespace_alias_definition" && symbol.semantic_path == alias_path
+            symbol.node_kind == "namespace_alias_definition"
+                && symbol.semantic_path == alias_path
+                && visibility_source.is_none_or(|source| {
+                    symbol.file_path == source.file_path
+                        && symbol.byte_range.0 < source.byte_range.0
+                })
         }) else {
             continue;
         };
@@ -451,7 +463,13 @@ fn cpp_namespace_alias_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]
 
         return cpp_lexical_qualified_reference_paths(&target, alias)
             .into_iter()
-            .map(|target_path| format!("{target_path}::{suffix}"))
+            .map(|target_path| {
+                if suffix.is_empty() {
+                    target_path
+                } else {
+                    format!("{target_path}::{suffix}")
+                }
+            })
             .collect();
     }
     Vec::new()

@@ -142,6 +142,8 @@ completed item can land in its own commit unless two changes are inseparable.
   imported callables in live and persisted symbol graphs.
 - [x] Resolve direct unqualified C++ calls through scoped `using namespace`
   imports in live and persisted symbol graphs.
+- [x] Expand namespace aliases used as scoped C++ `using namespace` import
+  targets before direct-call overload filtering.
 - [x] Verify explicit C++ class/method specializations across skeletons, live
   and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch

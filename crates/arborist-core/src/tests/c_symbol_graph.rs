@@ -1141,9 +1141,20 @@ fn resolves_cpp_using_namespace_calls_across_live_and_persisted_queries() {
     .unwrap();
     fs::write(
         &caller,
-        "namespace api {\nusing namespace vendor;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return convert(1); }\ndouble decimal_caller() { return convert(1.0, 2.0); }\n}\n",
+        "namespace api {\nnamespace alias = vendor;\nusing namespace alias;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return convert(1); }\ndouble decimal_caller() { return convert(1.0, 2.0); }\n}\n",
     )
     .unwrap();
+
+    let caller_source = fs::read_to_string(&caller).unwrap();
+    let skeleton = get_semantic_skeleton(&caller, &caller_source, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.signature.as_deref() == Some("using namespace alias;")),
+        "{:#?}",
+        skeleton.available_symbols
+    );
 
     let expected_callee = "api::vendor::convert(int)";
     let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
