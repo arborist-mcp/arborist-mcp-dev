@@ -2157,6 +2157,119 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 )
             )
 
+    def test_patch_context_at_position_variants_accept_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            caller = workspace.joinpath("caller.py")
+            source = (
+                "from helper import helper\n\n\n"
+                "def orchestrate(value: int) -> int:\n"
+                "    return value + 1\n"
+            )
+            new_code = (
+                "def orchestrate(value: int) -> int:\n"
+                "    return helper(value)\n"
+            )
+            cases = (
+                "arborist/validate_patch_with_trace_context_at_position",
+                "arborist/validate_patch_with_graph_context_at_position",
+                "arborist/validate_patch_with_neighborhood_context_at_position",
+                "arborist/validate_patch_with_discovery_context_at_position",
+            )
+
+            for request_id, method in enumerate(cases, start=220):
+                with self.subTest(method=method):
+                    params = {
+                        "workspace_root": str(workspace),
+                        "file_path": str(caller),
+                        "position": {"row": 3, "column": 5},
+                        "new_code": new_code,
+                        "source": source,
+                        "direction": "both",
+                    }
+                    if method != "arborist/validate_patch_with_trace_context_at_position":
+                        params["max_depth"] = 2
+                        params["max_nodes"] = 10
+                    result = self.assert_jsonrpc_ok(
+                        self.call_gateway(
+                            self.make_live_gateway(),
+                            method,
+                            params,
+                            request_id=request_id,
+                        ),
+                        request_id=request_id,
+                    )
+
+                    assert isinstance(result, dict)
+                    self.assertTrue(result["patch"]["applied"])
+                    self.assertEqual(result["patch"]["file"], str(caller).replace("\\", "/"))
+
+    def test_patch_context_index_variants_accept_unsaved_source(self) -> None:
+        with self.temp_workspace(
+            {
+                "helper.py": "def helper(value: int) -> int:\n    return value + 1\n",
+                "caller.py": "def orchestrate(value: int) -> int:\n    return value + 1\n",
+            }
+        ) as workspace:
+            caller = workspace.joinpath("caller.py")
+            db_path = workspace.joinpath("symbols.db")
+            source = (
+                "from helper import helper\n\n\n"
+                "def orchestrate(value: int) -> int:\n"
+                "    return value + 1\n"
+            )
+            new_code = (
+                "def orchestrate(value: int) -> int:\n"
+                "    return helper(value)\n"
+            )
+            rebuild = self.assert_jsonrpc_ok(
+                self.call_gateway(
+                    self.make_live_gateway(),
+                    "arborist/rebuild_symbol_index",
+                    {
+                        "workspace_root": str(workspace),
+                        "db_path": str(db_path),
+                    },
+                    request_id=230,
+                ),
+                request_id=230,
+            )
+            assert isinstance(rebuild, dict)
+
+            cases = (
+                "arborist/validate_patch_with_graph_context",
+                "arborist/validate_patch_with_neighborhood_context",
+                "arborist/validate_patch_with_discovery_context",
+            )
+            for request_id, method in enumerate(cases, start=231):
+                with self.subTest(method=method):
+                    result = self.assert_jsonrpc_ok(
+                        self.call_gateway(
+                            self.make_live_gateway(),
+                            method,
+                            {
+                                "workspace_root": str(workspace),
+                                "file_path": str(caller),
+                                "semantic_path": "orchestrate",
+                                "new_code": new_code,
+                                "source": source,
+                                "direction": "both",
+                                "max_depth": 2,
+                                "max_nodes": 10,
+                                "index_db_path": str(db_path),
+                            },
+                            request_id=request_id,
+                        ),
+                        request_id=request_id,
+                    )
+
+                    assert isinstance(result, dict)
+                    self.assertTrue(result["patch"]["applied"])
+                    self.assertTrue(result["trace_validation"]["allowed"])
+
     def test_read_symbol_accepts_unsaved_source_with_file_anchor(self) -> None:
         with self.temp_workspace(
             {
@@ -2289,6 +2402,8 @@ _LIVE_CORE_TEST_NAMES = (
     "test_read_at_position_accepts_unsaved_source",
     "test_trace_graph_at_position_accepts_unsaved_source",
     "test_discovery_context_at_position_accepts_unsaved_source",
+    "test_patch_context_at_position_variants_accept_unsaved_source",
+    "test_patch_context_index_variants_accept_unsaved_source",
     "test_read_symbol_accepts_unsaved_source_with_file_anchor",
     "test_trace_symbol_graph_accepts_unsaved_source_with_file_anchor",
     "test_list_symbols_accepts_unsaved_source_with_file_anchor",
