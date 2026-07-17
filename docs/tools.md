@@ -52,6 +52,8 @@ argument count before applying its existing scope ranking. Defaulted and
 variadic parameters are included in that check. Namespace-qualified calls such
 as `api::convert(value)` first resolve through enclosing namespaces, then use
 the same overload filtering.
+Explicit template calls such as `convert<int>(value)` are also treated as
+direct calls to `convert` for graph resolution.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace

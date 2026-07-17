@@ -1433,6 +1433,45 @@ fn traces_cpp_template_functions() {
 }
 
 #[test]
+fn resolves_explicit_cpp_template_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("template_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T>\nT convert(T value) { return value; }\nint bare_caller() { return convert<int>(1); }\n}\nint qualified_caller() { return api::convert<int>(1); }\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::convert(T)";
+    for caller in ["api::bare_caller", "qualified_caller"] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee]
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["api::bare_caller", "qualified_caller"] {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee]
+        );
+    }
+}
+
+#[test]
 fn distinguishes_cpp_function_overloads_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("convert.cpp");

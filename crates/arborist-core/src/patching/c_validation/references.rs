@@ -118,13 +118,10 @@ pub(crate) fn collect_c_call_arities(
         let Some(function) = candidate.child_by_field_name("function") else {
             return;
         };
-        if !matches!(function.kind(), "identifier" | "qualified_identifier") {
-            return;
-        }
         let Some(arguments) = candidate.child_by_field_name("arguments") else {
             return;
         };
-        let Ok(name) = node_text(function, source) else {
+        let Ok(Some(name)) = direct_c_call_name(function, source) else {
             return;
         };
 
@@ -137,6 +134,40 @@ pub(crate) fn collect_c_call_arities(
     };
     visit_tree(node, &mut callback);
     Ok(())
+}
+
+fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+    match function.kind() {
+        "identifier" => Ok(Some(node_text(function, source)?.trim().to_string())),
+        "qualified_identifier" => qualified_c_call_name(function, source),
+        "template_function" => template_function_name(function, source),
+        _ => Ok(None),
+    }
+}
+
+fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut cursor = function.walk();
+    let template_function = function
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "template_function")
+        .last();
+    let Some(template_function) = template_function else {
+        return Ok(Some(node_text(function, source)?.trim().to_string()));
+    };
+    let Some(name) = template_function_name(template_function, source)? else {
+        return Ok(None);
+    };
+
+    let prefix = source[function.start_byte()..template_function.start_byte()].trim_end();
+    let prefix = prefix.strip_suffix("template").unwrap_or(prefix).trim_end();
+    Ok(Some(format!("{prefix}{name}")))
+}
+
+fn template_function_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+    function
+        .child_by_field_name("name")
+        .map(|name| node_text(name, source).map(|name| name.trim().to_string()))
+        .transpose()
 }
 
 fn is_qualified_identifier_component(node: Node<'_>) -> bool {

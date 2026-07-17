@@ -132,8 +132,10 @@ completed item can land in its own commit unless two changes are inseparable.
   metadata.
 - [x] Resolve direct, unqualified C++ calls against overload candidates by
   argument count in live and persisted symbol graphs.
-- [x] Resolve namespace-qualified C++ calls against the exact semantic path
-  before filtering overloads in live and persisted symbol graphs.
+- [x] Resolve namespace-qualified C++ calls through enclosing namespaces before
+  filtering overloads in live and persisted symbol graphs.
+- [x] Trace explicit C++ template calls through the existing direct-call graph
+  resolution path in live and persisted indexes.
 - [x] Verify explicit C++ class/method specializations across skeletons, live
   and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch
