@@ -42,6 +42,12 @@ impl SymbolQueryContext {
         self.file_path.as_deref()
     }
 
+    pub(crate) fn required_file_path(&self) -> PyResult<&Path> {
+        self.file_path
+            .as_deref()
+            .ok_or_else(|| PyValueError::new_err("file_path is required"))
+    }
+
     pub(crate) fn position_file_path(&self) -> PyResult<&Path> {
         self.file_path
             .as_deref()
@@ -82,6 +88,7 @@ mod tests {
         );
         assert_eq!(context.source(), Some("int main() {}"));
         assert!(context.source_file_path().is_ok());
+        assert!(context.required_file_path().is_ok());
         assert!(context.position_file_path().is_ok());
     }
 
@@ -90,6 +97,7 @@ mod tests {
         let context = SymbolQueryContext::new("workspace", None, None, Some("source".into()));
 
         assert!(context.source_file_path().is_err());
+        assert!(context.required_file_path().is_err());
         assert!(context.position_file_path().is_err());
     }
 }
