@@ -352,28 +352,16 @@ pub(crate) fn c_symbol_nodes<'tree>(
         return Ok(symbols);
     }
 
-    let mut non_using_paths = BTreeSet::new();
-    for node in &symbols {
-        if node.kind() != "using_declaration"
-            && let Some(symbol_path) = c_semantic_path(path, *node, source)?
-        {
-            non_using_paths.insert(symbol_path);
-        }
-    }
-
-    let mut using_paths = BTreeSet::new();
     let mut deduplicated = Vec::new();
     for node in symbols {
         if node.kind() != "using_declaration" {
             deduplicated.push(node);
             continue;
         }
-        let Some(symbol_path) = c_semantic_path(path, node, source)? else {
+        if c_semantic_path(path, node, source)?.is_none() {
             continue;
-        };
-        if !non_using_paths.contains(&symbol_path) && using_paths.insert(symbol_path) {
-            deduplicated.push(node);
         }
+        deduplicated.push(node);
     }
 
     Ok(deduplicated)

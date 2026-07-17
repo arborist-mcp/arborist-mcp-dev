@@ -138,6 +138,8 @@ completed item can land in its own commit unless two changes are inseparable.
   resolution path in live and persisted indexes.
 - [x] Expand C++ namespace aliases for direct qualified calls in live and
   persisted symbol graphs.
+- [x] Resolve direct qualified C++ calls through `using` declarations to their
+  imported callables in live and persisted symbol graphs.
 - [x] Verify explicit C++ class/method specializations across skeletons, live
   and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch

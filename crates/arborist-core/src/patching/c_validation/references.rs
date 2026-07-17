@@ -179,6 +179,10 @@ fn is_direct_qualified_call_component(node: Node<'_>) -> bool {
     let Some(qualified_identifier) = node.parent() else {
         return false;
     };
+    is_direct_qualified_call(qualified_identifier)
+}
+
+fn is_direct_qualified_call(qualified_identifier: Node<'_>) -> bool {
     if qualified_identifier.kind() != "qualified_identifier" {
         return false;
     }

@@ -57,6 +57,9 @@ direct calls to `convert` for graph resolution.
 Direct qualified calls also expand indexed namespace aliases, so
 `namespace vendor = detail;` lets `vendor::convert(value)` resolve to
 `detail::convert` before overload filtering, including chained aliases.
+Qualified calls through `using api::function;` declarations resolve to
+the imported callables rather than the declaration symbols themselves; local
+and imported overloads remain part of the same argument-count-filtered set.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace

@@ -185,14 +185,18 @@ fn resolve_reference_path(
     let qualified_cpp_reference =
         language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
     let candidates = if qualified_cpp_reference {
-        cpp_qualified_reference_paths(lookup_name, source_symbol, raw_symbols)
+        cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols)
             .into_iter()
-            .find_map(|qualified_path| {
-                let candidates = raw_symbols
+            .find_map(|qualified_paths| {
+                let candidates = qualified_paths
                     .iter()
-                    .enumerate()
-                    .filter_map(|(index, candidate)| {
-                        (candidate.semantic_path == qualified_path).then_some(index)
+                    .flat_map(|qualified_path| {
+                        raw_symbols
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, candidate)| {
+                                (candidate.semantic_path == *qualified_path).then_some(index)
+                            })
                     })
                     .collect::<Vec<_>>();
                 (!candidates.is_empty()).then_some(candidates)
@@ -260,6 +264,9 @@ fn resolve_reference_path(
             .collect::<Vec<_>>();
         if callable_candidates.is_empty() {
             hinted_candidates
+                .into_iter()
+                .filter(|index| raw_symbols[*index].node_kind != "using_declaration")
+                .collect()
         } else {
             callable_candidates
                 .into_iter()
@@ -285,14 +292,22 @@ fn resolve_reference_path(
         .map(|index| raw_symbols[index].symbol_id.clone())
 }
 
-fn cpp_qualified_reference_paths(
+fn cpp_qualified_reference_path_groups(
     reference_name: &str,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
-) -> Vec<String> {
-    let mut pending = cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
+) -> Vec<Vec<String>> {
+    cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
         .into_iter()
-        .collect::<VecDeque<_>>();
+        .map(|reference_path| cpp_qualified_reference_path_group(reference_path, raw_symbols))
+        .collect()
+}
+
+fn cpp_qualified_reference_path_group(
+    reference_path: String,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<String> {
+    let mut pending = VecDeque::from([reference_path]);
     let mut paths = Vec::new();
     let mut visited = BTreeSet::new();
 
@@ -301,6 +316,12 @@ fn cpp_qualified_reference_paths(
             continue;
         }
         paths.push(path.clone());
+        for using_path in cpp_using_declaration_paths(&path, raw_symbols)
+            .into_iter()
+            .rev()
+        {
+            pending.push_front(using_path);
+        }
         for alias_path in cpp_namespace_alias_paths(&path, raw_symbols)
             .into_iter()
             .rev()
@@ -356,6 +377,27 @@ fn cpp_namespace_alias_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]
             .collect();
     }
     Vec::new()
+}
+
+fn cpp_using_declaration_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]) -> Vec<String> {
+    raw_symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.node_kind == "using_declaration" && symbol.semantic_path == reference_path
+        })
+        .filter_map(|declaration| {
+            let target = cpp_using_declaration_target(declaration)?;
+            Some(cpp_lexical_qualified_reference_paths(&target, declaration))
+        })
+        .flatten()
+        .collect()
+}
+
+fn cpp_using_declaration_target(declaration: &IndexedSymbol) -> Option<String> {
+    let declaration = declaration.signature.as_deref()?.trim();
+    let target = declaration.strip_prefix("using")?.trim();
+    let target = target.trim_end_matches(';').trim();
+    (target.contains("::") && !target.starts_with("namespace ")).then_some(target.to_string())
 }
 
 fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {

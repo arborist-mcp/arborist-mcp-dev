@@ -837,7 +837,7 @@ fn traces_cpp_using_declarations() {
 }
 
 #[test]
-fn indexes_cpp_using_declaration_overload_sets_once_per_scope() {
+fn indexes_cpp_using_declaration_overload_sets_per_scope() {
     let dir = temporary_dir();
     let source = dir.join("imports.hpp");
     let db_path = dir.join("symbols.db");
@@ -854,35 +854,46 @@ fn indexes_cpp_using_declaration_overload_sets_once_per_scope() {
         .iter()
         .filter(|symbol| symbol.semantic_path == "api::convert")
         .collect::<Vec<_>>();
-    assert_eq!(imported_symbols.len(), 1, "{imported_symbols:#?}");
+    assert_eq!(imported_symbols.len(), 2, "{imported_symbols:#?}");
     assert_eq!(
-        imported_symbols[0].signature.as_deref(),
-        Some("using integral::convert;")
+        imported_symbols
+            .iter()
+            .map(|symbol| symbol.signature.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("using integral::convert;"),
+            Some("using decimal::convert;")
+        ]
     );
     let imported_methods = skeleton
         .available_symbols
         .iter()
         .filter(|symbol| symbol.semantic_path == "api::Resettable::reset")
         .collect::<Vec<_>>();
-    assert_eq!(imported_methods.len(), 1, "{imported_methods:#?}");
+    assert_eq!(imported_methods.len(), 2, "{imported_methods:#?}");
     assert_eq!(
-        imported_methods[0].signature.as_deref(),
-        Some("using IntegerReset::reset;")
+        imported_methods
+            .iter()
+            .map(|symbol| symbol.signature.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("using IntegerReset::reset;"),
+            Some("using DecimalReset::reset;")
+        ]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted_trace =
         trace_symbol_graph_from_index(&db_path, "api::convert", TraceDirection::Both).unwrap();
-    assert_eq!(
-        persisted_trace.symbol.signature.as_deref(),
-        Some("using integral::convert;")
-    );
+    assert_eq!(persisted_trace.symbol.node_kind, "using_declaration");
+    assert_eq!(persisted_trace.symbol.scope_path.as_deref(), Some("api"));
     let persisted_method =
         trace_symbol_graph_from_index(&db_path, "api::Resettable::reset", TraceDirection::Both)
             .unwrap();
+    assert_eq!(persisted_method.symbol.node_kind, "using_declaration");
     assert_eq!(
-        persisted_method.symbol.signature.as_deref(),
-        Some("using IntegerReset::reset;")
+        persisted_method.symbol.scope_path.as_deref(),
+        Some("api::Resettable")
     );
 }
 
@@ -951,6 +962,163 @@ fn resolves_cpp_namespace_alias_calls_across_live_and_persisted_queries() {
             .map(|symbol| symbol.symbol_id.as_str())
             .collect::<Vec<_>>(),
         vec![expected_callee]
+    );
+}
+
+#[test]
+fn resolves_cpp_using_declaration_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("using_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace implementation {\nint convert(int value) { return value; }\n}\nnamespace detail = implementation;\nusing detail::convert;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return api::convert(1); }\ndouble decimal_caller() { return api::convert(1.0, 2.0); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::implementation::convert(int)";
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+    let expected_local_callee = "api::convert(double,double)";
+    let decimal_trace =
+        trace_symbol_graph(&dir, "api::decimal_caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        decimal_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_local_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+    let persisted_decimal_trace =
+        trace_symbol_graph_from_index(&db_path, "api::decimal_caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_decimal_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_local_callee]
+    );
+}
+
+#[test]
+fn resolves_cpp_using_declaration_overloads_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("using_overloads.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace integral { int convert(int value) { return value; } }\nnamespace decimal { double convert(double left, double right) { return left + right; } }\nusing integral::convert;\nusing decimal::convert;\nint caller() { return api::convert(1); }\ndouble decimal_caller() { return api::convert(1.0, 2.0); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_integer_callee = "api::integral::convert(int)";
+    let expected_decimal_callee = "api::decimal::convert(double,double)";
+    for (symbol_path, expected_callee) in [
+        ("api::caller", expected_integer_callee),
+        ("api::decimal_caller", expected_decimal_callee),
+    ] {
+        let trace = trace_symbol_graph(&dir, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee]
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (symbol_path, expected_callee) in [
+        ("api::caller", expected_integer_callee),
+        ("api::decimal_caller", expected_decimal_callee),
+    ] {
+        let trace =
+            trace_symbol_graph_from_index(&db_path, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee]
+        );
+    }
+}
+
+#[test]
+fn ignores_unindexed_cpp_using_declaration_call_targets() {
+    let dir = temporary_dir();
+    let source = dir.join("using_external.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nusing external::convert;\nint caller() { return api::convert(1); }\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert!(persisted_trace.callees.is_empty());
+}
+
+#[test]
+fn retains_unindexed_cpp_using_declaration_noncall_references() {
+    let dir = temporary_dir();
+    let source = dir.join("using_external_reference.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nusing external::convert;\nvoid callback() { auto target = &api::convert; }\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "api::callback", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::convert"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::callback", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::convert"]
     );
 }
 
