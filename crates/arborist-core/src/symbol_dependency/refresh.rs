@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::resolution::{
-    build_name_index, indexed_symbol_rank, raw_symbol_indexes_by_id,
+    build_name_index, build_semantic_path_index, indexed_symbol_rank, raw_symbol_indexes_by_id,
     resolve_dependencies_for_symbol,
 };
 use crate::model::{SymbolMeta, SymbolMetaInit};
@@ -15,6 +15,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     changed_file_paths: &BTreeSet<String>,
 ) -> (BTreeMap<String, SymbolMeta>, BTreeSet<String>) {
     let name_index = build_name_index(raw_symbols);
+    let semantic_path_index = build_semantic_path_index(raw_symbols);
     let raw_symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let representative_raw_symbols = raw_symbol_map(raw_symbols);
     let impacted_ids = impacted_symbol_ids(
@@ -47,6 +48,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &raw_symbols[*index],
                 raw_symbols,
                 &name_index,
+                &semantic_path_index,
             ));
         }
         symbol.dependencies = dependencies.into_iter().collect();

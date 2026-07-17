@@ -24,6 +24,7 @@ pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()>
 
 pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta> {
     let name_index = build_name_index(raw_symbols);
+    let semantic_path_index = build_semantic_path_index(raw_symbols);
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
@@ -34,6 +35,7 @@ pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<
                 &raw_symbols[*index],
                 raw_symbols,
                 &name_index,
+                &semantic_path_index,
             ));
         }
     }
@@ -87,6 +89,19 @@ pub(super) fn build_name_index(raw_symbols: &[IndexedSymbol]) -> BTreeMap<String
     name_index
 }
 
+pub(super) fn build_semantic_path_index(
+    raw_symbols: &[IndexedSymbol],
+) -> BTreeMap<String, Vec<usize>> {
+    let mut semantic_path_index = BTreeMap::new();
+    for (index, symbol) in raw_symbols.iter().enumerate() {
+        semantic_path_index
+            .entry(symbol.semantic_path.clone())
+            .or_insert_with(Vec::new)
+            .push(index);
+    }
+    semantic_path_index
+}
+
 pub(super) fn raw_symbol_indexes_by_id(
     raw_symbols: &[IndexedSymbol],
 ) -> BTreeMap<String, Vec<usize>> {
@@ -104,6 +119,7 @@ pub(super) fn resolve_dependencies_for_symbol(
     symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
     for reference_name in &symbol.references_by_name {
@@ -118,14 +134,20 @@ pub(super) fn resolve_dependencies_for_symbol(
                     symbol,
                     raw_symbols,
                     name_index,
+                    semantic_path_index,
                 ) && target_symbol_id != symbol.symbol_id
                 {
                     dependencies.insert(target_symbol_id);
                 }
             }
-        } else if let Some(target_symbol_id) =
-            resolve_reference_path(reference_name, None, symbol, raw_symbols, name_index)
-            && target_symbol_id != symbol.symbol_id
+        } else if let Some(target_symbol_id) = resolve_reference_path(
+            reference_name,
+            None,
+            symbol,
+            raw_symbols,
+            name_index,
+            semantic_path_index,
+        ) && target_symbol_id != symbol.symbol_id
         {
             dependencies.insert(target_symbol_id);
         }
@@ -175,6 +197,7 @@ fn resolve_reference_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
 ) -> Option<String> {
     let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
@@ -190,17 +213,7 @@ fn resolve_reference_path(
         cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols)
             .into_iter()
             .find_map(|qualified_paths| {
-                let candidates = qualified_paths
-                    .iter()
-                    .flat_map(|qualified_path| {
-                        raw_symbols
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, candidate)| {
-                                (candidate.semantic_path == *qualified_path).then_some(index)
-                            })
-                    })
-                    .collect::<Vec<_>>();
+                let candidates = symbol_indexes_for_paths(&qualified_paths, semantic_path_index);
                 (!candidates.is_empty()).then_some(candidates)
             })
             .map(|candidates| (candidates, false))
@@ -210,17 +223,7 @@ fn resolve_reference_path(
             cpp_unqualified_call_candidate_groups(lookup_name, source_symbol, raw_symbols)
                 .into_iter()
                 .find_map(|paths| {
-                    let candidates = paths
-                        .iter()
-                        .flat_map(|path| {
-                            raw_symbols
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(index, candidate)| {
-                                    (candidate.semantic_path == *path).then_some(index)
-                                })
-                        })
-                        .collect::<Vec<_>>();
+                    let candidates = symbol_indexes_for_paths(&paths, semantic_path_index);
                     (!candidates.is_empty()).then_some(candidates)
                 });
         match scoped_candidates {
@@ -318,6 +321,16 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn symbol_indexes_for_paths(
+    paths: &[String],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Vec<usize> {
+    paths
+        .iter()
+        .flat_map(|path| semantic_path_index.get(path).into_iter().flatten().copied())
+        .collect()
 }
 
 fn cpp_qualified_reference_path_groups(
