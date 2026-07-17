@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use arborist_core::{
     trace_symbol_graph_at_position_from_index_with_source_and_timeout,
     trace_symbol_graph_at_position_from_index_with_timeout,
@@ -15,9 +13,9 @@ use arborist_core::{
 };
 use pyo3::prelude::*;
 
+use super::SymbolQueryContext;
 use crate::{
-    ArboristCore, NeighborhoodBounds, parse_direction, require_source_file_path, source_position,
-    to_json_result, to_py_error,
+    ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
 
 impl ArboristCore {
@@ -32,34 +30,35 @@ impl ArboristCore {
         source: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_graph_from_index_with_source_and_timeout(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     symbol_path,
                     direction,
                     timeout_ms,
                 )
             }
             (Some(source), None) => trace_symbol_graph_with_source_and_timeout(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
                 timeout_ms,
             ),
             (None, Some(index_db_path)) => trace_symbol_graph_from_index_with_timeout(
-                Path::new(&index_db_path),
+                index_db_path,
                 symbol_path,
                 direction,
                 timeout_ms,
             ),
             (None, None) => self.vfs.borrow_mut().trace_symbol_graph_with_timeout(
-                Path::new(workspace_root),
+                context.workspace_root(),
                 symbol_path,
                 direction,
                 timeout_ms,
@@ -82,13 +81,14 @@ impl ArboristCore {
         source: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let direction = parse_direction(direction)?;
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_from_index_with_source_and_timeout(
-                    Path::new(&index_db_path),
-                    require_source_file_path(file_path.as_deref())?,
-                    &source,
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
                     symbol_path,
                     direction,
                     bounds.max_depth,
@@ -97,9 +97,9 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => trace_symbol_neighborhood_with_source_and_timeout(
-                Path::new(workspace_root),
-                require_source_file_path(file_path.as_deref())?,
-                &source,
+                context.workspace_root(),
+                context.source_file_path()?,
+                source,
                 symbol_path,
                 direction,
                 bounds.max_depth,
@@ -107,7 +107,7 @@ impl ArboristCore {
                 timeout_ms,
             ),
             (None, Some(index_db_path)) => trace_symbol_neighborhood_from_index_with_timeout(
-                Path::new(&index_db_path),
+                index_db_path,
                 symbol_path,
                 direction,
                 bounds.max_depth,
@@ -118,7 +118,7 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .trace_symbol_neighborhood_with_timeout(
-                    Path::new(workspace_root),
+                    context.workspace_root(),
                     symbol_path,
                     direction,
                     bounds.max_depth,
@@ -143,30 +143,36 @@ impl ArboristCore {
         index_db_path: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_graph_at_position_from_index_with_source_and_timeout(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
+                    index_db_path,
+                    context.position_file_path(),
+                    source,
                     &position,
                     direction,
                     timeout_ms,
                 )
             }
             (Some(source), None) => trace_symbol_graph_at_position_with_source_and_timeout(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
                 direction,
                 timeout_ms,
             ),
             (None, Some(index_db_path)) => trace_symbol_graph_at_position_from_index_with_timeout(
-                Path::new(&index_db_path),
-                Path::new(file_path),
+                index_db_path,
+                context.position_file_path(),
                 &position,
                 direction,
                 timeout_ms,
@@ -175,8 +181,8 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .trace_symbol_graph_at_position_with_timeout(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
+                    context.workspace_root(),
+                    context.position_file_path(),
                     &position,
                     direction,
                     timeout_ms,
@@ -200,14 +206,20 @@ impl ArboristCore {
         index_db_path: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
+        let context = SymbolQueryContext::new(
+            workspace_root,
+            index_db_path,
+            Some(file_path.to_string()),
+            source,
+        );
         let direction = parse_direction(direction)?;
         let position = source_position(row, column);
-        let result = match (source, index_db_path) {
+        let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
-                    &source,
+                    index_db_path,
+                    context.position_file_path(),
+                    source,
                     &position,
                     direction,
                     bounds.max_depth,
@@ -216,9 +228,9 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => trace_symbol_neighborhood_at_position_with_source_and_timeout(
-                Path::new(workspace_root),
-                Path::new(file_path),
-                &source,
+                context.workspace_root(),
+                context.position_file_path(),
+                source,
                 &position,
                 direction,
                 bounds.max_depth,
@@ -227,8 +239,8 @@ impl ArboristCore {
             ),
             (None, Some(index_db_path)) => {
                 trace_symbol_neighborhood_at_position_from_index_with_timeout(
-                    Path::new(&index_db_path),
-                    Path::new(file_path),
+                    index_db_path,
+                    context.position_file_path(),
                     &position,
                     direction,
                     bounds.max_depth,
@@ -240,8 +252,8 @@ impl ArboristCore {
                 .vfs
                 .borrow_mut()
                 .trace_symbol_neighborhood_at_position_with_timeout(
-                    Path::new(workspace_root),
-                    Path::new(file_path),
+                    context.workspace_root(),
+                    context.position_file_path(),
                     &position,
                     direction,
                     bounds.max_depth,
