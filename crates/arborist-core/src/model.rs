@@ -31,8 +31,9 @@ pub use symbols::{SymbolMeta, SymbolMetaInit, SymbolSummary, SymbolSummaryInit};
 pub use trace_patch_results::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchTraceValidationResult, TraceBackedPatchResult, TraceEvidenceKeys,
-    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-    TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
+    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TracePatchImpactSummary,
+    TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
+    TraceSymbolNeighborhoodResult,
 };
 
 fn ensure_nonblank(value: &str, field: &str) -> Result<()> {

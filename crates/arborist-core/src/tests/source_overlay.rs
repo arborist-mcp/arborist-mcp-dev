@@ -58,6 +58,11 @@ fn validates_trace_context_from_index_with_unsaved_source_overlay() {
             .iter()
             .any(|symbol| symbol.semantic_path == "helper")
     );
+    let impact = result.impact.expect("impact should be available");
+    assert_eq!(impact.affected_symbol_count, 1);
+    assert_eq!(impact.added_callees.len(), 1);
+    assert_eq!(impact.added_callees[0].semantic_path, "helper");
+    assert!(impact.removed_callees.is_empty());
 }
 
 #[test]

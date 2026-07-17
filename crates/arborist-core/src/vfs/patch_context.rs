@@ -319,6 +319,7 @@ impl VirtualFileSystem {
                 trace_target,
                 trace: None,
                 trace_validation: None,
+                impact: None,
                 trace_error: Some(
                     TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
                 ),
@@ -333,6 +334,7 @@ impl VirtualFileSystem {
                 trace_target,
                 trace: None,
                 trace_validation: None,
+                impact: None,
                 trace_error: Some(
                     TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection()
                         .to_string(),
@@ -356,6 +358,7 @@ impl VirtualFileSystem {
             trace_target,
             trace: Some(trace),
             trace_validation: Some(trace_validation),
+            impact: None,
             trace_error: None,
         };
         validate_trace_backed_patch_result(&result)?;

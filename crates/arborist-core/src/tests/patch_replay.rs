@@ -818,6 +818,13 @@ fn validates_patch_with_trace_context_in_one_call() {
             .as_ref()
             .is_some_and(|decision| decision.allowed)
     );
+    let impact = result.impact.as_ref().expect("impact should be available");
+    assert_eq!(impact.affected_symbol_count, 1);
+    assert!(impact.added_callers.is_empty());
+    assert!(impact.removed_callers.is_empty());
+    assert_eq!(impact.added_callees.len(), 1);
+    assert_eq!(impact.added_callees[0].semantic_path, "helper");
+    assert!(impact.removed_callees.is_empty());
 }
 
 #[test]
@@ -860,6 +867,34 @@ fn validates_trace_context_with_unsaved_source_file() {
             .is_some_and(|decision| decision.allowed)
     );
     assert!(!caller.exists());
+}
+
+#[test]
+fn trace_patch_impact_ignores_unchanged_callees_with_shifted_byte_ranges() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.py");
+    fs::write(
+        &caller,
+        "def orchestrate(value: int) -> int:\n    return helper(value)\n\n\ndef helper(value: int) -> int:\n    return value + 1\n",
+    )
+    .unwrap();
+
+    let result = validate_patch_with_trace_context_from_path(
+        &dir,
+        &caller,
+        "orchestrate",
+        "def orchestrate(value: int) -> int:\n    # Keep the existing dependency while changing this symbol's size.\n    return helper(value)\n",
+        None,
+        TraceDirection::Both,
+    )
+    .unwrap();
+
+    let impact = result.impact.expect("impact should be available");
+    assert!(impact.added_callers.is_empty());
+    assert!(impact.removed_callers.is_empty());
+    assert!(impact.added_callees.is_empty());
+    assert!(impact.removed_callees.is_empty());
+    assert_eq!(impact.affected_symbol_count, 0);
 }
 
 #[test]

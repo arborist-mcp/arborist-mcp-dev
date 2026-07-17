@@ -114,8 +114,8 @@ completed item can land in its own commit unless two changes are inseparable.
   validation and reference tracing.
 - [ ] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
-- [ ] Add richer impact summaries for trace-backed patch validation, including
-  changed callers/callees and bounded affected symbol counts.
+- [x] Add direct caller/callee change summaries and distinct affected-symbol
+  counts for live and persisted trace-backed patch validation.
 - [ ] Add optional SARIF or JSON diagnostics export for CI integrations.
 
 ### P4: Testing And Hardening

@@ -1734,6 +1734,7 @@ fn trace_backed_patch_validation_rejects_trace_without_validation() {
                 .expect("valid trace payload should deserialize"),
             ),
             trace_validation: None,
+            impact: None,
             trace_error: None,
         };
 
@@ -1787,6 +1788,7 @@ fn trace_backed_patch_validation_rejects_wrong_skip_reason() {
         trace_target: "top_level".to_string(),
         trace: None,
         trace_validation: None,
+        impact: None,
         trace_error: Some(
             TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
         ),

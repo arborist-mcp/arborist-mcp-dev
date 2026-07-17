@@ -15236,6 +15236,520 @@
                           }
                         ]
                       },
+                      "impact": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "description": "Direct caller and callee changes between pre-patch and post-patch traces.",
+                            "properties": {
+                              "added_callers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "removed_callers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "added_callees": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "removed_callees": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "affected_symbol_count": {
+                                "type": "integer",
+                                "description": "Distinct callers or callees changed by the patch.",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "added_callers",
+                              "removed_callers",
+                              "added_callees",
+                              "removed_callees",
+                              "affected_symbol_count"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "trace_error": {
                         "anyOf": [
                           {
@@ -15254,6 +15768,7 @@
                       "trace_target",
                       "trace",
                       "trace_validation",
+                      "impact",
                       "trace_error"
                     ],
                     "additionalProperties": false
@@ -16790,6 +17305,520 @@
                           }
                         ]
                       },
+                      "impact": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "description": "Direct caller and callee changes between pre-patch and post-patch traces.",
+                            "properties": {
+                              "added_callers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "removed_callers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "added_callees": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "removed_callees": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "description": "Compact symbol metadata.",
+                                  "properties": {
+                                    "symbol_id": {
+                                      "type": "string",
+                                      "description": "Stable symbol identifier.",
+                                      "minLength": 1
+                                    },
+                                    "semantic_path": {
+                                      "type": "string",
+                                      "description": "Stable Arborist semantic selector.",
+                                      "minLength": 1
+                                    },
+                                    "scope_path": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "file_path": {
+                                      "type": "string",
+                                      "description": "Normalized source file path.",
+                                      "minLength": 1
+                                    },
+                                    "node_kind": {
+                                      "type": "string",
+                                      "description": "Tree-sitter node kind.",
+                                      "minLength": 1
+                                    },
+                                    "origin_type": {
+                                      "type": "string",
+                                      "description": "Symbol origin classification.",
+                                      "minLength": 1
+                                    },
+                                    "evidence_key": {
+                                      "type": "string",
+                                      "description": "Trace evidence identity key.",
+                                      "minLength": 1
+                                    },
+                                    "byte_range": {
+                                      "type": "array",
+                                      "description": "Inclusive start and exclusive end byte offsets.",
+                                      "items": {
+                                        "type": "integer",
+                                        "description": "Byte offset.",
+                                        "minimum": 0
+                                      },
+                                      "minItems": 2,
+                                      "maxItems": 2
+                                    },
+                                    "signature": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "parameters": {
+                                      "type": "array",
+                                      "description": "String values.",
+                                      "items": {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "return_type": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "docstring": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "symbol_id",
+                                    "semantic_path",
+                                    "scope_path",
+                                    "file_path",
+                                    "node_kind",
+                                    "origin_type",
+                                    "evidence_key",
+                                    "byte_range",
+                                    "signature",
+                                    "parameters",
+                                    "return_type",
+                                    "docstring"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "affected_symbol_count": {
+                                "type": "integer",
+                                "description": "Distinct callers or callees changed by the patch.",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "added_callers",
+                              "removed_callers",
+                              "added_callees",
+                              "removed_callees",
+                              "affected_symbol_count"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "trace_error": {
                         "anyOf": [
                           {
@@ -16808,6 +17837,7 @@
                       "trace_target",
                       "trace",
                       "trace_validation",
+                      "impact",
                       "trace_error"
                     ],
                     "additionalProperties": false
@@ -53967,6 +54997,520 @@
                 }
               ]
             },
+            "impact": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "description": "Direct caller and callee changes between pre-patch and post-patch traces.",
+                  "properties": {
+                    "added_callers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "removed_callers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "added_callees": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "removed_callees": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "affected_symbol_count": {
+                      "type": "integer",
+                      "description": "Distinct callers or callees changed by the patch.",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "added_callers",
+                    "removed_callers",
+                    "added_callees",
+                    "removed_callees",
+                    "affected_symbol_count"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "trace_error": {
               "anyOf": [
                 {
@@ -53985,6 +55529,7 @@
             "trace_target",
             "trace",
             "trace_validation",
+            "impact",
             "trace_error"
           ],
           "additionalProperties": false
@@ -55620,6 +57165,520 @@
                 }
               ]
             },
+            "impact": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "description": "Direct caller and callee changes between pre-patch and post-patch traces.",
+                  "properties": {
+                    "added_callers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "removed_callers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "added_callees": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "removed_callees": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Compact symbol metadata.",
+                        "properties": {
+                          "symbol_id": {
+                            "type": "string",
+                            "description": "Stable symbol identifier.",
+                            "minLength": 1
+                          },
+                          "semantic_path": {
+                            "type": "string",
+                            "description": "Stable Arborist semantic selector.",
+                            "minLength": 1
+                          },
+                          "scope_path": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "file_path": {
+                            "type": "string",
+                            "description": "Normalized source file path.",
+                            "minLength": 1
+                          },
+                          "node_kind": {
+                            "type": "string",
+                            "description": "Tree-sitter node kind.",
+                            "minLength": 1
+                          },
+                          "origin_type": {
+                            "type": "string",
+                            "description": "Symbol origin classification.",
+                            "minLength": 1
+                          },
+                          "evidence_key": {
+                            "type": "string",
+                            "description": "Trace evidence identity key.",
+                            "minLength": 1
+                          },
+                          "byte_range": {
+                            "type": "array",
+                            "description": "Inclusive start and exclusive end byte offsets.",
+                            "items": {
+                              "type": "integer",
+                              "description": "Byte offset.",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          "signature": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "parameters": {
+                            "type": "array",
+                            "description": "String values.",
+                            "items": {
+                              "type": "string",
+                              "description": "String value.",
+                              "minLength": 1
+                            }
+                          },
+                          "return_type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "docstring": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "symbol_id",
+                          "semantic_path",
+                          "scope_path",
+                          "file_path",
+                          "node_kind",
+                          "origin_type",
+                          "evidence_key",
+                          "byte_range",
+                          "signature",
+                          "parameters",
+                          "return_type",
+                          "docstring"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "affected_symbol_count": {
+                      "type": "integer",
+                      "description": "Distinct callers or callees changed by the patch.",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "added_callers",
+                    "removed_callers",
+                    "added_callees",
+                    "removed_callees",
+                    "affected_symbol_count"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "trace_error": {
               "anyOf": [
                 {
@@ -55638,6 +57697,7 @@
             "trace_target",
             "trace",
             "trace_validation",
+            "impact",
             "trace_error"
           ],
           "additionalProperties": false

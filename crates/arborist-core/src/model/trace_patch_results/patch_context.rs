@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail};
 
 use super::super::ensure_nonblank;
 use super::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
-    TraceBackedPatchResult,
+    TraceBackedPatchResult, TracePatchImpactSummary,
 };
 
 impl TraceBackedPatchResult {
@@ -30,6 +32,9 @@ impl TraceBackedPatchResult {
                 bail!(
                     "invalid trace_validation: expected no trace validation when the patch was not safely applied"
                 );
+            }
+            if self.impact.is_some() {
+                bail!("invalid impact: expected no impact when the patch was not safely applied");
             }
             let trace_error = self
                 .trace_error
@@ -60,6 +65,9 @@ impl TraceBackedPatchResult {
             )
         })?;
         trace_validation.validate_public_output()?;
+        if let Some(impact) = &self.impact {
+            impact.validate_public_output()?;
+        }
         if self.trace_error.is_some() {
             bail!("invalid trace_error: expected no trace error for applied patches");
         }
@@ -79,6 +87,29 @@ impl TraceBackedPatchResult {
             );
         }
 
+        Ok(())
+    }
+}
+
+impl TracePatchImpactSummary {
+    fn validate_public_output(&self) -> Result<()> {
+        let mut symbol_ids = BTreeSet::new();
+        for (field, symbols) in [
+            ("impact.added_callers", &self.added_callers),
+            ("impact.removed_callers", &self.removed_callers),
+            ("impact.added_callees", &self.added_callees),
+            ("impact.removed_callees", &self.removed_callees),
+        ] {
+            for (index, symbol) in symbols.iter().enumerate() {
+                symbol.validate_trace_replay_input(&format!("{field}[{index}]"))?;
+                if !symbol_ids.insert(symbol.symbol_id.clone()) {
+                    bail!("invalid {field}[{index}]: duplicate changed symbol id");
+                }
+            }
+        }
+        if self.affected_symbol_count != symbol_ids.len() {
+            bail!("invalid impact.affected_symbol_count: expected distinct changed symbol count");
+        }
         Ok(())
     }
 }

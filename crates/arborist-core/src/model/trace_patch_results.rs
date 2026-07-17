@@ -51,11 +51,22 @@ pub struct PatchTraceValidationResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TracePatchImpactSummary {
+    pub added_callers: Vec<SymbolSummary>,
+    pub removed_callers: Vec<SymbolSummary>,
+    pub added_callees: Vec<SymbolSummary>,
+    pub removed_callees: Vec<SymbolSummary>,
+    pub affected_symbol_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TraceBackedPatchResult {
     pub patch: PatchAstNodeResult,
     pub trace_target: String,
     pub trace: Option<TraceSymbolGraphResult>,
     pub trace_validation: Option<PatchTraceValidationResult>,
+    pub impact: Option<TracePatchImpactSummary>,
     pub trace_error: Option<String>,
 }
 

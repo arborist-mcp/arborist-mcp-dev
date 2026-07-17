@@ -722,6 +722,30 @@ NULLABLE_TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA = {
 NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA = {
     "anyOf": [PATCH_TRACE_VALIDATION_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
 }
+TRACE_PATCH_IMPACT_SUMMARY_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Direct caller and callee changes between pre-patch and post-patch traces.",
+    "properties": {
+        "added_callers": {"type": "array", "items": SYMBOL_SUMMARY_RESULT_SCHEMA},
+        "removed_callers": {"type": "array", "items": SYMBOL_SUMMARY_RESULT_SCHEMA},
+        "added_callees": {"type": "array", "items": SYMBOL_SUMMARY_RESULT_SCHEMA},
+        "removed_callees": {"type": "array", "items": SYMBOL_SUMMARY_RESULT_SCHEMA},
+        "affected_symbol_count": _schema(
+            "integer", "Distinct callers or callees changed by the patch.", minimum=0
+        ),
+    },
+    "required": [
+        "added_callers",
+        "removed_callers",
+        "added_callees",
+        "removed_callees",
+        "affected_symbol_count",
+    ],
+    "additionalProperties": False,
+}
+NULLABLE_TRACE_PATCH_IMPACT_SUMMARY_RESULT_SCHEMA = {
+    "anyOf": [TRACE_PATCH_IMPACT_SUMMARY_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
+}
 NULLABLE_SYMBOL_READ_RESULT_SCHEMA = {"anyOf": [SYMBOL_READ_RESULT_SCHEMA, NULL_RESULT_SCHEMA]}
 NULLABLE_SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA = {
     "anyOf": [SYMBOL_NEIGHBORHOOD_CONTEXT_RESULT_SCHEMA, NULL_RESULT_SCHEMA]
@@ -734,9 +758,10 @@ TRACE_BACKED_PATCH_RESULT_SCHEMA = {
         "trace_target": _schema("string", "Trace target symbol selector."),
         "trace": NULLABLE_TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
         "trace_validation": NULLABLE_PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
+        "impact": NULLABLE_TRACE_PATCH_IMPACT_SUMMARY_RESULT_SCHEMA,
         "trace_error": NULLABLE_STRING_RESULT_SCHEMA,
     },
-    "required": ["patch", "trace_target", "trace", "trace_validation", "trace_error"],
+    "required": ["patch", "trace_target", "trace", "trace_validation", "impact", "trace_error"],
     "additionalProperties": False,
 }
 GRAPH_BACKED_PATCH_RESULT_SCHEMA = {

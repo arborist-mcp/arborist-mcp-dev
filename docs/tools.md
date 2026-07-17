@@ -172,6 +172,13 @@ symbol with the updated file held in memory, and returns the trace-backed
 validation decision in one response. If syntax validation or the patch gate
 rejects first, tracing is skipped and `trace_error` explains why.
 
+Successful live-workspace and persisted-index trace-backed patch results also
+include `impact`: direct callers/callees added or removed by the proposed
+change, plus a distinct affected-symbol count. It is a one-hop comparison, not
+a transitive impact analysis; callers should use the neighborhood variants when
+they need bounded multi-hop context. `impact` is `null` when tracing is skipped
+or when a VFS-backed operation cannot retain a pre-patch trace baseline.
+
 The graph, neighborhood, and discovery context variants add bounded impact
 analysis and aligned source snippets for reachable symbols. `*_at_position`
 variants resolve the target from `file_path + position` before running the same

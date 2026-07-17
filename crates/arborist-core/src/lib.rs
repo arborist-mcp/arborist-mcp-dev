@@ -38,9 +38,10 @@ pub use model::{
     SymbolSearchContextResult, SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, SymbolSummary,
     TraceBackedPatchResult, TraceDirection, TracePatchEvidenceReplayItem,
-    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge,
-    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationAmbiguity,
-    ValidationBinding, ValidationIssue, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    TracePatchEvidenceReplayResult, TracePatchImpactSummary, TraceSymbolGraphResult,
+    TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
+    ValidationAmbiguity, ValidationBinding, ValidationIssue, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 
 pub use api::*;

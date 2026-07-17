@@ -302,7 +302,18 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         ]["result"]
         self.assertEqual(
             trace_backed["required"],
-            ["patch", "trace_target", "trace", "trace_validation", "trace_error"],
+            [
+                "patch",
+                "trace_target",
+                "trace",
+                "trace_validation",
+                "impact",
+                "trace_error",
+            ],
+        )
+        self.assertEqual(
+            trace_backed["properties"]["impact"]["anyOf"][0]["additionalProperties"],
+            False,
         )
         graph_backed = by_name["arborist/validate_patch_with_graph_context"]["outputSchema"][
             "properties"

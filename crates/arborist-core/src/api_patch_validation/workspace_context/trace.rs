@@ -8,7 +8,10 @@ use crate::model::*;
 use crate::patching::patch_ast_node;
 use crate::{patching, symbols};
 
-use super::super::{validate_patch_commit_with_trace, validate_trace_backed_patch_result};
+use super::super::{
+    trace_patch_impact_summary, validate_patch_commit_with_trace,
+    validate_trace_backed_patch_result,
+};
 
 pub fn validate_patch_with_trace_context(
     workspace_root: &Path,
@@ -32,6 +35,7 @@ pub fn validate_patch_with_trace_context(
             trace_target,
             trace: None,
             trace_validation: None,
+            impact: None,
             trace_error: Some(
                 TraceBackedPatchResult::trace_skip_reason_for_syntax_errors().to_string(),
             ),
@@ -46,6 +50,7 @@ pub fn validate_patch_with_trace_context(
             trace_target,
             trace: None,
             trace_validation: None,
+            impact: None,
             trace_error: Some(
                 TraceBackedPatchResult::trace_skip_reason_for_patch_gate_rejection().to_string(),
             ),
@@ -54,8 +59,14 @@ pub fn validate_patch_with_trace_context(
         return Ok(result);
     }
 
-    let mut overrides = BTreeMap::new();
-    overrides.insert(patch.file.clone(), patch.updated_source.clone());
+    let baseline_overrides = BTreeMap::from([(patch.file.clone(), source.to_string())]);
+    let baseline = symbols::trace_symbol_graph_with_overrides(
+        &workspace_root,
+        &baseline_overrides,
+        &trace_target,
+        direction,
+    )?;
+    let overrides = BTreeMap::from([(patch.file.clone(), patch.updated_source.clone())]);
     let trace = symbols::trace_symbol_graph_with_overrides(
         &workspace_root,
         &overrides,
@@ -63,12 +74,14 @@ pub fn validate_patch_with_trace_context(
         direction,
     )?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
+    let impact = trace_patch_impact_summary(&baseline, &trace);
 
     let result = TraceBackedPatchResult {
         patch,
         trace_target,
         trace: Some(trace),
         trace_validation: Some(trace_validation),
+        impact: Some(impact),
         trace_error: None,
     };
     validate_trace_backed_patch_result(&result)?;
