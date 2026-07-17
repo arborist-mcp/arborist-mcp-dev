@@ -1199,6 +1199,54 @@ fn isolates_static_c_symbols_per_file() {
 }
 
 #[test]
+fn isolates_cpp_anonymous_namespace_symbols_per_file() {
+    let dir = temporary_dir();
+    let a = dir.join("a.cpp");
+    let b = dir.join("b.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &a,
+        "namespace {\nint helper(int value) { return value + 1; }\nint use_a(int value) { return helper(value); }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &b,
+        "namespace {\nint helper(int value) { return value + 2; }\nint use_b(int value) { return helper(value); }\n}\n",
+    )
+    .unwrap();
+
+    let use_a = format!("{}::use_a", a.to_string_lossy().replace('\\', "/"));
+    let use_b = format!("{}::use_b", b.to_string_lossy().replace('\\', "/"));
+    let trace_a = trace_symbol_graph(&dir, &use_a, TraceDirection::Both).unwrap();
+    let trace_b = trace_symbol_graph(&dir, &use_b, TraceDirection::Both).unwrap();
+
+    assert_eq!(trace_a.callees.len(), 1);
+    assert_eq!(trace_b.callees.len(), 1);
+    assert_eq!(
+        trace_a.callees[0].file_path,
+        a.to_string_lossy().replace('\\', "/")
+    );
+    assert_eq!(
+        trace_b.callees[0].file_path,
+        b.to_string_lossy().replace('\\', "/")
+    );
+    assert_ne!(
+        trace_a.callees[0].semantic_path,
+        trace_b.callees[0].semantic_path
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace_b =
+        trace_symbol_graph_from_index(&db_path, &use_b, TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace_b.callees.len(), 1);
+    assert_eq!(
+        persisted_trace_b.callees[0].file_path,
+        b.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn prefers_callee_from_included_header_family_when_names_collide() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

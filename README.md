@@ -53,7 +53,8 @@ definitions, named enum definitions, and named struct/union definitions are
 also indexed by qualified name, such as `api::Incrementable`, `api::Status`,
 `api::Counter`, and `api::Counter::Storage`. C definitions such as `struct
 Packet { ... };` and `union Payload { ... };` are indexed without a `typedef`
-alias.
+alias. C++ anonymous-namespace members use file-anchored identities so symbols
+with the same name in separate translation units remain isolated.
 
 ## Implemented Tool Families
 

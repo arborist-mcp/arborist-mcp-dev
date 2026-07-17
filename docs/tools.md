@@ -56,6 +56,8 @@ Named struct and union definitions are indexed with the same namespace and
 enclosing-type scope, such as `api::Counter` and `api::Counter::Storage`.
 Named C definitions such as `struct Packet { ... };` and `union Payload { ... };`
 are also available as patch and trace targets without requiring a `typedef`.
+C++ anonymous-namespace members have file-anchored identities, preventing
+same-name symbols in separate translation units from being merged in traces.
 
 ## Read And Discovery Tools
 

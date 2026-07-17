@@ -407,6 +407,9 @@ pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
     if has_type_scope_ancestor(node) {
         return false;
     }
+    if has_anonymous_namespace_ancestor(node) {
+        return true;
+    }
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -419,6 +422,19 @@ pub(crate) fn has_c_internal_linkage(node: Node<'_>, source: &str) -> bool {
         {
             return true;
         }
+    }
+    false
+}
+
+fn has_anonymous_namespace_ancestor(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "namespace_definition"
+            && candidate.child_by_field_name("name").is_none()
+        {
+            return true;
+        }
+        current = candidate.parent();
     }
     false
 }
