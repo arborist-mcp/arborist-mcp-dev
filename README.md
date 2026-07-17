@@ -56,6 +56,9 @@ matching candidates. Namespace-qualified calls such as `api::convert(value)`
 are resolved relative to enclosing namespaces before overload filtering.
 Explicit template calls such as `convert<int>(value)` are resolved through the
 same direct-call graph path.
+Namespace aliases are expanded for direct qualified calls, so an alias such as
+`namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
+alias chains are expanded transitively.
 C++ `using` aliases and declarations are indexed with namespace and class scope,
 for example `api::Size`, `api::Config::Count`, and `api::convert`. Namespace
 aliases are indexed at their definition scope, for example `api::vendor`. See the [tool

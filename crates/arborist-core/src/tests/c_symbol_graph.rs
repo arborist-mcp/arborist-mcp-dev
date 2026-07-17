@@ -920,6 +920,41 @@ fn traces_cpp_namespace_aliases() {
 }
 
 #[test]
+fn resolves_cpp_namespace_alias_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("alias_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace implementation {\nint convert(int value) { return value; }\n}\nnamespace detail = implementation;\nnamespace vendor = detail;\nint caller() { return vendor::convert(1); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::implementation::convert(int)";
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
 fn traces_cpp_concept_definitions() {
     let dir = temporary_dir();
     let source = dir.join("concepts.hpp");

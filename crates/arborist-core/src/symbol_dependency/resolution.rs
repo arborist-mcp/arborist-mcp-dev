@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use anyhow::Result;
@@ -185,7 +185,7 @@ fn resolve_reference_path(
     let qualified_cpp_reference =
         language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
     let candidates = if qualified_cpp_reference {
-        cpp_qualified_reference_paths(lookup_name, source_symbol)
+        cpp_qualified_reference_paths(lookup_name, source_symbol, raw_symbols)
             .into_iter()
             .find_map(|qualified_path| {
                 let candidates = raw_symbols
@@ -288,6 +288,33 @@ fn resolve_reference_path(
 fn cpp_qualified_reference_paths(
     reference_name: &str,
     source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<String> {
+    let mut pending = cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
+        .into_iter()
+        .collect::<VecDeque<_>>();
+    let mut paths = Vec::new();
+    let mut visited = BTreeSet::new();
+
+    while let Some(path) = pending.pop_front() {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+        paths.push(path.clone());
+        for alias_path in cpp_namespace_alias_paths(&path, raw_symbols)
+            .into_iter()
+            .rev()
+        {
+            pending.push_front(alias_path);
+        }
+    }
+
+    paths
+}
+
+fn cpp_lexical_qualified_reference_paths(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
 ) -> Vec<String> {
     let absolute = reference_name.starts_with("::");
     let reference_name = reference_name.trim_start_matches("::");
@@ -307,6 +334,35 @@ fn cpp_qualified_reference_paths(
     }
     paths.push(reference_name.to_string());
     paths
+}
+
+fn cpp_namespace_alias_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]) -> Vec<String> {
+    let components = reference_path.split("::").collect::<Vec<_>>();
+    for length in (1..components.len()).rev() {
+        let alias_path = components[..length].join("::");
+        let suffix = components[length..].join("::");
+        let Some(alias) = raw_symbols.iter().find(|symbol| {
+            symbol.node_kind == "namespace_alias_definition" && symbol.semantic_path == alias_path
+        }) else {
+            continue;
+        };
+        let Some(target) = cpp_namespace_alias_target(alias) else {
+            continue;
+        };
+
+        return cpp_lexical_qualified_reference_paths(&target, alias)
+            .into_iter()
+            .map(|target_path| format!("{target_path}::{suffix}"))
+            .collect();
+    }
+    Vec::new()
+}
+
+fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {
+    let declaration = alias.signature.as_deref()?;
+    let (_, target) = declaration.split_once('=')?;
+    let target = target.trim().trim_end_matches(';').trim();
+    (!target.is_empty()).then_some(target.to_string())
 }
 
 fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {

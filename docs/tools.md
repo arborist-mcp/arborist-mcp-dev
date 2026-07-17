@@ -54,6 +54,9 @@ as `api::convert(value)` first resolve through enclosing namespaces, then use
 the same overload filtering.
 Explicit template calls such as `convert<int>(value)` are also treated as
 direct calls to `convert` for graph resolution.
+Direct qualified calls also expand indexed namespace aliases, so
+`namespace vendor = detail;` lets `vendor::convert(value)` resolve to
+`detail::convert` before overload filtering, including chained aliases.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace
