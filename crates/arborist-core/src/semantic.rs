@@ -188,6 +188,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
                         | "class_specifier"
                         | "concept_definition"
                         | "enum_specifier"
+                        | "namespace_alias_definition"
                         | "struct_specifier"
                         | "type_definition"
                         | "union_specifier"

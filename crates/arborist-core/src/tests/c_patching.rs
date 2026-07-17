@@ -340,6 +340,31 @@ fn patches_cpp_using_alias_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_namespace_alias_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("aliases.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nnamespace detail {}\nnamespace alternate {}\nnamespace vendor = detail;\n}\n",
+    )
+    .unwrap();
+
+    let result =
+        patch_ast_node_from_path(&file, "api::vendor", "namespace vendor = alternate;", None)
+            .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::vendor");
+    assert_eq!(result.resolved_symbol_id, "api::vendor");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("namespace vendor = alternate;")
+    );
+}
+
+#[test]
 fn patches_cpp_concept_targeted_by_qualified_path() {
     let dir = temporary_dir();
     let file = dir.join("concepts.hpp");

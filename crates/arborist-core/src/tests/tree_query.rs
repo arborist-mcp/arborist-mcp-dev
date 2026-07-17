@@ -195,6 +195,27 @@ fn execute_tree_query_reports_owner_for_cpp_class_definition() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_namespace_alias() {
+    let source = "namespace api {\nnamespace vendor = third_party::vendor;\n}\n";
+    let captures = execute_tree_query(
+        Path::new("aliases.hpp"),
+        source,
+        "(namespace_identifier) @namespace",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| {
+            capture.text == "vendor"
+                && capture.owner_semantic_path.as_deref() == Some("api::vendor")
+        })
+        .expect("namespace alias name should report its semantic owner");
+
+    assert_eq!(capture.owner_symbol_id.as_deref(), Some("api::vendor"));
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class() {
     let source = "int api::Counter::increment(int value) { return value + 1; }\n";
     let captures = execute_tree_query(

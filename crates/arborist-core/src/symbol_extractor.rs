@@ -78,8 +78,14 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
     let mut symbols = Vec::new();
     for child in c_symbol_nodes(root) {
         match child.kind() {
-            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-            | "struct_specifier" | "type_definition" | "union_specifier" => {
+            "alias_declaration"
+            | "class_specifier"
+            | "concept_definition"
+            | "enum_specifier"
+            | "namespace_alias_definition"
+            | "struct_specifier"
+            | "type_definition"
+            | "union_specifier" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {

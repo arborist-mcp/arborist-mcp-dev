@@ -46,7 +46,8 @@ specializations have distinct paths such as `increment<int>`. Template
 parameter binding, class/method specializations, and overload-aware symbol
 identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
 `Class::operator bool`. C++ `using` aliases are indexed with namespace and
-class scope, for example `api::Size` and `api::Config::Count`. See the [tool
+class scope, for example `api::Size` and `api::Config::Count`. Namespace aliases
+are indexed at their definition scope, for example `api::vendor`. See the [tool
 guide](docs/tools.md#language-support) for the current scope. C++20 concept
 definitions, named enum definitions, and named struct/union definitions are
 also indexed by qualified name, such as `api::Incrementable`, `api::Status`,

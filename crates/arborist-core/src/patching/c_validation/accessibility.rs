@@ -46,8 +46,13 @@ fn collect_c_top_level_names(
                     names.insert(name);
                 }
             }
-            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-            | "struct_specifier" | "union_specifier" => {
+            "alias_declaration"
+            | "class_specifier"
+            | "concept_definition"
+            | "enum_specifier"
+            | "namespace_alias_definition"
+            | "struct_specifier"
+            | "union_specifier" => {
                 if let Some(name) = c_named_node_name(child, source)? {
                     names.insert(name);
                 }
@@ -252,8 +257,13 @@ fn collect_c_symbol_candidates_from_root(
 fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     match node.kind() {
         "type_definition" | "function_definition" => first_identifier(node, source),
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "struct_specifier" | "union_specifier" => c_named_node_name(node, source),
+        "alias_declaration"
+        | "class_specifier"
+        | "concept_definition"
+        | "enum_specifier"
+        | "namespace_alias_definition"
+        | "struct_specifier"
+        | "union_specifier" => c_named_node_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -267,10 +277,14 @@ fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>>
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             Ok(Some(node_text(node, source)?.trim().to_string()))
         }
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "struct_specifier" | "type_definition" | "union_specifier" => {
-            Ok(Some(node_text(node, source)?.trim().to_string()))
-        }
+        "alias_declaration"
+        | "class_specifier"
+        | "concept_definition"
+        | "enum_specifier"
+        | "namespace_alias_definition"
+        | "struct_specifier"
+        | "type_definition"
+        | "union_specifier" => Ok(Some(node_text(node, source)?.trim().to_string())),
         _ => Ok(None),
     }
 }
@@ -278,8 +292,14 @@ fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>>
 fn c_candidate_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "struct_specifier" | "type_definition" | "union_specifier" => 20,
+        "alias_declaration"
+        | "class_specifier"
+        | "concept_definition"
+        | "enum_specifier"
+        | "namespace_alias_definition"
+        | "struct_specifier"
+        | "type_definition"
+        | "union_specifier" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

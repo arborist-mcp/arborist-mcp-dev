@@ -193,8 +193,13 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
         .or(c_operator_cast_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
-            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-            | "struct_specifier" | "union_specifier" => c_named_node_name(node, source)?,
+            "alias_declaration"
+            | "class_specifier"
+            | "concept_definition"
+            | "enum_specifier"
+            | "namespace_alias_definition"
+            | "struct_specifier"
+            | "union_specifier" => c_named_node_name(node, source)?,
             "declaration" | "field_declaration" | "function_definition" => {
                 first_identifier(node, source)?
             }
@@ -343,6 +348,7 @@ fn is_c_symbol_node(node: Node<'_>) -> bool {
             | "class_specifier"
             | "concept_definition"
             | "enum_specifier"
+            | "namespace_alias_definition"
             | "struct_specifier"
             | "type_definition"
             | "union_specifier"
@@ -442,8 +448,14 @@ pub(crate) fn build_c_skeleton(
 
     for child in c_symbol_nodes(root) {
         match child.kind() {
-            "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-            | "struct_specifier" | "type_definition" | "union_specifier" => {
+            "alias_declaration"
+            | "class_specifier"
+            | "concept_definition"
+            | "enum_specifier"
+            | "namespace_alias_definition"
+            | "struct_specifier"
+            | "type_definition"
+            | "union_specifier" => {
                 let text = node_text(child, source)?.trim().to_string();
                 skeleton_items.push(text.clone());
                 if let Some(symbol) = c_semantic_path(path, child, source)? {
@@ -587,8 +599,13 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
 
     match node.kind() {
         "type_definition" => last_type_identifier(node, source),
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "struct_specifier" | "union_specifier" => c_named_node_name(node, source),
+        "alias_declaration"
+        | "class_specifier"
+        | "concept_definition"
+        | "enum_specifier"
+        | "namespace_alias_definition"
+        | "struct_specifier"
+        | "union_specifier" => c_named_node_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -607,8 +624,14 @@ fn c_callable_base_name(name: &str) -> String {
 fn c_symbol_node_rank(node_kind: &str) -> usize {
     match node_kind {
         "function_definition" => 30,
-        "alias_declaration" | "class_specifier" | "concept_definition" | "enum_specifier"
-        | "struct_specifier" | "type_definition" | "union_specifier" => 20,
+        "alias_declaration"
+        | "class_specifier"
+        | "concept_definition"
+        | "enum_specifier"
+        | "namespace_alias_definition"
+        | "struct_specifier"
+        | "type_definition"
+        | "union_specifier" => 20,
         "declaration" | "field_declaration" => 10,
         _ => 0,
     }

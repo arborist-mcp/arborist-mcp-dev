@@ -46,6 +46,8 @@ Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; same-name operator overloads are not distinguished.
 C++ `using` aliases are indexed with their enclosing namespace and class scope,
 for example `api::Size` and `api::Config::Count`.
+Namespace aliases are indexed at their definition scope, for example
+`api::vendor` for `namespace vendor = third_party::vendor;` inside `namespace api`.
 C++20 concept definitions are indexed by qualified name, such as
 `api::Incrementable`.
 Named enum definitions are indexed with namespace and enclosing-class scope,
