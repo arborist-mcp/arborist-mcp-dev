@@ -418,6 +418,8 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
     for child in template_node.named_children(&mut cursor) {
         if child.kind() == "template_declaration" {
             collect_cpp_template_symbols(child, symbols);
+        } else if child.kind() == "friend_declaration" {
+            collect_cpp_friend_function_symbols(child, symbols);
         } else if is_cpp_type_scope(child) {
             collect_cpp_type_scope_symbols(child, symbols);
         } else if child.kind() == "declaration" {

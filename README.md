@@ -58,8 +58,8 @@ with the same name in separate translation units remain isolated. `extern "C"`
 function declarations and definitions are indexed through their linkage wrapper.
 Declarations in `#if`/`#else` branches are also indexed without evaluating
 preprocessor conditions.
-Inline friend functions are indexed in their enclosing namespace, rather than
-as class methods.
+Inline friend functions, including function templates, are indexed in their
+enclosing namespace rather than as class methods.
 Explicit class and function template instantiations are indexed with their
 specialized paths, such as `api::Vector<int>` and `api::increment<int>`.
 
