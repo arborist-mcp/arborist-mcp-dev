@@ -50,6 +50,10 @@ paths, while exact `symbol_id` values include normalized parameter types and
 member qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
 `api::Counter::value() const`. Basic operator methods use paths such as
 `Class::operator+` and `Class::operator bool` with the same exact-ID convention.
+C++ graph resolution filters direct, unqualified function calls by argument
+count before choosing an overload; defaulted and variadic parameters are
+considered when matching candidates. Qualified calls retain the existing
+name-and-scope resolution behavior.
 C++ `using` aliases and declarations are indexed with namespace and class scope,
 for example `api::Size`, `api::Config::Count`, and `api::convert`. Namespace
 aliases are indexed at their definition scope, for example `api::vendor`. See the [tool
@@ -270,8 +274,8 @@ for response shapes, error behavior, and examples.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, bounded neighborhood context, and optional cooperative budgets for
   direct trace expansion.
-- SQLite-backed persisted symbol indexes with transactional v1/v2-to-v3 schema
-  migration, health inspection, response schema versioning,
+- SQLite-backed persisted symbol indexes with transactional v1-v3-to-v4 schema
+  migration plus source reindexing, health inspection, response schema versioning,
   stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
   optional per-file byte limits and cooperative time budgets, partial refresh,
   and fail-closed handling for damaged or unrelated databases.

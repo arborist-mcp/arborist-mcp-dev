@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use tree_sitter::Node;
@@ -80,6 +80,39 @@ pub(crate) fn collect_c_references(
                 }
             });
         }
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
+pub(crate) fn collect_c_call_arities(
+    node: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "call_expression" {
+            return;
+        }
+        let Some(function) = candidate.child_by_field_name("function") else {
+            return;
+        };
+        if function.kind() != "identifier" {
+            return;
+        }
+        let Some(arguments) = candidate.child_by_field_name("arguments") else {
+            return;
+        };
+        let Ok(name) = node_text(function, source) else {
+            return;
+        };
+
+        let mut cursor = arguments.walk();
+        let arity = arguments.named_children(&mut cursor).count();
+        call_arities
+            .entry(name.trim().to_string())
+            .or_default()
+            .insert(arity);
     };
     visit_tree(node, &mut callback);
     Ok(())

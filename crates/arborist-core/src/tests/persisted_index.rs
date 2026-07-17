@@ -6,7 +6,8 @@ use super::support::{
     create_incomplete_symbol_index_tables,
     create_legacy_symbol_index_schema_without_reference_names, create_minimal_symbol_index_schema,
     create_symbol_index_schema_with_text_byte_columns, downgrade_symbol_index_schema_to_v2,
-    symbol_table_column_type, symbol_table_columns, temporary_dir,
+    downgrade_symbol_index_schema_to_v3, symbol_table_column_type, symbol_table_columns,
+    temporary_dir,
 };
 use crate::language::normalize_path;
 use crate::{
@@ -598,7 +599,7 @@ fn rebuilt_symbol_index_writes_schema_version_metadata() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(schema_version, "3");
+    assert_eq!(schema_version, "4");
 }
 
 #[test]
@@ -614,8 +615,8 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
     assert_eq!(health.response_schema_version, "4");
     assert!(health.exists);
     assert!(health.ok);
-    assert_eq!(health.schema_version.as_deref(), Some("3"));
-    assert_eq!(health.expected_schema_version, "3");
+    assert_eq!(health.schema_version.as_deref(), Some("4"));
+    assert_eq!(health.expected_schema_version, "4");
     assert!(!health.migration.required);
     assert_eq!(health.migration.action, "none");
     assert_eq!(
@@ -971,7 +972,7 @@ fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
     );
     connection
         .execute(
-            "INSERT INTO metadata(key, value) VALUES('schema_version', '3')",
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '4')",
             [],
         )
         .unwrap();
@@ -1004,6 +1005,9 @@ fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
 
     let connection = Connection::open(&db_path).unwrap();
     assert!(!symbol_table_columns(&connection).contains(&"reference_names_json".to_string()));
+    assert!(
+        !symbol_table_columns(&connection).contains(&"reference_call_arities_json".to_string())
+    );
 }
 
 #[test]
@@ -1028,7 +1032,7 @@ fn trace_rejects_unsupported_schema_version() {
             .to_string()
             .contains("unsupported symbol index schema_version")
     );
-    assert!(error.to_string().contains("expected `3`"));
+    assert!(error.to_string().contains("expected `4`"));
 }
 
 #[test]
@@ -1058,7 +1062,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("3"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("4"));
     assert_eq!(migrated.migration.action, "none");
 
     let connection = Connection::open(&db_path).unwrap();
@@ -1081,7 +1085,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
 }
 
 #[test]
-fn migrates_v2_symbol_index_schema_to_v3_without_losing_symbols() {
+fn migrates_v2_symbol_index_schema_to_v4_without_losing_symbols() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cpp");
     let db_path = dir.join("symbols.db");
@@ -1103,7 +1107,7 @@ fn migrates_v2_symbol_index_schema_to_v3_without_losing_symbols() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("3"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("4"));
     assert_eq!(migrated.indexed_symbols, Some(1));
     assert_eq!(
         trace_symbol_graph_from_index(&db_path, "api::convert(int)", TraceDirection::Both)
@@ -1159,7 +1163,7 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
             "
             CREATE TRIGGER reject_schema_version_upgrade
             BEFORE UPDATE OF value ON metadata
-            WHEN OLD.key = 'schema_version' AND NEW.value = '3'
+            WHEN OLD.key = 'schema_version' AND NEW.value = '4'
             BEGIN
                 SELECT RAISE(ABORT, 'forced schema_version update failure');
             END;
@@ -1193,6 +1197,54 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
         )
         .unwrap();
     assert!(!index_exists);
+}
+
+#[test]
+fn migrates_v3_symbol_index_schema_to_v4_and_rebuilds_call_arity_metadata() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper,
+        "namespace api {\nint convert(int value) { return value; }\nint convert(int left, int right) { return left + right; }\nint caller() { return convert(1); }\n}\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v3(&connection);
+    drop(connection);
+
+    let pending = inspect_symbol_index(&db_path).unwrap();
+    assert!(!pending.ok);
+    assert_eq!(pending.schema_version.as_deref(), Some("3"));
+    assert_eq!(pending.migration.action, "migrate");
+
+    let migrated = migrate_symbol_index(&db_path).unwrap();
+    assert!(migrated.ok, "{:#?}", migrated.issues);
+    assert_eq!(migrated.schema_version.as_deref(), Some("4"));
+
+    let connection = Connection::open(&db_path).unwrap();
+    let call_arities: String = connection
+        .query_row(
+            "SELECT reference_call_arities_json FROM symbols WHERE semantic_path = 'api::caller'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(call_arities, "{\"convert\":[1]}");
+    drop(connection);
+
+    let trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::convert(int)"]
+    );
 }
 
 #[test]

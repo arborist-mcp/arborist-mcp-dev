@@ -44,8 +44,8 @@ pub(crate) fn persist_symbol_index(
             "INSERT INTO symbols (
                 symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                references_json, reference_names_json, reference_call_arities_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
 
         for symbol in symbols {
@@ -68,6 +68,7 @@ pub(crate) fn persist_symbol_index(
                 serde_json::to_string(&symbol.dependencies)?,
                 serde_json::to_string(&symbol.references)?,
                 serde_json::to_string(&reference_names(raw_symbol))?,
+                serde_json::to_string(&raw_symbol.call_arities_by_name)?,
             ])?;
         }
     }
@@ -109,8 +110,8 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
             "INSERT INTO symbols (
                 symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json, reference_names_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                references_json, reference_names_json, reference_call_arities_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
 
         for symbol in &changed_symbols {
@@ -133,6 +134,7 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
                 serde_json::to_string(&symbol.dependencies)?,
                 serde_json::to_string(&symbol.references)?,
                 serde_json::to_string(&reference_names(raw_symbol))?,
+                serde_json::to_string(&raw_symbol.call_arities_by_name)?,
             ])?;
         }
     }
@@ -199,16 +201,19 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
 ) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
     let mut statement = connection.prepare(
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-                signature, parameters_json, return_type, docstring, reference_names_json
+                signature, parameters_json, return_type, docstring, reference_names_json,
+                reference_call_arities_json
          FROM symbols
          ORDER BY file_path, semantic_path",
     )?;
     let rows = statement.query_map([], |row| {
         let parameters_json: String = row.get(8)?;
         let reference_names_json: String = row.get(11)?;
+        let reference_call_arities_json: String = row.get(12)?;
         let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
         let reference_names =
             string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
+        let call_arities_by_name = call_arities_from_json_column(&reference_call_arities_json, 12)?;
         let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
         let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
         Ok(IndexedSymbol {
@@ -224,6 +229,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
             return_type: row.get(9)?,
             docstring: row.get(10)?,
             references_by_name: reference_names.into_iter().collect(),
+            call_arities_by_name,
         })
     })?;
 
@@ -350,6 +356,27 @@ pub(crate) fn string_list_from_json_column(
         ));
     }
     Ok(values)
+}
+
+fn call_arities_from_json_column(
+    json: &str,
+    column: usize,
+) -> rusqlite::Result<BTreeMap<String, BTreeSet<usize>>> {
+    let call_arities: BTreeMap<String, BTreeSet<usize>> = json_from_column(json, column)?;
+    if call_arities
+        .iter()
+        .any(|(name, arities)| name.trim().is_empty() || arities.is_empty())
+    {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "empty reference_call_arities_json entry",
+            )),
+        ));
+    }
+    Ok(call_arities)
 }
 
 pub(crate) fn byte_range_from_row(

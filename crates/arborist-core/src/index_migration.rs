@@ -4,10 +4,11 @@ use anyhow::{Result, anyhow, bail};
 use rusqlite::Connection;
 
 use crate::index_schema::{
-    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
-    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata, load_optional_metadata_value,
-    load_symbol_index_workspace_root, migrate_symbol_index_schema_to_current,
-    require_legacy_symbol_index_schema, require_symbol_index_tables,
+    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root,
+    migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema,
+    require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::model::SymbolIndexMigrationPlan;
 
@@ -57,7 +58,9 @@ pub(crate) fn unsupported_schema_version(stored_version: &str) -> SymbolIndexMig
 pub(crate) fn is_migratable_symbol_index_schema_version(stored_version: &str) -> bool {
     matches!(
         stored_version,
-        LEGACY_SYMBOL_INDEX_SCHEMA_VERSION | PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION
+        OLDEST_SYMBOL_INDEX_SCHEMA_VERSION
+            | LEGACY_SYMBOL_INDEX_SCHEMA_VERSION
+            | PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION
     )
 }
 
@@ -73,12 +76,16 @@ pub(crate) fn migrate_symbol_index(connection: &mut Connection, db_path: &Path) 
 
     if !is_migratable_symbol_index_schema_version(&stored_version) {
         bail!(
-            "symbol index schema_version `{stored_version}` in {} cannot be migrated by this Arborist build; expected `{LEGACY_SYMBOL_INDEX_SCHEMA_VERSION}` or `{PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION}`",
+            "symbol index schema_version `{stored_version}` in {} cannot be migrated by this Arborist build; expected `{OLDEST_SYMBOL_INDEX_SCHEMA_VERSION}`, `{LEGACY_SYMBOL_INDEX_SCHEMA_VERSION}`, or `{PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION}`",
             db_path.display()
         );
     }
 
-    require_legacy_symbol_index_schema(connection, db_path)?;
+    if stored_version == PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
+        require_previous_symbol_index_schema(connection, db_path)?;
+    } else {
+        require_legacy_symbol_index_schema(connection, db_path)?;
+    }
     load_symbol_index_workspace_root(connection, db_path)?;
     load_indexed_files_metadata(connection)?;
     migrate_symbol_index_schema_to_current(connection)

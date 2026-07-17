@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -6,7 +6,7 @@ use tree_sitter::Node;
 
 use crate::language::{ParsedDocument, node_text, normalize_path, visit_tree};
 use crate::model::LanguageId;
-use crate::patching::{collect_c_references, collect_python_references};
+use crate::patching::{collect_c_call_arities, collect_c_references, collect_python_references};
 use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
     c_symbol_nodes, python_display_byte_range, python_display_header, python_docstring,
@@ -60,6 +60,7 @@ fn index_python_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec
             return_type,
             docstring,
             references_by_name: references,
+            call_arities_by_name: BTreeMap::new(),
         });
     };
 
@@ -104,6 +105,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                         return_type: None,
                         docstring: None,
                         references_by_name: BTreeSet::new(),
+                        call_arities_by_name: BTreeMap::new(),
                     });
                 }
             }
@@ -123,6 +125,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                         return_type: c_return_type(child, source)?,
                         docstring: None,
                         references_by_name: BTreeSet::new(),
+                        call_arities_by_name: BTreeMap::new(),
                     });
                 }
             }
@@ -130,6 +133,8 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let mut references = BTreeSet::new();
                     collect_c_references(child, source, &mut references)?;
+                    let mut call_arities = BTreeMap::new();
+                    collect_c_call_arities(child, source, &mut call_arities)?;
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
                         symbol_id: String::new(),
@@ -144,6 +149,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                         return_type: c_return_type(child, source)?,
                         docstring: None,
                         references_by_name: references,
+                        call_arities_by_name: call_arities,
                     });
                 }
             }

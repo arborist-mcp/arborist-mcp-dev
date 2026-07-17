@@ -7,10 +7,11 @@ use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata, load_optional_metadata_value,
-    load_symbol_index_workspace_root, open_symbol_index_read_only,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root, open_symbol_index_read_only,
     require_current_symbol_index_schema, require_legacy_symbol_index_schema,
-    require_symbol_index_tables, validate_symbol_index_schema_version,
+    require_previous_symbol_index_schema, require_symbol_index_tables,
+    validate_symbol_index_schema_version,
 };
 use crate::index_store::{
     count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
@@ -25,6 +26,7 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
+use crate::symbols::rebuild_symbol_index;
 use crate::workspace_scan::{
     DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
     collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
@@ -120,7 +122,13 @@ pub fn inspect_symbol_index_with_timeout(
         health.migration = index_migration::unsupported_schema_version(
             health.schema_version.as_deref().unwrap_or_default(),
         );
-        if let Err(error) = require_legacy_symbol_index_schema(&connection, &db_path) {
+        let schema_validation =
+            if health.schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
+                require_previous_symbol_index_schema(&connection, &db_path)
+            } else {
+                require_legacy_symbol_index_schema(&connection, &db_path)
+            };
+        if let Err(error) = schema_validation {
             health.issues.push(error.to_string());
             health.migration = index_migration::incomplete_or_foreign_database();
             health.validate_public_output()?;
@@ -250,20 +258,32 @@ pub fn migrate_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     }
 
     let mut connection = Connection::open(&db_path)?;
-    if load_optional_metadata_value(&connection, "schema_version")?
+    let workspace_root = if load_optional_metadata_value(&connection, "schema_version")?
         .as_deref()
         .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
     {
         require_symbol_index_tables(&connection, &db_path)?;
-        require_legacy_symbol_index_schema(&connection, &db_path)?;
+        if load_optional_metadata_value(&connection, "schema_version")?.as_deref()
+            == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION)
+        {
+            require_previous_symbol_index_schema(&connection, &db_path)?;
+        } else {
+            require_legacy_symbol_index_schema(&connection, &db_path)?;
+        }
         let workspace_root = load_symbol_index_workspace_root(&connection, &db_path)?;
         let file_states = load_file_states(&connection)?;
         let (symbols, indexed_files) = load_resolved_symbols(&connection)?;
         validate_indexed_file_count(indexed_files, file_states.len())?;
         validate_persisted_index_paths(&workspace_root, &file_states, &symbols)?;
-    }
+        Some(workspace_root)
+    } else {
+        None
+    };
     index_migration::migrate_symbol_index(&mut connection, &db_path)?;
     drop(connection);
+    if let Some(workspace_root) = workspace_root {
+        rebuild_symbol_index(&workspace_root, &db_path)?;
+    }
     inspect_symbol_index(&db_path)
 }
 

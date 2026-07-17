@@ -47,6 +47,10 @@ their stable `symbol_id` values use normalized parameter types and member
 qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
 `api::Counter::value() const`. Use the precise ID to read, trace, patch, or
 expand one overload; the semantic path remains a compatibility selector.
+For direct, unqualified C++ function calls, graph resolution filters callable
+overloads by argument count before applying its existing scope ranking. Defaulted
+and variadic parameters are included in that check. Qualified calls retain the
+existing name-and-scope behavior.
 Basic operator and conversion methods use paths such as `Class::operator+` and
 `Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace
@@ -240,7 +244,7 @@ JSON manifest of multiple registered workspace/index pairs. It uses
 `inspect_symbol_index` between refreshes, so healthy indexes do not incur
 SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
-index with freshness issues, and migrates a supported v1 index in place;
+index with freshness issues, and migrates supported v1-v3 indexes in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
 `--dry-run` follows the same inspection and fail-closed decisions but reports
 `would_refresh` or `would_migrate` without changing an index.
@@ -275,10 +279,12 @@ migration recommendation is intentionally advisory: Arborist does not rewrite
 unrecognized SQLite databases during inspection.
 
 `migrate_symbol_index` applies the migration only when inspection recommends
-`action: "migrate"`. The current v1/v2-to-v3 migration recreates the symbols
+`action: "migrate"`. The current v1-v3-to-v4 migration recreates the symbols
 table with a `(symbol_id, file_path, start_byte, end_byte)` primary key, creates
-the `symbols(file_path)` index used by partial file refreshes, and updates
-`schema_version` in one SQLite transaction. It rejects missing databases,
+the `symbols(file_path)` index used by partial file refreshes, then reparses the
+indexed workspace so persisted direct-call arity metadata and graph edges match
+the current sources. It updates `schema_version` in one SQLite transaction. It
+rejects missing databases,
 foreign or incomplete schemas, missing required metadata, current indexes, and
 unknown versions without rewriting them. Its result is the same complete health
 report returned by `inspect_symbol_index` after the attempted migration.

@@ -77,8 +77,9 @@ completed item can land in its own commit unless two changes are inseparable.
   workspace and supported source types before reading or refreshing them.
 - [x] Make current-schema validation cover every persisted column and primary
   key layout, and keep query/inspection connections read-only.
-- [x] Add durable SQLite v1/v2-to-v3 migration paths with transactional schema
-  updates and a fail-closed public migration operation.
+- [x] Add durable SQLite v1-v3-to-v4 migration paths with transactional schema
+  updates, persisted direct-call arity metadata, and a fail-closed public
+  migration operation.
 - [x] Centralize symbol-index migration recommendations behind a focused Rust
   module so future migration actions are not scattered through inspection code.
 - [x] Type symbol-index migration recommendation actions internally while
@@ -129,6 +130,8 @@ completed item can land in its own commit unless two changes are inseparable.
   explicit function/class/method specializations to overload-aware callable
   identities across skeletons, indexes, traces, patches, and raw-query owner
   metadata.
+- [x] Resolve direct, unqualified C++ calls against overload candidates by
+  argument count in live and persisted symbol graphs.
 - [x] Verify explicit C++ class/method specializations across skeletons, live
   and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch

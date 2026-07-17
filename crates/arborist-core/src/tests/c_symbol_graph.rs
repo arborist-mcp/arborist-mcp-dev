@@ -1505,6 +1505,96 @@ fn distinguishes_cpp_function_overloads_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_cpp_direct_calls_to_overloads_by_argument_count_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("overloads.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nint convert(int value) { return value; }\nint convert(int left, int right) { return left + right; }\nint convert(int first, int second, int third) { return first + second + third; }\nint one() { return convert(1); }\nint two() { return convert(1, 2); }\nint three() { return convert(1, 2, 3); }\n}\n",
+    )
+    .unwrap();
+
+    for (caller, callee) in [
+        ("api::one", "api::convert(int)"),
+        ("api::two", "api::convert(int,int)"),
+        ("api::three", "api::convert(int,int,int)"),
+    ] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![callee]
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, callee) in [
+        ("api::one", "api::convert(int)"),
+        ("api::two", "api::convert(int,int)"),
+        ("api::three", "api::convert(int,int,int)"),
+    ] {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![callee]
+        );
+    }
+}
+
+#[test]
+fn resolves_cpp_defaulted_and_variadic_direct_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("call_shapes.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nint defaulted(int value, int radix = 10) { return value + radix; }\nint select(int first, int second, int third) { return first + second + third; }\nint select(int first, ...) { return first; }\nint use_default() { return defaulted(1); }\nint use_variadic() { return select(1, 2, 3, 4); }\n}\n",
+    )
+    .unwrap();
+
+    for (caller, expected_path, expects_variadic) in [
+        ("api::use_default", "api::defaulted", false),
+        ("api::use_variadic", "api::select", true),
+    ] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(trace.callees.len(), 1, "{caller}: {:#?}", trace.callees);
+        assert_eq!(trace.callees[0].semantic_path, expected_path);
+        assert_eq!(
+            trace.callees[0]
+                .parameters
+                .last()
+                .is_some_and(|parameter| parameter.trim() == "..."),
+            expects_variadic
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_path, expects_variadic) in [
+        ("api::use_default", "api::defaulted", false),
+        ("api::use_variadic", "api::select", true),
+    ] {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(trace.callees.len(), 1, "{caller}: {:#?}", trace.callees);
+        assert_eq!(trace.callees[0].semantic_path, expected_path);
+        assert_eq!(
+            trace.callees[0]
+                .parameters
+                .last()
+                .is_some_and(|parameter| parameter.trim() == "..."),
+            expects_variadic
+        );
+    }
+}
+
+#[test]
 fn indexes_cpp_template_implementation_file_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("algorithms.tpp");

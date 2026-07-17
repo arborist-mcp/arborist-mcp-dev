@@ -234,6 +234,13 @@ pub(crate) fn c_parameters(node: Node<'_>, source: &str) -> Result<Vec<String>> 
     for child in parameters.named_children(&mut cursor) {
         values.push(node_text(child, source)?.trim().to_string());
     }
+    let mut cursor = parameters.walk();
+    if parameters
+        .children(&mut cursor)
+        .any(|child| child.kind() == "...")
+    {
+        values.push("...".to_string());
+    }
     Ok(values)
 }
 

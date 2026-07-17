@@ -8,9 +8,10 @@ use crate::language::{detect_language, normalize_absolute_path, normalize_path};
 use crate::model::LanguageId;
 use crate::semantic::cpp_callable_symbol_id;
 
-pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
-pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
-pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
+pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
+pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
+pub(crate) const OLDEST_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
     Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
@@ -187,7 +188,7 @@ pub(crate) fn require_legacy_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
-    require_symbol_index_schema_structure(connection, db_path)?;
+    require_symbol_index_schema_structure_v3(connection, db_path)?;
     require_table_primary_key_layout(
         connection,
         db_path,
@@ -196,7 +197,42 @@ pub(crate) fn require_legacy_symbol_index_schema(
     )
 }
 
+pub(crate) fn require_previous_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure_v3(connection, db_path)?;
+    require_table_primary_key_layout(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            ("symbol_id", 1),
+            ("file_path", 2),
+            ("start_byte", 3),
+            ("end_byte", 4),
+        ],
+    )?;
+    require_symbols_file_path_index(connection, db_path)
+}
+
 fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path) -> Result<()> {
+    require_symbol_index_schema_structure_v3(connection, db_path)?;
+    require_table_columns(
+        connection,
+        db_path,
+        "symbols",
+        &["reference_call_arities_json"],
+    )?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "symbols",
+        &[("reference_call_arities_json", "TEXT")],
+    )
+}
+
+fn require_symbol_index_schema_structure_v3(connection: &Connection, db_path: &Path) -> Result<()> {
     require_table_columns(
         connection,
         db_path,
@@ -267,6 +303,7 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
+            reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
         );
         CREATE TABLE IF NOT EXISTS file_state (
@@ -307,6 +344,7 @@ pub(crate) fn migrate_symbol_index_schema_to_current(connection: &mut Connection
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
+            reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
         );
         INSERT INTO symbols (
@@ -323,6 +361,7 @@ pub(crate) fn migrate_symbol_index_schema_to_current(connection: &mut Connection
         FROM symbols_legacy;
         DROP TABLE symbols_legacy;
         CREATE INDEX idx_symbols_file_path ON symbols(file_path);
+        DELETE FROM file_state;
         ",
     )?;
     migrate_cpp_callable_symbol_ids(&transaction)?;

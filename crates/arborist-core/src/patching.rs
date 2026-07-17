@@ -7,7 +7,9 @@ mod python_patterns;
 mod python_references;
 mod python_visibility;
 
-pub(crate) use c_validation::{collect_c_reference_validation, collect_c_references};
+pub(crate) use c_validation::{
+    collect_c_call_arities, collect_c_reference_validation, collect_c_references,
+};
 pub(crate) use commit_gate::evaluate_patch_commit_gate;
 pub(crate) use python_imports::{
     resolve_local_python_imported_symbol, resolve_local_python_module_path,

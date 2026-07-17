@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedSymbol {
@@ -14,6 +14,7 @@ pub(crate) struct IndexedSymbol {
     pub(crate) return_type: Option<String>,
     pub(crate) docstring: Option<String>,
     pub(crate) references_by_name: BTreeSet<String>,
+    pub(crate) call_arities_by_name: BTreeMap<String, BTreeSet<usize>>,
 }
 
 #[derive(Debug, Clone)]

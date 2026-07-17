@@ -155,6 +155,7 @@ fn invalid_indexed_symbol(file_path: &str) -> IndexedSymbol {
         return_type: None,
         docstring: None,
         references_by_name: BTreeSet::new(),
+        call_arities_by_name: BTreeMap::new(),
     }
 }
 

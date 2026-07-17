@@ -189,7 +189,7 @@ inspected in deterministic workspace order, and any unsupported or foreign
 index fails closed without rewriting it.
 
 The command emits one JSON object per initial, migrated, or refreshed state. It
-migrates the supported v1 schema transactionally, then exits fail-closed for
+migrates supported v1-v3 schemas transactionally, then exits fail-closed for
 foreign, incomplete, or unknown schemas rather than attempting to rewrite
 them. `--max-files`, `--max-file-bytes`, and `--timeout-ms` use the same limits
 as the gateway index tools; `--timeout-ms` bounds health freshness reads,

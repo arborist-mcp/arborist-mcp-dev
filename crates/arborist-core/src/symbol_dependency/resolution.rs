@@ -107,8 +107,24 @@ pub(super) fn resolve_dependencies_for_symbol(
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
     for reference_name in &symbol.references_by_name {
-        if let Some(target_symbol_id) =
-            resolve_reference_path(reference_name, symbol, raw_symbols, name_index)
+        let call_arities = symbol.call_arities_by_name.get(reference_name);
+        if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
+            && let Some(call_arities) = call_arities
+        {
+            for call_arity in call_arities {
+                if let Some(target_symbol_id) = resolve_reference_path(
+                    reference_name,
+                    Some(*call_arity),
+                    symbol,
+                    raw_symbols,
+                    name_index,
+                ) && target_symbol_id != symbol.symbol_id
+                {
+                    dependencies.insert(target_symbol_id);
+                }
+            }
+        } else if let Some(target_symbol_id) =
+            resolve_reference_path(reference_name, None, symbol, raw_symbols, name_index)
             && target_symbol_id != symbol.symbol_id
         {
             dependencies.insert(target_symbol_id);
@@ -155,6 +171,7 @@ fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<St
 
 fn resolve_reference_path(
     reference_name: &str,
+    call_arity: Option<usize>,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
@@ -210,9 +227,26 @@ fn resolve_reference_path(
     } else {
         candidate_slice.to_vec()
     };
+    let arity_candidates = if let Some(call_arity) = call_arity {
+        let callable_candidates = hinted_candidates
+            .iter()
+            .copied()
+            .filter(|index| is_cpp_callable(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if callable_candidates.is_empty() {
+            hinted_candidates
+        } else {
+            callable_candidates
+                .into_iter()
+                .filter(|index| cpp_callable_accepts_arity(&raw_symbols[*index], call_arity))
+                .collect()
+        }
+    } else {
+        hinted_candidates
+    };
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
-    hinted_candidates
+    arity_candidates
         .iter()
         .copied()
         .max_by_key(|index| {
@@ -224,6 +258,56 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {
+    detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
+        && matches!(
+            symbol.node_kind.as_str(),
+            "function_definition" | "declaration" | "field_declaration"
+        )
+}
+
+fn cpp_callable_accepts_arity(symbol: &IndexedSymbol, call_arity: usize) -> bool {
+    let parameters = if symbol.parameters.len() == 1 && symbol.parameters[0].trim() == "void" {
+        &[]
+    } else {
+        symbol.parameters.as_slice()
+    };
+    let variadic = parameters
+        .last()
+        .is_some_and(|parameter| parameter.trim() == "...");
+    let fixed_parameters = if variadic {
+        &parameters[..parameters.len().saturating_sub(1)]
+    } else {
+        parameters
+    };
+    let required_parameters = fixed_parameters
+        .iter()
+        .filter(|parameter| !cpp_parameter_has_default(parameter))
+        .count();
+
+    call_arity >= required_parameters && (variadic || call_arity <= fixed_parameters.len())
+}
+
+fn cpp_parameter_has_default(parameter: &str) -> bool {
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+
+    for character in parameter.chars() {
+        match character {
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.saturating_sub(1),
+            '[' => brackets += 1,
+            ']' => brackets = brackets.saturating_sub(1),
+            '{' => braces += 1,
+            '}' => braces = braces.saturating_sub(1),
+            '=' if parentheses == 0 && brackets == 0 && braces == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn python_reference_lookup(reference_name: &str) -> (&str, Option<&str>) {
@@ -292,4 +376,57 @@ fn source_symbol_scope_matches(source_symbol: &IndexedSymbol, candidate: &Indexe
     detect_language(Path::new(&source_symbol.file_path)).ok() == Some(LanguageId::Cpp)
         && source_symbol.scope_path.is_some()
         && source_symbol.scope_path == candidate.scope_path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cpp_callable(parameters: &[&str]) -> IndexedSymbol {
+        IndexedSymbol {
+            symbol_id: "api::convert".to_string(),
+            base_name: "convert".to_string(),
+            semantic_path: "api::convert".to_string(),
+            scope_path: Some("api".to_string()),
+            file_path: "api.cpp".to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (0, 0),
+            signature: None,
+            parameters: parameters
+                .iter()
+                .map(|parameter| (*parameter).to_string())
+                .collect(),
+            return_type: None,
+            docstring: None,
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn cpp_callable_arity_allows_defaulted_parameters() {
+        let callable = cpp_callable(&["int value", "int radix = 10"]);
+
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(cpp_callable_accepts_arity(&callable, 2));
+        assert!(!cpp_callable_accepts_arity(&callable, 0));
+        assert!(!cpp_callable_accepts_arity(&callable, 3));
+    }
+
+    #[test]
+    fn cpp_callable_arity_allows_variadic_arguments() {
+        let callable = cpp_callable(&["int first", "..."]);
+
+        assert!(!cpp_callable_accepts_arity(&callable, 0));
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(cpp_callable_accepts_arity(&callable, 4));
+    }
+
+    #[test]
+    fn cpp_callable_arity_does_not_treat_parameter_packs_as_variadic_calls() {
+        let callable = cpp_callable(&["Args... values"]);
+
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(!cpp_callable_accepts_arity(&callable, 2));
+    }
 }
