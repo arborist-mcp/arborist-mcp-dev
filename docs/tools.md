@@ -40,16 +40,19 @@ Named function and class-method templates are indexed, traced, and exposed to
 raw query owner metadata with their `template <...>` declaration text. Template
 function and class/method specializations have distinct paths such as
 `increment<int>` and `Box<int>::value`. Non-type template parameters are local
-bindings during patch validation and reference tracing. Overload-aware symbol
-identities are not yet modeled and should not be treated as full C++ semantic
-support.
+bindings during patch validation and reference tracing. C++ callable
+`semantic_path` values remain overload-set paths such as `api::convert`, while
+their stable `symbol_id` values use normalized parameter types and member
+qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
+`api::Counter::value() const`. Use the precise ID to read, trace, patch, or
+expand one overload; the semantic path remains a compatibility selector.
 Basic operator and conversion methods use paths such as `Class::operator+` and
-`Class::operator bool`; same-name operator overloads are not distinguished.
+`Class::operator bool`; their callable IDs use the same signature convention.
 C++ `using` aliases and declarations are indexed with their enclosing namespace
 and class scope, for example `api::Size`, `api::Config::Count`, and
 `api::convert` for `using vendor::convert;` inside `namespace api`.
-When multiple declarations introduce the same local name, Arborist represents
-the overload set as one symbol using the first declaration in source order.
+Multiple declarations of one overload retain that overload's shared
+`symbol_id`; different parameter types remain separate symbols.
 Namespace aliases are indexed at their definition scope, for example
 `api::vendor` for `namespace vendor = third_party::vendor;` inside `namespace api`.
 C++20 concept definitions are indexed by qualified name, such as
@@ -151,6 +154,12 @@ For C, patch selectors may be a plain name such as `helper` or a precise
 a forward declaration and a definition for the same symbol, Arborist prefers the
 definition by default.
 
+For C++, selectors may use a qualified overload-set path such as
+`api::convert` for compatibility, or an exact callable `symbol_id` such as
+`api::convert(double)` to target one overload deterministically. Patch results
+keep `resolved_path` as the semantic path and return the exact identity in
+`resolved_symbol_id`.
+
 Patch validation reports:
 
 - `resolved_identifiers`
@@ -165,8 +174,8 @@ through an explicit bypass. Bypass reasons must be nonblank.
 ## Trace And Context Tools
 
 `trace_symbol_graph` accepts either a plain semantic path such as `orchestrate`
-or a precise `symbol_id` when duplicate C globals need exact targeting. It
-returns the traced symbol, callers, callees, and `evidence_keys`.
+or a precise `symbol_id` when duplicate C globals or C++ overloads need exact
+targeting. It returns the traced symbol, callers, callees, and `evidence_keys`.
 
 `trace_symbol_neighborhood` expands a trace into a bounded graph. Callers can
 control `direction`, `max_depth`, and `max_nodes`; `truncated` indicates the
@@ -261,9 +270,10 @@ migration recommendation is intentionally advisory: Arborist does not rewrite
 unrecognized SQLite databases during inspection.
 
 `migrate_symbol_index` applies the migration only when inspection recommends
-`action: "migrate"`. The current v1-to-v2 migration creates the
-`symbols(file_path)` index used by partial file refreshes and updates
-`schema_version` in the same SQLite transaction. It rejects missing databases,
+`action: "migrate"`. The current v1/v2-to-v3 migration recreates the symbols
+table with a `(symbol_id, file_path, start_byte, end_byte)` primary key, creates
+the `symbols(file_path)` index used by partial file refreshes, and updates
+`schema_version` in one SQLite transaction. It rejects missing databases,
 foreign or incomplete schemas, missing required metadata, current indexes, and
 unknown versions without rewriting them. Its result is the same complete health
 report returned by `inspect_symbol_index` after the attempted migration.

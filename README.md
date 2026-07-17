@@ -44,12 +44,14 @@ declaration signatures. Named function and class-method templates are indexed
 and traced with their template declaration text. Explicit function template
 specializations have distinct paths such as `increment<int>` and `Box<int>::value`.
 Non-type template parameters are treated as local bindings during patch validation
-and reference tracing. Overload-aware symbol identities remain a follow-up. Basic operator methods use paths such as `Class::operator+` and
-`Class::operator bool`. C++ `using` aliases and declarations are indexed with namespace and
-class scope, for example `api::Size`, `api::Config::Count`, and `api::convert`. When multiple
-declarations introduce the same local name, Arborist represents the overload set as one symbol
-using the first declaration in source order. Namespace aliases are indexed at their definition
-scope, for example `api::vendor`. See the [tool
+and reference tracing. C++ callable `semantic_path` values remain overload-set
+paths, while exact `symbol_id` values include normalized parameter types and
+member qualifiers, such as `api::convert(int)`, `api::convert(double)`, and
+`api::Counter::value() const`. Basic operator methods use paths such as
+`Class::operator+` and `Class::operator bool` with the same exact-ID convention.
+C++ `using` aliases and declarations are indexed with namespace and class scope,
+for example `api::Size`, `api::Config::Count`, and `api::convert`. Namespace
+aliases are indexed at their definition scope, for example `api::vendor`. See the [tool
 guide](docs/tools.md#language-support) for the current scope. C++20 concept
 definitions, named enum definitions and members, and named struct/union definitions are
 also indexed by qualified name, such as `api::Incrementable`, `api::Status`,
@@ -261,7 +263,7 @@ for response shapes, error behavior, and examples.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, bounded neighborhood context, and optional cooperative budgets for
   direct trace expansion.
-- SQLite-backed persisted symbol indexes with transactional v1-to-v2 schema
+- SQLite-backed persisted symbol indexes with transactional v1/v2-to-v3 schema
   migration, health inspection, response schema versioning,
   stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
   optional per-file byte limits and cooperative time budgets, partial refresh,
@@ -280,7 +282,7 @@ Remaining larger work includes:
 
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
-- Extending C++ semantic support beyond named template declarations to template
-  parameter binding, specializations, and overload-aware symbol identities.
+- Extending C++ semantic support beyond overload-aware callable identities to
+  fuller language-aware overload resolution and remaining grammar coverage.
 - Adding benchmarks, fuzz/property tests, and broader cancellation boundaries
   for very large operations.

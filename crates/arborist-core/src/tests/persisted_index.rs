@@ -5,8 +5,8 @@ use rusqlite::Connection;
 use super::support::{
     create_incomplete_symbol_index_tables,
     create_legacy_symbol_index_schema_without_reference_names, create_minimal_symbol_index_schema,
-    create_symbol_index_schema_with_text_byte_columns, symbol_table_column_type,
-    symbol_table_columns, temporary_dir,
+    create_symbol_index_schema_with_text_byte_columns, downgrade_symbol_index_schema_to_v2,
+    symbol_table_column_type, symbol_table_columns, temporary_dir,
 };
 use crate::language::normalize_path;
 use crate::{
@@ -598,7 +598,7 @@ fn rebuilt_symbol_index_writes_schema_version_metadata() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(schema_version, "2");
+    assert_eq!(schema_version, "3");
 }
 
 #[test]
@@ -614,8 +614,8 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
     assert_eq!(health.response_schema_version, "4");
     assert!(health.exists);
     assert!(health.ok);
-    assert_eq!(health.schema_version.as_deref(), Some("2"));
-    assert_eq!(health.expected_schema_version, "2");
+    assert_eq!(health.schema_version.as_deref(), Some("3"));
+    assert_eq!(health.expected_schema_version, "3");
     assert!(!health.migration.required);
     assert_eq!(health.migration.action, "none");
     assert_eq!(
@@ -971,7 +971,7 @@ fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
     );
     connection
         .execute(
-            "INSERT INTO metadata(key, value) VALUES('schema_version', '2')",
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '3')",
             [],
         )
         .unwrap();
@@ -1028,7 +1028,7 @@ fn trace_rejects_unsupported_schema_version() {
             .to_string()
             .contains("unsupported symbol index schema_version")
     );
-    assert!(error.to_string().contains("expected `2`"));
+    assert!(error.to_string().contains("expected `3`"));
 }
 
 #[test]
@@ -1040,6 +1040,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
     let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
     connection
         .execute("DROP INDEX idx_symbols_file_path", [])
         .unwrap();
@@ -1057,7 +1058,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("2"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("3"));
     assert_eq!(migrated.migration.action, "none");
 
     let connection = Connection::open(&db_path).unwrap();
@@ -1080,6 +1081,61 @@ fn migrates_previous_symbol_index_schema_in_place() {
 }
 
 #[test]
+fn migrates_v2_symbol_index_schema_to_v3_without_losing_symbols() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper,
+        "namespace api { int convert(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
+    drop(connection);
+
+    let pending = inspect_symbol_index(&db_path).unwrap();
+    assert!(!pending.ok);
+    assert_eq!(pending.schema_version.as_deref(), Some("2"));
+    assert_eq!(pending.migration.action, "migrate");
+
+    let migrated = migrate_symbol_index(&db_path).unwrap();
+    assert!(migrated.ok, "{:#?}", migrated.issues);
+    assert_eq!(migrated.schema_version.as_deref(), Some("3"));
+    assert_eq!(migrated.indexed_symbols, Some(1));
+    assert_eq!(
+        trace_symbol_graph_from_index(&db_path, "api::convert(int)", TraceDirection::Both)
+            .unwrap()
+            .symbol
+            .symbol_id,
+        "api::convert(int)"
+    );
+
+    let connection = Connection::open(&db_path).unwrap();
+    let primary_key = connection
+        .prepare("PRAGMA table_info(symbols)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+        })
+        .unwrap()
+        .filter_map(|row| row.ok())
+        .filter(|(_, order)| *order > 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        primary_key,
+        vec![
+            ("symbol_id".to_string(), 1),
+            ("file_path".to_string(), 2),
+            ("start_byte".to_string(), 3),
+            ("end_byte".to_string(), 4),
+        ]
+    );
+}
+
+#[test]
 fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
@@ -1088,6 +1144,7 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
     let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
     connection
         .execute("DROP INDEX idx_symbols_file_path", [])
         .unwrap();
@@ -1102,7 +1159,7 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
             "
             CREATE TRIGGER reject_schema_version_upgrade
             BEFORE UPDATE OF value ON metadata
-            WHEN OLD.key = 'schema_version' AND NEW.value = '2'
+            WHEN OLD.key = 'schema_version' AND NEW.value = '3'
             BEGIN
                 SELECT RAISE(ABORT, 'forced schema_version update failure');
             END;
@@ -1176,6 +1233,7 @@ fn migration_rejects_invalid_v1_persisted_paths_without_rewrite() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
     let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
     connection
         .execute("DROP INDEX idx_symbols_file_path", [])
         .unwrap();

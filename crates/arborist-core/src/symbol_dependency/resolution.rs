@@ -7,6 +7,7 @@ use super::c::{CIncludeContext, c_include_context_for_file, c_symbol_family_anch
 use crate::language::{detect_language, is_c_header_path, normalize_path};
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
 use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
+use crate::semantic::cpp_callable_symbol_id;
 use crate::symbol_index_model::{IndexedSymbol, symbol_kind_rank};
 
 pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()> {
@@ -123,6 +124,18 @@ pub(super) fn indexed_symbol_rank(symbol: &IndexedSymbol) -> usize {
 fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
+    if detect_language(path).ok() == Some(LanguageId::Cpp)
+        && matches!(
+            symbol.node_kind.as_str(),
+            "function_definition" | "declaration" | "field_declaration"
+        )
+    {
+        return Ok(cpp_callable_symbol_id(
+            &symbol.semantic_path,
+            &symbol.parameters,
+            symbol.signature.as_deref(),
+        ));
+    }
     if !matches!(
         detect_language(path).ok(),
         Some(LanguageId::C | LanguageId::Cpp)

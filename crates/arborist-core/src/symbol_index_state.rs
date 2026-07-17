@@ -7,8 +7,8 @@ use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
-    load_optional_metadata_value, load_symbol_index_workspace_root, open_symbol_index_read_only,
+    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata, load_optional_metadata_value,
+    load_symbol_index_workspace_root, open_symbol_index_read_only,
     require_current_symbol_index_schema, require_legacy_symbol_index_schema,
     require_symbol_index_tables, validate_symbol_index_schema_version,
 };
@@ -106,7 +106,11 @@ pub fn inspect_symbol_index_with_timeout(
             db_path.display()
         ));
         health.migration = index_migration::missing_schema_version();
-    } else if health.schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
+    } else if health
+        .schema_version
+        .as_deref()
+        .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
+    {
         health.issues.push(format!(
             "unsupported symbol index schema_version `{}` in {}; expected `{}`",
             health.schema_version.as_deref().unwrap_or_default(),
@@ -246,8 +250,9 @@ pub fn migrate_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     }
 
     let mut connection = Connection::open(&db_path)?;
-    if load_optional_metadata_value(&connection, "schema_version")?.as_deref()
-        == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION)
+    if load_optional_metadata_value(&connection, "schema_version")?
+        .as_deref()
+        .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
     {
         require_symbol_index_tables(&connection, &db_path)?;
         require_legacy_symbol_index_schema(&connection, &db_path)?;

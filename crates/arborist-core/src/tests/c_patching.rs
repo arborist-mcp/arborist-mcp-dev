@@ -280,7 +280,7 @@ fn patches_cpp_function_targeted_by_nested_namespace_path() {
 
     assert!(result.applied);
     assert_eq!(result.resolved_path, "alpha::detail::orchestrate");
-    assert_eq!(result.resolved_symbol_id, "alpha::detail::orchestrate");
+    assert_eq!(result.resolved_symbol_id, "alpha::detail::orchestrate(int)");
     assert!(result.validation.unresolved_identifiers.is_empty());
     assert!(result.validation.commit_gate.allowed);
     assert!(
@@ -310,7 +310,7 @@ fn patches_cpp_class_method_targeted_by_qualified_path() {
 
     assert!(result.applied);
     assert_eq!(result.resolved_path, "api::Counter::increment");
-    assert_eq!(result.resolved_symbol_id, "api::Counter::increment");
+    assert_eq!(result.resolved_symbol_id, "api::Counter::increment(int)");
     assert!(result.validation.commit_gate.allowed);
     assert!(
         fs::read_to_string(&file)
@@ -772,7 +772,7 @@ fn patches_cpp_class_method_defined_outside_class() {
 
     assert!(result.applied);
     assert_eq!(result.resolved_path, "api::Counter::increment");
-    assert_eq!(result.resolved_symbol_id, "api::Counter::increment");
+    assert_eq!(result.resolved_symbol_id, "api::Counter::increment(int)");
     assert!(result.validation.commit_gate.allowed);
     assert!(
         fs::read_to_string(&file)
@@ -797,7 +797,7 @@ fn patches_cpp_destructor_targeted_by_qualified_path() {
 
     assert!(result.applied);
     assert_eq!(result.resolved_path, "api::Counter::~Counter");
-    assert_eq!(result.resolved_symbol_id, "api::Counter::~Counter");
+    assert_eq!(result.resolved_symbol_id, "api::Counter::~Counter()");
     assert!(result.validation.commit_gate.allowed);
     assert!(
         fs::read_to_string(&file)
@@ -851,6 +851,32 @@ fn patches_cpp_operator_method_targeted_by_qualified_path() {
     assert!(result.applied);
     assert_eq!(result.resolved_path, "math::Number::operator+");
     assert!(result.validation.commit_gate.allowed);
+}
+
+#[test]
+fn patches_cpp_overload_targeted_by_exact_symbol_id() {
+    let dir = temporary_dir();
+    let file = dir.join("convert.cpp");
+    fs::write(
+        &file,
+        "namespace api {\nint convert(int value) { return value; }\ndouble convert(double value) { return value; }\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::convert(double)",
+        "double convert(double value) { return value + 0.5; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::convert");
+    assert_eq!(result.resolved_symbol_id, "api::convert(double)");
+    let updated = fs::read_to_string(&file).unwrap();
+    assert!(updated.contains("int convert(int value) { return value; }"));
+    assert!(updated.contains("double convert(double value) { return value + 0.5; }"));
 }
 
 #[test]

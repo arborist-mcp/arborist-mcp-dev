@@ -124,7 +124,7 @@ fn execute_tree_query_reports_owner_for_cpp_namespace_function_captures() {
 
     assert_eq!(
         capture.owner_symbol_id.as_deref(),
-        Some("alpha::detail::orchestrate")
+        Some("alpha::detail::orchestrate(int)")
     );
     assert_eq!(
         capture.owner_semantic_path.as_deref(),
@@ -144,12 +144,7 @@ fn execute_tree_query_reports_owner_for_cpp_extern_c_function() {
     .unwrap();
 
     assert_eq!(captures.len(), 1);
-    assert!(
-        captures[0]
-            .owner_symbol_id
-            .as_deref()
-            .is_some_and(|symbol_id| symbol_id.ends_with("/bridge.cpp::helper"))
-    );
+    assert_eq!(captures[0].owner_symbol_id.as_deref(), Some("helper(int)"));
     assert_eq!(captures[0].owner_semantic_path.as_deref(), Some("helper"));
     assert_eq!(captures[0].owner_scope_path, None);
 }
@@ -192,7 +187,7 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 
     assert_eq!(
         capture.owner_symbol_id.as_deref(),
-        Some("api::Counter::increment")
+        Some("api::Counter::increment(int)")
     );
     assert_eq!(capture.owner_scope_path.as_deref(), Some("api::Counter"));
 }
@@ -395,7 +390,7 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_defined_outside_class()
         .expect("fully qualified method name should be captured");
     assert_eq!(
         capture.owner_symbol_id.as_deref(),
-        Some("api::Counter::increment")
+        Some("api::Counter::increment(int)")
     );
     assert_eq!(
         capture.owner_semantic_path.as_deref(),

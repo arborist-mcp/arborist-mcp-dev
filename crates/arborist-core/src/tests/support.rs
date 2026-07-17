@@ -45,14 +45,14 @@ pub(super) fn create_minimal_symbol_index_schema(connection: &Connection) {
                     dependencies_json TEXT NOT NULL,
                     references_json TEXT NOT NULL,
                     reference_names_json TEXT NOT NULL DEFAULT '[]',
-                    PRIMARY KEY (semantic_path, file_path)
+                    PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
                 );
                 CREATE TABLE file_state (
                     file_path TEXT PRIMARY KEY,
                     fingerprint INTEGER NOT NULL
                 );
                 CREATE INDEX idx_symbols_file_path ON symbols(file_path);
-                INSERT INTO metadata(key, value) VALUES('schema_version', '2');
+                INSERT INTO metadata(key, value) VALUES('schema_version', '3');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
                 ",
         )
@@ -102,14 +102,55 @@ pub(super) fn create_symbol_index_schema_with_text_byte_columns(connection: &Con
                     dependencies_json TEXT NOT NULL,
                     references_json TEXT NOT NULL,
                     reference_names_json TEXT NOT NULL DEFAULT '[]',
-                    PRIMARY KEY (semantic_path, file_path)
+                    PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
                 );
                 CREATE TABLE file_state (
                     file_path TEXT PRIMARY KEY,
                     fingerprint INTEGER NOT NULL
                 );
-                INSERT INTO metadata(key, value) VALUES('schema_version', '2');
+                INSERT INTO metadata(key, value) VALUES('schema_version', '3');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '0');
+                ",
+        )
+        .unwrap();
+}
+
+pub(super) fn downgrade_symbol_index_schema_to_v2(connection: &Connection) {
+    connection
+        .execute_batch(
+            "
+                DROP INDEX IF EXISTS idx_symbols_file_path;
+                ALTER TABLE symbols RENAME TO symbols_v3;
+                CREATE TABLE symbols (
+                    symbol_id TEXT NOT NULL,
+                    semantic_path TEXT NOT NULL,
+                    scope_path TEXT,
+                    file_path TEXT NOT NULL,
+                    node_kind TEXT NOT NULL,
+                    start_byte INTEGER NOT NULL,
+                    end_byte INTEGER NOT NULL,
+                    signature TEXT,
+                    parameters_json TEXT NOT NULL DEFAULT '[]',
+                    return_type TEXT,
+                    docstring TEXT,
+                    dependencies_json TEXT NOT NULL,
+                    references_json TEXT NOT NULL,
+                    reference_names_json TEXT NOT NULL DEFAULT '[]',
+                    PRIMARY KEY (semantic_path, file_path)
+                );
+                INSERT INTO symbols (
+                    symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte,
+                    end_byte, signature, parameters_json, return_type, docstring,
+                    dependencies_json, references_json, reference_names_json
+                )
+                SELECT
+                    symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte,
+                    end_byte, signature, parameters_json, return_type, docstring,
+                    dependencies_json, references_json, reference_names_json
+                FROM symbols_v3;
+                DROP TABLE symbols_v3;
+                CREATE INDEX idx_symbols_file_path ON symbols(file_path);
+                UPDATE metadata SET value = '2' WHERE key = 'schema_version';
                 ",
         )
         .unwrap();

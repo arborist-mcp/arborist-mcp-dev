@@ -1433,6 +1433,113 @@ fn traces_cpp_template_functions() {
 }
 
 #[test]
+fn distinguishes_cpp_function_overloads_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("convert.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nint convert(int value) { return value; }\ndouble convert(double value) { return value; }\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    let mut overload_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "api::convert")
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    overload_ids.sort();
+    assert_eq!(
+        overload_ids,
+        vec!["api::convert(double)", "api::convert(int)"]
+    );
+
+    let live_list = list_symbols(&dir, 20).unwrap();
+    let mut live_overload_ids = live_list
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "api::convert")
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    live_overload_ids.sort();
+    assert_eq!(live_overload_ids, overload_ids);
+
+    let live_int = trace_symbol_graph(&dir, "api::convert(int)", TraceDirection::Both).unwrap();
+    let live_double =
+        trace_symbol_graph(&dir, "api::convert(double)", TraceDirection::Both).unwrap();
+    assert_eq!(live_int.symbol.return_type.as_deref(), Some("int"));
+    assert_eq!(live_double.symbol.return_type.as_deref(), Some("double"));
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_list = list_symbols_from_index(&db_path, 20).unwrap();
+    let mut persisted_overload_ids = persisted_list
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "api::convert")
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    persisted_overload_ids.sort();
+    assert_eq!(persisted_overload_ids, overload_ids);
+
+    let persisted_int =
+        trace_symbol_graph_from_index(&db_path, "api::convert(int)", TraceDirection::Both).unwrap();
+    let persisted_double =
+        trace_symbol_graph_from_index(&db_path, "api::convert(double)", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(persisted_int.symbol.return_type.as_deref(), Some("int"));
+    assert_eq!(
+        persisted_double.symbol.return_type.as_deref(),
+        Some("double")
+    );
+    assert_eq!(
+        read_symbol_from_index(&db_path, "api::convert(int)")
+            .unwrap()
+            .symbol
+            .return_type
+            .as_deref(),
+        Some("int")
+    );
+}
+
+#[test]
+fn keeps_cpp_overload_identity_stable_between_unnamed_template_parameters_and_definitions() {
+    let dir = temporary_dir();
+    let header = dir.join("convert.hpp");
+    let source = dir.join("convert.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "#include <vector>\nnamespace api { int convert(const std::vector<int>&); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"convert.hpp\"\nnamespace api { int convert(const std::vector<int>& values) { return static_cast<int>(values.size()); } }\n",
+    )
+    .unwrap();
+
+    let exact_id = "api::convert(const std::vector<int>&)";
+    let trace = trace_symbol_graph(&dir, exact_id, TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.symbol_id, exact_id);
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, exact_id, TraceDirection::Both).unwrap();
+    assert_eq!(persisted.symbol.symbol_id, exact_id);
+    assert_eq!(
+        persisted.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn does_not_trace_non_type_cpp_template_parameters_as_global_references() {
     let dir = temporary_dir();
     let source = dir.join("templates.cpp");

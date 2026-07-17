@@ -4,10 +4,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 
-use crate::language::{normalize_absolute_path, normalize_path};
+use crate::language::{detect_language, normalize_absolute_path, normalize_path};
+use crate::model::LanguageId;
+use crate::semantic::cpp_callable_symbol_id;
 
-pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
-pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
+pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
+pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
     Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
@@ -166,6 +169,17 @@ pub(crate) fn require_current_symbol_index_schema(
     db_path: &Path,
 ) -> Result<()> {
     require_symbol_index_schema_structure(connection, db_path)?;
+    require_table_primary_key_layout(
+        connection,
+        db_path,
+        "symbols",
+        &[
+            ("symbol_id", 1),
+            ("file_path", 2),
+            ("start_byte", 3),
+            ("end_byte", 4),
+        ],
+    )?;
     require_symbols_file_path_index(connection, db_path)
 }
 
@@ -173,7 +187,13 @@ pub(crate) fn require_legacy_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
-    require_symbol_index_schema_structure(connection, db_path)
+    require_symbol_index_schema_structure(connection, db_path)?;
+    require_table_primary_key_layout(
+        connection,
+        db_path,
+        "symbols",
+        &[("semantic_path", 1), ("file_path", 2)],
+    )
 }
 
 fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path) -> Result<()> {
@@ -220,12 +240,6 @@ fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path
         ],
     )?;
     require_table_primary_key_layout(connection, db_path, "metadata", &[("key", 1)])?;
-    require_table_primary_key_layout(
-        connection,
-        db_path,
-        "symbols",
-        &[("semantic_path", 1), ("file_path", 2)],
-    )?;
     require_table_primary_key_layout(connection, db_path, "file_state", &[("file_path", 1)])?;
     Ok(())
 }
@@ -253,7 +267,7 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
-            PRIMARY KEY (semantic_path, file_path)
+            PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
         );
         CREATE TABLE IF NOT EXISTS file_state (
             file_path TEXT PRIMARY KEY,
@@ -272,17 +286,94 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn migrate_symbol_index_schema_v1_to_v2(connection: &mut Connection) -> Result<()> {
+pub(crate) fn migrate_symbol_index_schema_to_current(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction()?;
-    transaction.execute(
-        "CREATE INDEX idx_symbols_file_path ON symbols(file_path)",
-        [],
+    transaction.execute_batch(
+        "
+        DROP INDEX IF EXISTS idx_symbols_file_path;
+        ALTER TABLE symbols RENAME TO symbols_legacy;
+        CREATE TABLE symbols (
+            symbol_id TEXT NOT NULL,
+            semantic_path TEXT NOT NULL,
+            scope_path TEXT,
+            file_path TEXT NOT NULL,
+            node_kind TEXT NOT NULL,
+            start_byte INTEGER NOT NULL,
+            end_byte INTEGER NOT NULL,
+            signature TEXT,
+            parameters_json TEXT NOT NULL DEFAULT '[]',
+            return_type TEXT,
+            docstring TEXT,
+            dependencies_json TEXT NOT NULL,
+            references_json TEXT NOT NULL,
+            reference_names_json TEXT NOT NULL DEFAULT '[]',
+            PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
+        );
+        INSERT INTO symbols (
+            symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+            signature, parameters_json, return_type, docstring, dependencies_json,
+            references_json, reference_names_json
+        )
+        SELECT
+            COALESCE(NULLIF(symbol_id, ''), semantic_path),
+            semantic_path, scope_path, file_path, node_kind, start_byte, end_byte, signature,
+            COALESCE(parameters_json, '[]'), return_type, docstring,
+            dependencies_json, references_json,
+            COALESCE(reference_names_json, '[]')
+        FROM symbols_legacy;
+        DROP TABLE symbols_legacy;
+        CREATE INDEX idx_symbols_file_path ON symbols(file_path);
+        ",
     )?;
+    migrate_cpp_callable_symbol_ids(&transaction)?;
     transaction.execute(
         "UPDATE metadata SET value = ?1 WHERE key = 'schema_version'",
         [SYMBOL_INDEX_SCHEMA_VERSION],
     )?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_cpp_callable_symbol_ids(transaction: &Transaction<'_>) -> Result<()> {
+    let mut statement = transaction.prepare(
+        "SELECT rowid, semantic_path, file_path, node_kind, signature, parameters_json FROM symbols",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
+    let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(statement);
+
+    for (rowid, semantic_path, file_path, node_kind, signature, parameters_json) in rows {
+        if detect_language(Path::new(&file_path)).ok() != Some(LanguageId::Cpp)
+            || !matches!(
+                node_kind.as_str(),
+                "function_definition" | "declaration" | "field_declaration"
+            )
+        {
+            continue;
+        }
+
+        let parameters =
+            serde_json::from_str::<Vec<String>>(&parameters_json).map_err(|error| {
+                anyhow!(
+                    "invalid parameters_json while migrating C++ symbol `{semantic_path}`: {error}"
+                )
+            })?;
+        let symbol_id = cpp_callable_symbol_id(&semantic_path, &parameters, signature.as_deref());
+        transaction.execute(
+            "UPDATE symbols SET symbol_id = ?1 WHERE rowid = ?2",
+            (&symbol_id, rowid),
+        )?;
+    }
+
     Ok(())
 }
 
@@ -579,61 +670,28 @@ fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
         Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
     })?;
 
-    let mut semantic_path_pk = 0;
+    let mut symbol_id_pk = 0;
     let mut file_path_pk = 0;
+    let mut start_byte_pk = 0;
+    let mut end_byte_pk = 0;
     for column in columns {
         let (name, pk_order) = column?;
         match name.as_str() {
-            "semantic_path" => semantic_path_pk = pk_order,
+            "symbol_id" => symbol_id_pk = pk_order,
             "file_path" => file_path_pk = pk_order,
+            "start_byte" => start_byte_pk = pk_order,
+            "end_byte" => end_byte_pk = pk_order,
             _ => {}
         }
     }
 
-    if semantic_path_pk == 1 && file_path_pk == 2 {
+    if symbol_id_pk == 1 && file_path_pk == 2 && start_byte_pk == 3 && end_byte_pk == 4 {
         return Ok(());
     }
 
-    if semantic_path_pk == 0 && file_path_pk == 0 {
-        return Ok(());
-    }
-
-    connection.execute_batch(
-        "
-        ALTER TABLE symbols RENAME TO symbols_legacy;
-        CREATE TABLE symbols (
-            symbol_id TEXT NOT NULL,
-            semantic_path TEXT NOT NULL,
-            scope_path TEXT,
-            file_path TEXT NOT NULL,
-            node_kind TEXT NOT NULL,
-            start_byte INTEGER NOT NULL,
-            end_byte INTEGER NOT NULL,
-            signature TEXT,
-            parameters_json TEXT NOT NULL DEFAULT '[]',
-            return_type TEXT,
-            docstring TEXT,
-            dependencies_json TEXT NOT NULL,
-            references_json TEXT NOT NULL,
-            reference_names_json TEXT NOT NULL DEFAULT '[]',
-            PRIMARY KEY (semantic_path, file_path)
-        );
-        INSERT INTO symbols (
-            symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
-            signature, parameters_json, return_type, docstring, dependencies_json,
-            references_json, reference_names_json
-        )
-        SELECT
-            COALESCE(NULLIF(symbol_id, ''), semantic_path),
-            semantic_path, scope_path, file_path, node_kind, start_byte, end_byte, signature,
-            COALESCE(parameters_json, '[]'), return_type, docstring,
-            dependencies_json, references_json,
-            COALESCE(reference_names_json, '[]')
-        FROM symbols_legacy;
-        DROP TABLE symbols_legacy;
-        ",
-    )?;
-    Ok(())
+    Err(anyhow!(
+        "symbol index symbols table has incompatible primary key layout; migrate or rebuild the index"
+    ))
 }
 
 fn ensure_symbols_file_path_index(connection: &Connection) -> Result<()> {
