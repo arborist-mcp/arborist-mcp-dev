@@ -9,7 +9,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, TextIO
 
-from .tool_specs import MAX_WORKSPACE_SCAN_FILE_BYTES, MAX_WORKSPACE_SCAN_FILES
+from .tool_specs import (
+    MAX_WORKSPACE_SCAN_FILE_BYTES,
+    MAX_WORKSPACE_SCAN_FILES,
+    MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+)
 
 
 class IndexWatchCore(Protocol):
@@ -23,6 +27,7 @@ class IndexWatchCore(Protocol):
         db_path: str,
         max_files: int,
         max_file_bytes: int | None,
+        timeout_ms: int | None,
     ) -> str: ...
 
 
@@ -175,6 +180,7 @@ def reconcile_index(
     db_path: str,
     max_files: int,
     max_file_bytes: int | None,
+    timeout_ms: int | None = None,
 ) -> dict[str, Any]:
     try:
         health = _decode_object(
@@ -227,12 +233,19 @@ def reconcile_index(
         raise IndexWatchError(f"index watch cannot repair this index: {reason}")
 
     try:
-        stats = _decode_object(
-            core.refresh_symbol_index_json(
+        if timeout_ms is None:
+            refresh_payload = core.refresh_symbol_index_json(
                 workspace_root, db_path, max_files, max_file_bytes
-            ),
-            "refresh_symbol_index",
-        )
+            )
+        else:
+            refresh_payload = core.refresh_symbol_index_json(
+                workspace_root,
+                db_path,
+                max_files,
+                max_file_bytes,
+                timeout_ms,
+            )
+        stats = _decode_object(refresh_payload, "refresh_symbol_index")
     except IndexWatchError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -255,6 +268,7 @@ def run_watch(
     max_files: int,
     max_file_bytes: int | None,
     once: bool,
+    timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     emit: Callable[[dict[str, Any]], None] = lambda event: print(
         json.dumps(event, ensure_ascii=False, allow_nan=False)
@@ -266,6 +280,7 @@ def run_watch(
         interval_seconds=interval_seconds,
         max_files=max_files,
         max_file_bytes=max_file_bytes,
+        timeout_ms=timeout_ms,
         once=once,
         sleep=sleep,
         emit=emit,
@@ -281,6 +296,7 @@ def run_watch_targets(
     max_files: int,
     max_file_bytes: int | None,
     once: bool,
+    timeout_ms: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     emit: Callable[[dict[str, Any]], None] = lambda event: print(
         json.dumps(event, ensure_ascii=False, allow_nan=False)
@@ -302,6 +318,7 @@ def run_watch_targets(
                 db_path=target.db_path,
                 max_files=max_files,
                 max_file_bytes=max_file_bytes,
+                timeout_ms=timeout_ms,
             )
             if include_workspace_root:
                 event["workspace_root"] = target.workspace_root
@@ -377,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional maximum source file size in bytes.",
     )
     parser.add_argument(
+        "--timeout-ms",
+        type=lambda value: _bounded_positive_int(value, MAX_WORKSPACE_SCAN_TIMEOUT_MS),
+        default=None,
+        help="Optional cooperative workspace scan timeout in milliseconds.",
+    )
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Inspect and reconcile once, then exit.",
@@ -424,6 +447,7 @@ def run_cli(
             interval_seconds=args.interval_seconds,
             max_files=args.max_files,
             max_file_bytes=args.max_file_bytes,
+            timeout_ms=args.timeout_ms,
             once=args.once,
             sleep=sleep,
             emit=emit,

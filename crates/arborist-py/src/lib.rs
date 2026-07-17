@@ -929,15 +929,22 @@ impl ArboristCore {
         )
     }
 
-    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None))]
+    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None, timeout_ms=None))]
     fn rebuild_symbol_index_json(
         &self,
         workspace_root: &str,
         db_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.rebuild_symbol_index_json_impl(workspace_root, db_path, max_files, max_file_bytes)
+        self.rebuild_symbol_index_json_impl(
+            workspace_root,
+            db_path,
+            max_files,
+            max_file_bytes,
+            timeout_ms,
+        )
     }
 
     fn inspect_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
@@ -948,18 +955,25 @@ impl ArboristCore {
         self.migrate_symbol_index_json_impl(db_path)
     }
 
-    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None))]
+    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None, timeout_ms=None))]
     fn refresh_symbol_index_json(
         &self,
         workspace_root: &str,
         db_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.refresh_symbol_index_json_impl(workspace_root, db_path, max_files, max_file_bytes)
+        self.refresh_symbol_index_json_impl(
+            workspace_root,
+            db_path,
+            max_files,
+            max_file_bytes,
+            timeout_ms,
+        )
     }
 
-    #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000, max_file_bytes=None))]
+    #[pyo3(signature = (workspace_root, db_path, file_path, max_files=20_000, max_file_bytes=None, timeout_ms=None))]
     fn refresh_symbol_index_for_file_json(
         &self,
         workspace_root: &str,
@@ -967,6 +981,7 @@ impl ArboristCore {
         file_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.refresh_symbol_index_for_file_json_impl(
             workspace_root,
@@ -974,11 +989,26 @@ impl ArboristCore {
             file_path,
             max_files,
             max_file_bytes,
+            timeout_ms,
         )
     }
 
-    fn register_symbol_index_json(&self, workspace_root: &str, db_path: &str) -> PyResult<String> {
-        self.register_symbol_index_json_impl(workspace_root, db_path)
+    #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None, timeout_ms=None))]
+    fn register_symbol_index_json(
+        &self,
+        workspace_root: &str,
+        db_path: &str,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.register_symbol_index_json_impl(
+            workspace_root,
+            db_path,
+            max_files,
+            max_file_bytes,
+            timeout_ms,
+        )
     }
 
     fn unregister_symbol_index_json(&self, workspace_root: &str) -> PyResult<bool> {
@@ -989,13 +1019,14 @@ impl ArboristCore {
         self.list_symbol_indexes_json_impl()
     }
 
-    #[pyo3(signature = (max_files=20_000, max_file_bytes=None))]
+    #[pyo3(signature = (max_files=20_000, max_file_bytes=None, timeout_ms=None))]
     fn refresh_registered_symbol_indexes_json(
         &self,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.refresh_registered_symbol_indexes_json_impl(max_files, max_file_bytes)
+        self.refresh_registered_symbol_indexes_json_impl(max_files, max_file_bytes, timeout_ms)
     }
 
     fn open_virtual_file_json(&self, file_path: &str, source: Option<String>) -> PyResult<String> {

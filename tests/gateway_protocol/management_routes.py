@@ -66,6 +66,20 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {
+                "core_method": "register_symbol_index_json",
+                "rpc_method": "arborist/register_symbol_index",
+                "request_id": 127,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "max_files": 17,
+                    "timeout_ms": 5000,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 17, None, 5000),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
                 "core_method": "refresh_symbol_index_for_file_json",
                 "rpc_method": "arborist/refresh_symbol_index_for_file",
                 "request_id": 105,
@@ -76,6 +90,22 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 },
                 "payload": {},
                 "expected_call": (".", "symbols.db", "graph_b.py", 20000),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "refresh_symbol_index_for_file_json",
+                "rpc_method": "arborist/refresh_symbol_index_for_file",
+                "request_id": 128,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "file_path": "graph_b.py",
+                    "max_files": 17,
+                    "max_file_bytes": 4096,
+                    "timeout_ms": 5000,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", "graph_b.py", 17, 4096, 5000),
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {
@@ -133,6 +163,15 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "params": {},
                 "payload": [],
                 "expected_call": (20000,),
+                "check": lambda result: self.assertEqual(result, []),
+            },
+            {
+                "core_method": "refresh_registered_symbol_indexes_json",
+                "rpc_method": "arborist/refresh_registered_symbol_indexes",
+                "request_id": 129,
+                "params": {"timeout_ms": 5000},
+                "payload": [],
+                "expected_call": (20000, None, 5000),
                 "check": lambda result: self.assertEqual(result, []),
             },
             {
@@ -234,6 +273,19 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
             {
                 "core_method": "rebuild_symbol_index_json",
                 "rpc_method": "arborist/rebuild_symbol_index",
+                "request_id": 130,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "timeout_ms": 5000,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 20000, None, 5000),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "rebuild_symbol_index_json",
+                "rpc_method": "arborist/rebuild_symbol_index",
                 "request_id": 117,
                 "params": {
                     "workspace_root": ".",
@@ -267,6 +319,19 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 },
                 "payload": {},
                 "expected_call": (".", "symbols.db", 20000),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "refresh_symbol_index_json",
+                "rpc_method": "arborist/refresh_symbol_index",
+                "request_id": 131,
+                "params": {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "timeout_ms": 5000,
+                },
+                "payload": {},
+                "expected_call": (".", "symbols.db", 20000, None, 5000),
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {

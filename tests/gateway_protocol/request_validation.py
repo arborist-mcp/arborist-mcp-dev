@@ -1101,6 +1101,15 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 "max_file_bytes",
             ),
             (
+                "arborist/rebuild_symbol_index",
+                {
+                    "workspace_root": ".",
+                    "db_path": "symbols.db",
+                    "timeout_ms": gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1,
+                },
+                "timeout_ms",
+            ),
+            (
                 "arborist/refresh_symbol_index",
                 {
                     "workspace_root": ".",

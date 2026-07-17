@@ -16,8 +16,8 @@ use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
 use crate::workspace_scan::{
-    WorkspaceScanLimits, collect_source_files, collect_source_files_with_limits,
-    should_skip_index_path, validate_source_file_size,
+    WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files,
+    collect_source_files_with_deadline, should_skip_index_path, validate_source_file_size,
 };
 
 pub(crate) type IncrementalWorkspaceSymbols = (
@@ -32,28 +32,44 @@ pub(crate) type IncrementalWorkspaceSymbols = (
 pub(crate) fn expanded_refresh_file_paths(
     workspace_root: &Path,
     file_path: &Path,
+    deadline: &WorkspaceScanDeadline,
 ) -> Result<Vec<PathBuf>> {
     let mut refresh_paths = BTreeSet::new();
     refresh_paths.insert(file_path.to_path_buf());
 
     if matches!(detect_language(file_path)?, LanguageId::C | LanguageId::Cpp) {
-        refresh_paths.extend(transitive_c_include_dependents(workspace_root, file_path)?);
+        refresh_paths.extend(transitive_c_include_dependents_with_deadline(
+            workspace_root,
+            file_path,
+            deadline,
+        )?);
     }
 
     Ok(refresh_paths.into_iter().collect())
 }
 
+#[cfg(test)]
 pub(crate) fn transitive_c_include_dependents(
     workspace_root: &Path,
     target_path: &Path,
 ) -> Result<BTreeSet<PathBuf>> {
-    let reverse_index = reverse_local_c_include_index(workspace_root)?;
+    let deadline = WorkspaceScanDeadline::new(WorkspaceScanLimits::default())?;
+    transitive_c_include_dependents_with_deadline(workspace_root, target_path, &deadline)
+}
+
+fn transitive_c_include_dependents_with_deadline(
+    workspace_root: &Path,
+    target_path: &Path,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<BTreeSet<PathBuf>> {
+    let reverse_index = reverse_local_c_include_index(workspace_root, deadline)?;
     let normalized_target = normalize_path(target_path);
     let mut queue = vec![normalized_target.clone()];
     let mut visited = BTreeSet::from([normalized_target]);
     let mut dependents = BTreeSet::new();
 
     while let Some(current_path) = queue.pop() {
+        deadline.check("expanding C include dependents")?;
         let Some(children) = reverse_index.get(&current_path) else {
             continue;
         };
@@ -118,12 +134,13 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
     Ok((resolved_symbols, indexed_files))
 }
 
-pub(crate) fn resolve_workspace_symbols_incremental_with_limits(
+pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     workspace_root: &Path,
     db_path: &Path,
     limits: WorkspaceScanLimits,
+    deadline: &WorkspaceScanDeadline,
 ) -> Result<IncrementalWorkspaceSymbols> {
-    let indexed_paths = collect_source_files_with_limits(workspace_root, limits)?;
+    let indexed_paths = collect_source_files_with_deadline(workspace_root, limits, deadline)?;
     let indexed_files = indexed_paths.len();
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
@@ -137,6 +154,7 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_limits(
     let mut reused_files = 0;
 
     for path in indexed_paths {
+        deadline.check("indexing workspace files")?;
         validate_source_file_size(&path, limits)?;
         let source = read_source(&path)?;
         let normalized_path = normalize_path(&path);
@@ -162,7 +180,9 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_limits(
         rebuilt_files += 1;
     }
 
+    deadline.check("assigning symbol identities")?;
     assign_symbol_ids(&mut raw_symbols)?;
+    deadline.check("resolving workspace symbols")?;
     let resolved_symbols = resolve_symbol_dependencies(&raw_symbols);
     Ok((
         raw_symbols,
@@ -176,10 +196,16 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_limits(
 
 fn reverse_local_c_include_index(
     workspace_root: &Path,
+    deadline: &WorkspaceScanDeadline,
 ) -> Result<BTreeMap<String, BTreeSet<PathBuf>>> {
     let mut reverse_index = BTreeMap::new();
 
-    for path in collect_source_files(workspace_root)? {
+    for path in collect_source_files_with_deadline(
+        workspace_root,
+        WorkspaceScanLimits::default(),
+        deadline,
+    )? {
+        deadline.check("building C include reverse index")?;
         if !matches!(detect_language(&path), Ok(LanguageId::C | LanguageId::Cpp)) {
             continue;
         }

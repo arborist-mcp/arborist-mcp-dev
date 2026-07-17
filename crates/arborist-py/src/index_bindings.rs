@@ -14,11 +14,12 @@ struct WorkspaceIndexScan {
 }
 
 impl WorkspaceIndexScan {
-    fn new(max_files: usize, max_file_bytes: Option<u64>) -> Self {
+    fn new(max_files: usize, max_file_bytes: Option<u64>, timeout_ms: Option<u64>) -> Self {
         Self {
             limits: WorkspaceScanLimits {
                 max_files,
                 max_file_bytes,
+                timeout_ms,
             },
         }
     }
@@ -31,8 +32,9 @@ impl ArboristCore {
         db_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes, timeout_ms);
         let result = rebuild_symbol_index_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
@@ -61,8 +63,9 @@ impl ArboristCore {
         db_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes, timeout_ms);
         let result = refresh_symbol_index_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
@@ -80,8 +83,9 @@ impl ArboristCore {
         file_path: &str,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes);
+        let scan = WorkspaceIndexScan::new(max_files, max_file_bytes, timeout_ms);
         let result = refresh_symbol_index_for_file_with_limits(
             Path::new(workspace_root),
             Path::new(db_path),
@@ -97,11 +101,20 @@ impl ArboristCore {
         &self,
         workspace_root: &str,
         db_path: &str,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow_mut()
-            .register_symbol_index(Path::new(workspace_root), Path::new(db_path))
+            .register_symbol_index_with_limits(
+                Path::new(workspace_root),
+                Path::new(db_path),
+                max_files,
+                max_file_bytes,
+                timeout_ms,
+            )
             .map_err(to_py_error)?;
 
         to_json_result(&result)
@@ -127,11 +140,12 @@ impl ArboristCore {
         &self,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow()
-            .refresh_registered_symbol_indexes(max_files, max_file_bytes)
+            .refresh_registered_symbol_indexes(max_files, max_file_bytes, timeout_ms)
             .map_err(to_py_error)?;
         to_json_result(&result)
     }

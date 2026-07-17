@@ -260,8 +260,8 @@ for response shapes, error behavior, and examples.
 - SQLite-backed persisted symbol indexes with transactional v1-to-v2 schema
   migration, health inspection, response schema versioning,
   stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
-  optional per-file byte limits, partial refresh, and fail-closed handling for
-  damaged or unrelated databases.
+  optional per-file byte limits and cooperative time budgets, partial refresh,
+  and fail-closed handling for damaged or unrelated databases.
 - C include-family tracing and patch disambiguation for header/source projects,
   including duplicate globals and file-local `static` symbols.
 

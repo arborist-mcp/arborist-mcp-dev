@@ -98,6 +98,25 @@ class IndexWatchTests(unittest.TestCase):
             [("workspace", "symbols.db", 20, 4096)],
         )
 
+    def test_reconcile_passes_optional_timeout_to_refresh(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="rebuild", reason="indexed file is stale")
+        )
+
+        reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+            timeout_ms=5000,
+        )
+
+        self.assertEqual(
+            core.refresh_calls,
+            [("workspace", "symbols.db", 20, None, 5000)],
+        )
+
     def test_reconcile_migrates_supported_schema_version(self) -> None:
         core = StubCore(
             health_payload(ok=False, action="migrate", reason="schema v1 can migrate"),
@@ -364,6 +383,8 @@ class IndexWatchTests(unittest.TestCase):
                 run_cli(["--db-path", "symbols.db", "--max-file-bytes", "0"])
             with self.assertRaises(SystemExit):
                 run_cli(["--db-path", "symbols.db", "--max-files", "200001"])
+            with self.assertRaises(SystemExit):
+                run_cli(["--db-path", "symbols.db", "--timeout-ms", "300001"])
 
     def test_pyproject_registers_index_watch_console_script(self) -> None:
         pyproject = Path(__file__).resolve().parents[1].joinpath("pyproject.toml")

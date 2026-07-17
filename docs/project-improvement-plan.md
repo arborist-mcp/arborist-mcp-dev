@@ -84,6 +84,8 @@ completed item can land in its own commit unless two changes are inseparable.
   place.
 - [ ] Add timeout/cancellation boundaries for large workspace scans, broad raw
   Tree-sitter queries, and trace/neighborhood expansion.
+- [x] Add optional cooperative timeout budgets to workspace scans and persisted
+  index rebuild/refresh operations.
 - [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
   and patch validation.
 

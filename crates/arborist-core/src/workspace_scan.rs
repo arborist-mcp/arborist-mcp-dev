@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
@@ -21,11 +22,13 @@ const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
 ];
 
 pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
+pub const MAX_WORKSPACE_SCAN_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct WorkspaceScanLimits {
     pub max_files: usize,
     pub max_file_bytes: Option<u64>,
+    pub timeout_ms: Option<u64>,
 }
 
 impl Default for WorkspaceScanLimits {
@@ -33,6 +36,7 @@ impl Default for WorkspaceScanLimits {
         Self {
             max_files: DEFAULT_WORKSPACE_MAX_FILES,
             max_file_bytes: None,
+            timeout_ms: None,
         }
     }
 }
@@ -44,6 +48,44 @@ impl WorkspaceScanLimits {
             ..Self::default()
         }
     }
+
+    pub fn with_timeout_ms(timeout_ms: u64) -> Self {
+        Self {
+            timeout_ms: Some(timeout_ms),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WorkspaceScanDeadline {
+    deadline: Option<Instant>,
+    timeout_ms: Option<u64>,
+}
+
+impl WorkspaceScanDeadline {
+    pub(crate) fn new(limits: WorkspaceScanLimits) -> Result<Self> {
+        validate_workspace_scan_limits(limits)?;
+        Ok(Self {
+            deadline: limits
+                .timeout_ms
+                .map(|timeout_ms| Instant::now() + Duration::from_millis(timeout_ms)),
+            timeout_ms: limits.timeout_ms,
+        })
+    }
+
+    pub(crate) fn check(&self, phase: &str) -> Result<()> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            bail!(
+                "workspace scan timeout exceeded during {phase}: timeout_ms={}",
+                self.timeout_ms.unwrap_or_default(),
+            );
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn collect_source_files(workspace_root: &Path) -> Result<Vec<PathBuf>> {
@@ -54,9 +96,19 @@ pub(crate) fn collect_source_files_with_limits(
     workspace_root: &Path,
     limits: WorkspaceScanLimits,
 ) -> Result<Vec<PathBuf>> {
+    let deadline = WorkspaceScanDeadline::new(limits)?;
+    collect_source_files_with_deadline(workspace_root, limits, &deadline)
+}
+
+pub(crate) fn collect_source_files_with_deadline(
+    workspace_root: &Path,
+    limits: WorkspaceScanLimits,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<Vec<PathBuf>> {
     validate_workspace_scan_limits(limits)?;
     let mut files = Vec::new();
-    walk_workspace(workspace_root, workspace_root, &mut files, limits)?;
+    walk_workspace(workspace_root, workspace_root, &mut files, limits, deadline)?;
+    deadline.check("sorting workspace files")?;
     files.sort();
     Ok(files)
 }
@@ -80,6 +132,18 @@ pub(crate) fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Res
     }
     if limits.max_file_bytes == Some(0) {
         bail!("invalid workspace scan max_file_bytes: value must be greater than zero");
+    }
+    if limits.timeout_ms == Some(0) {
+        bail!("invalid workspace scan timeout_ms: value must be greater than zero");
+    }
+    if limits
+        .timeout_ms
+        .is_some_and(|timeout_ms| timeout_ms > MAX_WORKSPACE_SCAN_TIMEOUT_MS)
+    {
+        bail!(
+            "invalid workspace scan timeout_ms: value must not exceed {}",
+            MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        );
     }
     Ok(())
 }
@@ -115,7 +179,9 @@ fn walk_workspace(
     path: &Path,
     files: &mut Vec<PathBuf>,
     limits: WorkspaceScanLimits,
+    deadline: &WorkspaceScanDeadline,
 ) -> Result<()> {
+    deadline.check("workspace traversal")?;
     let symlink_metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect workspace path {}", path.display()))?;
     let metadata = if path == workspace_root && symlink_metadata.file_type().is_symlink() {
@@ -149,7 +215,7 @@ fn walk_workspace(
         entries.sort();
 
         for entry_path in entries {
-            walk_workspace(workspace_root, &entry_path, files, limits)?;
+            walk_workspace(workspace_root, &entry_path, files, limits, deadline)?;
         }
         return Ok(());
     }
@@ -191,9 +257,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        SKIPPED_WORKSPACE_DIR_NAMES, WorkspaceScanLimits, collect_source_files_with_limits,
-        should_skip_dir_name, should_skip_index_path,
+        MAX_WORKSPACE_SCAN_TIMEOUT_MS, SKIPPED_WORKSPACE_DIR_NAMES, WorkspaceScanDeadline,
+        WorkspaceScanLimits, collect_source_files_with_limits, should_skip_dir_name,
+        should_skip_index_path, validate_workspace_scan_limits,
     };
+    use std::time::{Duration, Instant};
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -336,6 +404,7 @@ mod tests {
             WorkspaceScanLimits {
                 max_files: 10,
                 max_file_bytes: Some(8),
+                timeout_ms: None,
             },
         )
         .expect_err("workspace scans should reject source files larger than max_file_bytes");
@@ -343,6 +412,42 @@ mod tests {
         assert!(error.to_string().contains("source file too large"));
         assert!(error.to_string().contains("max_file_bytes=8"));
         assert!(error.to_string().contains("huge.py"));
+    }
+
+    #[test]
+    fn validates_workspace_scan_timeout_bounds() {
+        assert!(
+            validate_workspace_scan_limits(WorkspaceScanLimits {
+                timeout_ms: Some(0),
+                ..WorkspaceScanLimits::default()
+            })
+            .is_err()
+        );
+        assert!(
+            validate_workspace_scan_limits(WorkspaceScanLimits {
+                timeout_ms: Some(MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1),
+                ..WorkspaceScanLimits::default()
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn deadline_reports_expired_workspace_scan_budget() {
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = deadline
+            .check("test phase")
+            .expect_err("expired workspace scan deadline should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+        assert!(error.to_string().contains("timeout_ms=1"));
     }
 
     fn temporary_dir() -> PathBuf {

@@ -19,7 +19,8 @@ use crate::model::{
 };
 use crate::patching::{collect_syntax_errors, splice_source};
 use crate::symbols::{
-    rebuild_symbol_index, refresh_symbol_index_for_file, refresh_symbol_index_with_limits,
+    rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
+    refresh_symbol_index_with_limits,
 };
 use crate::workspace_scan::{WorkspaceScanLimits, validate_workspace_scan_limits};
 
@@ -245,9 +246,41 @@ impl VirtualFileSystem {
         workspace_root: &Path,
         db_path: &Path,
     ) -> Result<SymbolIndexStats> {
+        self.register_symbol_index_with_scan_limits(
+            workspace_root,
+            db_path,
+            WorkspaceScanLimits::default(),
+        )
+    }
+
+    pub fn register_symbol_index_with_limits(
+        &mut self,
+        workspace_root: &Path,
+        db_path: &Path,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolIndexStats> {
+        self.register_symbol_index_with_scan_limits(
+            workspace_root,
+            db_path,
+            WorkspaceScanLimits {
+                max_files,
+                max_file_bytes,
+                timeout_ms,
+            },
+        )
+    }
+
+    fn register_symbol_index_with_scan_limits(
+        &mut self,
+        workspace_root: &Path,
+        db_path: &Path,
+        limits: WorkspaceScanLimits,
+    ) -> Result<SymbolIndexStats> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let db_path = normalize_absolute_path(db_path)?;
-        let stats = rebuild_symbol_index(&workspace_root, &db_path)?;
+        let stats = rebuild_symbol_index_with_limits(&workspace_root, &db_path, limits)?;
         self.symbol_indexes
             .insert(normalize_path(&workspace_root), db_path);
         Ok(stats)
@@ -286,10 +319,12 @@ impl VirtualFileSystem {
         &self,
         max_files: usize,
         max_file_bytes: Option<u64>,
+        timeout_ms: Option<u64>,
     ) -> Result<Vec<SymbolIndexStats>> {
         let limits = WorkspaceScanLimits {
             max_files,
             max_file_bytes,
+            timeout_ms,
         };
         validate_workspace_scan_limits(limits)?;
 

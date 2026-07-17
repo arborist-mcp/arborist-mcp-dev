@@ -848,7 +848,9 @@ fn refreshes_registered_symbol_index_after_external_disk_change() {
     )
     .unwrap();
 
-    let stats = vfs.refresh_registered_symbol_indexes(20_000, None).unwrap();
+    let stats = vfs
+        .refresh_registered_symbol_indexes(20_000, None, None)
+        .unwrap();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].indexed_files, 2);
     assert_eq!(stats[0].rebuilt_files, 1);

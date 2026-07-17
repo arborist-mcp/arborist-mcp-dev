@@ -189,8 +189,9 @@ index fails closed without rewriting it.
 The command emits one JSON object per initial, migrated, or refreshed state. It
 migrates the supported v1 schema transactionally, then exits fail-closed for
 foreign, incomplete, or unknown schemas rather than attempting to rewrite
-them. `--max-files` and `--max-file-bytes` use the same limits as the gateway
-index tools.
+them. `--max-files`, `--max-file-bytes`, and `--timeout-ms` use the same limits
+as the gateway index tools; `--timeout-ms` bounds cooperative traversal and
+per-file indexing work.
 
 ## Lightweight Benchmarks
 

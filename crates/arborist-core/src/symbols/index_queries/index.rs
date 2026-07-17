@@ -23,12 +23,11 @@ use crate::symbol_dependency::{
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_state::{source_fingerprint, validate_persisted_index_paths};
 use crate::symbol_index_workspace::{
-    expanded_refresh_file_paths, resolve_workspace_symbols_incremental_with_limits,
+    expanded_refresh_file_paths, resolve_workspace_symbols_incremental_with_deadline,
 };
 use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{
-    WorkspaceScanLimits, should_skip_index_path, validate_source_file_size,
-    validate_workspace_scan_limits,
+    WorkspaceScanDeadline, WorkspaceScanLimits, should_skip_index_path, validate_source_file_size,
 };
 
 pub fn rebuild_symbol_index(workspace_root: &Path, db_path: &Path) -> Result<SymbolIndexStats> {
@@ -52,7 +51,17 @@ pub fn rebuild_symbol_index_with_limits(
     db_path: &Path,
     limits: WorkspaceScanLimits,
 ) -> Result<SymbolIndexStats> {
-    validate_workspace_scan_limits(limits)?;
+    let deadline = WorkspaceScanDeadline::new(limits)?;
+    rebuild_symbol_index_with_deadline(workspace_root, db_path, limits, &deadline)
+}
+
+fn rebuild_symbol_index_with_deadline(
+    workspace_root: &Path,
+    db_path: &Path,
+    limits: WorkspaceScanLimits,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<SymbolIndexStats> {
+    deadline.check("preparing symbol index")?;
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     if db_path.exists() {
@@ -64,7 +73,13 @@ pub fn rebuild_symbol_index_with_limits(
         require_current_symbol_index_schema(&connection, &db_path)?;
     }
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
-        resolve_workspace_symbols_incremental_with_limits(&workspace_root, &db_path, limits)?;
+        resolve_workspace_symbols_incremental_with_deadline(
+            &workspace_root,
+            &db_path,
+            limits,
+            deadline,
+        )?;
+    deadline.check("persisting symbol index")?;
     persist_symbol_index(
         &db_path,
         &workspace_root,
@@ -104,7 +119,8 @@ pub fn refresh_symbol_index_for_file_with_limits(
     file_path: &Path,
     limits: WorkspaceScanLimits,
 ) -> Result<SymbolIndexStats> {
-    validate_workspace_scan_limits(limits)?;
+    let deadline = WorkspaceScanDeadline::new(limits)?;
+    deadline.check("preparing file refresh")?;
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
@@ -112,7 +128,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     ensure_path_inside_workspace(&workspace_root, &file_path)?;
 
     if !db_path.exists() {
-        return rebuild_symbol_index_with_limits(&workspace_root, &db_path, limits);
+        return rebuild_symbol_index_with_deadline(&workspace_root, &db_path, limits, &deadline);
     }
 
     let connection = Connection::open(&db_path)?;
@@ -128,7 +144,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
         vec![file_path.clone()]
     } else {
-        expanded_refresh_file_paths(&workspace_root, &file_path)?
+        expanded_refresh_file_paths(&workspace_root, &file_path, &deadline)?
     };
 
     let mut file_states = load_file_states(&connection)?;
@@ -138,6 +154,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let mut rebuilt_files = 0;
 
     for refresh_path in &refresh_paths {
+        deadline.check("refreshing indexed files")?;
         let normalized_refresh_path = normalize_path(refresh_path);
         let skip_refresh_path = should_skip_index_path(&workspace_root, refresh_path);
         let had_indexed_state = file_states.contains_key(&normalized_refresh_path)
@@ -178,6 +195,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
         .cloned()
         .collect::<Vec<_>>();
+    deadline.check("resolving refreshed symbols")?;
     let (resolved_map, impacted_paths) = refresh_resolved_symbol_subgraph(
         &raw_symbols,
         &old_resolved_map,
@@ -189,6 +207,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let indexed_files = file_states.len();
     let reused_files = indexed_files.saturating_sub(rebuilt_files);
 
+    deadline.check("persisting symbol index")?;
     persist_symbol_refresh(SymbolRefreshPersistence {
         db_path: &db_path,
         workspace_root: &workspace_root,

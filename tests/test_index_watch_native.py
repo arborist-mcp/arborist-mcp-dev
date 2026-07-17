@@ -116,6 +116,20 @@ class IndexWatchNativeTests(unittest.TestCase):
             self.assertEqual(event["workspace_root"], str(workspace))
             self.assertTrue(db_path.exists())
 
+    def test_native_index_timeout_rejects_zero_budget(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            with self.assertRaisesRegex(Exception, "timeout_ms"):
+                core.rebuild_symbol_index_json(
+                    str(workspace),
+                    str(workspace.joinpath("symbols.db")),
+                    20_000,
+                    None,
+                    0,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

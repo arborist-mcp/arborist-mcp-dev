@@ -70,6 +70,7 @@ fn rebuild_symbol_index_rejects_oversized_source_file() {
         WorkspaceScanLimits {
             max_files: 20_000,
             max_file_bytes: Some(8),
+            timeout_ms: None,
         },
     )
     .expect_err("rebuild should reject source files larger than max_file_bytes");
@@ -117,6 +118,7 @@ fn refresh_symbol_index_rejects_oversized_source_file() {
         WorkspaceScanLimits {
             max_files: 20_000,
             max_file_bytes: Some(8),
+            timeout_ms: None,
         },
     )
     .expect_err("refresh should reject source files larger than max_file_bytes");
@@ -141,6 +143,7 @@ fn refresh_symbol_index_rejects_invalid_source_file_size_limit() {
         WorkspaceScanLimits {
             max_files: 20_000,
             max_file_bytes: Some(0),
+            timeout_ms: None,
         },
     )
     .expect_err("refresh should reject invalid max_file_bytes before reading files");

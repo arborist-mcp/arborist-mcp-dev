@@ -122,3 +122,9 @@ strict JSON-derived values, including string object keys, lists rather than
 Python tuples, and finite numbers. Direct PyO3 JSON-string arguments for replay,
 trace-gated validation, and position edits reject duplicate JSON object keys
 before model deserialization.
+
+Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
+budget capped at `300000`. The budget is cooperative: the core checks it during
+workspace traversal, per-file indexing, C include dependency expansion, and
+before persistence, then fails without writing a new snapshot when the budget
+has expired.

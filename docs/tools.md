@@ -211,8 +211,11 @@ bounded by `max_files` (default `20000`) on rebuilds and missing-index refresh
 fallbacks so unexpectedly large workspaces fail with an actionable limit error
 instead of scanning without bound. Rebuild and refresh calls can also provide
 `max_file_bytes` to reject oversized source files before indexing reads them;
-this optional limit is capped at `67108864`. `max_files` is capped at `200000`;
-symbol list/search `limit` values are capped at `10000`.
+this optional limit is capped at `67108864`. `timeout_ms` adds an optional
+cooperative budget for directory traversal and per-file indexing, capped at
+`300000` milliseconds. `max_files` is capped at `200000`; symbol list/search
+`limit` values are capped at `10000`. When a budget expires, the operation
+returns an error before persisting a new index snapshot.
 
 `arborist-index-watch` is a polling console command for one index database or a
 JSON manifest of multiple registered workspace/index pairs. It uses
