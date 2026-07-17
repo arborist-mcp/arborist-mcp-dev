@@ -155,7 +155,7 @@ impl ArboristCore {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_graph_at_position_from_index_with_source_and_timeout(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     source,
                     &position,
                     direction,
@@ -164,7 +164,7 @@ impl ArboristCore {
             }
             (Some(source), None) => trace_symbol_graph_at_position_with_source_and_timeout(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
                 direction,
@@ -172,7 +172,7 @@ impl ArboristCore {
             ),
             (None, Some(index_db_path)) => trace_symbol_graph_at_position_from_index_with_timeout(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
                 direction,
                 timeout_ms,
@@ -182,7 +182,7 @@ impl ArboristCore {
                 .borrow_mut()
                 .trace_symbol_graph_at_position_with_timeout(
                     context.workspace_root(),
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     &position,
                     direction,
                     timeout_ms,
@@ -218,7 +218,7 @@ impl ArboristCore {
             (Some(source), Some(index_db_path)) => {
                 trace_symbol_neighborhood_at_position_from_index_with_source_and_timeout(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     source,
                     &position,
                     direction,
@@ -229,7 +229,7 @@ impl ArboristCore {
             }
             (Some(source), None) => trace_symbol_neighborhood_at_position_with_source_and_timeout(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
                 direction,
@@ -240,7 +240,7 @@ impl ArboristCore {
             (None, Some(index_db_path)) => {
                 trace_symbol_neighborhood_at_position_from_index_with_timeout(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     &position,
                     direction,
                     bounds.max_depth,
@@ -253,7 +253,7 @@ impl ArboristCore {
                 .borrow_mut()
                 .trace_symbol_neighborhood_at_position_with_timeout(
                     context.workspace_root(),
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     &position,
                     direction,
                     bounds.max_depth,

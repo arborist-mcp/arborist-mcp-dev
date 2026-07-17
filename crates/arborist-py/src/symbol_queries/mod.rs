@@ -42,10 +42,10 @@ impl SymbolQueryContext {
         self.file_path.as_deref()
     }
 
-    pub(crate) fn position_file_path(&self) -> &Path {
+    pub(crate) fn position_file_path(&self) -> PyResult<&Path> {
         self.file_path
             .as_deref()
-            .expect("position queries always provide a file path")
+            .ok_or_else(|| PyValueError::new_err("file_path is required for position queries"))
     }
 
     pub(crate) fn source(&self) -> Option<&str> {
@@ -55,5 +55,41 @@ impl SymbolQueryContext {
     pub(crate) fn source_file_path(&self) -> PyResult<&Path> {
         self.file_path()
             .ok_or_else(|| PyValueError::new_err("file_path is required when source is provided"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SymbolQueryContext;
+
+    #[test]
+    fn source_context_exposes_owned_paths_and_source() {
+        let context = SymbolQueryContext::new(
+            "workspace",
+            Some("symbols.db".to_string()),
+            Some("src/main.cpp".to_string()),
+            Some("int main() {}".to_string()),
+        );
+
+        assert_eq!(context.workspace_root().to_string_lossy(), "workspace");
+        assert_eq!(
+            context.index_db_path().map(|path| path.to_string_lossy()),
+            Some("symbols.db".into())
+        );
+        assert_eq!(
+            context.file_path().map(|path| path.to_string_lossy()),
+            Some("src/main.cpp".into())
+        );
+        assert_eq!(context.source(), Some("int main() {}"));
+        assert!(context.source_file_path().is_ok());
+        assert!(context.position_file_path().is_ok());
+    }
+
+    #[test]
+    fn source_file_path_requires_a_file_path() {
+        let context = SymbolQueryContext::new("workspace", None, None, Some("source".into()));
+
+        assert!(context.source_file_path().is_err());
+        assert!(context.position_file_path().is_err());
     }
 }

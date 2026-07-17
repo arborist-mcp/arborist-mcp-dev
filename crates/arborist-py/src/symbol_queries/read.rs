@@ -76,24 +76,24 @@ impl ArboristCore {
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => read_symbol_at_position_from_index_with_source(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
             ),
             (Some(source), None) => read_symbol_at_position_with_source(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
             ),
             (None, Some(index_db_path)) => read_symbol_at_position_from_index(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_at_position(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
             ),
         }
@@ -165,7 +165,7 @@ impl ArboristCore {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_context_at_position_from_index_with_source(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     source,
                     &position,
                     direction,
@@ -173,20 +173,20 @@ impl ArboristCore {
             }
             (Some(source), None) => read_symbol_context_at_position_with_source(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
                 direction,
             ),
             (None, Some(index_db_path)) => read_symbol_context_at_position_from_index(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
                 direction,
             ),
             (None, None) => self.vfs.borrow_mut().read_symbol_context_at_position(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
                 direction,
             ),
@@ -274,7 +274,7 @@ impl ArboristCore {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_neighborhood_context_at_position_from_index_with_source(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     source,
                     &position,
                     direction,
@@ -284,7 +284,7 @@ impl ArboristCore {
             }
             (Some(source), None) => read_symbol_neighborhood_context_at_position_with_source(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
                 direction,
@@ -293,7 +293,7 @@ impl ArboristCore {
             ),
             (None, Some(index_db_path)) => read_symbol_neighborhood_context_at_position_from_index(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
                 direction,
                 bounds.max_depth,
@@ -304,7 +304,7 @@ impl ArboristCore {
                 .borrow_mut()
                 .read_symbol_neighborhood_context_at_position(
                     context.workspace_root(),
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     &position,
                     direction,
                     bounds.max_depth,
@@ -394,7 +394,7 @@ impl ArboristCore {
             (Some(source), Some(index_db_path)) => {
                 read_symbol_discovery_context_at_position_from_index_with_source(
                     index_db_path,
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     source,
                     &position,
                     direction,
@@ -404,7 +404,7 @@ impl ArboristCore {
             }
             (Some(source), None) => read_symbol_discovery_context_at_position_with_source(
                 context.workspace_root(),
-                context.position_file_path(),
+                context.position_file_path()?,
                 source,
                 &position,
                 direction,
@@ -413,7 +413,7 @@ impl ArboristCore {
             ),
             (None, Some(index_db_path)) => read_symbol_discovery_context_at_position_from_index(
                 index_db_path,
-                context.position_file_path(),
+                context.position_file_path()?,
                 &position,
                 direction,
                 bounds.max_depth,
@@ -424,7 +424,7 @@ impl ArboristCore {
                 .borrow_mut()
                 .read_symbol_discovery_context_at_position(
                     context.workspace_root(),
-                    context.position_file_path(),
+                    context.position_file_path()?,
                     &position,
                     direction,
                     bounds.max_depth,
