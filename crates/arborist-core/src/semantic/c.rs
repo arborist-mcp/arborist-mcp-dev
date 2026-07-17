@@ -237,6 +237,18 @@ pub(crate) fn c_symbol_nodes(root: Node<'_>) -> Vec<Node<'_>> {
 }
 
 fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    if scope.kind() == "linkage_specification" {
+        let Some(body) = scope.child_by_field_name("body") else {
+            return;
+        };
+        if body.kind() == "declaration_list" {
+            collect_c_scope_symbols(body, symbols);
+        } else {
+            collect_c_scope_child(body, symbols);
+        }
+        return;
+    }
+
     let scope = if scope.kind() == "namespace_definition" {
         match scope.child_by_field_name("body") {
             Some(body) => body,
@@ -248,20 +260,27 @@ fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tr
     let mut cursor = scope.walk();
 
     for child in scope.named_children(&mut cursor) {
-        if child.kind() == "namespace_definition" {
-            collect_c_scope_symbols(child, symbols);
-        } else if child.kind() == "template_declaration" {
-            collect_cpp_template_symbols(child, symbols);
-        } else if is_cpp_type_scope(child) {
-            collect_cpp_type_scope_symbols(child, symbols);
-        } else if child.kind() == "declaration" {
-            collect_c_named_type_definition_symbols(child, symbols);
-            if is_c_symbol_node(child) {
-                symbols.push(child);
-            }
-        } else if is_c_symbol_node(child) {
+        collect_c_scope_child(child, symbols);
+    }
+}
+
+fn collect_c_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    if matches!(
+        child.kind(),
+        "linkage_specification" | "namespace_definition"
+    ) {
+        collect_c_scope_symbols(child, symbols);
+    } else if child.kind() == "template_declaration" {
+        collect_cpp_template_symbols(child, symbols);
+    } else if is_cpp_type_scope(child) {
+        collect_cpp_type_scope_symbols(child, symbols);
+    } else if child.kind() == "declaration" {
+        collect_c_named_type_definition_symbols(child, symbols);
+        if is_c_symbol_node(child) {
             symbols.push(child);
         }
+    } else if is_c_symbol_node(child) {
+        symbols.push(child);
     }
 }
 

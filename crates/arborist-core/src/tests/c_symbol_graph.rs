@@ -183,6 +183,53 @@ fn traces_cpp_symbol_graph_across_header_declaration_and_source_definition() {
 }
 
 #[test]
+fn traces_cpp_extern_c_functions_across_header_and_source() {
+    let dir = temporary_dir();
+    let header = dir.join("bridge.hpp");
+    let source = dir.join("bridge.cpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&header, "extern \"C\" {\nint helper(int value);\n}\n").unwrap();
+    fs::write(
+        &source,
+        "#include \"bridge.hpp\"\n\nextern \"C\" int helper(int value) { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"bridge.hpp\"\n\nint orchestrate(int value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper")
+    );
+
+    let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "helper");
+    assert_eq!(
+        trace.callees[0].file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(
+        persisted_trace.callees[0].file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn traces_nested_cpp_namespace_functions_with_scope_aware_resolution() {
     let dir = temporary_dir();
     let header = dir.join("api.hpp");

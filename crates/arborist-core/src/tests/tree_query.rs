@@ -134,6 +134,27 @@ fn execute_tree_query_reports_owner_for_cpp_namespace_function_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_extern_c_function() {
+    let source = "extern \"C\" int helper(int value) { return value + 1; }\n";
+    let captures = execute_tree_query(
+        Path::new("bridge.cpp"),
+        source,
+        "(function_definition) @function",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert!(
+        captures[0]
+            .owner_symbol_id
+            .as_deref()
+            .is_some_and(|symbol_id| symbol_id.ends_with("/bridge.cpp::helper"))
+    );
+    assert_eq!(captures[0].owner_semantic_path.as_deref(), Some("helper"));
+    assert_eq!(captures[0].owner_scope_path, None);
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
     let source = "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n";
     let captures = execute_tree_query(

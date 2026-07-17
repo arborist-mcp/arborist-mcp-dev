@@ -320,6 +320,30 @@ fn patches_cpp_class_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_extern_c_function_targeted_by_path() {
+    let dir = temporary_dir();
+    let file = dir.join("bridge.cpp");
+    fs::write(
+        &file,
+        "extern \"C\" int helper(int value) { return value + 1; }\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "helper",
+        "int helper(int value) { return value + 2; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "helper");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("value + 2"));
+}
+
+#[test]
 fn patches_cpp_using_alias_targeted_by_qualified_path() {
     let dir = temporary_dir();
     let file = dir.join("aliases.hpp");

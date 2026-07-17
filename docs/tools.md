@@ -58,6 +58,8 @@ Named C definitions such as `struct Packet { ... };` and `union Payload { ... };
 are also available as patch and trace targets without requiring a `typedef`.
 C++ anonymous-namespace members have file-anchored identities, preventing
 same-name symbols in separate translation units from being merged in traces.
+Functions declared or defined through `extern "C"` linkage specifications are
+indexed, traceable, query-ownable, and patchable like ordinary free functions.
 
 ## Read And Discovery Tools
 
