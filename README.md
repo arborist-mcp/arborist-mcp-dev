@@ -56,6 +56,8 @@ Packet { ... };` and `union Payload { ... };` are indexed without a `typedef`
 alias. C++ anonymous-namespace members use file-anchored identities so symbols
 with the same name in separate translation units remain isolated. `extern "C"`
 function declarations and definitions are indexed through their linkage wrapper.
+Declarations in `#if`/`#else` branches are also indexed without evaluating
+preprocessor conditions.
 
 ## Implemented Tool Families
 

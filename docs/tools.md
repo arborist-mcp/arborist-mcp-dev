@@ -60,6 +60,8 @@ C++ anonymous-namespace members have file-anchored identities, preventing
 same-name symbols in separate translation units from being merged in traces.
 Functions declared or defined through `extern "C"` linkage specifications are
 indexed, traceable, query-ownable, and patchable like ordinary free functions.
+Declarations in `#if`/`#else` branches are indexed without evaluating
+preprocessor conditions, including class methods in conditional branches.
 
 ## Read And Discovery Tools
 

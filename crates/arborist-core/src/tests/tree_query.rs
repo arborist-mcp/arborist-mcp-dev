@@ -155,6 +155,25 @@ fn execute_tree_query_reports_owner_for_cpp_extern_c_function() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_conditionally_compiled_cpp_class_method() {
+    let source = "namespace api {\nclass Config {\n#if ENABLED\npublic:\n    int enabled() { return 1; }\n#endif\n};\n}\n";
+    let captures = execute_tree_query(
+        Path::new("config.hpp"),
+        source,
+        "(field_identifier) @method",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].text, "enabled");
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("api::Config::enabled")
+    );
+    assert_eq!(captures[0].owner_scope_path.as_deref(), Some("api::Config"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
     let source = "namespace api {\nclass Counter {\npublic:\n    int increment(int value) { return value + 1; }\n};\n}\n";
     let captures = execute_tree_query(

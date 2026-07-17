@@ -270,6 +270,8 @@ fn collect_c_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Node<'tree
         "linkage_specification" | "namespace_definition"
     ) {
         collect_c_scope_symbols(child, symbols);
+    } else if is_c_preprocessor_conditional(child) {
+        collect_c_preprocessor_symbols(child, symbols);
     } else if child.kind() == "template_declaration" {
         collect_cpp_template_symbols(child, symbols);
     } else if is_cpp_type_scope(child) {
@@ -281,6 +283,20 @@ fn collect_c_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Node<'tree
         }
     } else if is_c_symbol_node(child) {
         symbols.push(child);
+    }
+}
+
+fn is_c_preprocessor_conditional(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "preproc_else" | "preproc_elif" | "preproc_elifdef" | "preproc_if" | "preproc_ifdef"
+    )
+}
+
+fn collect_c_preprocessor_symbols<'tree>(conditional: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    let mut cursor = conditional.walk();
+    for child in conditional.named_children(&mut cursor) {
+        collect_c_scope_child(child, symbols);
     }
 }
 
@@ -312,18 +328,27 @@ fn collect_cpp_type_scope_symbols<'tree>(type_node: Node<'tree>, symbols: &mut V
     let mut cursor = body.walk();
 
     for child in body.named_children(&mut cursor) {
-        if is_cpp_type_scope(child) {
-            collect_cpp_type_scope_symbols(child, symbols);
-        } else if child.kind() == "field_declaration" {
-            collect_cpp_nested_type_symbols(child, symbols);
-            if c_is_callable_declaration(child) {
-                symbols.push(child);
-            }
-        } else if child.kind() == "template_declaration" {
-            collect_cpp_template_symbols(child, symbols);
-        } else if is_c_symbol_node(child) {
+        collect_cpp_type_scope_child(child, symbols);
+    }
+}
+
+fn collect_cpp_type_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    if is_c_preprocessor_conditional(child) {
+        let mut cursor = child.walk();
+        for nested_child in child.named_children(&mut cursor) {
+            collect_cpp_type_scope_child(nested_child, symbols);
+        }
+    } else if is_cpp_type_scope(child) {
+        collect_cpp_type_scope_symbols(child, symbols);
+    } else if child.kind() == "field_declaration" {
+        collect_cpp_nested_type_symbols(child, symbols);
+        if c_is_callable_declaration(child) {
             symbols.push(child);
         }
+    } else if child.kind() == "template_declaration" {
+        collect_cpp_template_symbols(child, symbols);
+    } else if is_c_symbol_node(child) {
+        symbols.push(child);
     }
 }
 

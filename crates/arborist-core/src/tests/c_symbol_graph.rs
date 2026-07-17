@@ -230,6 +230,43 @@ fn traces_cpp_extern_c_functions_across_header_and_source() {
 }
 
 #[test]
+fn traces_conditionally_compiled_cpp_functions() {
+    let dir = temporary_dir();
+    let source = dir.join("feature.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "#if ENABLED\nint helper(int value) { return value + 1; }\n#else\nint fallback(int value) { return value - 1; }\n#endif\n\nint orchestrate(int value) { return helper(value); }\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper")
+    );
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "fallback")
+    );
+
+    let trace = trace_symbol_graph(&dir, "orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "orchestrate", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(persisted_trace.callees[0].semantic_path, "helper");
+}
+
+#[test]
 fn traces_nested_cpp_namespace_functions_with_scope_aware_resolution() {
     let dir = temporary_dir();
     let header = dir.join("api.hpp");

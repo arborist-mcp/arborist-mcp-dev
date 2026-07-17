@@ -344,6 +344,30 @@ fn patches_cpp_extern_c_function_targeted_by_path() {
 }
 
 #[test]
+fn patches_conditionally_compiled_cpp_class_method() {
+    let dir = temporary_dir();
+    let file = dir.join("config.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nclass Config {\n#if ENABLED\npublic:\n    int enabled() { return 1; }\n#endif\n};\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::Config::enabled",
+        "int enabled() { return 2; }",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Config::enabled");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(fs::read_to_string(&file).unwrap().contains("return 2"));
+}
+
+#[test]
 fn patches_cpp_using_alias_targeted_by_qualified_path() {
     let dir = temporary_dir();
     let file = dir.join("aliases.hpp");
