@@ -703,6 +703,28 @@ SARIF_RESULT_SCHEMA = {
     "required": ["version", "$schema", "runs"],
     "additionalProperties": True,
 }
+WORKSPACE_EDIT_PREVIEW_FILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "file": _schema("string", "Normalized source file path."),
+        "source": _schema("string", "Updated preview source."),
+        "unified_diff": _schema("string", "Unified diff for this file."),
+        "changed": _schema("boolean", "Whether this file changes."),
+        "validation": PATCH_VALIDATION_RESULT_SCHEMA,
+    },
+    "required": ["file", "source", "unified_diff", "changed", "validation"],
+    "additionalProperties": False,
+}
+WORKSPACE_EDIT_PREVIEW_RESULT_SCHEMA = {
+    "type": "object",
+    "description": "Read-only preview of sequential position edits across one or more files.",
+    "properties": {
+        "changed": _schema("boolean", "Whether any requested file changes."),
+        "files": {"type": "array", "description": "Per-file preview results.", "minItems": 1, "items": WORKSPACE_EDIT_PREVIEW_FILE_SCHEMA},
+    },
+    "required": ["changed", "files"],
+    "additionalProperties": False,
+}
 PATCH_TRACE_VALIDATION_RESULT_SCHEMA = {
     "type": "object",
     "description": "Patch commit decision against trace evidence.",
@@ -1056,6 +1078,7 @@ TOOL_RESULT_SCHEMAS = {
         "patch_preview": PATCH_PREVIEW_RESULT_SCHEMA,
         "trace_patch_evidence_replay": TRACE_PATCH_EVIDENCE_REPLAY_RESULT_SCHEMA,
         "sarif": SARIF_RESULT_SCHEMA,
+        "workspace_edit_preview": WORKSPACE_EDIT_PREVIEW_RESULT_SCHEMA,
         "patch_trace_validation": PATCH_TRACE_VALIDATION_RESULT_SCHEMA,
         "trace_backed_patch": TRACE_BACKED_PATCH_RESULT_SCHEMA,
         "graph_backed_patch": GRAPH_BACKED_PATCH_RESULT_SCHEMA,

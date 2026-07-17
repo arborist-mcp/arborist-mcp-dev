@@ -151,7 +151,7 @@ fn build_patch_preview_result(
     Ok(result)
 }
 
-fn unified_diff(path: &Path, old_source: &str, new_source: &str) -> String {
+pub(crate) fn unified_diff(path: &Path, old_source: &str, new_source: &str) -> String {
     if old_source == new_source {
         return String::new();
     }

@@ -1036,6 +1036,14 @@ class ArboristGateway:
         payload = self._require_core().export_patch_diagnostics_sarif_json(patch_json)
         return self._decode_core_object(payload)
 
+    def _preview_workspace_position_edits(self, params: dict[str, Any]) -> dict[str, Any]:
+        files = params.get("files")
+        if not isinstance(files, list):
+            raise JsonRpcError(-32602, "missing required array param: files")
+        files_json = self._encode_json_param(files, "files")
+        payload = self._require_core().preview_workspace_position_edits_json(files_json)
+        return self._decode_core_object(payload)
+
     def _validate_patch_commit_with_trace(
         self, params: dict[str, Any]
     ) -> dict[str, Any]:

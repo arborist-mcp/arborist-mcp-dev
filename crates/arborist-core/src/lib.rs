@@ -25,6 +25,7 @@ mod symbol_summary;
 mod symbol_trace;
 mod symbols;
 mod vfs;
+mod workspace_edit_preview;
 mod workspace_scan;
 
 pub use model::{
@@ -41,7 +42,8 @@ pub use model::{
     TracePatchEvidenceReplayResult, TracePatchImpactSummary, TraceSymbolGraphResult,
     TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult,
     ValidationAmbiguity, ValidationBinding, ValidationIssue, VirtualEditResult,
-    VirtualFileSnapshot, VirtualFileStatus,
+    VirtualFileSnapshot, VirtualFileStatus, WorkspaceEditPreviewFile, WorkspaceEditPreviewResult,
+    WorkspacePositionEdits,
 };
 
 pub use api::*;
@@ -98,6 +100,7 @@ pub use symbols::{
     trace_symbol_neighborhood_from_index,
 };
 pub use vfs::VirtualFileSystem;
+pub use workspace_edit_preview::preview_workspace_position_edits;
 pub use workspace_scan::{DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanLimits};
 
 #[cfg(test)]

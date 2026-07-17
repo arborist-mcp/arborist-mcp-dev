@@ -66,6 +66,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/search_symbols_discovery_context", "_search_symbols_discovery_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source"), "read", "symbol_search_discovery_context"),
     ToolSpec("arborist/replay_patch_evidence_against_trace", "_replay_patch_evidence_against_trace", ("patch", "trace"), "trace", "trace_patch_evidence_replay"),
     ToolSpec("arborist/export_patch_diagnostics_sarif", "_export_patch_diagnostics_sarif", ("patch",), "read", "sarif"),
+    ToolSpec("arborist/preview_workspace_position_edits", "_preview_workspace_position_edits", ("files",), "read", "workspace_edit_preview"),
     ToolSpec("arborist/validate_patch_commit_with_trace", "_validate_patch_commit_with_trace", ("patch", "trace"), "trace", "patch_trace_validation"),
     ToolSpec("arborist/validate_patch_with_trace_context", "_validate_patch_with_trace_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace", "trace_backed_patch"),
     ToolSpec("arborist/validate_patch_with_trace_context_at_position", "_validate_patch_with_trace_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "index_db_path"), "trace", "trace_backed_patch"),
@@ -286,6 +287,27 @@ TOOL_PARAM_SPECS = {
             "type": "array",
             "description": "Ordered LSP-style position edits to apply to an open virtual file.",
             "items": POSITION_EDIT_SCHEMA,
+        }
+    ),
+    "files": ToolParamSpec(
+        {
+            "type": "array",
+            "description": "Files with ordered position edits to preview without writing to disk.",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file_path": _schema("string", "Source file path."),
+                    "source": _schema("string", "Optional unsaved source text.", allow_empty=True),
+                    "edits": {
+                        "type": "array",
+                        "description": "Ordered LSP-style position edits.",
+                        "items": POSITION_EDIT_SCHEMA,
+                    },
+                },
+                "required": ["file_path", "edits"],
+                "additionalProperties": False,
+            },
         }
     ),
     "expand_nodes": ToolParamSpec(

@@ -13,6 +13,7 @@ COVERED_TOOLS = (
     "arborist/inspect_symbol_index",
     "arborist/migrate_symbol_index",
     "arborist/export_patch_diagnostics_sarif",
+    "arborist/preview_workspace_position_edits",
     "arborist/did_open",
     "arborist/did_close",
     "arborist/list_virtual_files",
@@ -198,6 +199,15 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "payload": {"version": "2.1.0", "runs": []},
                 "expected_call": ("{}",),
                 "check": lambda result: self.assertEqual(result["version"], "2.1.0"),
+            },
+            {
+                "core_method": "preview_workspace_position_edits_json",
+                "rpc_method": "arborist/preview_workspace_position_edits",
+                "request_id": 125,
+                "params": {"files": [{"file_path": "sample.py", "edits": []}]},
+                "payload": {"changed": False, "files": [{"file": "sample.py"}]},
+                "expected_call": ('[{"file_path": "sample.py", "edits": []}]',),
+                "check": lambda result: self.assertFalse(result["changed"]),
             },
             {
                 "core_method": "rebuild_symbol_index_json",

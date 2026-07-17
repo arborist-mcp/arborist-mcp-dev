@@ -8,6 +8,7 @@ mod primitives;
 mod query_results;
 mod symbols;
 mod trace_patch_results;
+mod workspace_edit_preview;
 pub use patch_validation::{
     DisambiguationContext, PatchAstNodeResult, PatchCommitGateReport, PatchEvidenceInvariantReport,
     PatchPreviewResult, PatchValidationReport, ValidationAmbiguity, ValidationBinding,
@@ -34,6 +35,9 @@ pub use trace_patch_results::{
     TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TracePatchImpactSummary,
     TraceSymbolGraphResult, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
     TraceSymbolNeighborhoodResult,
+};
+pub use workspace_edit_preview::{
+    WorkspaceEditPreviewFile, WorkspaceEditPreviewResult, WorkspacePositionEdits,
 };
 
 fn ensure_nonblank(value: &str, field: &str) -> Result<()> {

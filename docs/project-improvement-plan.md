@@ -112,7 +112,7 @@ completed item can land in its own commit unless two changes are inseparable.
   and persisted traces, and semantic patch targets.
 - [x] Treat non-type C++ template parameters as local bindings during patch
   validation and reference tracing.
-- [ ] Add symbol rename or guided multi-file edit previews using the existing
+- [x] Add symbol rename or guided multi-file edit previews using the existing
   symbol graph and patch validation machinery.
 - [x] Add direct caller/callee change summaries and distinct affected-symbol
   counts for live and persisted trace-backed patch validation.

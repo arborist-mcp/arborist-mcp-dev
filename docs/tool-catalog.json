@@ -13608,6 +13608,954 @@
                   },
                   {
                     "type": "object",
+                    "description": "Read-only preview of sequential position edits across one or more files.",
+                    "properties": {
+                      "changed": {
+                        "type": "boolean",
+                        "description": "Whether any requested file changes."
+                      },
+                      "files": {
+                        "type": "array",
+                        "description": "Per-file preview results.",
+                        "minItems": 1,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "file": {
+                              "type": "string",
+                              "description": "Normalized source file path.",
+                              "minLength": 1
+                            },
+                            "source": {
+                              "type": "string",
+                              "description": "Updated preview source.",
+                              "minLength": 1
+                            },
+                            "unified_diff": {
+                              "type": "string",
+                              "description": "Unified diff for this file.",
+                              "minLength": 1
+                            },
+                            "changed": {
+                              "type": "boolean",
+                              "description": "Whether this file changes."
+                            },
+                            "validation": {
+                              "type": "object",
+                              "description": "Patch validation audit report.",
+                              "properties": {
+                                "syntax_errors": {
+                                  "type": "array",
+                                  "description": "Syntax errors detected after patching.",
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Tree-sitter validation issue with byte and point ranges.",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "description": "Validation issue kind.",
+                                        "minLength": 1
+                                      },
+                                      "message": {
+                                        "type": "string",
+                                        "description": "Validation issue message.",
+                                        "minLength": 1
+                                      },
+                                      "start_byte": {
+                                        "type": "integer",
+                                        "description": "Inclusive start byte.",
+                                        "minimum": 0
+                                      },
+                                      "end_byte": {
+                                        "type": "integer",
+                                        "description": "Exclusive end byte.",
+                                        "minimum": 0
+                                      },
+                                      "start_point": {
+                                        "type": "object",
+                                        "description": "Zero-based source position.",
+                                        "properties": {
+                                          "row": {
+                                            "type": "integer",
+                                            "description": "Zero-based row.",
+                                            "minimum": 0
+                                          },
+                                          "column": {
+                                            "type": "integer",
+                                            "description": "Zero-based UTF-8 byte column.",
+                                            "minimum": 0
+                                          }
+                                        },
+                                        "required": [
+                                          "row",
+                                          "column"
+                                        ],
+                                        "additionalProperties": false
+                                      },
+                                      "end_point": {
+                                        "type": "object",
+                                        "description": "Zero-based source position.",
+                                        "properties": {
+                                          "row": {
+                                            "type": "integer",
+                                            "description": "Zero-based row.",
+                                            "minimum": 0
+                                          },
+                                          "column": {
+                                            "type": "integer",
+                                            "description": "Zero-based UTF-8 byte column.",
+                                            "minimum": 0
+                                          }
+                                        },
+                                        "required": [
+                                          "row",
+                                          "column"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "message",
+                                      "start_byte",
+                                      "end_byte",
+                                      "start_point",
+                                      "end_point"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "unresolved_identifiers": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                },
+                                "resolved_identifiers": {
+                                  "type": "array",
+                                  "description": "Identifiers resolved during validation.",
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Resolved validation binding.",
+                                    "properties": {
+                                      "name": {
+                                        "type": "string",
+                                        "description": "Identifier name.",
+                                        "minLength": 1
+                                      },
+                                      "symbol": {
+                                        "type": "object",
+                                        "description": "Compact symbol metadata.",
+                                        "properties": {
+                                          "symbol_id": {
+                                            "type": "string",
+                                            "description": "Stable symbol identifier.",
+                                            "minLength": 1
+                                          },
+                                          "semantic_path": {
+                                            "type": "string",
+                                            "description": "Stable Arborist semantic selector.",
+                                            "minLength": 1
+                                          },
+                                          "scope_path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "file_path": {
+                                            "type": "string",
+                                            "description": "Normalized source file path.",
+                                            "minLength": 1
+                                          },
+                                          "node_kind": {
+                                            "type": "string",
+                                            "description": "Tree-sitter node kind.",
+                                            "minLength": 1
+                                          },
+                                          "origin_type": {
+                                            "type": "string",
+                                            "description": "Symbol origin classification.",
+                                            "minLength": 1
+                                          },
+                                          "evidence_key": {
+                                            "type": "string",
+                                            "description": "Trace evidence identity key.",
+                                            "minLength": 1
+                                          },
+                                          "byte_range": {
+                                            "type": "array",
+                                            "description": "Inclusive start and exclusive end byte offsets.",
+                                            "items": {
+                                              "type": "integer",
+                                              "description": "Byte offset.",
+                                              "minimum": 0
+                                            },
+                                            "minItems": 2,
+                                            "maxItems": 2
+                                          },
+                                          "signature": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "parameters": {
+                                            "type": "array",
+                                            "description": "String values.",
+                                            "items": {
+                                              "type": "string",
+                                              "description": "String value.",
+                                              "minLength": 1
+                                            }
+                                          },
+                                          "return_type": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "docstring": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "symbol_id",
+                                          "semantic_path",
+                                          "scope_path",
+                                          "file_path",
+                                          "node_kind",
+                                          "origin_type",
+                                          "evidence_key",
+                                          "byte_range",
+                                          "signature",
+                                          "parameters",
+                                          "return_type",
+                                          "docstring"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "symbol"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "ambiguous_identifiers": {
+                                  "type": "array",
+                                  "description": "Identifiers that matched multiple candidate symbols.",
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Ambiguous identifier validation result.",
+                                    "properties": {
+                                      "name": {
+                                        "type": "string",
+                                        "description": "Identifier name.",
+                                        "minLength": 1
+                                      },
+                                      "candidates": {
+                                        "type": "array",
+                                        "description": "Candidate symbols for the identifier.",
+                                        "items": {
+                                          "type": "object",
+                                          "description": "Compact symbol metadata.",
+                                          "properties": {
+                                            "symbol_id": {
+                                              "type": "string",
+                                              "description": "Stable symbol identifier.",
+                                              "minLength": 1
+                                            },
+                                            "semantic_path": {
+                                              "type": "string",
+                                              "description": "Stable Arborist semantic selector.",
+                                              "minLength": 1
+                                            },
+                                            "scope_path": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "file_path": {
+                                              "type": "string",
+                                              "description": "Normalized source file path.",
+                                              "minLength": 1
+                                            },
+                                            "node_kind": {
+                                              "type": "string",
+                                              "description": "Tree-sitter node kind.",
+                                              "minLength": 1
+                                            },
+                                            "origin_type": {
+                                              "type": "string",
+                                              "description": "Symbol origin classification.",
+                                              "minLength": 1
+                                            },
+                                            "evidence_key": {
+                                              "type": "string",
+                                              "description": "Trace evidence identity key.",
+                                              "minLength": 1
+                                            },
+                                            "byte_range": {
+                                              "type": "array",
+                                              "description": "Inclusive start and exclusive end byte offsets.",
+                                              "items": {
+                                                "type": "integer",
+                                                "description": "Byte offset.",
+                                                "minimum": 0
+                                              },
+                                              "minItems": 2,
+                                              "maxItems": 2
+                                            },
+                                            "signature": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "parameters": {
+                                              "type": "array",
+                                              "description": "String values.",
+                                              "items": {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              }
+                                            },
+                                            "return_type": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "docstring": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "symbol_id",
+                                            "semantic_path",
+                                            "scope_path",
+                                            "file_path",
+                                            "node_kind",
+                                            "origin_type",
+                                            "evidence_key",
+                                            "byte_range",
+                                            "signature",
+                                            "parameters",
+                                            "return_type",
+                                            "docstring"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "description": "Why the identifier is ambiguous.",
+                                        "minLength": 1
+                                      },
+                                      "disambiguation_context": {
+                                        "type": "object",
+                                        "description": "C include-family disambiguation context.",
+                                        "properties": {
+                                          "active_include_family": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "preferred_family": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "visible_include_families": {
+                                            "type": "array",
+                                            "description": "String values.",
+                                            "items": {
+                                              "type": "string",
+                                              "description": "String value.",
+                                              "minLength": 1
+                                            }
+                                          },
+                                          "candidate_include_families": {
+                                            "type": "array",
+                                            "description": "String values.",
+                                            "items": {
+                                              "type": "string",
+                                              "description": "String value.",
+                                              "minLength": 1
+                                            }
+                                          },
+                                          "candidate_symbol_ids": {
+                                            "type": "array",
+                                            "description": "String values.",
+                                            "items": {
+                                              "type": "string",
+                                              "description": "String value.",
+                                              "minLength": 1
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "active_include_family",
+                                          "preferred_family",
+                                          "visible_include_families",
+                                          "candidate_include_families",
+                                          "candidate_symbol_ids"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "candidates",
+                                      "reason",
+                                      "disambiguation_context"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "binding_decisions": {
+                                  "type": "array",
+                                  "description": "Binding decisions made by validation.",
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Patch validation binding decision.",
+                                    "properties": {
+                                      "name": {
+                                        "type": "string",
+                                        "description": "Identifier name.",
+                                        "minLength": 1
+                                      },
+                                      "status": {
+                                        "type": "string",
+                                        "description": "Decision status.",
+                                        "minLength": 1
+                                      },
+                                      "reason": {
+                                        "type": "string",
+                                        "description": "Decision reason.",
+                                        "minLength": 1
+                                      },
+                                      "selected_symbol_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "description": "String value.",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "candidates": {
+                                        "type": "array",
+                                        "description": "Candidate symbols considered by the decision.",
+                                        "items": {
+                                          "type": "object",
+                                          "description": "Compact symbol metadata.",
+                                          "properties": {
+                                            "symbol_id": {
+                                              "type": "string",
+                                              "description": "Stable symbol identifier.",
+                                              "minLength": 1
+                                            },
+                                            "semantic_path": {
+                                              "type": "string",
+                                              "description": "Stable Arborist semantic selector.",
+                                              "minLength": 1
+                                            },
+                                            "scope_path": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "file_path": {
+                                              "type": "string",
+                                              "description": "Normalized source file path.",
+                                              "minLength": 1
+                                            },
+                                            "node_kind": {
+                                              "type": "string",
+                                              "description": "Tree-sitter node kind.",
+                                              "minLength": 1
+                                            },
+                                            "origin_type": {
+                                              "type": "string",
+                                              "description": "Symbol origin classification.",
+                                              "minLength": 1
+                                            },
+                                            "evidence_key": {
+                                              "type": "string",
+                                              "description": "Trace evidence identity key.",
+                                              "minLength": 1
+                                            },
+                                            "byte_range": {
+                                              "type": "array",
+                                              "description": "Inclusive start and exclusive end byte offsets.",
+                                              "items": {
+                                                "type": "integer",
+                                                "description": "Byte offset.",
+                                                "minimum": 0
+                                              },
+                                              "minItems": 2,
+                                              "maxItems": 2
+                                            },
+                                            "signature": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "parameters": {
+                                              "type": "array",
+                                              "description": "String values.",
+                                              "items": {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              }
+                                            },
+                                            "return_type": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "docstring": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string",
+                                                  "description": "String value.",
+                                                  "minLength": 1
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "symbol_id",
+                                            "semantic_path",
+                                            "scope_path",
+                                            "file_path",
+                                            "node_kind",
+                                            "origin_type",
+                                            "evidence_key",
+                                            "byte_range",
+                                            "signature",
+                                            "parameters",
+                                            "return_type",
+                                            "docstring"
+                                          ],
+                                          "additionalProperties": false
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "name",
+                                      "status",
+                                      "reason",
+                                      "selected_symbol_id",
+                                      "candidates"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "commit_gate": {
+                                  "type": "object",
+                                  "description": "Commit gate decision for a patch result.",
+                                  "properties": {
+                                    "status": {
+                                      "type": "string",
+                                      "description": "Commit gate status.",
+                                      "minLength": 1
+                                    },
+                                    "allowed": {
+                                      "type": "boolean",
+                                      "description": "Whether the patch may be committed."
+                                    },
+                                    "reason": {
+                                      "type": "string",
+                                      "description": "Commit gate reason.",
+                                      "minLength": 1
+                                    },
+                                    "bypass_reason": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "blocking_decisions": {
+                                      "type": "array",
+                                      "description": "Binding decisions that block a normal commit.",
+                                      "items": {
+                                        "type": "object",
+                                        "description": "Patch validation binding decision.",
+                                        "properties": {
+                                          "name": {
+                                            "type": "string",
+                                            "description": "Identifier name.",
+                                            "minLength": 1
+                                          },
+                                          "status": {
+                                            "type": "string",
+                                            "description": "Decision status.",
+                                            "minLength": 1
+                                          },
+                                          "reason": {
+                                            "type": "string",
+                                            "description": "Decision reason.",
+                                            "minLength": 1
+                                          },
+                                          "selected_symbol_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "candidates": {
+                                            "type": "array",
+                                            "description": "Candidate symbols considered by the decision.",
+                                            "items": {
+                                              "type": "object",
+                                              "description": "Compact symbol metadata.",
+                                              "properties": {
+                                                "symbol_id": {
+                                                  "type": "string",
+                                                  "description": "Stable symbol identifier.",
+                                                  "minLength": 1
+                                                },
+                                                "semantic_path": {
+                                                  "type": "string",
+                                                  "description": "Stable Arborist semantic selector.",
+                                                  "minLength": 1
+                                                },
+                                                "scope_path": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "string",
+                                                      "description": "String value.",
+                                                      "minLength": 1
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                },
+                                                "file_path": {
+                                                  "type": "string",
+                                                  "description": "Normalized source file path.",
+                                                  "minLength": 1
+                                                },
+                                                "node_kind": {
+                                                  "type": "string",
+                                                  "description": "Tree-sitter node kind.",
+                                                  "minLength": 1
+                                                },
+                                                "origin_type": {
+                                                  "type": "string",
+                                                  "description": "Symbol origin classification.",
+                                                  "minLength": 1
+                                                },
+                                                "evidence_key": {
+                                                  "type": "string",
+                                                  "description": "Trace evidence identity key.",
+                                                  "minLength": 1
+                                                },
+                                                "byte_range": {
+                                                  "type": "array",
+                                                  "description": "Inclusive start and exclusive end byte offsets.",
+                                                  "items": {
+                                                    "type": "integer",
+                                                    "description": "Byte offset.",
+                                                    "minimum": 0
+                                                  },
+                                                  "minItems": 2,
+                                                  "maxItems": 2
+                                                },
+                                                "signature": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "string",
+                                                      "description": "String value.",
+                                                      "minLength": 1
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                },
+                                                "parameters": {
+                                                  "type": "array",
+                                                  "description": "String values.",
+                                                  "items": {
+                                                    "type": "string",
+                                                    "description": "String value.",
+                                                    "minLength": 1
+                                                  }
+                                                },
+                                                "return_type": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "string",
+                                                      "description": "String value.",
+                                                      "minLength": 1
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                },
+                                                "docstring": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "string",
+                                                      "description": "String value.",
+                                                      "minLength": 1
+                                                    },
+                                                    {
+                                                      "type": "null"
+                                                    }
+                                                  ]
+                                                }
+                                              },
+                                              "required": [
+                                                "symbol_id",
+                                                "semantic_path",
+                                                "scope_path",
+                                                "file_path",
+                                                "node_kind",
+                                                "origin_type",
+                                                "evidence_key",
+                                                "byte_range",
+                                                "signature",
+                                                "parameters",
+                                                "return_type",
+                                                "docstring"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "name",
+                                          "status",
+                                          "reason",
+                                          "selected_symbol_id",
+                                          "candidates"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "evidence_invariants": {
+                                      "type": "array",
+                                      "description": "Trace evidence invariants evaluated by the gate.",
+                                      "items": {
+                                        "type": "object",
+                                        "description": "Trace evidence invariant checked by the commit gate.",
+                                        "properties": {
+                                          "name": {
+                                            "type": "string",
+                                            "description": "Invariant name.",
+                                            "minLength": 1
+                                          },
+                                          "status": {
+                                            "type": "string",
+                                            "description": "Invariant status.",
+                                            "minLength": 1
+                                          },
+                                          "reason": {
+                                            "type": "string",
+                                            "description": "Invariant reason.",
+                                            "minLength": 1
+                                          },
+                                          "selected_evidence_key": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string",
+                                                "description": "String value.",
+                                                "minLength": 1
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "candidate_evidence_keys": {
+                                            "type": "array",
+                                            "description": "String values.",
+                                            "items": {
+                                              "type": "string",
+                                              "description": "String value.",
+                                              "minLength": 1
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "name",
+                                          "status",
+                                          "reason",
+                                          "selected_evidence_key",
+                                          "candidate_evidence_keys"
+                                        ],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "syntax_error_count": {
+                                      "type": "integer",
+                                      "description": "Number of syntax errors.",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "status",
+                                    "allowed",
+                                    "reason",
+                                    "bypass_reason",
+                                    "blocking_decisions",
+                                    "evidence_invariants",
+                                    "syntax_error_count"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "syntax_errors",
+                                "unresolved_identifiers",
+                                "resolved_identifiers",
+                                "ambiguous_identifiers",
+                                "binding_decisions",
+                                "commit_gate"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "file",
+                            "source",
+                            "unified_diff",
+                            "changed",
+                            "validation"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "changed",
+                      "files"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
                     "description": "Patch commit decision against trace evidence.",
                     "properties": {
                       "allowed": {
@@ -53318,6 +54266,1073 @@
     "metadata": {
       "category": "read",
       "legacyMethod": "arborist/export_patch_diagnostics_sarif",
+      "mutatesState": false
+    }
+  },
+  {
+    "name": "arborist/preview_workspace_position_edits",
+    "title": "Preview Workspace Position Edits",
+    "description": "Read semantic source information without writing project files. Legacy JSON-RPC method: arborist/preview_workspace_position_edits.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "description": "Files with ordered position edits to preview without writing to disk.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "file_path": {
+                "type": "string",
+                "description": "Source file path.",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "description": "Optional unsaved source text."
+              },
+              "edits": {
+                "type": "array",
+                "description": "Ordered LSP-style position edits.",
+                "items": {
+                  "type": "object",
+                  "description": "LSP-style text edit using zero-based start and end positions.",
+                  "properties": {
+                    "start": {
+                      "type": "object",
+                      "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+                      "properties": {
+                        "row": {
+                          "type": "integer",
+                          "description": "Zero-based row.",
+                          "minimum": 0
+                        },
+                        "column": {
+                          "type": "integer",
+                          "description": "Zero-based column.",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "row",
+                        "column"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "end": {
+                      "type": "object",
+                      "description": "Zero-based Tree-sitter point for position-based lookup or patching.",
+                      "properties": {
+                        "row": {
+                          "type": "integer",
+                          "description": "Zero-based row.",
+                          "minimum": 0
+                        },
+                        "column": {
+                          "type": "integer",
+                          "description": "Zero-based column.",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "row",
+                        "column"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "new_text": {
+                      "type": "string",
+                      "description": "Replacement text for the range.",
+                      "maxLength": 4194304
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "end",
+                    "new_text"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "file_path",
+              "edits"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "type": "object",
+          "description": "Read-only preview of sequential position edits across one or more files.",
+          "properties": {
+            "changed": {
+              "type": "boolean",
+              "description": "Whether any requested file changes."
+            },
+            "files": {
+              "type": "array",
+              "description": "Per-file preview results.",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "description": "Normalized source file path.",
+                    "minLength": 1
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Updated preview source.",
+                    "minLength": 1
+                  },
+                  "unified_diff": {
+                    "type": "string",
+                    "description": "Unified diff for this file.",
+                    "minLength": 1
+                  },
+                  "changed": {
+                    "type": "boolean",
+                    "description": "Whether this file changes."
+                  },
+                  "validation": {
+                    "type": "object",
+                    "description": "Patch validation audit report.",
+                    "properties": {
+                      "syntax_errors": {
+                        "type": "array",
+                        "description": "Syntax errors detected after patching.",
+                        "items": {
+                          "type": "object",
+                          "description": "Tree-sitter validation issue with byte and point ranges.",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "description": "Validation issue kind.",
+                              "minLength": 1
+                            },
+                            "message": {
+                              "type": "string",
+                              "description": "Validation issue message.",
+                              "minLength": 1
+                            },
+                            "start_byte": {
+                              "type": "integer",
+                              "description": "Inclusive start byte.",
+                              "minimum": 0
+                            },
+                            "end_byte": {
+                              "type": "integer",
+                              "description": "Exclusive end byte.",
+                              "minimum": 0
+                            },
+                            "start_point": {
+                              "type": "object",
+                              "description": "Zero-based source position.",
+                              "properties": {
+                                "row": {
+                                  "type": "integer",
+                                  "description": "Zero-based row.",
+                                  "minimum": 0
+                                },
+                                "column": {
+                                  "type": "integer",
+                                  "description": "Zero-based UTF-8 byte column.",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "row",
+                                "column"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "end_point": {
+                              "type": "object",
+                              "description": "Zero-based source position.",
+                              "properties": {
+                                "row": {
+                                  "type": "integer",
+                                  "description": "Zero-based row.",
+                                  "minimum": 0
+                                },
+                                "column": {
+                                  "type": "integer",
+                                  "description": "Zero-based UTF-8 byte column.",
+                                  "minimum": 0
+                                }
+                              },
+                              "required": [
+                                "row",
+                                "column"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "message",
+                            "start_byte",
+                            "end_byte",
+                            "start_point",
+                            "end_point"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "unresolved_identifiers": {
+                        "type": "array",
+                        "description": "String values.",
+                        "items": {
+                          "type": "string",
+                          "description": "String value.",
+                          "minLength": 1
+                        }
+                      },
+                      "resolved_identifiers": {
+                        "type": "array",
+                        "description": "Identifiers resolved during validation.",
+                        "items": {
+                          "type": "object",
+                          "description": "Resolved validation binding.",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "Identifier name.",
+                              "minLength": 1
+                            },
+                            "symbol": {
+                              "type": "object",
+                              "description": "Compact symbol metadata.",
+                              "properties": {
+                                "symbol_id": {
+                                  "type": "string",
+                                  "description": "Stable symbol identifier.",
+                                  "minLength": 1
+                                },
+                                "semantic_path": {
+                                  "type": "string",
+                                  "description": "Stable Arborist semantic selector.",
+                                  "minLength": 1
+                                },
+                                "scope_path": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "file_path": {
+                                  "type": "string",
+                                  "description": "Normalized source file path.",
+                                  "minLength": 1
+                                },
+                                "node_kind": {
+                                  "type": "string",
+                                  "description": "Tree-sitter node kind.",
+                                  "minLength": 1
+                                },
+                                "origin_type": {
+                                  "type": "string",
+                                  "description": "Symbol origin classification.",
+                                  "minLength": 1
+                                },
+                                "evidence_key": {
+                                  "type": "string",
+                                  "description": "Trace evidence identity key.",
+                                  "minLength": 1
+                                },
+                                "byte_range": {
+                                  "type": "array",
+                                  "description": "Inclusive start and exclusive end byte offsets.",
+                                  "items": {
+                                    "type": "integer",
+                                    "description": "Byte offset.",
+                                    "minimum": 0
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                "signature": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "parameters": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                },
+                                "return_type": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "docstring": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "symbol_id",
+                                "semantic_path",
+                                "scope_path",
+                                "file_path",
+                                "node_kind",
+                                "origin_type",
+                                "evidence_key",
+                                "byte_range",
+                                "signature",
+                                "parameters",
+                                "return_type",
+                                "docstring"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "symbol"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "ambiguous_identifiers": {
+                        "type": "array",
+                        "description": "Identifiers that matched multiple candidate symbols.",
+                        "items": {
+                          "type": "object",
+                          "description": "Ambiguous identifier validation result.",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "Identifier name.",
+                              "minLength": 1
+                            },
+                            "candidates": {
+                              "type": "array",
+                              "description": "Candidate symbols for the identifier.",
+                              "items": {
+                                "type": "object",
+                                "description": "Compact symbol metadata.",
+                                "properties": {
+                                  "symbol_id": {
+                                    "type": "string",
+                                    "description": "Stable symbol identifier.",
+                                    "minLength": 1
+                                  },
+                                  "semantic_path": {
+                                    "type": "string",
+                                    "description": "Stable Arborist semantic selector.",
+                                    "minLength": 1
+                                  },
+                                  "scope_path": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "file_path": {
+                                    "type": "string",
+                                    "description": "Normalized source file path.",
+                                    "minLength": 1
+                                  },
+                                  "node_kind": {
+                                    "type": "string",
+                                    "description": "Tree-sitter node kind.",
+                                    "minLength": 1
+                                  },
+                                  "origin_type": {
+                                    "type": "string",
+                                    "description": "Symbol origin classification.",
+                                    "minLength": 1
+                                  },
+                                  "evidence_key": {
+                                    "type": "string",
+                                    "description": "Trace evidence identity key.",
+                                    "minLength": 1
+                                  },
+                                  "byte_range": {
+                                    "type": "array",
+                                    "description": "Inclusive start and exclusive end byte offsets.",
+                                    "items": {
+                                      "type": "integer",
+                                      "description": "Byte offset.",
+                                      "minimum": 0
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "signature": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "parameters": {
+                                    "type": "array",
+                                    "description": "String values.",
+                                    "items": {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "return_type": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "docstring": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "symbol_id",
+                                  "semantic_path",
+                                  "scope_path",
+                                  "file_path",
+                                  "node_kind",
+                                  "origin_type",
+                                  "evidence_key",
+                                  "byte_range",
+                                  "signature",
+                                  "parameters",
+                                  "return_type",
+                                  "docstring"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "reason": {
+                              "type": "string",
+                              "description": "Why the identifier is ambiguous.",
+                              "minLength": 1
+                            },
+                            "disambiguation_context": {
+                              "type": "object",
+                              "description": "C include-family disambiguation context.",
+                              "properties": {
+                                "active_include_family": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "preferred_family": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "visible_include_families": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                },
+                                "candidate_include_families": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                },
+                                "candidate_symbol_ids": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                }
+                              },
+                              "required": [
+                                "active_include_family",
+                                "preferred_family",
+                                "visible_include_families",
+                                "candidate_include_families",
+                                "candidate_symbol_ids"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "candidates",
+                            "reason",
+                            "disambiguation_context"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "binding_decisions": {
+                        "type": "array",
+                        "description": "Binding decisions made by validation.",
+                        "items": {
+                          "type": "object",
+                          "description": "Patch validation binding decision.",
+                          "properties": {
+                            "name": {
+                              "type": "string",
+                              "description": "Identifier name.",
+                              "minLength": 1
+                            },
+                            "status": {
+                              "type": "string",
+                              "description": "Decision status.",
+                              "minLength": 1
+                            },
+                            "reason": {
+                              "type": "string",
+                              "description": "Decision reason.",
+                              "minLength": 1
+                            },
+                            "selected_symbol_id": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "description": "String value.",
+                                  "minLength": 1
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "candidates": {
+                              "type": "array",
+                              "description": "Candidate symbols considered by the decision.",
+                              "items": {
+                                "type": "object",
+                                "description": "Compact symbol metadata.",
+                                "properties": {
+                                  "symbol_id": {
+                                    "type": "string",
+                                    "description": "Stable symbol identifier.",
+                                    "minLength": 1
+                                  },
+                                  "semantic_path": {
+                                    "type": "string",
+                                    "description": "Stable Arborist semantic selector.",
+                                    "minLength": 1
+                                  },
+                                  "scope_path": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "file_path": {
+                                    "type": "string",
+                                    "description": "Normalized source file path.",
+                                    "minLength": 1
+                                  },
+                                  "node_kind": {
+                                    "type": "string",
+                                    "description": "Tree-sitter node kind.",
+                                    "minLength": 1
+                                  },
+                                  "origin_type": {
+                                    "type": "string",
+                                    "description": "Symbol origin classification.",
+                                    "minLength": 1
+                                  },
+                                  "evidence_key": {
+                                    "type": "string",
+                                    "description": "Trace evidence identity key.",
+                                    "minLength": 1
+                                  },
+                                  "byte_range": {
+                                    "type": "array",
+                                    "description": "Inclusive start and exclusive end byte offsets.",
+                                    "items": {
+                                      "type": "integer",
+                                      "description": "Byte offset.",
+                                      "minimum": 0
+                                    },
+                                    "minItems": 2,
+                                    "maxItems": 2
+                                  },
+                                  "signature": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "parameters": {
+                                    "type": "array",
+                                    "description": "String values.",
+                                    "items": {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "return_type": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "docstring": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "description": "String value.",
+                                        "minLength": 1
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "symbol_id",
+                                  "semantic_path",
+                                  "scope_path",
+                                  "file_path",
+                                  "node_kind",
+                                  "origin_type",
+                                  "evidence_key",
+                                  "byte_range",
+                                  "signature",
+                                  "parameters",
+                                  "return_type",
+                                  "docstring"
+                                ],
+                                "additionalProperties": false
+                              }
+                            }
+                          },
+                          "required": [
+                            "name",
+                            "status",
+                            "reason",
+                            "selected_symbol_id",
+                            "candidates"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "commit_gate": {
+                        "type": "object",
+                        "description": "Commit gate decision for a patch result.",
+                        "properties": {
+                          "status": {
+                            "type": "string",
+                            "description": "Commit gate status.",
+                            "minLength": 1
+                          },
+                          "allowed": {
+                            "type": "boolean",
+                            "description": "Whether the patch may be committed."
+                          },
+                          "reason": {
+                            "type": "string",
+                            "description": "Commit gate reason.",
+                            "minLength": 1
+                          },
+                          "bypass_reason": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "description": "String value.",
+                                "minLength": 1
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "blocking_decisions": {
+                            "type": "array",
+                            "description": "Binding decisions that block a normal commit.",
+                            "items": {
+                              "type": "object",
+                              "description": "Patch validation binding decision.",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "description": "Identifier name.",
+                                  "minLength": 1
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "description": "Decision status.",
+                                  "minLength": 1
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "description": "Decision reason.",
+                                  "minLength": 1
+                                },
+                                "selected_symbol_id": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "candidates": {
+                                  "type": "array",
+                                  "description": "Candidate symbols considered by the decision.",
+                                  "items": {
+                                    "type": "object",
+                                    "description": "Compact symbol metadata.",
+                                    "properties": {
+                                      "symbol_id": {
+                                        "type": "string",
+                                        "description": "Stable symbol identifier.",
+                                        "minLength": 1
+                                      },
+                                      "semantic_path": {
+                                        "type": "string",
+                                        "description": "Stable Arborist semantic selector.",
+                                        "minLength": 1
+                                      },
+                                      "scope_path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "description": "String value.",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "file_path": {
+                                        "type": "string",
+                                        "description": "Normalized source file path.",
+                                        "minLength": 1
+                                      },
+                                      "node_kind": {
+                                        "type": "string",
+                                        "description": "Tree-sitter node kind.",
+                                        "minLength": 1
+                                      },
+                                      "origin_type": {
+                                        "type": "string",
+                                        "description": "Symbol origin classification.",
+                                        "minLength": 1
+                                      },
+                                      "evidence_key": {
+                                        "type": "string",
+                                        "description": "Trace evidence identity key.",
+                                        "minLength": 1
+                                      },
+                                      "byte_range": {
+                                        "type": "array",
+                                        "description": "Inclusive start and exclusive end byte offsets.",
+                                        "items": {
+                                          "type": "integer",
+                                          "description": "Byte offset.",
+                                          "minimum": 0
+                                        },
+                                        "minItems": 2,
+                                        "maxItems": 2
+                                      },
+                                      "signature": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "description": "String value.",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "parameters": {
+                                        "type": "array",
+                                        "description": "String values.",
+                                        "items": {
+                                          "type": "string",
+                                          "description": "String value.",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "return_type": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "description": "String value.",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "docstring": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "description": "String value.",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "symbol_id",
+                                      "semantic_path",
+                                      "scope_path",
+                                      "file_path",
+                                      "node_kind",
+                                      "origin_type",
+                                      "evidence_key",
+                                      "byte_range",
+                                      "signature",
+                                      "parameters",
+                                      "return_type",
+                                      "docstring"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "status",
+                                "reason",
+                                "selected_symbol_id",
+                                "candidates"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "evidence_invariants": {
+                            "type": "array",
+                            "description": "Trace evidence invariants evaluated by the gate.",
+                            "items": {
+                              "type": "object",
+                              "description": "Trace evidence invariant checked by the commit gate.",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "description": "Invariant name.",
+                                  "minLength": 1
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "description": "Invariant status.",
+                                  "minLength": 1
+                                },
+                                "reason": {
+                                  "type": "string",
+                                  "description": "Invariant reason.",
+                                  "minLength": 1
+                                },
+                                "selected_evidence_key": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "description": "String value.",
+                                      "minLength": 1
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "candidate_evidence_keys": {
+                                  "type": "array",
+                                  "description": "String values.",
+                                  "items": {
+                                    "type": "string",
+                                    "description": "String value.",
+                                    "minLength": 1
+                                  }
+                                }
+                              },
+                              "required": [
+                                "name",
+                                "status",
+                                "reason",
+                                "selected_evidence_key",
+                                "candidate_evidence_keys"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "syntax_error_count": {
+                            "type": "integer",
+                            "description": "Number of syntax errors.",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "allowed",
+                          "reason",
+                          "bypass_reason",
+                          "blocking_decisions",
+                          "evidence_invariants",
+                          "syntax_error_count"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "syntax_errors",
+                      "unresolved_identifiers",
+                      "resolved_identifiers",
+                      "ambiguous_identifiers",
+                      "binding_decisions",
+                      "commit_gate"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "file",
+                  "source",
+                  "unified_diff",
+                  "changed",
+                  "validation"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "changed",
+            "files"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    },
+    "metadata": {
+      "category": "read",
+      "legacyMethod": "arborist/preview_workspace_position_edits",
       "mutatesState": false
     }
   },

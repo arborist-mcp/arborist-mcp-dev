@@ -132,6 +132,13 @@ disk. They return:
 - `unified_diff`: a compact unified diff from original source to preview source.
 - `changed`: whether the preview changes source text.
 
+`preview_workspace_position_edits` extends previewing to a batch of files. It
+accepts sequential `PositionEdit` values per file and returns each updated
+source, unified diff, and syntax diagnostics without writing any file. The
+entire request fails when any position is invalid, so callers never receive a
+partial batch preview. Optional per-file `source` values support unsaved
+buffers.
+
 `patch_ast_node` and `patch_ast_node_at_position` perform semantic replacement
 with validation. Patch responses include `resolved_symbol_id`, `resolved_path`,
 `updated_source`, and `validation`.

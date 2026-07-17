@@ -14,6 +14,7 @@ pub(crate) use python_imports::{
 };
 pub(crate) use python_references::collect_python_references;
 
+pub(crate) use api::unified_diff;
 pub use api::{
     patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
     patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,

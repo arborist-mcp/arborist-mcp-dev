@@ -10,9 +10,10 @@ use std::path::Path;
 
 use arborist_core::{
     PatchAstNodeResult, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
-    execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
+    WorkspacePositionEdits, execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
     export_patch_diagnostics_sarif, get_semantic_skeleton, get_semantic_skeleton_from_path,
-    replay_patch_evidence_against_trace, supported_languages, validate_patch_commit_with_trace,
+    preview_workspace_position_edits, replay_patch_evidence_against_trace, supported_languages,
+    validate_patch_commit_with_trace,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -682,6 +683,12 @@ impl ArboristCore {
     fn export_patch_diagnostics_sarif_json(&self, patch_json: &str) -> PyResult<String> {
         let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
         let result = export_patch_diagnostics_sarif(&patch).map_err(to_py_error)?;
+        to_json_result(&result)
+    }
+
+    fn preview_workspace_position_edits_json(&self, files_json: &str) -> PyResult<String> {
+        let files: Vec<WorkspacePositionEdits> = parse_json_arg(files_json)?;
+        let result = preview_workspace_position_edits(&files).map_err(to_py_error)?;
         to_json_result(&result)
     }
 
