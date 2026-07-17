@@ -625,10 +625,14 @@ pub fn c_symbol_id_for_node(path: &Path, node: Node<'_>, source: &str) -> Result
     };
 
     if detect_language(path).ok() == Some(LanguageId::Cpp) && is_c_callable_node(node) {
+        let signature = c_function_declarator(node)
+            .map(|declarator| node_text(declarator, source).map(str::trim))
+            .transpose()?
+            .or_else(|| node_text(node, source).ok().map(str::trim));
         return Ok(Some(cpp_callable_symbol_id(
             &semantic_path,
             &c_parameters(node, source)?,
-            Some(node_text(node, source)?.trim()),
+            signature,
         )));
     }
 
@@ -664,8 +668,82 @@ pub(crate) fn cpp_callable_symbol_id(
 }
 
 fn cpp_parameter_type_identity(parameter: &str) -> String {
-    let parameter = strip_cpp_default_argument(parameter).trim();
-    compact_cpp_identity_text(&strip_cpp_parameter_name(parameter))
+    if parameter.trim() == "void" {
+        return String::new();
+    }
+
+    cpp_parameter_type_identity_from_tree(parameter).unwrap_or_else(|| {
+        let parameter = strip_cpp_default_argument(parameter).trim();
+        compact_cpp_identity_text(&strip_cpp_parameter_name(parameter))
+    })
+}
+
+fn cpp_parameter_type_identity_from_tree(parameter: &str) -> Option<String> {
+    let source = format!("void arborist_identity({parameter});");
+    let document = parse_document(Path::new("arborist_identity.cpp"), &source).ok()?;
+    let parameter_node = find_first_descendant_by_kind(
+        document.tree.root_node(),
+        if parameter.trim() == "..." {
+            "variadic_parameter_declaration"
+        } else {
+            "parameter_declaration"
+        },
+    )?;
+    if parameter_node.kind() == "variadic_parameter_declaration" {
+        return Some("...".to_string());
+    }
+
+    let parameter_text = node_text(parameter_node, &source).ok()?;
+    let parameter_text = strip_cpp_default_argument(parameter_text).trim();
+    let mut name_ranges = Vec::new();
+    collect_cpp_parameter_name_ranges(parameter_node, &mut name_ranges);
+    name_ranges.sort_unstable();
+    name_ranges.dedup();
+
+    let mut normalized = parameter_text.to_string();
+    for (start, end) in name_ranges.into_iter().rev() {
+        if start < parameter_node.start_byte()
+            || end > parameter_node.start_byte() + parameter_text.len()
+        {
+            continue;
+        }
+        let start = start - parameter_node.start_byte();
+        let end = end - parameter_node.start_byte();
+        normalized.replace_range(start..end, "");
+    }
+    Some(compact_cpp_identity_text(&normalized))
+}
+
+fn collect_cpp_parameter_name_ranges(node: Node<'_>, ranges: &mut Vec<(usize, usize)>) {
+    if node.kind() == "parameter_declaration"
+        && let Some(declarator) = node.child_by_field_name("declarator")
+        && let Some(name) = cpp_declarator_name_node(declarator)
+    {
+        ranges.push((name.start_byte(), name.end_byte()));
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_cpp_parameter_name_ranges(child, ranges);
+    }
+}
+
+fn cpp_declarator_name_node(node: Node<'_>) -> Option<Node<'_>> {
+    if matches!(node.kind(), "identifier" | "field_identifier") {
+        return Some(node);
+    }
+    if let Some(declarator) = node.child_by_field_name("declarator")
+        && let Some(name) = cpp_declarator_name_node(declarator)
+    {
+        return Some(name);
+    }
+
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    children
+        .into_iter()
+        .rev()
+        .find_map(cpp_declarator_name_node)
 }
 
 fn strip_cpp_default_argument(parameter: &str) -> &str {

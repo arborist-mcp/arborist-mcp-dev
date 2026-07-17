@@ -1540,6 +1540,49 @@ fn keeps_cpp_overload_identity_stable_between_unnamed_template_parameters_and_de
 }
 
 #[test]
+fn preserves_cpp_callable_identity_for_qualifiers_and_declarator_shapes() {
+    let dir = temporary_dir();
+    let header = dir.join("counter.hpp");
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace api {\nint helper();\nclass Counter { public: int value() const; };\nvoid reset(void);\nint transform(int values[3][4], void (*callback)(int code));\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        "#include \"counter.hpp\"\nnamespace api {\nint helper() { return 1; }\nint Counter::value() const { return helper(); }\nvoid reset() {}\nint transform(int buffer[3][4], void (*handler)(int error)) { handler(buffer[0][0]); return buffer[0][0]; }\n}\n",
+    )
+    .unwrap();
+
+    let exact_ids = [
+        "api::Counter::value() const",
+        "api::reset()",
+        "api::transform(int[3][4],void(*)(int))",
+    ];
+    for exact_id in exact_ids {
+        let live = trace_symbol_graph(&dir, exact_id, TraceDirection::Both).unwrap();
+        assert_eq!(live.symbol.symbol_id, exact_id);
+        assert_eq!(
+            live.symbol.file_path,
+            source.to_string_lossy().replace('\\', "/")
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for exact_id in exact_ids {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, exact_id, TraceDirection::Both).unwrap();
+        assert_eq!(persisted.symbol.symbol_id, exact_id);
+        assert_eq!(
+            persisted.symbol.file_path,
+            source.to_string_lossy().replace('\\', "/")
+        );
+    }
+}
+
+#[test]
 fn does_not_trace_non_type_cpp_template_parameters_as_global_references() {
     let dir = temporary_dir();
     let source = dir.join("templates.cpp");
