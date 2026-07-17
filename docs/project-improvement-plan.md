@@ -50,9 +50,11 @@ completed item can land in its own commit unless two changes are inseparable.
   without changing core loading or response shapes.
 - [x] Move batch tool dispatch into a focused helper module without changing
   batch validation or per-tool response shapes.
-- [ ] Introduce shared PyO3 argument/context structs where wrappers repeatedly
-  validate the same `workspace_root`, `file_path`, `index_db_path`, `source`,
-  `symbol_path`, `direction`, `max_depth`, and `max_nodes` patterns.
+- [x] Introduce a shared PyO3 symbol-query context for the repeated
+  `workspace_root`, `file_path`, `index_db_path`, and `source` patterns across
+  list, read, search, and trace wrappers.
+- [ ] Extend shared PyO3 argument/context structs to the remaining patch,
+  index, and VFS wrappers where their repeated parameter patterns warrant it.
 - [x] Introduce a shared PyO3 source-position helper as the first small step
   toward consolidated wrapper arguments.
 - [x] Group PyO3 neighborhood/query/patch context `max_depth` and `max_nodes`
