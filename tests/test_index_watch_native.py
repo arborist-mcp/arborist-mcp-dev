@@ -57,6 +57,27 @@ class IndexWatchNativeTests(unittest.TestCase):
             )
             self.assertTrue(db_path.exists())
 
+    def test_registered_refresh_updates_external_disk_changes(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            db_path = workspace.joinpath("symbols.db")
+            core = ArboristCore()
+
+            initial = json.loads(
+                core.register_symbol_index_json(str(workspace), str(db_path))
+            )
+            workspace.joinpath("helper.py").write_text(
+                "def helper() -> int:\n    return 2\n", encoding="utf-8"
+            )
+            refreshed = json.loads(core.refresh_registered_symbol_indexes_json())
+
+            self.assertEqual(initial["indexed_files"], 1)
+            self.assertEqual(len(refreshed), 1)
+            self.assertEqual(refreshed[0]["db_path"], str(db_path).replace("\\", "/"))
+            self.assertEqual(refreshed[0]["rebuilt_files"], 1)
+            self.assertEqual(refreshed[0]["reused_files"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -122,4 +122,17 @@ impl ArboristCore {
             .map_err(to_py_error)?;
         to_json_result(&result)
     }
+
+    pub(super) fn refresh_registered_symbol_indexes_json_impl(
+        &self,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        let result = self
+            .vfs
+            .borrow()
+            .refresh_registered_symbol_indexes(max_files, max_file_bytes)
+            .map_err(to_py_error)?;
+        to_json_result(&result)
+    }
 }

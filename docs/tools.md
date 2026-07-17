@@ -4,15 +4,15 @@ This guide summarizes Arborist's tool families and semantic behavior. The exact
 MCP schemas are generated from the gateway and checked in at
 [`docs/tool-catalog.json`](tool-catalog.json).
 
-As of this revision, `tools/list` returns 55 tools:
+As of this revision, `tools/list` returns 58 tools:
 
-- Read tools: 27, including batch reads, semantic skeletons, patch previews, raw Tree-sitter
+- Read tools: 29, including batch reads, semantic skeletons, patch previews, raw Tree-sitter
   queries, symbol reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `arborist/patch_ast_node` and
   `arborist/patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits,
   commit/discard, and virtual reads.
-- Index tools: 8, covering register, unregister, list, inspect, migrate,
+- Index tools: 9, covering register, unregister, list, inspect, migrate,
   rebuild, workspace refresh, and file refresh for symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay
   and validation.
@@ -223,7 +223,11 @@ foreign, incomplete, and unknown schemas are reported and left unchanged.
 
 `register_symbol_index`, `unregister_symbol_index`, and `list_symbol_indexes`
 manage session-scoped index registrations. Registered indexes are refreshed when
-a committed file belongs to that workspace.
+a committed file belongs to that workspace. `refresh_registered_symbol_indexes`
+polls every registered workspace using the same fingerprint-based incremental
+refresh path, so clients can reconcile externally changed files without
+repeating registration or managing database paths themselves. It returns one
+refresh statistic object per registered index in deterministic workspace order.
 
 `inspect_symbol_index` is read-only. It reports whether an index exists, whether
 its schema and metadata are healthy, the response schema version, the expected

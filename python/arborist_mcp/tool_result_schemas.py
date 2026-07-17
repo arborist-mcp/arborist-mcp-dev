@@ -951,6 +951,11 @@ SYMBOL_INDEX_STATS_RESULT_SCHEMA = {
     "required": ["db_path", "indexed_files", "indexed_symbols", "rebuilt_files", "reused_files"],
     "additionalProperties": False,
 }
+SYMBOL_INDEX_STATS_ARRAY_RESULT_SCHEMA = {
+    "type": "array",
+    "description": "Refresh statistics for registered persisted symbol indexes.",
+    "items": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
+}
 REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA = {
     "type": "object",
     "description": "Registered workspace-to-symbol-index mapping.",
@@ -1057,6 +1062,7 @@ TOOL_RESULT_SCHEMAS = {
         "virtual_file_status_array": VIRTUAL_FILE_STATUS_ARRAY_RESULT_SCHEMA,
         "virtual_edit": VIRTUAL_EDIT_RESULT_SCHEMA,
         "symbol_index_stats": SYMBOL_INDEX_STATS_RESULT_SCHEMA,
+        "symbol_index_stats_array": SYMBOL_INDEX_STATS_ARRAY_RESULT_SCHEMA,
         "registered_symbol_index": REGISTERED_SYMBOL_INDEX_RESULT_SCHEMA,
         "registered_symbol_index_array": REGISTERED_SYMBOL_INDEX_ARRAY_RESULT_SCHEMA,
         "symbol_index_health": SYMBOL_INDEX_HEALTH_RESULT_SCHEMA,

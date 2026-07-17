@@ -32,6 +32,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files", "max_file_bytes"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
     ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", (), "index", "registered_symbol_index_array"),
+    ToolSpec("arborist/refresh_registered_symbol_indexes", "_refresh_registered_symbol_indexes", ("max_files", "max_file_bytes"), "index", "symbol_index_stats_array"),
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path",), "index", "symbol_index_health"),
     ToolSpec("arborist/migrate_symbol_index", "_migrate_symbol_index", ("db_path",), "index", "symbol_index_health"),
     ToolSpec("arborist/did_open", "_did_open", ("file_path", "source"), "vfs", "virtual_file_snapshot"),

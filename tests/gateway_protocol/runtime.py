@@ -215,6 +215,17 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             refresh_index["outputSchema"]["properties"]["result"],
             rebuild_index["outputSchema"]["properties"]["result"],
         )
+        refresh_registered = by_name["arborist/refresh_registered_symbol_indexes"]
+        self.assertEqual(refresh_registered["metadata"]["category"], "index")
+        self.assertTrue(refresh_registered["metadata"]["mutatesState"])
+        self.assertEqual(
+            refresh_registered["outputSchema"]["properties"]["result"]["type"],
+            "array",
+        )
+        self.assertEqual(
+            refresh_registered["outputSchema"]["properties"]["result"]["items"],
+            rebuild_index["outputSchema"]["properties"]["result"],
+        )
         virtual_snapshot = by_name["arborist/read_virtual_file"]["outputSchema"]["properties"][
             "result"
         ]

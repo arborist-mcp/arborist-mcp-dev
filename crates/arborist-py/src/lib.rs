@@ -989,6 +989,15 @@ impl ArboristCore {
         self.list_symbol_indexes_json_impl()
     }
 
+    #[pyo3(signature = (max_files=20_000, max_file_bytes=None))]
+    fn refresh_registered_symbol_indexes_json(
+        &self,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+    ) -> PyResult<String> {
+        self.refresh_registered_symbol_indexes_json_impl(max_files, max_file_bytes)
+    }
+
     fn open_virtual_file_json(&self, file_path: &str, source: Option<String>) -> PyResult<String> {
         self.open_virtual_file_json_impl(file_path, source)
     }

@@ -18,7 +18,10 @@ use crate::model::{
     VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
 };
 use crate::patching::{collect_syntax_errors, splice_source};
-use crate::symbols::{rebuild_symbol_index, refresh_symbol_index_for_file};
+use crate::symbols::{
+    rebuild_symbol_index, refresh_symbol_index_for_file, refresh_symbol_index_with_limits,
+};
+use crate::workspace_scan::{WorkspaceScanLimits, validate_workspace_scan_limits};
 
 impl VirtualFileSystem {
     pub fn new() -> Self {
@@ -277,6 +280,29 @@ impl VirtualFileSystem {
             registered.validate_public_output(index)?;
         }
         Ok(indexes)
+    }
+
+    pub fn refresh_registered_symbol_indexes(
+        &self,
+        max_files: usize,
+        max_file_bytes: Option<u64>,
+    ) -> Result<Vec<SymbolIndexStats>> {
+        let limits = WorkspaceScanLimits {
+            max_files,
+            max_file_bytes,
+        };
+        validate_workspace_scan_limits(limits)?;
+
+        self.registered_symbol_indexes()
+            .into_iter()
+            .map(|registered| {
+                refresh_symbol_index_with_limits(
+                    Path::new(&registered.workspace_root),
+                    Path::new(&registered.db_path),
+                    limits,
+                )
+            })
+            .collect()
     }
 
     pub fn virtual_file_statuses(&mut self, dirty_only: bool) -> Result<Vec<VirtualFileStatus>> {

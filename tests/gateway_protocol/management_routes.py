@@ -10,6 +10,7 @@ COVERED_TOOLS = (
     "arborist/refresh_symbol_index_for_file",
     "arborist/unregister_symbol_index",
     "arborist/list_symbol_indexes",
+    "arborist/refresh_registered_symbol_indexes",
     "arborist/inspect_symbol_index",
     "arborist/migrate_symbol_index",
     "arborist/export_patch_diagnostics_sarif",
@@ -123,6 +124,15 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "params": {},
                 "payload": [],
                 "expected_call": (),
+                "check": lambda result: self.assertEqual(result, []),
+            },
+            {
+                "core_method": "refresh_registered_symbol_indexes_json",
+                "rpc_method": "arborist/refresh_registered_symbol_indexes",
+                "request_id": 126,
+                "params": {},
+                "payload": [],
+                "expected_call": (20000,),
                 "check": lambda result: self.assertEqual(result, []),
             },
             {

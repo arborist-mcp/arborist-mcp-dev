@@ -822,6 +822,54 @@ fn commits_new_file_refresh_registered_symbol_index() {
 }
 
 #[test]
+fn refreshes_registered_symbol_index_after_external_disk_change() {
+    let workspace = temp_workspace();
+    let helper_path = workspace.join("helper.py");
+    let caller_path = workspace.join("caller.py");
+    let db_path = workspace.join("symbols.db");
+
+    fs::write(
+        &helper_path,
+        "def helper(value: int) -> int:\n    return leaf(value)\n\n\ndef leaf(value: int) -> int:\n    return value + 1\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "from helper import helper\n\n\ndef orchestrate(value: int) -> int:\n    return helper(value)\n",
+    )
+    .unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.register_symbol_index(&workspace, &db_path).unwrap();
+
+    fs::write(
+        &helper_path,
+        "def helper(value: int) -> int:\n    return branch(value)\n\n\ndef branch(value: int) -> int:\n    return value + 2\n",
+    )
+    .unwrap();
+
+    let stats = vfs.refresh_registered_symbol_indexes(20_000, None).unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].indexed_files, 2);
+    assert_eq!(stats[0].rebuilt_files, 1);
+    assert_eq!(stats[0].reused_files, 1);
+
+    let trace = trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).unwrap();
+    assert!(
+        trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "branch")
+    );
+    assert!(
+        !trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "leaf")
+    );
+}
+
+#[test]
 fn commits_clean_deleted_file_refresh_registered_symbol_index() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");

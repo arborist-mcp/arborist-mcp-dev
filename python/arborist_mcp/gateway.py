@@ -1384,6 +1384,16 @@ class ArboristGateway:
         payload = self._require_core().list_symbol_indexes_json()
         return self._decode_core_object_array(payload)
 
+    def _refresh_registered_symbol_indexes(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        max_files = self._optional_positive_int(params, "max_files", default=20000)
+        max_file_bytes = self._optional_positive_int_or_none(params, "max_file_bytes")
+        core = self._require_core()
+        if max_file_bytes is None:
+            payload = core.refresh_registered_symbol_indexes_json(max_files)
+        else:
+            payload = core.refresh_registered_symbol_indexes_json(max_files, max_file_bytes)
+        return self._decode_core_object_array(payload)
+
     def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
