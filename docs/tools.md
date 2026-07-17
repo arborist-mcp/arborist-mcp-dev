@@ -244,6 +244,8 @@ index with freshness issues, and migrates a supported v1 index in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
 `--dry-run` follows the same inspection and fail-closed decisions but reports
 `would_refresh` or `would_migrate` without changing an index.
+`--check` runs this no-write pass once and exits nonzero when any target is not
+healthy, while emitting each target's status for CI diagnostics.
 `inspect_symbol_index` and the watch command accept the optional cooperative
 `timeout_ms` / `--timeout-ms` budget for indexed-file freshness reads and the
 unindexed workspace scan.

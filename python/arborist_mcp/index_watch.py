@@ -324,12 +324,7 @@ def run_watch_targets(
     ),
     include_workspace_root: bool = True,
 ) -> None:
-    if not targets:
-        raise IndexWatchError("index watch requires at least one target")
-
-    ordered_targets = tuple(
-        sorted(targets, key=_target_sort_key)
-    )
+    ordered_targets = _ordered_watch_targets(targets)
     first_cycle = True
     while True:
         for target in ordered_targets:
@@ -350,6 +345,44 @@ def run_watch_targets(
         if once:
             return
         sleep(interval_seconds)
+
+
+def check_watch_targets(
+    core: IndexWatchCore,
+    *,
+    targets: tuple[IndexWatchTarget, ...],
+    max_files: int,
+    max_file_bytes: int | None,
+    timeout_ms: int | None = None,
+    emit: Callable[[dict[str, Any]], None] = lambda event: print(
+        json.dumps(event, ensure_ascii=False, allow_nan=False)
+    ),
+    include_workspace_root: bool = True,
+) -> bool:
+    all_healthy = True
+    for target in _ordered_watch_targets(targets):
+        event = reconcile_index(
+            core,
+            workspace_root=target.workspace_root,
+            db_path=target.db_path,
+            max_files=max_files,
+            max_file_bytes=max_file_bytes,
+            timeout_ms=timeout_ms,
+            dry_run=True,
+        )
+        if include_workspace_root:
+            event["workspace_root"] = target.workspace_root
+        emit(event)
+        all_healthy = all_healthy and event["status"] == "healthy"
+    return all_healthy
+
+
+def _ordered_watch_targets(
+    targets: tuple[IndexWatchTarget, ...],
+) -> tuple[IndexWatchTarget, ...]:
+    if not targets:
+        raise IndexWatchError("index watch requires at least one target")
+    return tuple(sorted(targets, key=_target_sort_key))
 
 
 def _positive_int(value: str) -> int:
@@ -431,6 +464,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Report refresh or migration actions without writing the index.",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check configured targets without writing; exit nonzero unless all are healthy.",
+    )
     return parser
 
 
@@ -468,8 +506,22 @@ def run_cli(
                 IndexWatchTarget(str(args.workspace_root), str(args.db_path)),
             )
 
+        core = core_factory()
+        if args.check:
+            return int(
+                not check_watch_targets(
+                    core,
+                    targets=targets,
+                    max_files=args.max_files,
+                    max_file_bytes=args.max_file_bytes,
+                    timeout_ms=args.timeout_ms,
+                    emit=emit,
+                    include_workspace_root=args.config_path is not None,
+                )
+            )
+
         run_watch_targets(
-            core_factory(),
+            core,
             targets=targets,
             interval_seconds=args.interval_seconds,
             max_files=args.max_files,

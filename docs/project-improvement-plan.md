@@ -110,6 +110,8 @@ completed item can land in its own commit unless two changes are inseparable.
   index, including a one-shot reconciliation mode for CI and supervisor probes.
 - [x] Add a no-write `--dry-run` index-watch mode that reports planned refresh
   or migration actions for single-index and manifest-based checks.
+- [x] Add an index-watch `--check` mode that turns no-write health diagnostics
+  into a CI-friendly success or failure exit status.
 - [x] Route C++ source and header extensions through `tree-sitter-cpp` while
   preserving C-family free-function and header/source graph behavior.
 - [x] Route common C++ template and inline implementation extensions (`.tpp`,

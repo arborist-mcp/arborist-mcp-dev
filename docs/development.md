@@ -163,6 +163,7 @@ integration that wants a simple no-dependency watch loop:
 arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-seconds 1
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once --dry-run
+arborist-index-watch --workspace-root . --db-path .\symbols.db --check
 ```
 
 For multiple registered workspace/index pairs, use a JSON manifest relative to
@@ -195,6 +196,8 @@ as the gateway index tools; `--timeout-ms` bounds health freshness reads,
 cooperative traversal, and per-file indexing work.
 `--dry-run` uses the same safety decisions but reports `would_refresh` or
 `would_migrate` instead of writing the index.
+`--check` runs that no-write decision path once and exits nonzero unless every
+configured target is healthy, while still emitting the target diagnostics.
 
 ## Lightweight Benchmarks
 

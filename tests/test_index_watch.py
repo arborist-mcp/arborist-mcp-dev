@@ -10,6 +10,7 @@ import unittest
 from arborist_mcp.index_watch import (
     IndexWatchError,
     IndexWatchTarget,
+    check_watch_targets,
     load_watch_config,
     reconcile_index,
     run_cli,
@@ -251,6 +252,32 @@ class IndexWatchTests(unittest.TestCase):
         )
         self.assertEqual(core.inspect_calls, ["a.db", "z.db"])
 
+    def test_check_watch_targets_reports_all_targets_without_writing(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="rebuild", reason="indexed file is stale")
+        )
+        events: list[dict[str, object]] = []
+
+        healthy = check_watch_targets(
+            core,
+            targets=(
+                IndexWatchTarget("workspace-z", "z.db"),
+                IndexWatchTarget("workspace-a", "a.db"),
+            ),
+            max_files=20,
+            max_file_bytes=None,
+            emit=events.append,
+        )
+
+        self.assertFalse(healthy)
+        self.assertEqual(
+            [event["workspace_root"] for event in events],
+            ["workspace-a", "workspace-z"],
+        )
+        self.assertEqual([event["status"] for event in events], ["would_refresh", "would_refresh"])
+        self.assertEqual(core.refresh_calls, [])
+        self.assertEqual(core.migrate_calls, [])
+
     def test_load_watch_config_resolves_and_orders_targets(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             config_path = Path(temporary_directory).joinpath("watch.json")
@@ -382,6 +409,36 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
         self.assertEqual(json.loads(stdout.getvalue())["status"], "would_refresh")
         self.assertEqual(core.refresh_calls, [])
+
+    def test_cli_check_returns_nonzero_for_repairable_index_without_writing(self) -> None:
+        core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        result = run_cli(
+            ["--workspace-root", "workspace", "--db-path", "symbols.db", "--check"],
+            core_factory=lambda: core,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "would_refresh")
+        self.assertEqual(core.refresh_calls, [])
+
+    def test_cli_check_returns_zero_for_healthy_index(self) -> None:
+        core = StubCore(health_payload(ok=True, action="none"))
+        stdout = io.StringIO()
+
+        result = run_cli(
+            ["--db-path", "symbols.db", "--check"],
+            core_factory=lambda: core,
+            stdout=stdout,
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["status"], "healthy")
 
     def test_cli_config_dry_run_preserves_target_context_without_writing(self) -> None:
         core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
