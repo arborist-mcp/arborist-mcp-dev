@@ -2179,6 +2179,12 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "arborist/validate_patch_with_neighborhood_context_at_position",
                 "arborist/validate_patch_with_discovery_context_at_position",
             )
+            expected_fields = {
+                "arborist/validate_patch_with_trace_context_at_position": "trace",
+                "arborist/validate_patch_with_graph_context_at_position": "neighborhood",
+                "arborist/validate_patch_with_neighborhood_context_at_position": "neighborhood_context",
+                "arborist/validate_patch_with_discovery_context_at_position": "read",
+            }
 
             for request_id, method in enumerate(cases, start=220):
                 with self.subTest(method=method):
@@ -2206,6 +2212,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     assert isinstance(result, dict)
                     self.assertTrue(result["patch"]["applied"])
                     self.assertEqual(result["patch"]["file"], str(caller).replace("\\", "/"))
+                    self.assertIn(expected_fields[method], result)
 
     def test_patch_context_index_variants_accept_unsaved_source(self) -> None:
         with self.temp_workspace(
@@ -2216,6 +2223,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
         ) as workspace:
             caller = workspace.joinpath("caller.py")
             db_path = workspace.joinpath("symbols.db")
+            isolated_root = workspace.joinpath("isolated")
+            isolated_root.mkdir()
             source = (
                 "from helper import helper\n\n\n"
                 "def orchestrate(value: int) -> int:\n"
@@ -2244,6 +2253,11 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "arborist/validate_patch_with_neighborhood_context",
                 "arborist/validate_patch_with_discovery_context",
             )
+            expected_fields = {
+                "arborist/validate_patch_with_graph_context": "neighborhood",
+                "arborist/validate_patch_with_neighborhood_context": "neighborhood_context",
+                "arborist/validate_patch_with_discovery_context": "read",
+            }
             for request_id, method in enumerate(cases, start=231):
                 with self.subTest(method=method):
                     result = self.assert_jsonrpc_ok(
@@ -2251,7 +2265,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                             self.make_live_gateway(),
                             method,
                             {
-                                "workspace_root": str(workspace),
+                                "workspace_root": str(isolated_root),
                                 "file_path": str(caller),
                                 "semantic_path": "orchestrate",
                                 "new_code": new_code,
@@ -2269,6 +2283,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     assert isinstance(result, dict)
                     self.assertTrue(result["patch"]["applied"])
                     self.assertTrue(result["trace_validation"]["allowed"])
+                    self.assertIn(expected_fields[method], result)
 
     def test_read_symbol_accepts_unsaved_source_with_file_anchor(self) -> None:
         with self.temp_workspace(
