@@ -11,7 +11,8 @@ use crate::language::{
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
     c_is_callable_declaration, c_named_node_name, c_parameters, c_return_type, c_semantic_path,
-    c_symbol_id_for_node, c_symbol_nodes, has_c_internal_linkage, semantic_parent_path,
+    c_symbol_id_for_node, c_symbol_nodes, c_template_instantiation_name, has_c_internal_linkage,
+    semantic_parent_path,
 };
 
 #[derive(Debug, Clone)]
@@ -54,6 +55,11 @@ fn collect_c_top_level_names(
             | "struct_specifier"
             | "union_specifier" => {
                 if let Some(name) = c_named_node_name(child, source)? {
+                    names.insert(name);
+                }
+            }
+            "template_instantiation" => {
+                if let Some(name) = c_template_instantiation_name(child, source)? {
                     names.insert(name);
                 }
             }
@@ -264,6 +270,7 @@ fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         | "namespace_alias_definition"
         | "struct_specifier"
         | "union_specifier" => c_named_node_name(node, source),
+        "template_instantiation" => c_template_instantiation_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -283,6 +290,7 @@ fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>>
         | "enum_specifier"
         | "namespace_alias_definition"
         | "struct_specifier"
+        | "template_instantiation"
         | "type_definition"
         | "union_specifier" => Ok(Some(node_text(node, source)?.trim().to_string())),
         _ => Ok(None),
@@ -298,6 +306,7 @@ fn c_candidate_node_rank(node_kind: &str) -> usize {
         | "enum_specifier"
         | "namespace_alias_definition"
         | "struct_specifier"
+        | "template_instantiation"
         | "type_definition"
         | "union_specifier" => 20,
         "declaration" | "field_declaration" => 10,

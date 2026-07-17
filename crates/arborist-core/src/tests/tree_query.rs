@@ -198,6 +198,25 @@ fn execute_tree_query_reports_owner_for_cpp_class_method_captures() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_explicit_template_instantiation() {
+    let source = "template class api::Vector<int>;\n";
+    let captures = execute_tree_query(
+        Path::new("instantiations.cpp"),
+        source,
+        "(template_type) @instantiation",
+    )
+    .unwrap();
+
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].text, "Vector<int>");
+    assert_eq!(
+        captures[0].owner_semantic_path.as_deref(),
+        Some("api::Vector<int>")
+    );
+    assert_eq!(captures[0].owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_inline_friend_function() {
     let source = "namespace api {\nclass Token {\n    friend int inspect(const Token&) { return 1; }\n};\n}\n";
     let captures = execute_tree_query(

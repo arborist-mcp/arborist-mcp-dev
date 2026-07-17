@@ -84,6 +84,7 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
             | "enum_specifier"
             | "namespace_alias_definition"
             | "struct_specifier"
+            | "template_instantiation"
             | "type_definition"
             | "union_specifier" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {

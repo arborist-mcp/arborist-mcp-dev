@@ -320,6 +320,34 @@ fn patches_cpp_class_method_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_explicit_function_template_instantiation() {
+    let dir = temporary_dir();
+    let file = dir.join("instantiations.cpp");
+    fs::write(
+        &file,
+        "namespace api {\ntemplate <typename T> T increment(T value) { return value; }\n}\n\ntemplate int api::increment<int>(int);\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(
+        &file,
+        "api::increment<int>",
+        "template double api::increment<double>(double);",
+        None,
+    )
+    .unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::increment<double>");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("api::increment<double>")
+    );
+}
+
+#[test]
 fn patches_cpp_inline_friend_function_targeted_by_namespace_path() {
     let dir = temporary_dir();
     let file = dir.join("token.hpp");

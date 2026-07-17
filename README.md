@@ -60,6 +60,8 @@ Declarations in `#if`/`#else` branches are also indexed without evaluating
 preprocessor conditions.
 Inline friend functions are indexed in their enclosing namespace, rather than
 as class methods.
+Explicit class and function template instantiations are indexed with their
+specialized paths, such as `api::Vector<int>` and `api::increment<int>`.
 
 ## Implemented Tool Families
 

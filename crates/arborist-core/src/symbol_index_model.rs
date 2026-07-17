@@ -43,6 +43,7 @@ pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
         | "enum_specifier"
         | "namespace_alias_definition"
         | "struct_specifier"
+        | "template_instantiation"
         | "type_definition"
         | "union_specifier" => 2,
         "declaration" | "field_declaration" => 1,

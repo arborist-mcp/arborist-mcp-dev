@@ -64,6 +64,8 @@ Declarations in `#if`/`#else` branches are indexed without evaluating
 preprocessor conditions, including class methods in conditional branches.
 Inline friend functions are indexed in their enclosing namespace, so a friend
 inside `api::Token` has a path such as `api::inspect` rather than a class method path.
+Explicit class and function template instantiations are indexed with specialized
+paths such as `api::Vector<int>` and `api::increment<int>`.
 
 ## Read And Discovery Tools
 

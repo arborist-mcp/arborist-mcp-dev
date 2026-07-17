@@ -185,12 +185,44 @@ pub(crate) fn c_return_type(node: Node<'_>, source: &str) -> Result<Option<Strin
         return Ok(None);
     }
 
+    let prefix = if node.kind() == "template_instantiation" {
+        prefix
+            .strip_prefix("template")
+            .map(str::trim)
+            .unwrap_or(prefix)
+    } else {
+        prefix
+    };
+
     Ok(Some(prefix.to_string()))
+}
+
+pub(crate) fn c_template_instantiation_name(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    if node.kind() != "template_instantiation" {
+        return Ok(None);
+    }
+
+    if let Some(function_name) = c_function_declarator_name(node, source)? {
+        return Ok(Some(function_name));
+    }
+
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    if !is_cpp_type_scope(type_node) {
+        return Ok(None);
+    }
+
+    c_named_node_name(type_node, source)
 }
 
 pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Option<String>> {
     let symbol_name = c_function_declarator_name(node, source)?
         .or(c_operator_cast_name(node, source)?)
+        .or(c_template_instantiation_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
             "alias_declaration"
@@ -408,6 +440,7 @@ fn is_c_symbol_node(node: Node<'_>) -> bool {
             | "enum_specifier"
             | "namespace_alias_definition"
             | "struct_specifier"
+            | "template_instantiation"
             | "type_definition"
             | "union_specifier"
             | "function_definition"
@@ -420,7 +453,10 @@ pub(crate) fn c_is_callable_declaration(node: Node<'_>) -> bool {
 }
 
 fn is_c_callable_node(node: Node<'_>) -> bool {
-    node.kind() == "function_definition" || c_is_callable_declaration(node)
+    matches!(
+        node.kind(),
+        "function_definition" | "template_instantiation"
+    ) || c_is_callable_declaration(node)
 }
 
 fn c_scope_path(node: Node<'_>, source: &str) -> Result<String> {
@@ -541,6 +577,7 @@ pub(crate) fn build_c_skeleton(
             | "enum_specifier"
             | "namespace_alias_definition"
             | "struct_specifier"
+            | "template_instantiation"
             | "type_definition"
             | "union_specifier" => {
                 let text = node_text(child, source)?.trim().to_string();
@@ -693,6 +730,7 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         | "namespace_alias_definition"
         | "struct_specifier"
         | "union_specifier" => c_named_node_name(node, source),
+        "template_instantiation" => c_template_instantiation_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
             first_identifier(node, source)
         }
@@ -717,6 +755,7 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
         | "enum_specifier"
         | "namespace_alias_definition"
         | "struct_specifier"
+        | "template_instantiation"
         | "type_definition"
         | "union_specifier" => 20,
         "declaration" | "field_declaration" => 10,

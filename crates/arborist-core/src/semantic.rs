@@ -12,6 +12,7 @@ mod c;
 pub(crate) use c::c_is_callable_declaration;
 pub(crate) use c::c_named_node_name;
 pub(crate) use c::c_symbol_nodes;
+pub(crate) use c::c_template_instantiation_name;
 pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
 pub(crate) use c::{c_parameters, c_return_type};
@@ -190,6 +191,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
                         | "enum_specifier"
                         | "namespace_alias_definition"
                         | "struct_specifier"
+                        | "template_instantiation"
                         | "type_definition"
                         | "union_specifier"
                 ) || candidate.kind() == "function_definition"

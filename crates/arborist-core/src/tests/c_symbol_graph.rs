@@ -941,6 +941,49 @@ fn traces_cpp_enum_definitions() {
 }
 
 #[test]
+fn traces_cpp_explicit_template_instantiations() {
+    let dir = temporary_dir();
+    let source = dir.join("instantiations.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T> class Vector {};\ntemplate <typename T> T increment(T value) { return value + 1; }\n}\n\ntemplate class api::Vector<int>;\ntemplate int api::increment<int>(int);\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "api::Vector<int>")
+    );
+    let function = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "api::increment<int>")
+        .expect("explicit function instantiation should be indexed");
+    assert_eq!(function.parameters, vec!["int".to_string()]);
+    assert_eq!(function.return_type.as_deref(), Some("int"));
+
+    let trace = trace_symbol_graph(&dir, "api::Vector<int>", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::increment<int>", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace.symbol.file_path,
+        source.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
 fn traces_cpp_explicit_function_template_specialization() {
     let dir = temporary_dir();
     let header = dir.join("templates.hpp");
