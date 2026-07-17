@@ -964,8 +964,13 @@ impl ArboristCore {
         )
     }
 
-    fn inspect_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
-        self.inspect_symbol_index_json_impl(db_path)
+    #[pyo3(signature = (db_path, timeout_ms=None))]
+    fn inspect_symbol_index_json(
+        &self,
+        db_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.inspect_symbol_index_json_impl(db_path, timeout_ms)
     }
 
     fn migrate_symbol_index_json(&self, db_path: &str) -> PyResult<String> {

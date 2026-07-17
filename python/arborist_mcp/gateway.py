@@ -1362,7 +1362,12 @@ class ArboristGateway:
 
     def _inspect_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         db_path = self._require_string(params, "db_path")
-        payload = self._require_core().inspect_symbol_index_json(db_path)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        core = self._require_core()
+        if timeout_ms is None:
+            payload = core.inspect_symbol_index_json(db_path)
+        else:
+            payload = core.inspect_symbol_index_json(db_path, timeout_ms)
         return self._decode_core_object(payload)
 
     def _migrate_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:

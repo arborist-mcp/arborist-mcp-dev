@@ -48,8 +48,11 @@ class StubCore:
         self.refresh_calls: list[tuple[object, ...]] = []
         self.migrate_calls: list[str] = []
 
-    def inspect_symbol_index_json(self, db_path: str) -> str:
+    def inspect_symbol_index_json(
+        self, db_path: str, timeout_ms: int | None = None
+    ) -> str:
         self.inspect_calls.append(db_path)
+        self.inspect_timeout_ms = timeout_ms
         return self.health
 
     def refresh_symbol_index_json(self, *args: object) -> str:
@@ -116,6 +119,7 @@ class IndexWatchTests(unittest.TestCase):
             core.refresh_calls,
             [("workspace", "symbols.db", 20, None, 5000)],
         )
+        self.assertEqual(core.inspect_timeout_ms, 5000)
 
     def test_reconcile_migrates_supported_schema_version(self) -> None:
         core = StubCore(

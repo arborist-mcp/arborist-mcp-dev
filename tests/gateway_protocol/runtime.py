@@ -272,6 +272,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         inspect_index = by_name["arborist/inspect_symbol_index"]
         self.assertTrue(inspect_index["annotations"]["readOnlyHint"])
         self.assertFalse(inspect_index["metadata"]["mutatesState"])
+        self.assertEqual(
+            inspect_index["inputSchema"]["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
         self.assertIn("response_schema_version", inspect_result["required"])

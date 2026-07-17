@@ -232,6 +232,9 @@ SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
 index with freshness issues, and migrates a supported v1 index in place;
 foreign, incomplete, and unknown schemas are reported and left unchanged.
+`inspect_symbol_index` and the watch command accept the optional cooperative
+`timeout_ms` / `--timeout-ms` budget for indexed-file freshness reads and the
+unindexed workspace scan.
 Manifest paths are resolved relative to the manifest file, targets are ordered
 by workspace root, and unknown fields, duplicate keys, empty target lists,
 duplicate workspace roots, or duplicate database paths are rejected before the

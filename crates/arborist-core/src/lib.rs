@@ -66,7 +66,9 @@ pub use query::{
     execute_tree_query_from_path_with_timeout, execute_tree_query_with_limit,
     execute_tree_query_with_timeout,
 };
-pub use symbol_index_state::{inspect_symbol_index, migrate_symbol_index};
+pub use symbol_index_state::{
+    inspect_symbol_index, inspect_symbol_index_with_timeout, migrate_symbol_index,
+};
 pub use symbol_query::SymbolQueryContext;
 pub use symbol_trace::MAX_TRACE_TIMEOUT_MS;
 pub use symbols::{

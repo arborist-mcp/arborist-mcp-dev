@@ -17,7 +17,9 @@ from .tool_specs import (
 
 
 class IndexWatchCore(Protocol):
-    def inspect_symbol_index_json(self, db_path: str) -> str: ...
+    def inspect_symbol_index_json(
+        self, db_path: str, timeout_ms: int | None = None
+    ) -> str: ...
 
     def migrate_symbol_index_json(self, db_path: str) -> str: ...
 
@@ -183,9 +185,11 @@ def reconcile_index(
     timeout_ms: int | None = None,
 ) -> dict[str, Any]:
     try:
-        health = _decode_object(
-            core.inspect_symbol_index_json(db_path), "inspect_symbol_index"
-        )
+        if timeout_ms is None:
+            health_payload = core.inspect_symbol_index_json(db_path)
+        else:
+            health_payload = core.inspect_symbol_index_json(db_path, timeout_ms)
+        health = _decode_object(health_payload, "inspect_symbol_index")
     except IndexWatchError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -397,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--timeout-ms",
         type=lambda value: _bounded_positive_int(value, MAX_WORKSPACE_SCAN_TIMEOUT_MS),
         default=None,
-        help="Optional cooperative workspace scan timeout in milliseconds.",
+        help="Optional cooperative health and workspace scan timeout in milliseconds.",
     )
     parser.add_argument(
         "--once",

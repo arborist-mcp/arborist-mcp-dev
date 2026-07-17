@@ -112,12 +112,14 @@ rewriting it while it is healthy:
 ```powershell
 arborist-index-watch --workspace-root . --db-path .\symbols.db
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
+arborist-index-watch --workspace-root . --db-path .\symbols.db --once --timeout-ms 5000
 ```
 
 The watcher refreshes missing indexes and current-schema freshness issues
 through the incremental workspace refresh path. It exits without writing when
 inspection requires manual intervention, such as an unsupported or foreign
-SQLite schema.
+SQLite schema. `--timeout-ms` bounds health freshness reads and workspace
+reconciliation scans as well as refresh indexing work.
 
 To watch several registered workspace/index pairs, provide a JSON manifest:
 

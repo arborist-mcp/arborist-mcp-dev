@@ -160,6 +160,28 @@ class IndexWatchNativeTests(unittest.TestCase):
                     0,
                 )
 
+    def test_native_index_health_timeout_rejects_zero_budget(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            with self.assertRaisesRegex(Exception, "timeout_ms"):
+                core.inspect_symbol_index_json(
+                    str(workspace.joinpath("symbols.db")),
+                    0,
+                )
+
+    def test_native_index_health_timeout_preserves_healthy_result(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            db_path = workspace.joinpath("symbols.db")
+            core.rebuild_symbol_index_json(str(workspace), str(db_path), 20_000, None, 5000)
+            health = json.loads(core.inspect_symbol_index_json(str(db_path), 5000))
+
+            self.assertTrue(health["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

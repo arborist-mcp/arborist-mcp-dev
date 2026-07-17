@@ -26,11 +26,22 @@ use crate::symbol_dependency::{
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{
-    DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanLimits, collect_source_files_with_limits,
-    should_skip_index_path,
+    DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
+    collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
 };
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
+    inspect_symbol_index_with_timeout(db_path, None)
+}
+
+pub fn inspect_symbol_index_with_timeout(
+    db_path: &Path,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolIndexHealth> {
+    let deadline = WorkspaceScanDeadline::new(WorkspaceScanLimits {
+        timeout_ms,
+        ..WorkspaceScanLimits::default()
+    })?;
     let db_path = normalize_absolute_path(db_path)?;
     let db_path_display = normalize_path(&db_path);
     let mut health = SymbolIndexHealth {
@@ -72,6 +83,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             return Ok(health);
         }
     };
+    deadline.check("opening persisted index")?;
 
     if let Err(error) = require_symbol_index_tables(&connection, &db_path) {
         health.issues.push(error.to_string());
@@ -174,6 +186,7 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             None
         }
     };
+    deadline.check("loading persisted index state")?;
 
     if let (Some(workspace_root), Some(file_states)) =
         (workspace_root.as_deref(), file_states.as_ref())
@@ -192,8 +205,8 @@ pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
             health.issues.push(error.to_string());
         }
         if paths_valid {
-            inspect_symbol_index_freshness(&mut health, file_states);
-            match unindexed_workspace_files(workspace_root, file_states, None) {
+            inspect_symbol_index_freshness(&mut health, file_states, &deadline)?;
+            match unindexed_workspace_files(workspace_root, file_states, None, Some(&deadline)) {
                 Ok(unindexed_files) => {
                     for file_path in &unindexed_files {
                         health
@@ -357,9 +370,11 @@ pub(crate) fn source_fingerprint(source: &str) -> u64 {
 fn inspect_symbol_index_freshness(
     health: &mut SymbolIndexHealth,
     file_states: &BTreeMap<String, u64>,
-) {
+    deadline: &WorkspaceScanDeadline,
+) -> Result<()> {
     let mut fresh_files = 0;
     for (file_path, stored_fingerprint) in file_states {
+        deadline.check("inspecting indexed file freshness")?;
         let path = Path::new(file_path);
         if !path.exists() {
             health.missing_files.push(file_path.clone());
@@ -390,6 +405,7 @@ fn inspect_symbol_index_freshness(
         }
     }
     health.fresh_file_count = Some(fresh_files);
+    Ok(())
 }
 
 fn ensure_symbol_index_fresh(
@@ -400,7 +416,7 @@ fn ensure_symbol_index_fresh(
 ) -> Result<()> {
     let mut issues = symbol_index_freshness_issues(file_states, file_overrides);
     issues.extend(
-        unindexed_workspace_files(workspace_root, file_states, file_overrides)?
+        unindexed_workspace_files(workspace_root, file_states, file_overrides, None)?
             .into_iter()
             .map(|file_path| format!("workspace source file is not indexed: {file_path}")),
     );
@@ -487,24 +503,24 @@ fn unindexed_workspace_files(
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let max_files = file_states
         .len()
         .saturating_add(DEFAULT_WORKSPACE_MAX_FILES);
-    collect_source_files_with_limits(
-        workspace_root,
-        WorkspaceScanLimits::with_max_files(max_files),
-    )
-    .map(|paths| {
-        paths
-            .into_iter()
-            .map(|path| normalize_path(&path))
-            .filter(|path| {
-                !file_states.contains_key(path)
-                    && !file_overrides.is_some_and(|overrides| overrides.contains_key(path))
-            })
-            .collect()
-    })
+    let limits = WorkspaceScanLimits::with_max_files(max_files);
+    let paths = match deadline {
+        Some(deadline) => collect_source_files_with_deadline(workspace_root, limits, deadline)?,
+        None => collect_source_files_with_limits(workspace_root, limits)?,
+    };
+    Ok(paths
+        .into_iter()
+        .map(|path| normalize_path(&path))
+        .filter(|path| {
+            !file_states.contains_key(path)
+                && !file_overrides.is_some_and(|overrides| overrides.contains_key(path))
+        })
+        .collect())
 }
 
 fn symbol_index_freshness_issues(
