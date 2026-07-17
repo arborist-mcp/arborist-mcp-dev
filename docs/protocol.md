@@ -130,3 +130,7 @@ before persistence, then fails without writing a new snapshot when the budget
 has expired. The direct graph and neighborhood trace tools accept the same
 budget for expansion phases; loading an index or parsing a source overlay is
 still a non-preemptible boundary.
+
+`execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped
+at `300000`; omitting it keeps the existing `500ms` default. The budget is
+checked by Tree-sitter progress callbacks and capture collection.

@@ -357,6 +357,14 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             query["inputSchema"]["properties"]["query"]["maxLength"],
             gateway_module.TREE_QUERY_MAX_LENGTH,
         )
+        self.assertEqual(
+            query["inputSchema"]["properties"]["timeout_ms"]["minimum"],
+            1,
+        )
+        self.assertEqual(
+            query["inputSchema"]["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         query_items = query["outputSchema"]["properties"]["result"]["items"]
         self.assertEqual(query_items["additionalProperties"], False)
         self.assertIn("capture_name", query_items["required"])
@@ -894,6 +902,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
                     "file_path": "sample.py",
                     "query": "(module) @module",
                     "max_captures": 7,
+                    "timeout_ms": 2500,
                 },
                 request_id=55,
             ),
@@ -901,7 +910,32 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         )
 
         self.assertEqual(result, [])
-        self.assertEqual(core.args, ("sample.py", "(module) @module", None, 7))
+        self.assertEqual(core.args, ("sample.py", "(module) @module", None, 7, 2500))
+
+    def test_execute_tree_query_rejects_invalid_timeout(self) -> None:
+        class StubCore:
+            def execute_tree_query_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+            with self.subTest(timeout_ms=timeout_ms):
+                response = self.call_gateway(
+                    self.make_gateway(StubCore()),
+                    "arborist/execute_tree_query",
+                    {
+                        "file_path": "sample.py",
+                        "query": "(module) @module",
+                        "timeout_ms": timeout_ms,
+                    },
+                    request_id=58 + timeout_ms,
+                )
+
+                self.assert_jsonrpc_error(
+                    response,
+                    request_id=58 + timeout_ms,
+                    code=-32602,
+                    contains="timeout_ms",
+                )
 
     def test_execute_tree_query_rejects_zero_capture_limit(self) -> None:
         class StubCore:

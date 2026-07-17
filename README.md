@@ -69,8 +69,9 @@ specialized paths, such as `api::Vector<int>` and `api::increment<int>`.
 
 The MCP catalog currently returns 58 tools:
 
-- Read tools: 29, including batch reads, semantic skeletons, patch previews, raw Tree-sitter queries,
-  symbol reads, symbol list/search, and graph-backed read bundles.
+- Read tools: 29, including batch reads, semantic skeletons, patch previews,
+  bounded raw Tree-sitter queries with cooperative timeout budgets, symbol
+  reads, symbol list/search, and graph-backed read bundles.
 - Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,
   and virtual reads.
@@ -279,5 +280,5 @@ Remaining larger work includes:
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond named template declarations to template
   parameter binding, specializations, and overload-aware symbol identities.
-- Adding benchmarks, fuzz/property tests, raw Tree-sitter query budgets, and
-  broader cancellation boundaries for very large operations.
+- Adding benchmarks, fuzz/property tests, and broader cancellation boundaries
+  for very large operations.

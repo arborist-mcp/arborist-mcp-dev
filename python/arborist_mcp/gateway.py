@@ -251,8 +251,9 @@ class ArboristGateway:
         query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
         source = self._optional_string(params, "source", allow_empty=True)
         max_captures = self._optional_positive_int(params, "max_captures", default=10000)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         payload = self._require_core().execute_tree_query_json(
-            file_path, query, source, max_captures
+            file_path, query, source, max_captures, timeout_ms
         )
         return self._decode_core_object_array(payload)
 

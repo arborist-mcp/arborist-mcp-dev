@@ -10,10 +10,10 @@ use std::path::Path;
 
 use arborist_core::{
     PatchAstNodeResult, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
-    WorkspacePositionEdits, execute_tree_query_from_path_with_limit, execute_tree_query_with_limit,
-    export_patch_diagnostics_sarif, get_semantic_skeleton, get_semantic_skeleton_from_path,
-    preview_workspace_position_edits, replay_patch_evidence_against_trace, supported_languages,
-    validate_patch_commit_with_trace,
+    WorkspacePositionEdits, execute_tree_query_from_path_with_timeout,
+    execute_tree_query_with_timeout, export_patch_diagnostics_sarif, get_semantic_skeleton,
+    get_semantic_skeleton_from_path, preview_workspace_position_edits,
+    replay_patch_evidence_against_trace, supported_languages, validate_patch_commit_with_trace,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -64,21 +64,29 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
-    #[pyo3(signature = (file_path, query, source=None, max_captures=10_000))]
+    #[pyo3(signature = (file_path, query, source=None, max_captures=10_000, timeout_ms=None))]
     fn execute_tree_query_json(
         &self,
         file_path: &str,
         query: &str,
         source: Option<String>,
         max_captures: usize,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let result = match source {
-            Some(source) => {
-                execute_tree_query_with_limit(Path::new(file_path), &source, query, max_captures)
-            }
-            None => {
-                execute_tree_query_from_path_with_limit(Path::new(file_path), query, max_captures)
-            }
+            Some(source) => execute_tree_query_with_timeout(
+                Path::new(file_path),
+                &source,
+                query,
+                max_captures,
+                timeout_ms,
+            ),
+            None => execute_tree_query_from_path_with_timeout(
+                Path::new(file_path),
+                query,
+                max_captures,
+                timeout_ms,
+            ),
         }
         .map_err(to_py_error)?;
 

@@ -18,6 +18,7 @@ use crate::semantic::{
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
 pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
 pub const DEFAULT_TREE_QUERY_TIMEOUT_MICROS: u64 = 500_000;
+pub const MAX_TREE_QUERY_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const DEFAULT_TREE_QUERY_MATCH_LIMIT: u32 = 32_768;
 
 pub fn execute_tree_query_from_path(path: &Path, query: &str) -> Result<Vec<QueryCaptureResult>> {
@@ -29,9 +30,18 @@ pub fn execute_tree_query_from_path_with_limit(
     query: &str,
     max_captures: usize,
 ) -> Result<Vec<QueryCaptureResult>> {
+    execute_tree_query_from_path_with_timeout(path, query, max_captures, None)
+}
+
+pub fn execute_tree_query_from_path_with_timeout(
+    path: &Path,
+    query: &str,
+    max_captures: usize,
+    timeout_ms: Option<u64>,
+) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     let source = read_source(&path)?;
-    execute_tree_query_with_limit(&path, &source, query, max_captures)
+    execute_tree_query_with_timeout(&path, &source, query, max_captures, timeout_ms)
 }
 
 pub fn execute_tree_query(
@@ -48,9 +58,20 @@ pub fn execute_tree_query_with_limit(
     query: &str,
     max_captures: usize,
 ) -> Result<Vec<QueryCaptureResult>> {
+    execute_tree_query_with_timeout(path, source, query, max_captures, None)
+}
+
+pub fn execute_tree_query_with_timeout(
+    path: &Path,
+    source: &str,
+    query: &str,
+    max_captures: usize,
+    timeout_ms: Option<u64>,
+) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
     validate_tree_query(query)?;
     validate_max_captures(max_captures)?;
+    let timeout_micros = validate_timeout(timeout_ms)?;
     let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
@@ -60,7 +81,7 @@ pub fn execute_tree_query_with_limit(
     let mut cursor = QueryCursor::new();
     cursor.set_match_limit(DEFAULT_TREE_QUERY_MATCH_LIMIT);
     let mut captures = Vec::new();
-    let deadline = Instant::now() + Duration::from_micros(DEFAULT_TREE_QUERY_TIMEOUT_MICROS);
+    let deadline = Instant::now() + Duration::from_micros(timeout_micros);
     let timed_out = Cell::new(false);
     let mut progress_callback = |_: &tree_sitter::QueryCursorState| -> bool {
         if Instant::now() >= deadline {
@@ -74,6 +95,10 @@ pub fn execute_tree_query_with_limit(
     let mut query_captures =
         cursor.captures_with_options(&compiled, root, source.as_bytes(), options);
     while let Some((query_match, capture_index)) = query_captures.next() {
+        if Instant::now() >= deadline {
+            timed_out.set(true);
+            break;
+        }
         if captures.len() >= max_captures {
             bail!(
                 "Tree-sitter query capture limit exceeded for {}: max_captures={}",
@@ -104,7 +129,7 @@ pub fn execute_tree_query_with_limit(
         bail!(
             "Tree-sitter query timed out for {} after {} microseconds",
             normalize_path(&path),
-            DEFAULT_TREE_QUERY_TIMEOUT_MICROS
+            timeout_micros
         );
     }
     if cursor.did_exceed_match_limit() {
@@ -142,6 +167,20 @@ fn validate_max_captures(max_captures: usize) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_timeout(timeout_ms: Option<u64>) -> Result<u64> {
+    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_TREE_QUERY_TIMEOUT_MICROS / 1_000);
+    if timeout_ms == 0 {
+        bail!("invalid Tree-sitter query timeout_ms: value must be greater than zero");
+    }
+    if timeout_ms > MAX_TREE_QUERY_TIMEOUT_MS {
+        bail!(
+            "invalid Tree-sitter query timeout_ms: value must not exceed {}",
+            MAX_TREE_QUERY_TIMEOUT_MS
+        );
+    }
+    Ok(timeout_ms.saturating_mul(1_000))
 }
 
 fn capture_owner(
@@ -221,4 +260,17 @@ fn c_capture_owner(
         .or_else(|| Some(owner_semantic_path.clone()));
 
     Ok((owner_symbol_id, Some(owner_semantic_path), owner_scope_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_TREE_QUERY_TIMEOUT_MS, validate_timeout};
+
+    #[test]
+    fn validates_tree_query_timeout_bounds() {
+        assert!(validate_timeout(Some(0)).is_err());
+        assert!(validate_timeout(Some(MAX_TREE_QUERY_TIMEOUT_MS + 1)).is_err());
+        assert_eq!(validate_timeout(None).unwrap(), 500_000);
+        assert_eq!(validate_timeout(Some(2)).unwrap(), 2_000);
+    }
 }

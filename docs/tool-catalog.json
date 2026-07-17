@@ -37954,7 +37954,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -38042,7 +38042,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -38227,7 +38227,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -41298,7 +41298,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -41399,7 +41399,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -41513,7 +41513,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -42041,7 +42041,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -42481,7 +42481,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -43026,7 +43026,7 @@
         },
         "timeout_ms": {
           "type": "integer",
-          "description": "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
           "minimum": 1,
           "maximum": 300000
         }
@@ -73282,6 +73282,12 @@
           "default": 10000,
           "minimum": 1,
           "maximum": 100000
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
         }
       },
       "required": [

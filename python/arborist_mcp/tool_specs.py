@@ -77,7 +77,7 @@ TOOL_SPECS = (
     ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "neighborhood_context_patch"),
     ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "discovery_context_patch"),
     ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path"), "read", "discovery_context_patch"),
-    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures"), "read", "query_capture_array"),
+    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures", "timeout_ms"), "read", "query_capture_array"),
 )
 TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
 TOOL_SPECS_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
@@ -413,7 +413,7 @@ TOOL_PARAM_SPECS = {
     "timeout_ms": ToolParamSpec(
         _schema(
             "integer",
-            "Optional cooperative timeout for workspace scanning, indexing, and trace expansion in milliseconds.",
+            "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
             minimum=1,
             maximum=MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         ),

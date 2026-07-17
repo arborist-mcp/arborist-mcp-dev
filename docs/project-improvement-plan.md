@@ -88,6 +88,8 @@ completed item can land in its own commit unless two changes are inseparable.
   index rebuild/refresh operations.
 - [x] Add optional cooperative timeout budgets to direct trace graph and
   neighborhood expansion while preserving existing call signatures.
+- [x] Make raw Tree-sitter query timeout budgets configurable while preserving
+  the existing default.
 - [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
   and patch validation.
 

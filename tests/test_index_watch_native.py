@@ -146,6 +146,20 @@ class IndexWatchNativeTests(unittest.TestCase):
                     0,
                 )
 
+    def test_native_tree_query_timeout_rejects_zero_budget(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            with self.assertRaisesRegex(Exception, "timeout_ms"):
+                core.execute_tree_query_json(
+                    str(workspace.joinpath("helper.py")),
+                    "(function_definition) @function",
+                    None,
+                    10_000,
+                    0,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

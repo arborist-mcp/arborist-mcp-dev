@@ -1127,6 +1127,15 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 },
                 "max_captures",
             ),
+            (
+                "arborist/execute_tree_query",
+                {
+                    "file_path": "sample.py",
+                    "query": "(module) @root",
+                    "timeout_ms": gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1,
+                },
+                "timeout_ms",
+            ),
         ]
 
         for index, (method, params, expected_param) in enumerate(cases, start=1):

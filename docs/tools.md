@@ -87,9 +87,12 @@ optional `return_type`, and optional `signature` / `docstring`.
 capture belongs to a semantic symbol. Results are bounded by `max_captures`
 (default `10000`) so broad arbitrary queries fail closed instead of returning
 unbounded capture sets. `max_captures` is capped at `100000`, Tree-sitter match
-expansion is capped internally, and long-running queries stop after a short
-execution timeout. Query text is also
-capped at 64 KiB before compilation, which keeps accidental or adversarial raw
+expansion is capped internally, and queries use a cooperative `timeout_ms`
+budget capped at `300000` milliseconds. Omitting `timeout_ms` preserves the
+default `500ms` budget. The budget can stop Tree-sitter progress and capture
+collection, but cannot interrupt source parsing or one native Tree-sitter call
+already in progress. Query text is also capped at 64 KiB before compilation,
+which keeps accidental or adversarial raw
 Tree-sitter queries from consuming unbounded parser resources. Its MCP
 `outputSchema` describes each capture field explicitly, including byte ranges
 and start/end points.
