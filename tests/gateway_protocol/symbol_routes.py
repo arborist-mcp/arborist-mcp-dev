@@ -2179,13 +2179,6 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "arborist/validate_patch_with_neighborhood_context_at_position",
                 "arborist/validate_patch_with_discovery_context_at_position",
             )
-            expected_fields = {
-                "arborist/validate_patch_with_trace_context_at_position": "trace",
-                "arborist/validate_patch_with_graph_context_at_position": "neighborhood",
-                "arborist/validate_patch_with_neighborhood_context_at_position": "neighborhood_context",
-                "arborist/validate_patch_with_discovery_context_at_position": "read",
-            }
-
             for request_id, method in enumerate(cases, start=220):
                 with self.subTest(method=method):
                     params = {
@@ -2212,7 +2205,16 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     assert isinstance(result, dict)
                     self.assertTrue(result["patch"]["applied"])
                     self.assertEqual(result["patch"]["file"], str(caller).replace("\\", "/"))
-                    self.assertIn(expected_fields[method], result)
+                    if method.endswith("trace_context_at_position"):
+                        self.assertIsNotNone(result["impact"])
+                    elif method.endswith("graph_context_at_position"):
+                        self.assertIsNotNone(result["neighborhood"])
+                    elif method.endswith("neighborhood_context_at_position"):
+                        self.assertIsNotNone(result["neighborhood_context"])
+                        self.assertNotIn("read", result)
+                    else:
+                        self.assertIsNotNone(result["read"])
+                        self.assertIsNotNone(result["neighborhood_context"])
 
     def test_patch_context_index_variants_accept_unsaved_source(self) -> None:
         with self.temp_workspace(
@@ -2253,11 +2255,6 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 "arborist/validate_patch_with_neighborhood_context",
                 "arborist/validate_patch_with_discovery_context",
             )
-            expected_fields = {
-                "arborist/validate_patch_with_graph_context": "neighborhood",
-                "arborist/validate_patch_with_neighborhood_context": "neighborhood_context",
-                "arborist/validate_patch_with_discovery_context": "read",
-            }
             for request_id, method in enumerate(cases, start=231):
                 with self.subTest(method=method):
                     result = self.assert_jsonrpc_ok(
@@ -2283,7 +2280,14 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     assert isinstance(result, dict)
                     self.assertTrue(result["patch"]["applied"])
                     self.assertTrue(result["trace_validation"]["allowed"])
-                    self.assertIn(expected_fields[method], result)
+                    if method.endswith("graph_context"):
+                        self.assertIsNotNone(result["neighborhood"])
+                    elif method.endswith("neighborhood_context"):
+                        self.assertIsNotNone(result["neighborhood_context"])
+                        self.assertNotIn("read", result)
+                    else:
+                        self.assertIsNotNone(result["read"])
+                        self.assertIsNotNone(result["neighborhood_context"])
 
     def test_read_symbol_accepts_unsaved_source_with_file_anchor(self) -> None:
         with self.temp_workspace(
