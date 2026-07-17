@@ -10,9 +10,10 @@ use crate::language::{
 };
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
-    c_is_callable_declaration, c_named_node_name, c_parameters, c_return_type, c_semantic_path,
-    c_symbol_id_for_node, c_symbol_nodes, c_template_instantiation_name, c_using_declaration_name,
-    has_c_internal_linkage, semantic_parent_path,
+    c_is_callable_declaration, c_is_scoped_enumerator, c_named_node_name, c_parameters,
+    c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes,
+    c_template_instantiation_name, c_using_declaration_name, has_c_internal_linkage,
+    semantic_parent_path,
 };
 
 #[derive(Debug, Clone)]
@@ -55,6 +56,11 @@ fn collect_c_top_level_names(
             | "namespace_alias_definition"
             | "struct_specifier"
             | "union_specifier" => {
+                if let Some(name) = c_named_node_name(child, source)? {
+                    names.insert(name);
+                }
+            }
+            "enumerator" if !c_is_scoped_enumerator(child, source) => {
                 if let Some(name) = c_named_node_name(child, source)? {
                     names.insert(name);
                 }
@@ -276,6 +282,7 @@ fn c_candidate_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         | "namespace_alias_definition"
         | "struct_specifier"
         | "union_specifier" => c_named_node_name(node, source),
+        "enumerator" if !c_is_scoped_enumerator(node, source) => c_named_node_name(node, source),
         "using_declaration" => c_using_declaration_name(node, source),
         "template_instantiation" => c_template_instantiation_name(node, source),
         "declaration" | "field_declaration" if c_is_callable_declaration(node) => {
@@ -295,6 +302,7 @@ fn c_candidate_signature(node: Node<'_>, source: &str) -> Result<Option<String>>
         | "class_specifier"
         | "concept_definition"
         | "enum_specifier"
+        | "enumerator"
         | "namespace_alias_definition"
         | "struct_specifier"
         | "template_instantiation"
@@ -312,6 +320,7 @@ fn c_candidate_node_rank(node_kind: &str) -> usize {
         | "class_specifier"
         | "concept_definition"
         | "enum_specifier"
+        | "enumerator"
         | "namespace_alias_definition"
         | "struct_specifier"
         | "template_instantiation"

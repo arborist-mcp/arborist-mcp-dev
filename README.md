@@ -51,10 +51,10 @@ declarations introduce the same local name, Arborist represents the overload set
 using the first declaration in source order. Namespace aliases are indexed at their definition
 scope, for example `api::vendor`. See the [tool
 guide](docs/tools.md#language-support) for the current scope. C++20 concept
-definitions, named enum definitions, and named struct/union definitions are
+definitions, named enum definitions and members, and named struct/union definitions are
 also indexed by qualified name, such as `api::Incrementable`, `api::Status`,
-`api::Counter`, and `api::Counter::Storage`. C definitions such as `struct
-Packet { ... };` and `union Payload { ... };` are indexed without a `typedef`
+`api::Status::ready`, `api::Counter`, and `api::Counter::Storage`. C definitions such as `struct
+Packet { ... };`, `union Payload { ... };`, and named enum members are indexed without a `typedef`
 alias. C++ anonymous-namespace members use file-anchored identities so symbols
 with the same name in separate translation units remain isolated. `extern "C"`
 function declarations and definitions are indexed through their linkage wrapper.

@@ -988,6 +988,35 @@ fn traces_named_c_struct_and_union_definitions() {
 }
 
 #[test]
+fn traces_c_enum_members() {
+    let dir = temporary_dir();
+    let source = dir.join("status.c");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "enum Status { STATUS_READY = 1, STATUS_FAILED = 2 };\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    assert!(
+        skeleton
+            .available_symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "STATUS_READY")
+    );
+
+    let trace = trace_symbol_graph(&dir, "STATUS_FAILED", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.node_kind, "enumerator");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "STATUS_READY", TraceDirection::Both).unwrap();
+    assert_eq!(persisted_trace.symbol.node_kind, "enumerator");
+}
+
+#[test]
 fn traces_cpp_struct_methods_and_nested_union_definitions() {
     let dir = temporary_dir();
     let source = dir.join("counter.hpp");
@@ -1066,6 +1095,50 @@ fn traces_cpp_enum_definitions() {
     let persisted_trace =
         trace_symbol_graph_from_index(&db_path, "api::Status", TraceDirection::Both).unwrap();
     assert_eq!(persisted_trace.symbol.scope_path.as_deref(), Some("api"));
+}
+
+#[test]
+fn traces_cpp_enum_members() {
+    let dir = temporary_dir();
+    let source = dir.join("status.hpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nenum class Status : unsigned char { idle = 0, busy };\nenum Legacy { pending, complete };\n\nclass Task {\npublic:\n    enum class State { queued, running };\n    enum Mode { paused, active };\n};\n}\n",
+    )
+    .unwrap();
+
+    let source_text = fs::read_to_string(&source).unwrap();
+    let skeleton = get_semantic_skeleton(&source, &source_text, 1, &[]).unwrap();
+    for expected_path in [
+        "api::Status::idle",
+        "api::Status::busy",
+        "api::pending",
+        "api::Task::State::queued",
+        "api::Task::paused",
+    ] {
+        assert!(
+            skeleton
+                .available_symbols
+                .iter()
+                .any(|symbol| symbol.semantic_path == expected_path),
+            "missing {expected_path} in {:#?}",
+            skeleton.available_symbols
+        );
+    }
+
+    let trace = trace_symbol_graph(&dir, "api::Status::busy", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.node_kind, "enumerator");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Task::State::queued", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(persisted_trace.symbol.node_kind, "enumerator");
+    assert_eq!(
+        persisted_trace.symbol.scope_path.as_deref(),
+        Some("api::Task::State")
+    );
 }
 
 #[test]

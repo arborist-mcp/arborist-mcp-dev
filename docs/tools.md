@@ -53,12 +53,15 @@ Namespace aliases are indexed at their definition scope, for example
 `api::vendor` for `namespace vendor = third_party::vendor;` inside `namespace api`.
 C++20 concept definitions are indexed by qualified name, such as
 `api::Incrementable`.
-Named enum definitions are indexed with namespace and enclosing-class scope,
-such as `api::Status` and `api::Task::State`.
+Named enum definitions and members are indexed with namespace and enclosing-class
+scope. Scoped members use paths such as `api::Status::ready` and
+`api::Task::State::queued`; non-scoped members use their enclosing namespace or
+class scope, such as `api::pending` and `api::Task::paused`.
 Named struct and union definitions are indexed with the same namespace and
 enclosing-type scope, such as `api::Counter` and `api::Counter::Storage`.
-Named C definitions such as `struct Packet { ... };` and `union Payload { ... };`
-are also available as patch and trace targets without requiring a `typedef`.
+Named C definitions such as `struct Packet { ... };` and `union Payload { ... };`,
+along with C enum members such as `STATUS_READY`, are also available as patch and
+trace targets without requiring a `typedef`.
 C++ anonymous-namespace members have file-anchored identities, preventing
 same-name symbols in separate translation units from being merged in traces.
 Functions declared or defined through `extern "C"` linkage specifications are

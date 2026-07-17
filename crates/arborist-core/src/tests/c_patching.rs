@@ -585,6 +585,90 @@ fn patches_cpp_enum_definition_targeted_by_qualified_path() {
 }
 
 #[test]
+fn patches_cpp_scoped_enum_member_targeted_by_qualified_path() {
+    let dir = temporary_dir();
+    let file = dir.join("status.hpp");
+    fs::write(
+        &file,
+        "namespace api {\nenum class Status { idle, busy };\n}\n",
+    )
+    .unwrap();
+
+    let result = patch_ast_node_from_path(&file, "api::Status::idle", "idle = 7", None).unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "api::Status::idle");
+    assert_eq!(result.resolved_symbol_id, "api::Status::idle");
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("idle = 7, busy")
+    );
+}
+
+#[test]
+fn patches_c_enum_member_targeted_by_path() {
+    let dir = temporary_dir();
+    let file = dir.join("status.c");
+    fs::write(&file, "enum Status { STATUS_READY, STATUS_FAILED };\n").unwrap();
+
+    let result = patch_ast_node_from_path(&file, "STATUS_READY", "STATUS_READY = 1", None).unwrap();
+
+    assert!(result.applied);
+    assert_eq!(result.resolved_path, "STATUS_READY");
+    assert_eq!(
+        result.resolved_symbol_id,
+        format!(
+            "{}::STATUS_READY",
+            file.to_string_lossy().replace('\\', "/")
+        )
+    );
+    assert!(result.validation.commit_gate.allowed);
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("STATUS_READY = 1, STATUS_FAILED")
+    );
+}
+
+#[test]
+fn rejects_bare_scoped_enum_member_during_patch_validation() {
+    let dir = temporary_dir();
+    let file = dir.join("status.cpp");
+    fs::write(
+        &file,
+        "enum class Status { idle, busy };\n\nint status() { return 0; }\n",
+    )
+    .unwrap();
+
+    let result =
+        patch_ast_node_from_path(&file, "status", "int status() { return idle; }", None).unwrap();
+
+    assert!(!result.applied);
+    assert_eq!(result.validation.commit_gate.status, "rejected");
+    assert_eq!(result.validation.unresolved_identifiers, vec!["idle"]);
+}
+
+#[test]
+fn allows_bare_unscoped_enum_member_during_patch_validation() {
+    let dir = temporary_dir();
+    let file = dir.join("status.cpp");
+    fs::write(
+        &file,
+        "enum Status { idle, busy };\n\nint status() { return 0; }\n",
+    )
+    .unwrap();
+
+    let result =
+        patch_ast_node_from_path(&file, "status", "int status() { return idle; }", None).unwrap();
+
+    assert!(result.applied);
+    assert!(result.validation.commit_gate.allowed);
+    assert!(result.validation.unresolved_identifiers.is_empty());
+}
+
+#[test]
 fn patches_cpp_class_method_defined_outside_class() {
     let dir = temporary_dir();
     let file = dir.join("counter.cpp");

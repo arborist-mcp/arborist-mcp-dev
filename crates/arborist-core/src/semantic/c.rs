@@ -112,6 +112,59 @@ pub(crate) fn c_using_declaration_name(node: Node<'_>, source: &str) -> Result<O
     Ok(target_name.rsplit("::").next().map(ToOwned::to_owned))
 }
 
+fn c_enumerator_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() != "enumerator" {
+        return Ok(None);
+    }
+
+    c_named_node_name(node, source)
+}
+
+fn c_enumerator_semantic_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(name) = c_enumerator_name(node, source)? else {
+        return Ok(None);
+    };
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "enum_specifier" {
+            if c_is_scoped_enum(candidate, source)
+                && let Some(enum_name) = c_named_node_name(candidate, source)?
+            {
+                return Ok(Some(format!("{enum_name}::{name}")));
+            }
+            break;
+        }
+        current = candidate.parent();
+    }
+
+    Ok(Some(name))
+}
+
+pub(crate) fn c_is_scoped_enumerator(node: Node<'_>, source: &str) -> bool {
+    if node.kind() != "enumerator" {
+        return false;
+    }
+
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "enum_specifier" {
+            return c_is_scoped_enum(candidate, source);
+        }
+        current = candidate.parent();
+    }
+
+    false
+}
+
+fn c_is_scoped_enum(enum_node: Node<'_>, source: &str) -> bool {
+    let Some(name) = enum_node.child_by_field_name("name") else {
+        return false;
+    };
+    source[enum_node.start_byte()..name.start_byte()]
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| matches!(word, "class" | "struct"))
+}
+
 fn c_operator_cast_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     if !is_c_callable_node(node) {
         return Ok(None);
@@ -236,12 +289,14 @@ pub fn c_semantic_path(path: &Path, node: Node<'_>, source: &str) -> Result<Opti
     let symbol_name = c_function_declarator_name(node, source)?
         .or(c_operator_cast_name(node, source)?)
         .or(c_template_instantiation_name(node, source)?)
+        .or(c_enumerator_semantic_name(node, source)?)
         .or(match node.kind() {
             "type_definition" => last_type_identifier(node, source)?,
             "alias_declaration"
             | "class_specifier"
             | "concept_definition"
             | "enum_specifier"
+            | "enumerator"
             | "namespace_alias_definition"
             | "struct_specifier"
             | "union_specifier" => c_named_node_name(node, source)?,
@@ -357,6 +412,8 @@ fn collect_c_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Node<'tree
         collect_cpp_template_symbols(child, symbols);
     } else if is_cpp_type_scope(child) {
         collect_cpp_type_scope_symbols(child, symbols);
+    } else if child.kind() == "enum_specifier" {
+        collect_c_enum_symbols(child, symbols);
     } else if child.kind() == "declaration" {
         collect_c_named_type_definition_symbols(child, symbols);
         if is_c_symbol_node(child) {
@@ -396,6 +453,22 @@ fn collect_c_named_type_definition_symbols<'tree>(
     for child in declaration.named_children(&mut cursor) {
         if is_cpp_type_scope(child) && child.child_by_field_name("body").is_some() {
             collect_cpp_type_scope_symbols(child, symbols);
+        } else if child.kind() == "enum_specifier" {
+            collect_c_enum_symbols(child, symbols);
+        }
+    }
+}
+
+fn collect_c_enum_symbols<'tree>(enum_node: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {
+    symbols.push(enum_node);
+
+    let Some(body) = enum_node.child_by_field_name("body") else {
+        return;
+    };
+    let mut cursor = body.walk();
+    for child in body.named_children(&mut cursor) {
+        if child.kind() == "enumerator" {
+            symbols.push(child);
         }
     }
 }
@@ -430,6 +503,8 @@ fn collect_cpp_type_scope_child<'tree>(child: Node<'tree>, symbols: &mut Vec<Nod
         }
     } else if child.kind() == "template_declaration" {
         collect_cpp_template_symbols(child, symbols);
+    } else if child.kind() == "enum_specifier" {
+        collect_c_enum_symbols(child, symbols);
     } else if is_c_symbol_node(child) {
         symbols.push(child);
     }
@@ -456,7 +531,7 @@ fn collect_cpp_nested_type_symbols<'tree>(
         if is_cpp_type_scope(child) {
             collect_cpp_type_scope_symbols(child, symbols);
         } else if child.kind() == "enum_specifier" {
-            symbols.push(child);
+            collect_c_enum_symbols(child, symbols);
         }
     }
 }
@@ -471,6 +546,8 @@ fn collect_cpp_template_symbols<'tree>(template_node: Node<'tree>, symbols: &mut
             collect_cpp_friend_function_symbols(child, symbols);
         } else if is_cpp_type_scope(child) {
             collect_cpp_type_scope_symbols(child, symbols);
+        } else if child.kind() == "enum_specifier" {
+            collect_c_enum_symbols(child, symbols);
         } else if child.kind() == "declaration" {
             collect_c_named_type_definition_symbols(child, symbols);
             if is_c_symbol_node(child) {
@@ -489,6 +566,7 @@ fn is_c_symbol_node(node: Node<'_>) -> bool {
             | "class_specifier"
             | "concept_definition"
             | "enum_specifier"
+            | "enumerator"
             | "namespace_alias_definition"
             | "struct_specifier"
             | "template_instantiation"
@@ -627,6 +705,7 @@ pub(crate) fn build_c_skeleton(
             | "class_specifier"
             | "concept_definition"
             | "enum_specifier"
+            | "enumerator"
             | "namespace_alias_definition"
             | "struct_specifier"
             | "template_instantiation"
@@ -780,6 +859,7 @@ fn c_symbol_base_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
         | "class_specifier"
         | "concept_definition"
         | "enum_specifier"
+        | "enumerator"
         | "namespace_alias_definition"
         | "struct_specifier"
         | "union_specifier" => c_named_node_name(node, source),
@@ -807,6 +887,7 @@ fn c_symbol_node_rank(node_kind: &str) -> usize {
         | "class_specifier"
         | "concept_definition"
         | "enum_specifier"
+        | "enumerator"
         | "namespace_alias_definition"
         | "struct_specifier"
         | "template_instantiation"

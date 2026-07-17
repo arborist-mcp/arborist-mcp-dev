@@ -10,6 +10,7 @@ use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 mod c;
 
 pub(crate) use c::c_is_callable_declaration;
+pub(crate) use c::c_is_scoped_enumerator;
 pub(crate) use c::c_named_node_name;
 pub(crate) use c::c_symbol_nodes;
 pub(crate) use c::c_template_instantiation_name;
@@ -190,6 +191,7 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
                         | "class_specifier"
                         | "concept_definition"
                         | "enum_specifier"
+                        | "enumerator"
                         | "namespace_alias_definition"
                         | "struct_specifier"
                         | "template_instantiation"

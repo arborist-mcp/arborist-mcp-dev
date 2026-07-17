@@ -272,6 +272,74 @@ fn execute_tree_query_reports_owner_for_cpp_class_definition() {
 }
 
 #[test]
+fn execute_tree_query_reports_owner_for_cpp_enum_member() {
+    let source = "namespace api {\nenum class Status { ready, failed };\n}\n";
+    let captures = execute_tree_query(
+        Path::new("status.hpp"),
+        source,
+        "(enumerator name: (identifier) @member)",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "ready")
+        .expect("enum member should be captured");
+
+    assert_eq!(
+        capture.owner_symbol_id.as_deref(),
+        Some("api::Status::ready")
+    );
+    assert_eq!(
+        capture.owner_semantic_path.as_deref(),
+        Some("api::Status::ready")
+    );
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api::Status"));
+}
+
+#[test]
+fn execute_tree_query_reports_owner_for_cpp_unscoped_enum_member() {
+    let source = "namespace api {\nenum Legacy { pending, complete };\n}\n";
+    let captures = execute_tree_query(
+        Path::new("status.hpp"),
+        source,
+        "(enumerator name: (identifier) @member)",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "pending")
+        .expect("enum member should be captured");
+
+    assert_eq!(capture.owner_symbol_id.as_deref(), Some("api::pending"));
+    assert_eq!(capture.owner_semantic_path.as_deref(), Some("api::pending"));
+    assert_eq!(capture.owner_scope_path.as_deref(), Some("api"));
+}
+
+#[test]
+fn execute_tree_query_reports_owner_for_c_enum_member() {
+    let source = "enum Status { STATUS_READY, STATUS_FAILED };\n";
+    let captures = execute_tree_query(
+        Path::new("status.c"),
+        source,
+        "(enumerator name: (identifier) @member)",
+    )
+    .unwrap();
+    let capture = captures
+        .iter()
+        .find(|capture| capture.text == "STATUS_READY")
+        .expect("enum member should be captured");
+
+    assert!(
+        capture
+            .owner_symbol_id
+            .as_deref()
+            .is_some_and(|symbol_id| symbol_id.ends_with("status.c::STATUS_READY"))
+    );
+    assert_eq!(capture.owner_semantic_path.as_deref(), Some("STATUS_READY"));
+    assert_eq!(capture.owner_scope_path, None);
+}
+
+#[test]
 fn execute_tree_query_reports_owner_for_cpp_namespace_alias() {
     let source = "namespace api {\nnamespace vendor = third_party::vendor;\n}\n";
     let captures = execute_tree_query(
