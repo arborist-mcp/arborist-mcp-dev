@@ -9,17 +9,17 @@ mod vfs_bindings;
 use std::cell::RefCell;
 use std::path::Path;
 
+#[cfg(test)]
+use arborist_core::{PatchAstNodeResult, TraceSymbolGraphResult};
 use arborist_core::{
-    PatchAstNodeResult, TraceDirection, TraceSymbolGraphResult, VirtualFileSystem,
-    WorkspacePositionEdits, execute_tree_query_from_path_with_timeout,
-    execute_tree_query_with_timeout, export_patch_diagnostics_sarif, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, preview_workspace_position_edits,
-    replay_patch_evidence_against_trace, supported_languages, validate_patch_commit_with_trace,
+    TraceDirection, VirtualFileSystem, execute_tree_query_from_path_with_timeout,
+    execute_tree_query_with_timeout, get_semantic_skeleton, get_semantic_skeleton_from_path,
+    supported_languages,
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use crate::json_args::parse_json_arg;
+pub(crate) use crate::json_args::parse_json_arg;
 use serde::Serialize;
 
 #[pyclass(unsendable)]
@@ -587,40 +587,6 @@ impl ArboristCore {
             file_path,
             source,
         )
-    }
-
-    fn replay_patch_evidence_against_trace_json(
-        &self,
-        patch_json: &str,
-        trace_json: &str,
-    ) -> PyResult<String> {
-        let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
-        let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
-        let result = replay_patch_evidence_against_trace(&patch, &trace).map_err(to_py_error)?;
-        to_json_result(&result)
-    }
-
-    fn export_patch_diagnostics_sarif_json(&self, patch_json: &str) -> PyResult<String> {
-        let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
-        let result = export_patch_diagnostics_sarif(&patch).map_err(to_py_error)?;
-        to_json_result(&result)
-    }
-
-    fn preview_workspace_position_edits_json(&self, files_json: &str) -> PyResult<String> {
-        let files: Vec<WorkspacePositionEdits> = parse_json_arg(files_json)?;
-        let result = preview_workspace_position_edits(&files).map_err(to_py_error)?;
-        to_json_result(&result)
-    }
-
-    fn validate_patch_commit_with_trace_json(
-        &self,
-        patch_json: &str,
-        trace_json: &str,
-    ) -> PyResult<String> {
-        let patch: PatchAstNodeResult = parse_json_arg(patch_json)?;
-        let trace: TraceSymbolGraphResult = parse_json_arg(trace_json)?;
-        let result = validate_patch_commit_with_trace(&patch, &trace).map_err(to_py_error)?;
-        to_json_result(&result)
     }
 }
 
