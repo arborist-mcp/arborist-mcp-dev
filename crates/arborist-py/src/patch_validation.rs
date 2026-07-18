@@ -130,6 +130,34 @@ impl ArboristCore {
             index_db_path,
         )
     }
+
+    #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn validate_patch_with_neighborhood_context_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+        direction: &str,
+        max_depth: usize,
+        max_nodes: usize,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        self.validate_patch_with_neighborhood_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            NeighborhoodBounds::new(max_depth, max_nodes),
+            index_db_path,
+        )
+    }
 }
 
 impl ArboristCore {
