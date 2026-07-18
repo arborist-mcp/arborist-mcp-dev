@@ -5,6 +5,48 @@ use pyo3::prelude::*;
 
 use crate::{ArboristCore, parse_json_arg, to_json_result, to_py_error};
 
+#[pymethods]
+impl ArboristCore {
+    fn open_virtual_file_json(&self, file_path: &str, source: Option<String>) -> PyResult<String> {
+        self.open_virtual_file_json_impl(file_path, source)
+    }
+
+    fn read_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
+        self.read_virtual_file_json_impl(file_path)
+    }
+
+    fn list_virtual_files_json(&self, dirty_only: bool) -> PyResult<String> {
+        self.list_virtual_files_json_impl(dirty_only)
+    }
+
+    fn apply_buffer_edit_json(
+        &self,
+        file_path: &str,
+        start_byte: usize,
+        old_end_byte: usize,
+        new_text: &str,
+    ) -> PyResult<String> {
+        self.apply_buffer_edit_json_impl(file_path, start_byte, old_end_byte, new_text)
+    }
+
+    fn apply_position_edits_json(&self, file_path: &str, edits_json: &str) -> PyResult<String> {
+        self.apply_position_edits_json_impl(file_path, edits_json)
+    }
+
+    fn commit_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
+        self.commit_virtual_file_json_impl(file_path)
+    }
+
+    fn discard_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
+        self.discard_virtual_file_json_impl(file_path)
+    }
+
+    #[pyo3(signature = (file_path, persist=false))]
+    fn close_virtual_file_json(&self, file_path: &str, persist: bool) -> PyResult<String> {
+        self.close_virtual_file_json_impl(file_path, persist)
+    }
+}
+
 impl ArboristCore {
     pub(super) fn open_virtual_file_json_impl(
         &self,

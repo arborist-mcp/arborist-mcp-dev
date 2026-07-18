@@ -15,6 +15,6 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 anyhow.workspace = true
 arborist-core = { path = "../arborist-core" }
-pyo3 = { version = "0.24", features = ["abi3-py310"] }
+pyo3 = { version = "0.24", features = ["abi3-py310", "multiple-pymethods"] }
 serde.workspace = true
 serde_json.workspace = true
