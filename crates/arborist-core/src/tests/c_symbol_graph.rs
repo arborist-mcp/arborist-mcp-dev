@@ -1240,11 +1240,14 @@ fn resolves_unqualified_cpp_using_declaration_calls_across_live_and_persisted_qu
     .unwrap();
     fs::write(
         &caller,
-        "namespace api {\nnamespace import_alias = base;\nusing import_alias::convert;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return convert(1); }\ndouble decimal_caller() { return convert(1.0, 2.0); }\n}\n",
+        "namespace api {\nnamespace import_alias = base;\nint before_import() { return convert(1); }\nusing import_alias::convert;\ndouble convert(double left, double right) { return left + right; }\nint caller() { return convert(1); }\ndouble decimal_caller() { return convert(1.0, 2.0); }\n}\n",
     )
     .unwrap();
 
     let expected_callee = "api::base::convert(int)";
+    let before_import =
+        trace_symbol_graph(&dir, "api::before_import", TraceDirection::Both).unwrap();
+    assert!(before_import.callees.is_empty());
     let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
     assert_eq!(
         trace
@@ -1266,6 +1269,10 @@ fn resolves_unqualified_cpp_using_declaration_calls_across_live_and_persisted_qu
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_before_import =
+        trace_symbol_graph_from_index(&db_path, "api::before_import", TraceDirection::Both)
+            .unwrap();
+    assert!(persisted_before_import.callees.is_empty());
     let persisted_trace =
         trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
     assert_eq!(
