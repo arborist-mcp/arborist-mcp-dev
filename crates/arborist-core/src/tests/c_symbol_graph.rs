@@ -1792,6 +1792,26 @@ fn resolves_unqualified_cpp_using_namespaces_from_local_headers() {
 }
 
 #[test]
+fn does_not_resolve_cpp_using_declarations_from_headers_included_after_callers() {
+    let dir = temporary_dir();
+    let header = dir.join("imports.hpp");
+    let caller = dir.join("caller.cpp");
+    fs::write(
+        &header,
+        "namespace vendor { int convert(int value) { return value; } }\nnamespace app { using vendor::convert; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace app { int caller() { return convert(1); } }\n#include \"imports.hpp\"\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}
+
+#[test]
 fn resolves_cpp_using_declaration_overloads_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("using_overloads.cpp");
