@@ -350,10 +350,13 @@ fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<Stri
 }
 
 fn template_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
-    function
-        .child_by_field_name("name")
-        .map(|name| node_text(name, source).map(|name| name.trim().to_string()))
-        .transpose()
+    node_text(function, source).map(|name| {
+        Some(
+            name.chars()
+                .filter(|character| !character.is_whitespace())
+                .collect(),
+        )
+    })
 }
 
 fn is_qualified_identifier_component(node: Node<'_>) -> bool {
@@ -436,7 +439,7 @@ mod tests {
 
         assert_eq!(
             arities,
-            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1]))])
+            BTreeMap::from([("adjust<int>".to_string(), BTreeSet::from([1]))])
         );
     }
 }

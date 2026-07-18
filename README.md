@@ -54,7 +54,8 @@ C++ graph resolution filters direct function calls by argument count before
 choosing an overload; defaulted and variadic parameters are considered when
 matching candidates. Namespace-qualified calls such as `api::convert(value)`
 are resolved relative to enclosing namespaces before overload filtering.
-Explicit template calls such as `convert<int>(value)` are resolved through the
+Explicit template calls such as `convert<int>(value)` prefer an indexed exact
+specialization and otherwise fall back to the primary template through the
 same direct-call graph path.
 Calls through `this->method(value)`, `(*this).method(value)`, and dependent
 member-template syntax such as `this->template method<T>(value)` resolve

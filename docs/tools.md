@@ -52,8 +52,9 @@ argument count before applying its existing scope ranking. Defaulted and
 variadic parameters are included in that check. Namespace-qualified calls such
 as `api::convert(value)` first resolve through enclosing namespaces, then use
 the same overload filtering.
-Explicit template calls such as `convert<int>(value)` are also treated as
-direct calls to `convert` for graph resolution.
+Explicit template calls such as `convert<int>(value)` prefer an indexed exact
+specialization and otherwise fall back to the primary template for graph
+resolution.
 Calls through `this->method(value)`, `(*this).method(value)`, and dependent
 member-template syntax such as `this->template method<T>(value)` resolve
 against the enclosing class's method overloads by argument count; `const`
