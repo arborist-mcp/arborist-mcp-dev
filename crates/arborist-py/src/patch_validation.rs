@@ -19,6 +19,61 @@ use crate::{
     ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
 
+#[pymethods]
+impl ArboristCore {
+    #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn validate_patch_with_trace_context_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+        direction: &str,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        self.validate_patch_with_trace_context_json_impl(
+            workspace_root,
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            index_db_path,
+        )
+    }
+
+    #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", index_db_path=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn validate_patch_with_trace_context_at_position_json(
+        &self,
+        workspace_root: &str,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+        direction: &str,
+        index_db_path: Option<String>,
+    ) -> PyResult<String> {
+        self.validate_patch_with_trace_context_at_position_json_impl(
+            workspace_root,
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+            direction,
+            index_db_path,
+        )
+    }
+}
+
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn validate_patch_with_trace_context_json_impl(
