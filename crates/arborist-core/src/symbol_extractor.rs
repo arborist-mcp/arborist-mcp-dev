@@ -7,8 +7,7 @@ use tree_sitter::Node;
 use crate::language::{ParsedDocument, node_text, normalize_path, visit_tree};
 use crate::model::LanguageId;
 use crate::patching::{
-    collect_c_call_arities, collect_c_graph_references, collect_cpp_braced_call_arities,
-    collect_cpp_braced_initializer_arities, collect_cpp_new_call_arities,
+    collect_c_call_arities, collect_c_graph_references, collect_cpp_call_arities,
     collect_python_references,
 };
 use crate::semantic::{
@@ -144,11 +143,10 @@ fn index_c_symbols(
                     let mut references = BTreeSet::new();
                     collect_c_graph_references(child, source, &mut references)?;
                     let mut call_arities = BTreeMap::new();
-                    collect_c_call_arities(child, source, &mut call_arities)?;
                     if is_cpp {
-                        collect_cpp_braced_call_arities(child, source, &mut call_arities)?;
-                        collect_cpp_braced_initializer_arities(child, source, &mut call_arities)?;
-                        collect_cpp_new_call_arities(child, source, &mut call_arities)?;
+                        collect_cpp_call_arities(child, source, &mut call_arities)?;
+                    } else {
+                        collect_c_call_arities(child, source, &mut call_arities)?;
                     }
                     references.extend(call_arities.keys().cloned());
                     let scope_path = semantic_parent_path(&name);

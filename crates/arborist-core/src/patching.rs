@@ -9,8 +9,7 @@ mod python_visibility;
 
 pub(crate) use c_validation::{
     collect_c_call_arities, collect_c_graph_references, collect_c_reference_validation,
-    collect_cpp_braced_call_arities, collect_cpp_braced_initializer_arities,
-    collect_cpp_new_call_arities,
+    collect_cpp_call_arities,
 };
 pub(crate) use commit_gate::evaluate_patch_commit_gate;
 pub(crate) use python_imports::{

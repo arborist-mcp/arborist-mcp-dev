@@ -111,144 +111,150 @@ pub(crate) fn collect_c_call_arities(
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
 ) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "call_expression" {
-            return;
-        }
-        let Some(function) = candidate.child_by_field_name("function") else {
-            return;
-        };
-        let Some(arguments) = candidate.child_by_field_name("arguments") else {
-            return;
-        };
-        let Ok(Some(name)) = direct_c_call_name(function, source) else {
-            return;
-        };
+    let mut callback = |candidate: Node<'_>| collect_c_call_arity(candidate, source, call_arities);
+    visit_tree(node, &mut callback);
+    Ok(())
+}
 
-        let mut cursor = arguments.walk();
-        let arity = arguments.named_children(&mut cursor).count();
-        call_arities
-            .entry(name.trim().to_string())
-            .or_default()
-            .insert(arity);
+pub(crate) fn collect_cpp_call_arities(
+    node: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| match candidate.kind() {
+        "call_expression" => collect_c_call_arity(candidate, source, call_arities),
+        "compound_literal_expression" => {
+            collect_cpp_braced_call_arity(candidate, source, call_arities)
+        }
+        "init_declarator" => collect_cpp_braced_initializer_arity(candidate, source, call_arities),
+        "new_expression" => collect_cpp_new_call_arity(candidate, source, call_arities),
+        _ => {}
     };
     visit_tree(node, &mut callback);
     Ok(())
 }
 
-pub(crate) fn collect_cpp_braced_call_arities(
-    node: Node<'_>,
+fn collect_c_call_arity(
+    candidate: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "compound_literal_expression" {
-            return;
-        }
-        let mut cursor = candidate.walk();
-        let children = candidate.named_children(&mut cursor).collect::<Vec<_>>();
-        let type_node = candidate
-            .child_by_field_name("type")
-            .or_else(|| children.first().copied());
-        let initializer = candidate.child_by_field_name("value").or_else(|| {
-            children
-                .iter()
-                .copied()
-                .find(|child| child.kind() == "initializer_list")
-        });
-        let (Some(type_node), Some(initializer)) = (type_node, initializer) else {
-            return;
-        };
-        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
-            return;
-        };
-
-        let mut initializer_cursor = initializer.walk();
-        let arity = initializer.named_children(&mut initializer_cursor).count();
-        call_arities
-            .entry(name.trim().to_string())
-            .or_default()
-            .insert(arity);
+) {
+    if candidate.kind() != "call_expression" {
+        return;
+    }
+    let Some(function) = candidate.child_by_field_name("function") else {
+        return;
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+    let Some(arguments) = candidate.child_by_field_name("arguments") else {
+        return;
+    };
+    let Ok(Some(name)) = direct_c_call_name(function, source) else {
+        return;
+    };
+
+    record_c_call_arity(name, arguments, call_arities);
 }
 
-pub(crate) fn collect_cpp_braced_initializer_arities(
-    node: Node<'_>,
+fn collect_cpp_braced_call_arity(
+    candidate: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "init_declarator" {
-            return;
-        }
-        let Some(declaration) = candidate
-            .parent()
-            .filter(|parent| parent.kind() == "declaration")
-        else {
-            return;
-        };
-        let Some(declarator) = candidate.child_by_field_name("declarator") else {
-            return;
-        };
-        if declarator.kind() != "identifier" {
-            return;
-        }
-        let Some(initializer) = candidate
-            .child_by_field_name("value")
-            .filter(|value| value.kind() == "initializer_list")
-        else {
-            return;
-        };
-        let Some(type_node) = declaration.child_by_field_name("type") else {
-            return;
-        };
-        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
-            return;
-        };
-
-        let mut cursor = initializer.walk();
-        let arity = initializer.named_children(&mut cursor).count();
-        call_arities
-            .entry(name.trim().to_string())
-            .or_default()
-            .insert(arity);
+) {
+    let mut cursor = candidate.walk();
+    let children = candidate.named_children(&mut cursor).collect::<Vec<_>>();
+    let type_node = candidate
+        .child_by_field_name("type")
+        .or_else(|| children.first().copied());
+    let initializer = candidate.child_by_field_name("value").or_else(|| {
+        children
+            .iter()
+            .copied()
+            .find(|child| child.kind() == "initializer_list")
+    });
+    let (Some(type_node), Some(initializer)) = (type_node, initializer) else {
+        return;
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+    let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+        return;
+    };
+
+    record_c_call_arity(name, initializer, call_arities);
 }
 
-pub(crate) fn collect_cpp_new_call_arities(
-    node: Node<'_>,
+fn collect_cpp_braced_initializer_arity(
+    candidate: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
-) -> Result<()> {
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() != "new_expression" {
-            return;
-        }
-        let Some(type_node) = candidate.child_by_field_name("type") else {
-            return;
-        };
-        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
-            return;
-        };
-
-        let arity = candidate
-            .child_by_field_name("arguments")
-            .map(|arguments| {
-                let mut cursor = arguments.walk();
-                arguments.named_children(&mut cursor).count()
-            })
-            .unwrap_or_default();
-        call_arities
-            .entry(name.trim().to_string())
-            .or_default()
-            .insert(arity);
+) {
+    let Some(declaration) = candidate
+        .parent()
+        .filter(|parent| parent.kind() == "declaration")
+    else {
+        return;
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+    let Some(declarator) = candidate.child_by_field_name("declarator") else {
+        return;
+    };
+    if declarator.kind() != "identifier" {
+        return;
+    }
+    let Some(initializer) = candidate
+        .child_by_field_name("value")
+        .filter(|value| value.kind() == "initializer_list")
+    else {
+        return;
+    };
+    let Some(type_node) = declaration.child_by_field_name("type") else {
+        return;
+    };
+    let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+        return;
+    };
+
+    record_c_call_arity(name, initializer, call_arities);
+}
+
+fn collect_cpp_new_call_arity(
+    candidate: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) {
+    let Some(type_node) = candidate.child_by_field_name("type") else {
+        return;
+    };
+    let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+        return;
+    };
+
+    let arity = candidate
+        .child_by_field_name("arguments")
+        .map(named_child_count)
+        .unwrap_or_default();
+    record_c_call_arity_with_count(name, arity, call_arities);
+}
+
+fn record_c_call_arity(
+    name: String,
+    arguments: Node<'_>,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) {
+    record_c_call_arity_with_count(name, named_child_count(arguments), call_arities);
+}
+
+fn record_c_call_arity_with_count(
+    name: String,
+    arity: usize,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) {
+    call_arities
+        .entry(name.trim().to_string())
+        .or_default()
+        .insert(arity);
+}
+
+fn named_child_count(node: Node<'_>) -> usize {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).count()
 }
 
 fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -327,7 +333,7 @@ mod tests {
 
     use crate::language::parse_document;
 
-    use super::collect_cpp_braced_initializer_arities;
+    use super::collect_cpp_call_arities;
 
     #[test]
     fn collects_only_object_braced_initializers() {
@@ -335,8 +341,7 @@ mod tests {
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
-        collect_cpp_braced_initializer_arities(document.tree.root_node(), source, &mut arities)
-            .unwrap();
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
 
         assert_eq!(
             arities,
