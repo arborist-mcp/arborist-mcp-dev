@@ -4,9 +4,15 @@ import ast
 from pathlib import Path
 import unittest
 
+from arborist_mcp import gateway as gateway_module
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GATEWAY_PATH = _REPO_ROOT / "python" / "arborist_mcp" / "gateway.py"
+
+SUITE_NAME = "gateway-native-bindings"
+REQUIRES_EXTENSION = True
+COVERED_TOOLS = tuple(gateway_module.TOOL_NAMES)
 
 
 def _is_core_receiver(node: ast.expr) -> bool:
