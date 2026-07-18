@@ -362,6 +362,8 @@ fn resolve_reference_path(
     };
     let arity_candidates =
         cpp_const_member_candidates(arity_candidates, source_symbol, raw_symbols);
+    let arity_candidates =
+        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols);
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
     arity_candidates
@@ -923,6 +925,52 @@ fn cpp_callable_is_const_qualified(symbol: &IndexedSymbol) -> bool {
             .rsplit_once(')')
             .is_some_and(|(_, suffix)| suffix.trim_start().starts_with("const"))
     })
+}
+
+fn cpp_lvalue_member_candidates(
+    candidates: Vec<usize>,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<usize> {
+    let lvalue_members = candidates
+        .iter()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            source_symbol.scope_path.is_some()
+                && source_symbol.scope_path == candidate.scope_path
+                && is_cpp_callable(candidate)
+                && cpp_callable_ref_qualifier(candidate) == Some("&")
+        })
+        .collect::<Vec<_>>();
+
+    if lvalue_members.is_empty() {
+        candidates
+    } else {
+        lvalue_members
+    }
+}
+
+fn cpp_callable_ref_qualifier(symbol: &IndexedSymbol) -> Option<&'static str> {
+    let (_, mut suffix) = symbol.signature.as_deref()?.rsplit_once(')')?;
+    loop {
+        suffix = suffix.trim_start();
+        if let Some(remaining) = suffix.strip_prefix("const") {
+            suffix = remaining;
+        } else if let Some(remaining) = suffix.strip_prefix("volatile") {
+            suffix = remaining;
+        } else {
+            break;
+        }
+    }
+    let suffix = suffix.trim_start();
+    if suffix.starts_with("&&") {
+        Some("&&")
+    } else if suffix.starts_with('&') {
+        Some("&")
+    } else {
+        None
+    }
 }
 
 fn cpp_callable_accepts_arity(symbol: &IndexedSymbol, call_arity: usize) -> bool {

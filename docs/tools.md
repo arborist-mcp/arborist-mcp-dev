@@ -58,7 +58,9 @@ resolution.
 Calls through `this->method(value)`, `(*this).method(value)`, and dependent
 member-template syntax such as `this->template method<T>(value)` resolve
 against the enclosing class's method overloads by argument count; `const`
-member callers prefer matching `const` overloads.
+member callers prefer matching `const` overloads. Because `this` receivers are
+lvalues, matching `&` and `const &` member overloads are preferred over `&&`
+overloads.
 Direct type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
