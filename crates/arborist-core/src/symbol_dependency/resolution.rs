@@ -11,7 +11,29 @@ use crate::language::{detect_language, is_c_header_path, normalize_path};
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
 use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
 use crate::semantic::cpp_callable_symbol_id;
-use crate::symbol_index_model::{IndexedSymbol, symbol_kind_rank};
+use crate::symbol_index_model::{CPP_RVALUE_THIS_CALL_PREFIX, IndexedSymbol, symbol_kind_rank};
+
+#[derive(Clone, Copy)]
+struct CallResolutionContext {
+    arity: Option<usize>,
+    rvalue_this_receiver: bool,
+}
+
+impl CallResolutionContext {
+    fn cpp(arity: usize, rvalue_this_receiver: bool) -> Self {
+        Self {
+            arity: Some(arity),
+            rvalue_this_receiver,
+        }
+    }
+
+    fn non_call() -> Self {
+        Self {
+            arity: None,
+            rvalue_this_receiver: false,
+        }
+    }
+}
 
 pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()> {
     let symbol_ids = (0..raw_symbols.len())
@@ -134,15 +156,19 @@ pub(super) fn resolve_dependencies_for_symbol(
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
-    for reference_name in &symbol.references_by_name {
-        let call_arities = symbol.call_arities_by_name.get(reference_name);
+    for encoded_reference_name in &symbol.references_by_name {
+        let (reference_name, rvalue_this_receiver) = encoded_reference_name
+            .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
+            .map(|name| (name, true))
+            .unwrap_or((encoded_reference_name.as_str(), false));
+        let call_arities = symbol.call_arities_by_name.get(encoded_reference_name);
         if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
             && let Some(call_arities) = call_arities
         {
             for call_arity in call_arities {
                 if let Some(target_symbol_id) = resolve_reference_path(
                     reference_name,
-                    Some(*call_arity),
+                    CallResolutionContext::cpp(*call_arity, rvalue_this_receiver),
                     symbol,
                     raw_symbols,
                     name_index,
@@ -155,7 +181,7 @@ pub(super) fn resolve_dependencies_for_symbol(
             }
         } else if let Some(target_symbol_id) = resolve_reference_path(
             reference_name,
-            None,
+            CallResolutionContext::non_call(),
             symbol,
             raw_symbols,
             name_index,
@@ -207,13 +233,14 @@ fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<St
 
 fn resolve_reference_path(
     reference_name: &str,
-    call_arity: Option<usize>,
+    call_context: CallResolutionContext,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Option<String> {
+    let call_arity = call_context.arity;
     let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
         python_reference_lookup(reference_name)
@@ -362,8 +389,11 @@ fn resolve_reference_path(
     };
     let arity_candidates =
         cpp_const_member_candidates(arity_candidates, source_symbol, raw_symbols);
-    let arity_candidates =
-        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols);
+    let arity_candidates = if call_context.rvalue_this_receiver {
+        cpp_rvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+    } else {
+        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+    };
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
     arity_candidates
@@ -948,6 +978,30 @@ fn cpp_lvalue_member_candidates(
         candidates
     } else {
         lvalue_members
+    }
+}
+
+fn cpp_rvalue_member_candidates(
+    candidates: Vec<usize>,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<usize> {
+    let rvalue_members = candidates
+        .iter()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            source_symbol.scope_path.is_some()
+                && source_symbol.scope_path == candidate.scope_path
+                && is_cpp_callable(candidate)
+                && cpp_callable_ref_qualifier(candidate) == Some("&&")
+        })
+        .collect::<Vec<_>>();
+
+    if rvalue_members.is_empty() {
+        candidates
+    } else {
+        rvalue_members
     }
 }
 

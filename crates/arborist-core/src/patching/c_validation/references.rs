@@ -4,6 +4,13 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use crate::language::{node_text, visit_tree};
+use crate::symbol_index_model::CPP_RVALUE_THIS_CALL_PREFIX;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CppThisMemberReceiver {
+    Lvalue,
+    Rvalue,
+}
 
 pub(super) fn collect_c_local_definitions(
     node: Node<'_>,
@@ -145,10 +152,15 @@ fn collect_cpp_call_arity(
     let Some(arguments) = candidate.child_by_field_name("arguments") else {
         return;
     };
-    let Ok(Some(name)) = direct_cpp_call_name(function, source) else {
+    let Ok(Some((name, rvalue_this_receiver))) = direct_cpp_call_name(function, source) else {
         return;
     };
 
+    let name = if rvalue_this_receiver {
+        format!("{CPP_RVALUE_THIS_CALL_PREFIX}{name}")
+    } else {
+        name
+    };
     record_c_call_arity(name, arguments, call_arities);
 }
 
@@ -286,9 +298,9 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
     }
 }
 
-fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<(String, bool)>> {
     if let Some(name) = direct_c_call_name(function, source)? {
-        return Ok(Some(name));
+        return Ok(Some((name, false)));
     }
     if function.kind() != "field_expression" {
         return Ok(None);
@@ -297,14 +309,15 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
     let Some(argument) = function.child_by_field_name("argument") else {
         return Ok(None);
     };
-    if !is_cpp_this_member_receiver(argument, source)? {
+    let Some(receiver) = cpp_this_member_receiver(argument, source)? else {
         return Ok(None);
-    }
+    };
 
     let Some(field) = function.child_by_field_name("field") else {
         return Ok(None);
     };
     cpp_member_call_name(field, source)
+        .map(|name| name.map(|name| (name, receiver == CppThisMemberReceiver::Rvalue)))
 }
 
 fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -323,12 +336,19 @@ fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>>
     node_text(field, source).map(|field| Some(field.trim().to_string()))
 }
 
-fn is_cpp_this_member_receiver(argument: Node<'_>, source: &str) -> Result<bool> {
+fn cpp_this_member_receiver(
+    argument: Node<'_>,
+    source: &str,
+) -> Result<Option<CppThisMemberReceiver>> {
     let receiver = node_text(argument, source)?
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    Ok(matches!(receiver.as_str(), "this" | "(*this)"))
+    Ok(match receiver.as_str() {
+        "this" | "(*this)" => Some(CppThisMemberReceiver::Lvalue),
+        "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
+        _ => None,
+    })
 }
 
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {

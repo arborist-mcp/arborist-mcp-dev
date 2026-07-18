@@ -147,6 +147,9 @@ completed item can land in its own commit unless two changes are inseparable.
   indexed.
 - [x] Respect lvalue `this` receivers when selecting C++ `&`, `const &`, and
   `&&` member overloads across workspace, persisted-index, and VFS queries.
+- [x] Recognize `std::move(*this)` as an explicit C++ rvalue self receiver and
+  select matching `&&` member overloads across workspace, persisted-index, and
+  VFS queries without guessing arbitrary object types.
 - [x] Expand C++ namespace aliases for direct qualified calls in live and
   persisted symbol graphs.
 - [x] Resolve direct qualified C++ calls through `using` declarations to their

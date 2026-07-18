@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) const CPP_RVALUE_THIS_CALL_PREFIX: &str = "\u{1f}arborist-rvalue-this:";
+
 #[derive(Debug, Clone)]
 pub(crate) struct IndexedSymbol {
     pub(crate) symbol_id: String,
