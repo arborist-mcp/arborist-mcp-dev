@@ -34,6 +34,11 @@
       "module": "tests.gateway_protocol.runtime",
       "description": "Run gateway runtime and transport tests against the synced native extension.",
       "requires_extension": true
+    },
+    "gateway-native-bindings": {
+      "module": "tests.gateway_protocol.native_bindings",
+      "description": "Verify all gateway-native extension method references are registered.",
+      "requires_extension": true
     }
   },
   "groups": {
@@ -51,7 +56,8 @@
         "gateway-symbol-routes-native",
         "gateway-trace-payloads",
         "gateway-execution",
-        "gateway-runtime"
+        "gateway-runtime",
+        "gateway-native-bindings"
       ]
     },
     "gateway": {
