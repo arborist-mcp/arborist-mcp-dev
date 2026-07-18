@@ -122,7 +122,7 @@ pub(crate) fn collect_cpp_call_arities(
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| match candidate.kind() {
-        "call_expression" => collect_c_call_arity(candidate, source, call_arities),
+        "call_expression" => collect_cpp_call_arity(candidate, source, call_arities),
         "compound_literal_expression" => {
             collect_cpp_braced_call_arity(candidate, source, call_arities)
         }
@@ -132,6 +132,24 @@ pub(crate) fn collect_cpp_call_arities(
     };
     visit_tree(node, &mut callback);
     Ok(())
+}
+
+fn collect_cpp_call_arity(
+    candidate: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) {
+    let Some(function) = candidate.child_by_field_name("function") else {
+        return;
+    };
+    let Some(arguments) = candidate.child_by_field_name("arguments") else {
+        return;
+    };
+    let Ok(Some(name)) = direct_cpp_call_name(function, source) else {
+        return;
+    };
+
+    record_c_call_arity(name, arguments, call_arities);
 }
 
 fn collect_c_call_arity(
@@ -268,6 +286,27 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
     }
 }
 
+fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+    if let Some(name) = direct_c_call_name(function, source)? {
+        return Ok(Some(name));
+    }
+    if function.kind() != "field_expression" {
+        return Ok(None);
+    }
+
+    let Some(argument) = function.child_by_field_name("argument") else {
+        return Ok(None);
+    };
+    if node_text(argument, source)?.trim() != "this" {
+        return Ok(None);
+    }
+
+    function
+        .child_by_field_name("field")
+        .map(|field| node_text(field, source).map(|field| field.trim().to_string()))
+        .transpose()
+}
+
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut cursor = function.walk();
     let template_function = function
@@ -346,6 +385,20 @@ mod tests {
         assert_eq!(
             arities,
             BTreeMap::from([("api::Counter".to_string(), BTreeSet::from([1]))])
+        );
+    }
+
+    #[test]
+    fn collects_this_member_call_arities_without_inferring_other_objects() {
+        let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + other->adjust(1, 2); } };";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities,
+            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1]))])
         );
     }
 }

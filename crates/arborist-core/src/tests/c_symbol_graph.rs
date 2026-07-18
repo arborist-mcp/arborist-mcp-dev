@@ -1761,6 +1761,42 @@ fn resolves_cpp_qualified_namespace_aliases_from_local_headers() {
 }
 
 #[test]
+fn resolves_cpp_this_member_calls_by_arity_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("this_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) { return value; }\n    double adjust(double left, double right) { return left + right; }\n    int caller(int value) { return this->adjust(value); }\n};\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Counter::adjust(int)";
+    let trace = trace_symbol_graph(&dir, "api::Counter::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+}
+
+#[test]
 fn resolves_cpp_using_declaration_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("using_calls.cpp");
