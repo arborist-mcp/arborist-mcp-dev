@@ -697,6 +697,96 @@ fn resolves_cpp_braced_initializer_constructor_calls_across_live_and_persisted_q
 }
 
 #[test]
+fn resolves_cpp_type_alias_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("alias.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: Counter(int value) {} Counter(int left, int right) {} }; }\nnamespace app { using First = api::Counter; using Alias = First; int caller(int value) { Alias counter{value}; return value; } }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+}
+
+#[test]
+fn does_not_trace_cpp_type_aliases_declared_after_the_caller() {
+    let dir = temporary_dir();
+    let source = dir.join("alias.cpp");
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: Counter(int value) {} }; }\nnamespace app { int caller(int value) { Alias counter{value}; return value; } using Alias = api::Counter; }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}
+
+#[test]
+fn does_not_trace_cpp_type_aliases_from_unrelated_files() {
+    let dir = temporary_dir();
+    let definitions = dir.join("counter.cpp");
+    let aliases = dir.join("aliases.cpp");
+    let caller = dir.join("caller.cpp");
+    fs::write(
+        &definitions,
+        "namespace api { class Counter { public: Counter(int value) {} }; }\n",
+    )
+    .unwrap();
+    fs::write(&aliases, "namespace app { using Alias = api::Counter; }\n").unwrap();
+    fs::write(
+        &caller,
+        "namespace app { int caller(int value) { Alias counter{value}; return value; } }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}
+
+#[test]
+fn does_not_trace_unresolved_cpp_type_aliases_as_constructor_dependencies() {
+    let dir = temporary_dir();
+    let source = dir.join("alias.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace app { using Missing = external::Counter; int caller(int value) { Missing counter{value}; return value; } }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert!(persisted_trace.callees.is_empty());
+}
+
+#[test]
 fn resolves_cpp_template_braced_initializer_constructor_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("box.cpp");

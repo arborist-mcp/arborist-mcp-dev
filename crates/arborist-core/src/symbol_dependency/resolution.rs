@@ -294,19 +294,26 @@ fn resolve_reference_path(
         candidate_slice
     };
     let arity_candidates = if let Some(call_arity) = call_arity {
+        let type_alias_candidates = cpp_type_alias_target_indexes(
+            &hinted_candidates,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+        );
         let callable_candidates = hinted_candidates
             .iter()
             .copied()
             .filter(|index| is_cpp_callable(&raw_symbols[*index]))
             .collect::<Vec<_>>();
-        if callable_candidates.is_empty()
-            && hinted_candidates
-                .iter()
-                .any(|index| is_cpp_constructible_type(&raw_symbols[*index]))
-        {
-            let constructor_paths = hinted_candidates
+        let constructible_candidates = hinted_candidates
+            .iter()
+            .copied()
+            .chain(type_alias_candidates)
+            .filter(|index| is_cpp_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if callable_candidates.is_empty() && !constructible_candidates.is_empty() {
+            let constructor_paths = constructible_candidates
                 .into_iter()
-                .filter(|index| is_cpp_constructible_type(&raw_symbols[*index]))
                 .filter_map(|index| cpp_constructor_path(&raw_symbols[index].semantic_path))
                 .collect::<Vec<_>>();
             symbol_indexes_for_paths(&constructor_paths, semantic_path_index)
@@ -319,7 +326,12 @@ fn resolve_reference_path(
         } else if callable_candidates.is_empty() {
             hinted_candidates
                 .into_iter()
-                .filter(|index| raw_symbols[*index].node_kind != "using_declaration")
+                .filter(|index| {
+                    !matches!(
+                        raw_symbols[*index].node_kind.as_str(),
+                        "alias_declaration" | "using_declaration"
+                    )
+                })
                 .collect()
         } else {
             callable_candidates
@@ -351,6 +363,50 @@ fn cpp_constructor_path(type_path: &str) -> Option<String> {
     let constructor_name =
         cpp_template_base_path(constructor_name).unwrap_or_else(|| constructor_name.to_string());
     (!constructor_name.is_empty()).then(|| format!("{type_path}::{constructor_name}"))
+}
+
+fn cpp_type_alias_target_indexes(
+    candidates: &[usize],
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Vec<usize> {
+    let mut pending = candidates
+        .iter()
+        .copied()
+        .filter(|index| cpp_type_alias_is_visible(&raw_symbols[*index], source_symbol))
+        .collect::<VecDeque<_>>();
+    let mut visited_aliases = BTreeSet::new();
+    let mut target_indexes = BTreeSet::new();
+
+    while let Some(alias_index) = pending.pop_front() {
+        if !visited_aliases.insert(alias_index) {
+            continue;
+        }
+        let alias = &raw_symbols[alias_index];
+        let Some(target) = cpp_type_alias_target(alias) else {
+            continue;
+        };
+
+        for path in cpp_lexical_qualified_reference_paths(&target, alias) {
+            for path in cpp_qualified_reference_path_group(path, raw_symbols, Some(alias)) {
+                for target_index in
+                    symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
+                {
+                    let target = &raw_symbols[target_index];
+                    if target.node_kind == "alias_declaration" {
+                        if cpp_type_alias_is_visible(target, source_symbol) {
+                            pending.push_back(target_index);
+                        }
+                    } else {
+                        target_indexes.insert(target_index);
+                    }
+                }
+            }
+        }
+    }
+
+    target_indexes.into_iter().collect()
 }
 
 fn is_cpp_constructible_type(symbol: &IndexedSymbol) -> bool {
@@ -641,6 +697,20 @@ fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {
     let (_, target) = declaration.split_once('=')?;
     let target = target.trim().trim_end_matches(';').trim();
     (!target.is_empty()).then_some(target.to_string())
+}
+
+fn cpp_type_alias_target(alias: &IndexedSymbol) -> Option<String> {
+    let declaration = alias.signature.as_deref()?.trim();
+    let declaration = declaration.strip_prefix("using")?.trim();
+    let (_, target) = declaration.split_once('=')?;
+    let target = target.trim().trim_end_matches(';').trim();
+    (!target.is_empty()).then_some(target.to_string())
+}
+
+fn cpp_type_alias_is_visible(alias: &IndexedSymbol, source_symbol: &IndexedSymbol) -> bool {
+    alias.node_kind == "alias_declaration"
+        && alias.file_path == source_symbol.file_path
+        && alias.byte_range.0 < source_symbol.byte_range.0
 }
 
 fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {
