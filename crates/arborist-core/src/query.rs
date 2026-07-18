@@ -110,6 +110,10 @@ pub fn execute_tree_query_with_timeout(
         let node = capture.node;
         let (owner_symbol_id, owner_semantic_path, owner_scope_path) =
             capture_owner(&path, source, root, document.language_id, node)?;
+        if Instant::now() >= deadline {
+            timed_out.set(true);
+            break;
+        }
         captures.push(QueryCaptureResult {
             capture_name: compiled.capture_names()[capture.index as usize].to_string(),
             node_kind: node.kind().to_string(),
