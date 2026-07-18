@@ -110,6 +110,7 @@ pub(crate) fn collect_source_files_with_deadline(
     walk_workspace(workspace_root, workspace_root, &mut files, limits, deadline)?;
     deadline.check("sorting workspace files")?;
     files.sort();
+    deadline.check("completing workspace scan")?;
     Ok(files)
 }
 
