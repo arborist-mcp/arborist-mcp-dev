@@ -9,14 +9,14 @@ completed item can land in its own commit unless two changes are inseparable.
 - Public protocol metadata is healthy: `python scripts/tool_catalog.py --check`
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
-- The largest production files are still large enough to slow review:
-  `python/arborist_mcp/gateway.py` is now about 1595 lines after the first
-  protocol-helper splits, batch dispatch extraction, and validation
-  consolidation, and
-  `crates/arborist-py/src/lib.rs` is about 990 lines.
-- The README already names the main strategic gaps: Rust module splits, PyO3
-  wrapper repetition, durable schema migrations, full C++ grammar support,
-  watch mode, benchmarks, fuzz/property tests, and cancellation controls.
+- The gateway remains the largest production file at about 1800 lines after
+  the protocol-helper splits, batch dispatch extraction, and validation
+  consolidation. The PyO3 root facade is now 92 lines, with public bindings
+  colocated by VFS, index, patch, validation, source-query, and symbol-query
+  domains.
+- The README still names strategic gaps including deeper Rust module splits,
+  durable schema migrations, full C++ grammar support, watch mode, benchmarks,
+  fuzz/property tests, and cancellation controls.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -61,6 +61,9 @@ completed item can land in its own commit unless two changes are inseparable.
   toward consolidated wrapper arguments.
 - [x] Group PyO3 neighborhood/query/patch context `max_depth` and `max_nodes`
   arguments behind a shared bounds object for internal wrapper calls.
+- [x] Split PyO3 public bindings by VFS, index, patch, validation, source-query,
+  and symbol-query domains, and add a native registration contract test for all
+  gateway-referenced core methods.
 
 ### P2: Core Architecture Improvements
 
