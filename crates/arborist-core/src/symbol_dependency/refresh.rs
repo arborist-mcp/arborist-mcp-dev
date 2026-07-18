@@ -13,6 +13,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     old_changed_symbols: &[IndexedSymbol],
     new_changed_symbols: &[IndexedSymbol],
     changed_file_paths: &BTreeSet<String>,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> (BTreeMap<String, SymbolMeta>, BTreeSet<String>) {
     let name_index = build_name_index(raw_symbols);
     let semantic_path_index = build_semantic_path_index(raw_symbols);
@@ -49,6 +50,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 raw_symbols,
                 &name_index,
                 &semantic_path_index,
+                file_overrides,
             ));
         }
         symbol.dependencies = dependencies.into_iter().collect();

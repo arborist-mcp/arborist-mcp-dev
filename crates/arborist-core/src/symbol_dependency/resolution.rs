@@ -3,7 +3,10 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::c::{CIncludeContext, c_include_context_for_file, c_symbol_family_anchor};
+use super::c::{
+    CIncludeContext, c_include_context_for_file, c_include_context_for_file_before_with_overrides,
+    c_symbol_family_anchor,
+};
 use crate::language::{detect_language, is_c_header_path, normalize_path};
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
 use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
@@ -23,6 +26,13 @@ pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()>
 }
 
 pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta> {
+    resolve_symbol_dependencies_with_overrides(raw_symbols, None)
+}
+
+pub(crate) fn resolve_symbol_dependencies_with_overrides(
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Vec<SymbolMeta> {
     let name_index = build_name_index(raw_symbols);
     let semantic_path_index = build_semantic_path_index(raw_symbols);
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
@@ -36,6 +46,7 @@ pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<
                 raw_symbols,
                 &name_index,
                 &semantic_path_index,
+                file_overrides,
             ));
         }
     }
@@ -120,6 +131,7 @@ pub(super) fn resolve_dependencies_for_symbol(
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
     for reference_name in &symbol.references_by_name {
@@ -135,6 +147,7 @@ pub(super) fn resolve_dependencies_for_symbol(
                     raw_symbols,
                     name_index,
                     semantic_path_index,
+                    file_overrides,
                 ) && target_symbol_id != symbol.symbol_id
                 {
                     dependencies.insert(target_symbol_id);
@@ -147,6 +160,7 @@ pub(super) fn resolve_dependencies_for_symbol(
             raw_symbols,
             name_index,
             semantic_path_index,
+            file_overrides,
         ) && target_symbol_id != symbol.symbol_id
         {
             dependencies.insert(target_symbol_id);
@@ -198,6 +212,7 @@ fn resolve_reference_path(
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Option<String> {
     let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
@@ -299,6 +314,7 @@ fn resolve_reference_path(
             source_symbol,
             raw_symbols,
             semantic_path_index,
+            file_overrides,
         );
         let callable_candidates = hinted_candidates
             .iter()
@@ -370,11 +386,24 @@ fn cpp_type_alias_target_indexes(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<usize> {
+    let include_context = c_include_context_for_file_before_with_overrides(
+        &source_symbol.file_path,
+        source_symbol.byte_range.0,
+        file_overrides,
+    )
+    .ok();
     let mut pending = candidates
         .iter()
         .copied()
-        .filter(|index| cpp_type_alias_is_visible(&raw_symbols[*index], source_symbol))
+        .filter(|index| {
+            cpp_type_alias_is_visible(
+                &raw_symbols[*index],
+                source_symbol,
+                include_context.as_ref(),
+            )
+        })
         .collect::<VecDeque<_>>();
     let mut visited_aliases = BTreeSet::new();
     let mut target_indexes = BTreeSet::new();
@@ -395,7 +424,11 @@ fn cpp_type_alias_target_indexes(
                 {
                     let target = &raw_symbols[target_index];
                     if cpp_is_type_alias(target) {
-                        if cpp_type_alias_is_visible(target, source_symbol) {
+                        if cpp_type_alias_is_visible(
+                            target,
+                            source_symbol,
+                            include_context.as_ref(),
+                        ) {
                             pending.push_back(target_index);
                         }
                     } else {
@@ -719,10 +752,16 @@ fn cpp_type_alias_target(alias: &IndexedSymbol) -> Option<String> {
     cpp_constructible_type_alias_target(target)
 }
 
-fn cpp_type_alias_is_visible(alias: &IndexedSymbol, source_symbol: &IndexedSymbol) -> bool {
+fn cpp_type_alias_is_visible(
+    alias: &IndexedSymbol,
+    source_symbol: &IndexedSymbol,
+    include_context: Option<&CIncludeContext>,
+) -> bool {
     cpp_is_type_alias(alias)
-        && alias.file_path == source_symbol.file_path
-        && alias.byte_range.0 < source_symbol.byte_range.0
+        && ((alias.file_path == source_symbol.file_path
+            && alias.byte_range.0 < source_symbol.byte_range.0)
+            || include_context
+                .is_some_and(|context| context.include_paths.contains(&alias.file_path)))
 }
 
 fn cpp_is_type_alias(symbol: &IndexedSymbol) -> bool {

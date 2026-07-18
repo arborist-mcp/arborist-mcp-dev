@@ -377,6 +377,7 @@ pub(crate) fn load_symbol_index_with_overrides(
         &old_changed_symbols,
         &new_changed_symbols,
         &changed_file_paths,
+        Some(file_overrides),
     );
     let indexed_files = persisted_indexed_files + added_file_paths.len();
 

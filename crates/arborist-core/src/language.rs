@@ -9,12 +9,12 @@ use crate::model::{LanguageId, Position};
 
 mod c;
 
-pub(crate) use c::extension_case_candidates;
 pub use c::{
     C_FAMILY_HEADER_EXTENSIONS, C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS,
     CPP_SOURCE_EXTENSIONS, c_companion_source_path, c_include_targets, c_local_include_targets,
     is_c_header_path, resolve_local_c_include,
 };
+pub(crate) use c::{c_include_targets_before, extension_case_candidates};
 
 pub struct ParsedDocument {
     pub language_id: LanguageId,

@@ -202,6 +202,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         &old_changed_symbols,
         &new_changed_symbols,
         &changed_file_paths,
+        None,
     );
     let resolved_symbols = materialize_resolved_symbol_rows(&raw_symbols, &resolved_map);
     let indexed_files = file_states.len();

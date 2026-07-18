@@ -65,13 +65,16 @@ indexed; this applies to `new api::Box<int>(value)` as well.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
-source file, such as `using Alias = api::Counter; Alias counter{value};` or
+source file or in a local header included before the caller, such as
+`using Alias = api::Counter; Alias counter{value};` or
 `typedef api::Counter CounterAlias;`, resolve to the aliased constructor;
 alias chains are expanded transitively. Template aliases such as
 `template <typename T> using BoxAlias = api::Box<T>;` resolve to the primary
 template constructor. Top-level `const` and `volatile` qualifiers are ignored
 for construction lookup; pointer and reference aliases do not create
-constructor dependencies.
+constructor dependencies. For conditional local includes, static analysis
+follows only branches with literal `#if 0` or `#if 1` conditions and leaves
+macro-dependent branches unresolved.
 Namespace aliases are expanded for direct qualified calls, so an alias such as
 `namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
 alias chains are expanded transitively.

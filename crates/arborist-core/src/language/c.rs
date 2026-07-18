@@ -91,39 +91,120 @@ pub fn c_companion_source_path(include_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn c_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
+    include_targets_for_nodes(
+        c_include_target_nodes(root, source, None)?,
+        source,
+        normalize_include_target,
+    )
+}
+
+pub(crate) fn c_include_targets_before(
+    root: Node<'_>,
+    source: &str,
+    byte_offset: usize,
+) -> Result<Vec<String>> {
+    include_targets_for_nodes(
+        c_include_target_nodes(root, source, Some(byte_offset))?,
+        source,
+        normalize_include_target,
+    )
+}
+
+pub fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
+    include_targets_for_nodes(
+        c_include_target_nodes(root, source, None)?,
+        source,
+        normalize_local_include_target,
+    )
+}
+
+fn include_targets_for_nodes(
+    includes: Vec<Node<'_>>,
+    source: &str,
+    normalize: impl Fn(&str) -> Option<String>,
+) -> Result<Vec<String>> {
     let mut targets = Vec::new();
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
-        if child.kind() != "preproc_include" {
-            continue;
-        }
-        let Some(path_node) = child.child_by_field_name("path") else {
-            continue;
-        };
-        let raw = node_text(path_node, source)?.trim();
-        if let Some(target) = normalize_include_target(raw) {
+    for include in includes {
+        if let Some(target) = include_target_for_node(include, source, &normalize)? {
             targets.push(target);
         }
     }
     Ok(targets)
 }
 
-pub fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
-    let mut targets = Vec::new();
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
-        if child.kind() != "preproc_include" {
-            continue;
+fn c_include_target_nodes<'tree>(
+    root: Node<'tree>,
+    source: &str,
+    byte_offset: Option<usize>,
+) -> Result<Vec<Node<'tree>>> {
+    let mut includes = Vec::new();
+    collect_c_include_target_nodes(root, source, byte_offset, &mut includes)?;
+    Ok(includes)
+}
+
+fn collect_c_include_target_nodes<'tree>(
+    node: Node<'tree>,
+    source: &str,
+    byte_offset: Option<usize>,
+    includes: &mut Vec<Node<'tree>>,
+) -> Result<()> {
+    match node.kind() {
+        "preproc_include" => {
+            if byte_offset.is_none_or(|offset| node.start_byte() < offset) {
+                includes.push(node);
+            }
         }
-        let Some(path_node) = child.child_by_field_name("path") else {
-            continue;
-        };
-        let raw = node_text(path_node, source)?.trim();
-        if let Some(target) = normalize_local_include_target(raw) {
-            targets.push(target);
+        "preproc_if" | "preproc_elif" => {
+            let Some(condition) = node.child_by_field_name("condition") else {
+                return Ok(());
+            };
+            let Some(active) = known_preprocessor_condition(condition, source)? else {
+                return Ok(());
+            };
+            let alternative = node.child_by_field_name("alternative");
+            if active {
+                let mut cursor = node.walk();
+                for child in node.named_children(&mut cursor) {
+                    if child == condition || alternative == Some(child) {
+                        continue;
+                    }
+                    collect_c_include_target_nodes(child, source, byte_offset, includes)?;
+                }
+            } else if let Some(alternative) = alternative {
+                collect_c_include_target_nodes(alternative, source, byte_offset, includes)?;
+            }
+        }
+        "preproc_ifdef" | "preproc_elifdef" => {
+            // Macro state is not available during static indexing, so neither branch is trusted.
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_c_include_target_nodes(child, source, byte_offset, includes)?;
+            }
         }
     }
-    Ok(targets)
+    Ok(())
+}
+
+fn known_preprocessor_condition(condition: Node<'_>, source: &str) -> Result<Option<bool>> {
+    match node_text(condition, source)?.trim() {
+        "1" => Ok(Some(true)),
+        "0" => Ok(Some(false)),
+        _ => Ok(None),
+    }
+}
+
+fn include_target_for_node(
+    include: Node<'_>,
+    source: &str,
+    normalize: impl FnOnce(&str) -> Option<String>,
+) -> Result<Option<String>> {
+    let Some(path_node) = include.child_by_field_name("path") else {
+        return Ok(None);
+    };
+    let raw = node_text(path_node, source)?.trim();
+    Ok(normalize(raw))
 }
 
 pub fn resolve_local_c_include(current_path: &Path, include_target: &str) -> Option<PathBuf> {

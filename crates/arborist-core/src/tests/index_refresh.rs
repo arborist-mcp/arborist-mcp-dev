@@ -384,6 +384,48 @@ fn refreshes_cpp_cv_qualified_type_alias_constructor_call_dependencies() {
 }
 
 #[test]
+fn refreshes_cpp_header_type_alias_constructor_call_dependencies() {
+    let dir = temporary_dir();
+    let header = dir.join("aliases.hpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace api { class Counter { public: Counter(int value) {} }; }\nnamespace app { using Alias = api::Counter; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"aliases.hpp\"\nnamespace app { int caller(int value) { Alias counter{value}; return value; } }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        initial_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+
+    fs::write(
+        &header,
+        "namespace api { class Counter { public: Counter(int left, int right) {} }; }\nnamespace app { using Alias = api::Counter; }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &header).unwrap();
+    assert!(stats.rebuilt_files >= 1);
+    let refreshed_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert!(refreshed_trace.callees.is_empty());
+}
+
+#[test]
 fn refreshes_cpp_template_type_alias_constructor_call_dependencies() {
     let dir = temporary_dir();
     let definitions = dir.join("box.cpp");

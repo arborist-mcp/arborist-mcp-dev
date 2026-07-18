@@ -11,7 +11,9 @@ use crate::language::{
     normalize_path, parse_document, path_is_inside_workspace, read_source, resolve_local_c_include,
 };
 use crate::model::{LanguageId, SymbolMeta};
-use crate::symbol_dependency::{assign_symbol_ids, resolve_symbol_dependencies};
+use crate::symbol_dependency::{
+    assign_symbol_ids, resolve_symbol_dependencies, resolve_symbol_dependencies_with_overrides,
+};
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
@@ -130,7 +132,8 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
     indexed_paths.sort();
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index(&indexed_paths, Some(file_overrides))?;
-    let resolved_symbols = resolve_symbol_dependencies(&raw_symbols);
+    let resolved_symbols =
+        resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(file_overrides));
     Ok((resolved_symbols, indexed_files))
 }
 
