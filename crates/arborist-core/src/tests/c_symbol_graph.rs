@@ -2927,6 +2927,54 @@ fn resolves_cpp_as_const_this_member_calls_to_const_lvalue_ref_overloads() {
 }
 
 #[test]
+fn resolves_cpp_forward_this_member_calls_with_value_categories() {
+    let dir = temporary_dir();
+    let source = dir.join("forward_this_ref_qualified_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) const & { return value + 3; }\n    int adjust(int value) & { return value + 2; }\n    int adjust(int value) const && { return value + 1; }\n    int adjust(int value) && { return value; }\n    int rvalue_caller(int value) { return std::forward<Counter>(*this).adjust(value); }\n    int const_lvalue_caller(int value) { return std::forward<Counter const &>(*this).adjust(value); }\n};\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        (
+            "api::Counter::rvalue_caller",
+            "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::Counter::const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+        );
+    }
+}
+
+#[test]
 fn indexes_cpp_operator_methods() {
     let source = r#"
 namespace math {

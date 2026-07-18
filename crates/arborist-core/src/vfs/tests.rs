@@ -1006,6 +1006,46 @@ fn traces_cpp_as_const_this_member_lvalue_ref_overloads_from_unsaved_virtual_cha
 }
 
 #[test]
+fn traces_cpp_forward_this_member_calls_with_value_categories_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { class Counter { public: int adjust(int value) const & { return value + 3; } int adjust(int value) & { return value + 2; } int adjust(int value) const && { return value + 1; } int adjust(int value) && { return value; } int rvalue_caller(int value) { return std::forward<Counter>(*this).adjust(value); } int const_lvalue_caller(int value) { return std::forward<Counter const &>(*this).adjust(value); } }; }\n",
+        ),
+    )
+    .unwrap();
+
+    let expected_callees = [
+        (
+            "api::Counter::rvalue_caller",
+            "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::Counter::const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_header_type_alias_constructor_calls_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let header = workspace.join("aliases.hpp");

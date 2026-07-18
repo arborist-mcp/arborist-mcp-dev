@@ -366,16 +366,23 @@ fn cpp_this_member_receiver(
         "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
         "std::as_const(*this)" => Some(CppThisMemberReceiver::ConstLvalue),
         receiver if receiver.starts_with("static_cast<") => {
-            cpp_this_static_cast_receiver(receiver_text)
+            cpp_this_receiver_from_typed_call(receiver_text, "static_cast", None)
+        }
+        receiver if receiver.starts_with("std::forward<") => {
+            cpp_this_receiver_from_typed_call(receiver_text, "std::forward", Some(true))
         }
         _ => None,
     })
 }
 
-fn cpp_this_static_cast_receiver(receiver: &str) -> Option<CppThisMemberReceiver> {
+fn cpp_this_receiver_from_typed_call(
+    receiver: &str,
+    function_name: &str,
+    default_rvalue: Option<bool>,
+) -> Option<CppThisMemberReceiver> {
     let cast_contents = receiver
         .trim()
-        .strip_prefix("static_cast")?
+        .strip_prefix(function_name)?
         .trim_start()
         .strip_prefix('<')?;
     let (type_name, value) = cast_contents.rsplit_once('>')?;
@@ -388,8 +395,14 @@ fn cpp_this_static_cast_receiver(receiver: &str) -> Option<CppThisMemberReceiver
         return None;
     }
 
-    let raw_type_name = type_name;
-    let normalized_type_name = raw_type_name
+    cpp_this_receiver_for_type(type_name, default_rvalue)
+}
+
+fn cpp_this_receiver_for_type(
+    type_name: &str,
+    default_rvalue: Option<bool>,
+) -> Option<CppThisMemberReceiver> {
+    let normalized_type_name = type_name
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
@@ -398,9 +411,9 @@ fn cpp_this_static_cast_receiver(receiver: &str) -> Option<CppThisMemberReceiver
     } else if normalized_type_name.ends_with('&') {
         false
     } else {
-        return None;
+        default_rvalue?
     };
-    let const_qualified = cpp_type_is_top_level_const(raw_type_name);
+    let const_qualified = cpp_type_is_top_level_const(type_name);
     Some(match (const_qualified, rvalue) {
         (false, false) => CppThisMemberReceiver::Lvalue,
         (true, false) => CppThisMemberReceiver::ConstLvalue,

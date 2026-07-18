@@ -66,7 +66,8 @@ overloads. Explicit rvalue self calls through `std::move(*this).method(value)`
 or `static_cast<T&&>(*this).method(value)` prefer matching `&&` member
 overloads; `const`-qualified casts select matching `const &` or `const &&`
 overloads. `std::as_const(*this).method(value)` selects a matching `const &`
-member overload.
+member overload. `std::forward<T>(*this).method(value)` follows the explicit
+template argument's value category and top-level `const` qualification.
 Direct C++ type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
