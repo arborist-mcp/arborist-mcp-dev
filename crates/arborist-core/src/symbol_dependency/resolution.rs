@@ -360,6 +360,8 @@ fn resolve_reference_path(
     } else {
         hinted_candidates
     };
+    let arity_candidates =
+        cpp_const_member_candidates(arity_candidates, source_symbol, raw_symbols);
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
     arity_candidates
@@ -887,6 +889,42 @@ fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {
         )
 }
 
+fn cpp_const_member_candidates(
+    candidates: Vec<usize>,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Vec<usize> {
+    if !cpp_callable_is_const_qualified(source_symbol) {
+        return candidates;
+    }
+
+    let const_members = candidates
+        .iter()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            source_symbol.scope_path.is_some()
+                && source_symbol.scope_path == candidate.scope_path
+                && is_cpp_callable(candidate)
+                && cpp_callable_is_const_qualified(candidate)
+        })
+        .collect::<Vec<_>>();
+
+    if const_members.is_empty() {
+        candidates
+    } else {
+        const_members
+    }
+}
+
+fn cpp_callable_is_const_qualified(symbol: &IndexedSymbol) -> bool {
+    symbol.signature.as_deref().is_some_and(|signature| {
+        signature
+            .rsplit_once(')')
+            .is_some_and(|(_, suffix)| suffix.trim_start().starts_with("const"))
+    })
+}
+
 fn cpp_callable_accepts_arity(symbol: &IndexedSymbol, call_arity: usize) -> bool {
     let parameters = if symbol.parameters.len() == 1 && symbol.parameters[0].trim() == "void" {
         &[]
@@ -1047,6 +1085,17 @@ mod tests {
 
         assert!(cpp_callable_accepts_arity(&callable, 1));
         assert!(!cpp_callable_accepts_arity(&callable, 2));
+    }
+
+    #[test]
+    fn cpp_const_qualification_comes_after_the_parameter_list() {
+        let mut const_member = cpp_callable(&[]);
+        const_member.signature = Some("const int convert() const;".to_string());
+        let mut const_return = cpp_callable(&[]);
+        const_return.signature = Some("const int convert();".to_string());
+
+        assert!(cpp_callable_is_const_qualified(&const_member));
+        assert!(!cpp_callable_is_const_qualified(&const_return));
     }
 
     #[test]
