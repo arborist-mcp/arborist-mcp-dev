@@ -9,11 +9,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - Public protocol metadata is healthy: `python scripts/tool_catalog.py --check`
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
-- The gateway remains the largest production file at about 1800 lines after
-  the protocol-helper splits, batch dispatch extraction, and validation
-  consolidation. The PyO3 root facade is now 92 lines, with public bindings
-  colocated by VFS, index, patch, validation, source-query, and symbol-query
-  domains.
+- The gateway remains the largest production file at about 1370 lines after
+  the protocol-helper splits, batch dispatch extraction, and validation,
+  index-route, and VFS-route mixins. The PyO3 root facade is now 92 lines,
+  with public bindings colocated by VFS, index, patch, validation, source-query,
+  and symbol-query domains.
 - The README still names strategic gaps including deeper Rust module splits,
   durable schema migrations, full C++ grammar support, watch mode, benchmarks,
   fuzz/property tests, and cancellation controls.
@@ -50,6 +50,8 @@ completed item can land in its own commit unless two changes are inseparable.
   without changing core loading or response shapes.
 - [x] Move batch tool dispatch into a focused helper module without changing
   batch validation or per-tool response shapes.
+- [x] Move gateway parameter validation plus index and VFS route adapters into
+  focused mixins without changing handlers, error responses, or tool metadata.
 - [x] Introduce a shared PyO3 symbol-query context for the repeated
   `workspace_root`, `file_path`, `index_db_path`, and `source` patterns across
   list, read, search, and trace wrappers.
