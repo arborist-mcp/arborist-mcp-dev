@@ -347,8 +347,16 @@ fn cpp_this_member_receiver(
     Ok(match receiver.as_str() {
         "this" | "(*this)" => Some(CppThisMemberReceiver::Lvalue),
         "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
+        receiver if is_cpp_rvalue_this_static_cast(receiver) => Some(CppThisMemberReceiver::Rvalue),
         _ => None,
     })
+}
+
+fn is_cpp_rvalue_this_static_cast(receiver: &str) -> bool {
+    receiver
+        .strip_prefix("static_cast<")
+        .and_then(|value| value.strip_suffix(">(*this)"))
+        .is_some_and(|type_name| type_name.ends_with("&&"))
 }
 
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
