@@ -62,9 +62,10 @@ back to the primary class template when an explicit specialization is not
 indexed; this applies to `new api::Box<int>(value)` as well.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
-count. Indexed type aliases declared earlier in the same source file, such as
-`using Alias = api::Counter; Alias counter{value};`, resolve to the aliased
-constructor; alias chains are expanded transitively.
+count. Indexed `using` and `typedef` aliases declared earlier in the same
+source file, such as `using Alias = api::Counter; Alias counter{value};` or
+`typedef api::Counter CounterAlias;`, resolve to the aliased constructor;
+alias chains are expanded transitively.
 Direct qualified calls also expand indexed namespace aliases, so
 `namespace vendor = detail;` lets `vendor::convert(value)` resolve to
 `detail::convert` before overload filtering, including chained aliases.

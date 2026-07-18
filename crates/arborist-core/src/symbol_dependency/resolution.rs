@@ -329,7 +329,7 @@ fn resolve_reference_path(
                 .filter(|index| {
                     !matches!(
                         raw_symbols[*index].node_kind.as_str(),
-                        "alias_declaration" | "using_declaration"
+                        "alias_declaration" | "type_definition" | "using_declaration"
                     )
                 })
                 .collect()
@@ -394,7 +394,7 @@ fn cpp_type_alias_target_indexes(
                     symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
                 {
                     let target = &raw_symbols[target_index];
-                    if target.node_kind == "alias_declaration" {
+                    if cpp_is_type_alias(target) {
                         if cpp_type_alias_is_visible(target, source_symbol) {
                             pending.push_back(target_index);
                         }
@@ -701,16 +701,34 @@ fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {
 
 fn cpp_type_alias_target(alias: &IndexedSymbol) -> Option<String> {
     let declaration = alias.signature.as_deref()?.trim();
-    let declaration = declaration.strip_prefix("using")?.trim();
-    let (_, target) = declaration.split_once('=')?;
-    let target = target.trim().trim_end_matches(';').trim();
-    (!target.is_empty()).then_some(target.to_string())
+    match alias.node_kind.as_str() {
+        "alias_declaration" => {
+            let declaration = declaration.strip_prefix("using")?.trim();
+            let (_, target) = declaration.split_once('=')?;
+            let target = target.trim().trim_end_matches(';').trim();
+            (!target.is_empty()).then_some(target.to_string())
+        }
+        "type_definition" => {
+            let declaration = declaration.strip_prefix("typedef")?.trim();
+            let target = declaration.trim_end_matches(';').trim();
+            let target = target.strip_suffix(&alias.base_name)?.trim();
+            (!target.is_empty()).then_some(target.to_string())
+        }
+        _ => None,
+    }
 }
 
 fn cpp_type_alias_is_visible(alias: &IndexedSymbol, source_symbol: &IndexedSymbol) -> bool {
-    alias.node_kind == "alias_declaration"
+    cpp_is_type_alias(alias)
         && alias.file_path == source_symbol.file_path
         && alias.byte_range.0 < source_symbol.byte_range.0
+}
+
+fn cpp_is_type_alias(symbol: &IndexedSymbol) -> bool {
+    matches!(
+        symbol.node_kind.as_str(),
+        "alias_declaration" | "type_definition"
+    )
 }
 
 fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {
