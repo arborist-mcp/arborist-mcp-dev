@@ -225,7 +225,7 @@ fn resolve_reference_path(
     let scoped_cpp_direct_call =
         language_id == Some(LanguageId::Cpp) && call_arity.is_some() && !qualified_cpp_reference;
     let (candidates, scoped_cpp_candidates) = if qualified_cpp_reference {
-        cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols)
+        cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols, file_overrides)
             .into_iter()
             .find_map(|qualified_paths| {
                 let candidates = symbol_indexes_for_paths_with_template_fallback(
@@ -420,7 +420,8 @@ fn cpp_type_alias_target_indexes(
         };
 
         for path in cpp_lexical_qualified_reference_paths(&target, alias) {
-            for path in cpp_qualified_reference_path_group(path, raw_symbols, Some(alias)) {
+            for path in cpp_qualified_reference_path_group(path, raw_symbols, alias, file_overrides)
+            {
                 for target_index in
                     symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
                 {
@@ -526,10 +527,18 @@ fn cpp_qualified_reference_path_groups(
     reference_name: &str,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<Vec<String>> {
     cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
         .into_iter()
-        .map(|reference_path| cpp_qualified_reference_path_group(reference_path, raw_symbols, None))
+        .map(|reference_path| {
+            cpp_qualified_reference_path_group(
+                reference_path,
+                raw_symbols,
+                source_symbol,
+                file_overrides,
+            )
+        })
         .collect()
 }
 
@@ -593,7 +602,8 @@ fn cpp_unqualified_call_candidate_groups(
                                 cpp_qualified_reference_path_group(
                                     path,
                                     raw_symbols,
-                                    Some(directive),
+                                    directive,
+                                    file_overrides,
                                 )
                             }),
                     );
@@ -603,7 +613,12 @@ fn cpp_unqualified_call_candidate_groups(
                     cpp_lexical_qualified_reference_paths(&target, directive)
                         .into_iter()
                         .flat_map(|path| {
-                            cpp_qualified_reference_path_group(path, raw_symbols, Some(directive))
+                            cpp_qualified_reference_path_group(
+                                path,
+                                raw_symbols,
+                                directive,
+                                file_overrides,
+                            )
                         })
                         .map(|path| format!("{path}::{reference_name}")),
                 );
@@ -626,8 +641,15 @@ fn cpp_symbol_is_visible_before(
 fn cpp_qualified_reference_path_group(
     reference_path: String,
     raw_symbols: &[IndexedSymbol],
-    visibility_source: Option<&IndexedSymbol>,
+    visibility_source: &IndexedSymbol,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<String> {
+    let include_context = c_include_context_for_file_before_with_overrides(
+        &visibility_source.file_path,
+        visibility_source.byte_range.0,
+        file_overrides,
+    )
+    .ok();
     let mut pending = VecDeque::from([reference_path]);
     let mut paths = Vec::new();
     let mut visited = BTreeSet::new();
@@ -637,15 +659,25 @@ fn cpp_qualified_reference_path_group(
             continue;
         }
         paths.push(path.clone());
-        for using_path in cpp_using_declaration_paths(&path, raw_symbols)
-            .into_iter()
-            .rev()
+        for using_path in cpp_using_declaration_paths(
+            &path,
+            raw_symbols,
+            visibility_source,
+            include_context.as_ref(),
+        )
+        .into_iter()
+        .rev()
         {
             pending.push_front(using_path);
         }
-        for alias_path in cpp_namespace_alias_paths(&path, raw_symbols, visibility_source)
-            .into_iter()
-            .rev()
+        for alias_path in cpp_namespace_alias_paths(
+            &path,
+            raw_symbols,
+            visibility_source,
+            include_context.as_ref(),
+        )
+        .into_iter()
+        .rev()
         {
             pending.push_front(alias_path);
         }
@@ -681,7 +713,8 @@ fn cpp_lexical_qualified_reference_paths(
 fn cpp_namespace_alias_paths(
     reference_path: &str,
     raw_symbols: &[IndexedSymbol],
-    visibility_source: Option<&IndexedSymbol>,
+    visibility_source: &IndexedSymbol,
+    include_context: Option<&CIncludeContext>,
 ) -> Vec<String> {
     let components = reference_path.split("::").collect::<Vec<_>>();
     for length in (1..=components.len()).rev() {
@@ -690,10 +723,7 @@ fn cpp_namespace_alias_paths(
         let Some(alias) = raw_symbols.iter().find(|symbol| {
             symbol.node_kind == "namespace_alias_definition"
                 && symbol.semantic_path == alias_path
-                && visibility_source.is_none_or(|source| {
-                    symbol.file_path == source.file_path
-                        && symbol.byte_range.0 < source.byte_range.0
-                })
+                && cpp_symbol_is_visible_before(symbol, visibility_source, include_context)
         }) else {
             continue;
         };
@@ -715,11 +745,18 @@ fn cpp_namespace_alias_paths(
     Vec::new()
 }
 
-fn cpp_using_declaration_paths(reference_path: &str, raw_symbols: &[IndexedSymbol]) -> Vec<String> {
+fn cpp_using_declaration_paths(
+    reference_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    visibility_source: &IndexedSymbol,
+    include_context: Option<&CIncludeContext>,
+) -> Vec<String> {
     raw_symbols
         .iter()
         .filter(|symbol| {
-            symbol.node_kind == "using_declaration" && symbol.semantic_path == reference_path
+            symbol.node_kind == "using_declaration"
+                && symbol.semantic_path == reference_path
+                && cpp_symbol_is_visible_before(symbol, visibility_source, include_context)
         })
         .filter_map(|declaration| {
             let target = cpp_using_declaration_target(declaration)?;

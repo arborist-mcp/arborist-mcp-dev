@@ -1667,6 +1667,100 @@ fn resolves_cpp_namespace_alias_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn does_not_resolve_cpp_qualified_imports_declared_after_callers() {
+    let dir = temporary_dir();
+    let source = dir.join("qualified_import_order.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nnamespace implementation { int convert(int value) { return value; } }\nint before_alias() { return detail::convert(1); }\nnamespace detail = implementation;\nint after_alias() { return detail::convert(1); }\nnamespace imported { int scale(int value) { return value; } }\nint before_using() { return api::scale(1); }\nusing imported::scale;\nint after_using() { return api::scale(1); }\n}\n",
+    )
+    .unwrap();
+
+    for symbol_path in ["api::before_alias", "api::before_using"] {
+        let trace = trace_symbol_graph(&dir, symbol_path, TraceDirection::Both).unwrap();
+        assert!(trace.callees.is_empty(), "{symbol_path}: {trace:#?}");
+    }
+    for (symbol_path, expected_callee) in [
+        ("api::after_alias", "api::implementation::convert(int)"),
+        ("api::after_using", "api::imported::scale(int)"),
+    ] {
+        let trace = trace_symbol_graph(&dir, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for symbol_path in ["api::before_alias", "api::before_using"] {
+        let trace =
+            trace_symbol_graph_from_index(&db_path, symbol_path, TraceDirection::Both).unwrap();
+        assert!(trace.callees.is_empty(), "{symbol_path}: {trace:#?}");
+    }
+    for (symbol_path, expected_callee) in [
+        ("api::after_alias", "api::implementation::convert(int)"),
+        ("api::after_using", "api::imported::scale(int)"),
+    ] {
+        let trace =
+            trace_symbol_graph_from_index(&db_path, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+        );
+    }
+}
+
+#[test]
+fn resolves_cpp_qualified_namespace_aliases_from_local_headers() {
+    let dir = temporary_dir();
+    let header = dir.join("imports.hpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace implementation { int convert(int value) { return value; } }\nnamespace detail = implementation;\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"imports.hpp\"\nint caller() { return detail::convert(1); }\n",
+    )
+    .unwrap();
+
+    let expected_callee = "implementation::convert(int)";
+    let trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+}
+
+#[test]
 fn resolves_cpp_using_declaration_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("using_calls.cpp");
