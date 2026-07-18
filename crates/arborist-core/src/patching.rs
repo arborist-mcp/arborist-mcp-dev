@@ -8,6 +8,7 @@ mod python_references;
 mod python_replacement;
 mod python_visibility;
 mod syntax_validation;
+mod target_resolution;
 
 pub(crate) use c_validation::{
     collect_c_call_arities, collect_c_graph_references, collect_c_reference_validation,
@@ -18,10 +19,9 @@ pub(crate) use python_imports::{
     resolve_local_python_imported_symbol, resolve_local_python_module_path,
 };
 pub(crate) use python_references::collect_python_references;
-use python_replacement::{
-    normalize_python_replacement_indentation, python_replacement_starts_with_decorator,
-};
 pub(crate) use syntax_validation::collect_syntax_errors;
+use target_resolution::{locate_patched_symbol, resolve_symbol_id, resolve_symbol_path};
+pub(crate) use target_resolution::{prepare_patch_replacement, semantic_target_at_position};
 
 pub(crate) use api::unified_diff;
 pub use api::{
@@ -33,44 +33,20 @@ pub use api::{
 use std::ops::Range;
 use std::path::Path;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use tree_sitter::Node;
 
-use crate::language::{
-    ParsedDocument, contains_node, normalize_absolute_path, normalize_path, offset_for_position,
-    parse_document, position_from,
-};
+use crate::language::{ParsedDocument, contains_node, normalize_path, parse_document};
 use crate::model::{
-    LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, Position,
-    SymbolSummary, ValidationAmbiguity, ValidationBinding, ValidationBindingDecision,
-    ValidationIssue,
+    LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, SymbolSummary,
+    ValidationAmbiguity, ValidationBinding, ValidationBindingDecision, ValidationIssue,
 };
-use crate::semantic::{
-    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node, semantic_path,
-};
-
 #[derive(Default)]
 pub(crate) struct ReferenceValidation {
     unresolved_identifiers: Vec<String>,
     resolved_identifiers: Vec<ValidationBinding>,
     ambiguous_identifiers: Vec<ValidationAmbiguity>,
     binding_decisions: Vec<ValidationBindingDecision>,
-}
-
-pub(crate) struct PreparedPatchReplacement {
-    pub(crate) start_byte: usize,
-    pub(crate) end_byte: usize,
-    pub(crate) replacement: String,
-    pub(crate) validation_issues: Vec<ValidationIssue>,
-}
-
-struct SemanticTargetInfo {
-    language_id: LanguageId,
-    start_byte: usize,
-    end_byte: usize,
-    node_kind: String,
-    start_point: Position,
-    end_point: Position,
 }
 
 #[derive(Debug, Clone)]
@@ -82,134 +58,6 @@ enum PythonImportBinding {
         module_name: Option<String>,
         symbol_name: String,
     },
-}
-
-pub fn semantic_target_at_position(
-    path: &Path,
-    source: &str,
-    position: &Position,
-) -> Result<String> {
-    let path = normalize_absolute_path(path)?;
-    let document = parse_document(&path, source)?;
-    let byte_offset = offset_for_position(source, position)?;
-    let node =
-        node_at_byte_offset(document.tree.root_node(), source, byte_offset).ok_or_else(|| {
-            anyhow!(
-                "position {}:{} does not resolve to a syntax node in {}",
-                position.row,
-                position.column,
-                path.display()
-            )
-        })?;
-    let symbol_node = ascend_to_symbol(document.language_id, node).ok_or_else(|| {
-        anyhow!(
-            "position {}:{} does not resolve to a semantic symbol in {}",
-            position.row,
-            position.column,
-            path.display()
-        )
-    })?;
-
-    match document.language_id {
-        LanguageId::Python => semantic_path(symbol_node, source),
-        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
-            .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
-    }
-}
-
-fn semantic_target_info(
-    path: &Path,
-    source: &str,
-    semantic_target: &str,
-) -> Result<SemanticTargetInfo> {
-    validate_semantic_target(semantic_target)?;
-    let document = parse_document(path, source)?;
-    let target_node = find_semantic_node(
-        document.language_id,
-        path,
-        &document.tree,
-        source,
-        semantic_target,
-    )?
-    .ok_or_else(|| anyhow!("semantic path not found: {semantic_target}"))?;
-    let target_node = python_symbol_replacement_node(document.language_id, target_node);
-
-    Ok(SemanticTargetInfo {
-        language_id: document.language_id,
-        start_byte: target_node.start_byte(),
-        end_byte: target_node.end_byte(),
-        node_kind: target_node.kind().to_string(),
-        start_point: position_from(target_node.start_position()),
-        end_point: position_from(target_node.end_position()),
-    })
-}
-
-pub(crate) fn prepare_patch_replacement(
-    path: &Path,
-    source: &str,
-    semantic_target: &str,
-    new_code: &str,
-) -> Result<PreparedPatchReplacement> {
-    let target = semantic_target_info(path, source, semantic_target)?;
-    let replacement = match target.language_id {
-        LanguageId::Python => normalize_python_replacement_indentation(
-            source,
-            target.start_byte,
-            target.end_byte,
-            new_code,
-        ),
-        LanguageId::C | LanguageId::Cpp => new_code.to_string(),
-    };
-    let mut validation_issues = Vec::new();
-    if target.language_id == LanguageId::Python
-        && target.node_kind == "decorated_definition"
-        && !python_replacement_starts_with_decorator(&replacement)
-    {
-        validation_issues.push(ValidationIssue {
-            kind: "decorator_guard".to_string(),
-            message: "replacement would remove existing Python decorator(s); include decorators in new_code or provide an explicit bypass_reason".to_string(),
-            start_byte: target.start_byte,
-            end_byte: target.end_byte,
-            start_point: target.start_point,
-            end_point: target.end_point,
-        });
-    }
-
-    Ok(PreparedPatchReplacement {
-        start_byte: target.start_byte,
-        end_byte: target.end_byte,
-        replacement,
-        validation_issues,
-    })
-}
-
-fn validate_semantic_target(semantic_target: &str) -> Result<()> {
-    if semantic_target.trim().is_empty() {
-        bail!("invalid semantic target: selector must not be blank");
-    }
-    Ok(())
-}
-
-fn node_at_byte_offset<'tree>(
-    root: Node<'tree>,
-    source: &str,
-    byte_offset: usize,
-) -> Option<Node<'tree>> {
-    root.named_descendant_for_byte_range(byte_offset, byte_offset)
-        .or_else(|| {
-            byte_offset
-                .checked_sub(1)
-                .and_then(|offset| root.named_descendant_for_byte_range(offset, offset))
-        })
-        .or_else(|| {
-            if byte_offset < source.len() {
-                root.descendant_for_byte_range(byte_offset, byte_offset)
-            } else {
-                byte_offset
-                    .checked_sub(1)
-                    .and_then(|offset| root.descendant_for_byte_range(offset, offset))
-            }
-        })
 }
 
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {
@@ -301,74 +149,6 @@ pub(crate) fn splice_source(source: &str, range: Range<usize>, replacement: &str
     updated.push_str(replacement);
     updated.push_str(&source[range.end..]);
     updated
-}
-
-fn locate_patched_symbol<'tree>(
-    document: &'tree ParsedDocument,
-    source: &str,
-    patch_start: usize,
-    replacement_len: usize,
-) -> Option<Node<'tree>> {
-    let patch_end = replacement_content_end(source, patch_start, replacement_len)?;
-    let root = document.tree.root_node();
-    let descendant = root
-        .named_descendant_for_byte_range(patch_start, patch_end)
-        .or_else(|| root.named_descendant_for_byte_range(patch_start, patch_start))?;
-    ascend_to_symbol(document.language_id, descendant)
-}
-
-fn replacement_content_end(
-    source: &str,
-    patch_start: usize,
-    replacement_len: usize,
-) -> Option<usize> {
-    let patch_end = patch_start.checked_add(replacement_len)?;
-    let replacement = source.get(patch_start..patch_end)?;
-    let content_len = replacement.trim_end().len();
-    if content_len == 0 {
-        return Some(patch_start);
-    }
-    Some(patch_start + content_len - 1)
-}
-
-fn python_symbol_replacement_node<'tree>(
-    language_id: LanguageId,
-    node: Node<'tree>,
-) -> Node<'tree> {
-    if language_id == LanguageId::Python
-        && let Some(parent) = node.parent()
-        && parent.kind() == "decorated_definition"
-    {
-        return parent;
-    }
-
-    node
-}
-
-fn resolve_symbol_path(
-    path: &Path,
-    language_id: LanguageId,
-    node: Node<'_>,
-    source: &str,
-) -> Result<String> {
-    match language_id {
-        LanguageId::Python => semantic_path(node, source),
-        LanguageId::C | LanguageId::Cpp => c_semantic_path(path, node, source)?
-            .ok_or_else(|| anyhow!("failed to resolve patched C symbol path")),
-    }
-}
-
-fn resolve_symbol_id(
-    path: &Path,
-    language_id: LanguageId,
-    node: Node<'_>,
-    source: &str,
-) -> Result<String> {
-    match language_id {
-        LanguageId::Python => semantic_path(node, source),
-        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
-            .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
-    }
 }
 
 fn collect_reference_validation(
