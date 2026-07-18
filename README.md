@@ -69,7 +69,9 @@ source file, such as `using Alias = api::Counter; Alias counter{value};` or
 `typedef api::Counter CounterAlias;`, resolve to the aliased constructor;
 alias chains are expanded transitively. Template aliases such as
 `template <typename T> using BoxAlias = api::Box<T>;` resolve to the primary
-template constructor.
+template constructor. Top-level `const` and `volatile` qualifiers are ignored
+for construction lookup; pointer and reference aliases do not create
+constructor dependencies.
 Namespace aliases are expanded for direct qualified calls, so an alias such as
 `namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
 alias chains are expanded transitively.

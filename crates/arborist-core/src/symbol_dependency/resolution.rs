@@ -701,21 +701,22 @@ fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {
 
 fn cpp_type_alias_target(alias: &IndexedSymbol) -> Option<String> {
     let declaration = alias.signature.as_deref()?.trim();
-    match alias.node_kind.as_str() {
+    let target = match alias.node_kind.as_str() {
         "alias_declaration" => {
             let declaration = declaration.strip_prefix("using")?.trim();
             let (_, target) = declaration.split_once('=')?;
             let target = target.trim().trim_end_matches(';').trim();
-            (!target.is_empty()).then_some(target.to_string())
+            Some(target)
         }
         "type_definition" => {
             let declaration = declaration.strip_prefix("typedef")?.trim();
             let target = declaration.trim_end_matches(';').trim();
             let target = target.strip_suffix(&alias.base_name)?.trim();
-            (!target.is_empty()).then_some(target.to_string())
+            Some(target)
         }
         _ => None,
-    }
+    }?;
+    cpp_constructible_type_alias_target(target)
 }
 
 fn cpp_type_alias_is_visible(alias: &IndexedSymbol, source_symbol: &IndexedSymbol) -> bool {
@@ -729,6 +730,63 @@ fn cpp_is_type_alias(symbol: &IndexedSymbol) -> bool {
         symbol.node_kind.as_str(),
         "alias_declaration" | "type_definition"
     )
+}
+
+fn cpp_constructible_type_alias_target(target: &str) -> Option<String> {
+    let mut target = target.trim();
+    while let Some(stripped) = target
+        .strip_prefix("const ")
+        .or_else(|| target.strip_prefix("volatile "))
+        .or_else(|| target.strip_prefix("typename "))
+        .or_else(|| target.strip_prefix("class "))
+        .or_else(|| target.strip_prefix("struct "))
+    {
+        target = stripped.trim_start();
+    }
+    while let Some(stripped) = target
+        .strip_suffix(" const")
+        .or_else(|| target.strip_suffix(" volatile"))
+    {
+        target = stripped.trim_end();
+    }
+
+    (!target.is_empty() && !cpp_type_alias_target_has_top_level_indirection(target))
+        .then_some(target.to_string())
+}
+
+fn cpp_type_alias_target_has_top_level_indirection(target: &str) -> bool {
+    let characters = target.chars().collect::<Vec<_>>();
+    let mut template_depth = 0usize;
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+
+    for (index, character) in characters.iter().copied().enumerate() {
+        match character {
+            '<' if parentheses == 0 && brackets == 0 && braces == 0 => template_depth += 1,
+            '>' if template_depth > 0
+                && parentheses == 0
+                && brackets == 0
+                && braces == 0
+                && cpp_template_argument_closes(&characters[index + 1..]) =>
+            {
+                template_depth -= 1;
+            }
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.saturating_sub(1),
+            '[' => brackets += 1,
+            ']' => brackets = brackets.saturating_sub(1),
+            '{' => braces += 1,
+            '}' => braces = braces.saturating_sub(1),
+            '*' | '&'
+                if template_depth == 0 && parentheses == 0 && brackets == 0 && braces == 0 =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn is_cpp_callable(symbol: &IndexedSymbol) -> bool {
