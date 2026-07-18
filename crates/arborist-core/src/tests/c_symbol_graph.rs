@@ -765,6 +765,40 @@ fn resolves_cpp_typedef_constructor_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_cpp_template_type_alias_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("alias.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { template <typename T> class Box { public: Box(T value) {} }; }\nnamespace app { template <typename T> using Alias = api::Box<T>; int caller(int value) { Alias<int> box{value}; return value; } }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+}
+
+#[test]
 fn does_not_trace_cpp_type_aliases_declared_after_the_caller() {
     let dir = temporary_dir();
     let source = dir.join("alias.cpp");

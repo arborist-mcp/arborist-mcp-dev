@@ -65,7 +65,9 @@ Braced local initializers such as `api::Counter counter{value}` and
 count. Indexed `using` and `typedef` aliases declared earlier in the same
 source file, such as `using Alias = api::Counter; Alias counter{value};` or
 `typedef api::Counter CounterAlias;`, resolve to the aliased constructor;
-alias chains are expanded transitively.
+alias chains are expanded transitively. Template aliases such as
+`template <typename T> using BoxAlias = api::Box<T>;` resolve to the primary
+template constructor.
 Direct qualified calls also expand indexed namespace aliases, so
 `namespace vendor = detail;` lets `vendor::convert(value)` resolve to
 `detail::convert` before overload filtering, including chained aliases.

@@ -754,6 +754,34 @@ fn traces_cpp_typedef_constructor_calls_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_template_type_alias_constructor_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("alias.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { template <typename T> class Box { public: Box(T value) {} }; }\nnamespace app { template <typename T> using Alias = api::Box<T>; int caller(int value) { Alias<int> box{value}; return value; } }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "app::caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+}
+
+#[test]
 fn traces_cpp_template_braced_initializer_constructor_calls_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("box.cpp");
