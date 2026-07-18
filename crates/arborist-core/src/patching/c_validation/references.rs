@@ -364,6 +364,7 @@ fn cpp_this_member_receiver(
     Ok(match normalized_receiver.as_str() {
         "this" | "(*this)" => Some(CppThisMemberReceiver::Lvalue),
         "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
+        "std::as_const(*this)" => Some(CppThisMemberReceiver::ConstLvalue),
         receiver if receiver.starts_with("static_cast<") => {
             cpp_this_static_cast_receiver(receiver_text)
         }

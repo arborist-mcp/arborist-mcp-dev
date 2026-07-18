@@ -2891,6 +2891,42 @@ fn resolves_cpp_const_cast_this_member_calls_to_const_lvalue_ref_overloads() {
 }
 
 #[test]
+fn resolves_cpp_as_const_this_member_calls_to_const_lvalue_ref_overloads() {
+    let dir = temporary_dir();
+    let source = dir.join("as_const_this_lvalue_ref_qualified_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) & { return value; }\n    int caller(int value) { return std::as_const(*this).adjust(value); }\n};\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Counter::adjust(int) const &";
+    let trace = trace_symbol_graph(&dir, "api::Counter::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+}
+
+#[test]
 fn indexes_cpp_operator_methods() {
     let source = r#"
 namespace math {
