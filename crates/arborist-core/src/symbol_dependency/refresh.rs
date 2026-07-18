@@ -220,6 +220,10 @@ fn reference_impacted_paths(
 }
 
 fn reference_base_name(reference_name: &str) -> String {
+    let reference_name = reference_name
+        .rsplit_once("::")
+        .map(|(_, name)| name)
+        .unwrap_or(reference_name);
     reference_name
         .rsplit('.')
         .next()

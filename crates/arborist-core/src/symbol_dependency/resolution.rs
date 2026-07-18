@@ -293,7 +293,24 @@ fn resolve_reference_path(
             .copied()
             .filter(|index| is_cpp_callable(&raw_symbols[*index]))
             .collect::<Vec<_>>();
-        if callable_candidates.is_empty() {
+        if callable_candidates.is_empty()
+            && hinted_candidates
+                .iter()
+                .any(|index| is_cpp_constructible_type(&raw_symbols[*index]))
+        {
+            let constructor_paths = hinted_candidates
+                .into_iter()
+                .filter(|index| is_cpp_constructible_type(&raw_symbols[*index]))
+                .filter_map(|index| cpp_constructor_path(&raw_symbols[index].semantic_path))
+                .collect::<Vec<_>>();
+            symbol_indexes_for_paths(&constructor_paths, semantic_path_index)
+                .into_iter()
+                .filter(|index| {
+                    is_cpp_callable(&raw_symbols[*index])
+                        && cpp_callable_accepts_arity(&raw_symbols[*index], call_arity)
+                })
+                .collect()
+        } else if callable_candidates.is_empty() {
             hinted_candidates
                 .into_iter()
                 .filter(|index| raw_symbols[*index].node_kind != "using_declaration")
@@ -321,6 +338,19 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn cpp_constructor_path(type_path: &str) -> Option<String> {
+    let constructor_name = type_path.rsplit("::").next()?;
+    (!constructor_name.is_empty()).then(|| format!("{type_path}::{constructor_name}"))
+}
+
+fn is_cpp_constructible_type(symbol: &IndexedSymbol) -> bool {
+    detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
+        && matches!(
+            symbol.node_kind.as_str(),
+            "class_specifier" | "struct_specifier" | "union_specifier"
+        )
 }
 
 fn symbol_indexes_for_paths(

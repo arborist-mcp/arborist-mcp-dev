@@ -582,6 +582,38 @@ fn traces_symbol_graph_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_constructor_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    Counter(int value) {}\n};\nCounter caller(int value) { return Counter{}; }\n}\n",
+    )
+    .unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace lib { class Counter { public: Counter(int value) {} }; }\nnamespace api { using namespace lib; Counter caller(int value) { return Counter(value); } }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "api::caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["lib::Counter::Counter(int)"]
+    );
+}
+
+#[test]
 fn trace_patch_context_uses_unsaved_workspace_overrides() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");

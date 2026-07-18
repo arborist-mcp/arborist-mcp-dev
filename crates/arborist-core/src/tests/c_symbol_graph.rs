@@ -546,6 +546,80 @@ api::Counter::~Counter() {}
 }
 
 #[test]
+fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    Counter(int value) {}\n    Counter(int left, int right) {}\n};\nCounter local_caller(int value) { return Counter(value); }\n}\napi::Counter qualified_caller(int value) { return api::Counter(value); }\n",
+    )
+    .unwrap();
+
+    for caller in ["api::local_caller", "qualified_caller"] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api::Counter::Counter(int)"]
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["api::local_caller", "qualified_caller"] {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api::Counter::Counter(int)"]
+        );
+    }
+}
+
+#[test]
+fn resolves_cpp_imported_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace lib { class Counter { public: Counter(int value) {} }; }\nnamespace api { using namespace lib; Counter namespace_caller(int value) { return Counter(value); } }\nnamespace vendor = lib;\nnamespace app { using vendor::Counter; Counter declaration_caller(int value) { return Counter(value); } }\n",
+    )
+    .unwrap();
+
+    for caller in ["api::namespace_caller", "app::declaration_caller"] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lib::Counter::Counter(int)"]
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["api::namespace_caller", "app::declaration_caller"] {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lib::Counter::Counter(int)"]
+        );
+    }
+}
+
+#[test]
 fn indexes_defaulted_and_deleted_cpp_methods() {
     let source = r#"
 namespace api {
