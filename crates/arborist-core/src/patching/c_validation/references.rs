@@ -183,18 +183,20 @@ pub(crate) fn collect_cpp_new_call_arities(
         if candidate.kind() != "new_expression" {
             return;
         }
-        let (Some(type_node), Some(arguments)) = (
-            candidate.child_by_field_name("type"),
-            candidate.child_by_field_name("arguments"),
-        ) else {
+        let Some(type_node) = candidate.child_by_field_name("type") else {
             return;
         };
         let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
             return;
         };
 
-        let mut cursor = arguments.walk();
-        let arity = arguments.named_children(&mut cursor).count();
+        let arity = candidate
+            .child_by_field_name("arguments")
+            .map(|arguments| {
+                let mut cursor = arguments.walk();
+                arguments.named_children(&mut cursor).count()
+            })
+            .unwrap_or_default();
         call_arities
             .entry(name.trim().to_string())
             .or_default()
