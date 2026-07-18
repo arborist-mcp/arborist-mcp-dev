@@ -174,6 +174,51 @@ pub(crate) fn collect_cpp_braced_call_arities(
     Ok(())
 }
 
+pub(crate) fn collect_cpp_braced_initializer_arities(
+    node: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "init_declarator" {
+            return;
+        }
+        let Some(declaration) = candidate
+            .parent()
+            .filter(|parent| parent.kind() == "declaration")
+        else {
+            return;
+        };
+        let Some(declarator) = candidate.child_by_field_name("declarator") else {
+            return;
+        };
+        if declarator.kind() != "identifier" {
+            return;
+        }
+        let Some(initializer) = candidate
+            .child_by_field_name("value")
+            .filter(|value| value.kind() == "initializer_list")
+        else {
+            return;
+        };
+        let Some(type_node) = declaration.child_by_field_name("type") else {
+            return;
+        };
+        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+            return;
+        };
+
+        let mut cursor = initializer.walk();
+        let arity = initializer.named_children(&mut cursor).count();
+        call_arities
+            .entry(name.trim().to_string())
+            .or_default()
+            .insert(arity);
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
 pub(crate) fn collect_cpp_new_call_arities(
     node: Node<'_>,
     source: &str,
@@ -273,4 +318,29 @@ fn is_c_enumerator_name(node: Node<'_>) -> bool {
                 .child_by_field_name("name")
                 .is_some_and(|name| name == node)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::Path;
+
+    use crate::language::parse_document;
+
+    use super::collect_cpp_braced_initializer_arities;
+
+    #[test]
+    fn collects_only_object_braced_initializers() {
+        let source = "namespace api { class Counter { public: Counter(int value) {} }; }\nint caller(api::Counter* existing, api::Counter& current) { api::Counter counter{1}; api::Counter* pointer{existing}; api::Counter& reference{current}; return 0; }\n";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_braced_initializer_arities(document.tree.root_node(), source, &mut arities)
+            .unwrap();
+
+        assert_eq!(
+            arities,
+            BTreeMap::from([("api::Counter".to_string(), BTreeSet::from([1]))])
+        );
+    }
 }

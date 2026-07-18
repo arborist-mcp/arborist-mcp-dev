@@ -8,7 +8,8 @@ use crate::language::{ParsedDocument, node_text, normalize_path, visit_tree};
 use crate::model::LanguageId;
 use crate::patching::{
     collect_c_call_arities, collect_c_graph_references, collect_cpp_braced_call_arities,
-    collect_cpp_new_call_arities, collect_python_references,
+    collect_cpp_braced_initializer_arities, collect_cpp_new_call_arities,
+    collect_python_references,
 };
 use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
@@ -146,6 +147,7 @@ fn index_c_symbols(
                     collect_c_call_arities(child, source, &mut call_arities)?;
                     if is_cpp {
                         collect_cpp_braced_call_arities(child, source, &mut call_arities)?;
+                        collect_cpp_braced_initializer_arities(child, source, &mut call_arities)?;
                         collect_cpp_new_call_arities(child, source, &mut call_arities)?;
                     }
                     references.extend(call_arities.keys().cloned());

@@ -670,6 +670,34 @@ fn traces_cpp_default_new_constructor_calls_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_braced_initializer_constructor_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { class Counter { public: Counter(int value) {} }; }\nint caller(int value) { api::Counter counter{value}; return value; }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+}
+
+#[test]
 fn traces_cpp_template_new_constructor_calls_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("box.cpp");
