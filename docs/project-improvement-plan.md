@@ -14,9 +14,9 @@ completed item can land in its own commit unless two changes are inseparable.
   index-route, and VFS-route mixins. The PyO3 root facade is now 92 lines,
   with public bindings colocated by VFS, index, patch, validation, source-query,
   and symbol-query domains.
-- The README still names strategic gaps including deeper Rust module splits,
-  durable schema migrations, full C++ grammar support, watch mode, benchmarks,
-  fuzz/property tests, and cancellation controls.
+- The remaining strategic gaps are deeper Rust module splits, fuller C++
+  language-aware resolution, fuzz/property tests, and cancellation that can
+  interrupt individual native parse or query operations.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -92,7 +92,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Route unsupported schema-version recommendations through a single
   decision point so future version-specific migrations can be added in one
   place.
-- [ ] Add timeout/cancellation boundaries for large workspace scans, broad raw
+- [x] Add cooperative timeout boundaries for large workspace scans, broad raw
   Tree-sitter queries, and trace/neighborhood expansion.
 - [x] Add optional cooperative timeout budgets to workspace scans and persisted
   index rebuild/refresh operations.
