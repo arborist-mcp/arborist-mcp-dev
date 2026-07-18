@@ -595,6 +595,75 @@ fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_cpp_template_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("box.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { template <typename T> class Box { public: Box(T value) {} }; }\nint caller(int value) { auto box = api::Box<int>{value}; return value; }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+}
+
+#[test]
+fn prefers_cpp_template_specialization_constructors_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("box.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T> class Box { public: Box(T value) {} };\ntemplate <> class Box<int> { public: Box(int left, int right) {} };\n}\nint caller(int value) { auto box = api::Box<int>{value, value}; return value; }\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Box<int>::Box(int,int)";
+    let trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
 fn resolves_cpp_imported_constructor_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("counter.cpp");

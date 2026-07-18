@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::resolution::{
-    build_name_index, build_semantic_path_index, indexed_symbol_rank, raw_symbol_indexes_by_id,
-    resolve_dependencies_for_symbol,
+    build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
+    raw_symbol_indexes_by_id, resolve_dependencies_for_symbol,
 };
 use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
@@ -220,6 +220,8 @@ fn reference_impacted_paths(
 }
 
 fn reference_base_name(reference_name: &str) -> String {
+    let template_base_path = cpp_template_base_path(reference_name);
+    let reference_name = template_base_path.as_deref().unwrap_or(reference_name);
     let reference_name = reference_name
         .rsplit_once("::")
         .map(|(_, name)| name)

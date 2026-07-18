@@ -132,6 +132,48 @@ fn refreshes_qualified_cpp_constructor_call_dependencies() {
 }
 
 #[test]
+fn refreshes_template_cpp_constructor_call_dependencies() {
+    let dir = temporary_dir();
+    let definitions = dir.join("box.cpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &definitions,
+        "namespace detail { struct Tag {}; }\nnamespace api { template <typename T> class Box { public: Box(T value) {} }; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "int caller(int value) { auto box = api::Box<detail::Tag>{value}; return value; }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        initial_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+
+    fs::write(
+        &definitions,
+        "namespace detail { struct Tag {}; }\nnamespace api { template <typename T> class Box { public: Box(T left, T right) {} }; }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &definitions).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    let refreshed_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert!(refreshed_trace.callees.is_empty());
+}
+
+#[test]
 fn refreshes_c_include_dependents_for_header_change() {
     let dir = temporary_dir();
     let alpha_header = dir.join("alpha.h");

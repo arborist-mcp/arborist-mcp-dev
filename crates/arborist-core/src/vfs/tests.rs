@@ -614,6 +614,34 @@ fn traces_cpp_constructor_calls_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_template_constructor_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("box.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { template <typename T> class Box { public: Box(T value) {} }; }\nint caller(int value) { auto box = api::Box<int>{value}; return value; }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box::Box(T)"]
+    );
+}
+
+#[test]
 fn trace_patch_context_uses_unsaved_workspace_overrides() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");

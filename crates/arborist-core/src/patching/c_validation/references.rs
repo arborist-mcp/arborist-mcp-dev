@@ -176,7 +176,7 @@ pub(crate) fn collect_cpp_braced_call_arities(
 
 fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     match function.kind() {
-        "identifier" | "type_identifier" => {
+        "identifier" | "type_identifier" | "template_type" => {
             Ok(Some(node_text(function, source)?.trim().to_string()))
         }
         "qualified_identifier" => qualified_c_call_name(function, source),

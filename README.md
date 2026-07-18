@@ -57,8 +57,9 @@ are resolved relative to enclosing namespaces before overload filtering.
 Explicit template calls such as `convert<int>(value)` are resolved through the
 same direct-call graph path.
 Direct C++ type constructions such as `Counter(value)`, `Counter{value}`, and
-`api::Counter{value}` resolve to the matching `Counter::Counter` overload by
-argument count.
+`api::Box<int>{value}` resolve to the matching constructor overload by argument
+count, including primary class templates when an explicit specialization is not
+indexed.
 Namespace aliases are expanded for direct qualified calls, so an alias such as
 `namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
 alias chains are expanded transitively.

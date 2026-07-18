@@ -213,7 +213,10 @@ fn resolve_reference_path(
         cpp_qualified_reference_path_groups(lookup_name, source_symbol, raw_symbols)
             .into_iter()
             .find_map(|qualified_paths| {
-                let candidates = symbol_indexes_for_paths(&qualified_paths, semantic_path_index);
+                let candidates = symbol_indexes_for_paths_with_template_fallback(
+                    &qualified_paths,
+                    semantic_path_index,
+                );
                 (!candidates.is_empty()).then_some(candidates)
             })
             .map(|candidates| (candidates, false))
@@ -223,7 +226,10 @@ fn resolve_reference_path(
             cpp_unqualified_call_candidate_groups(lookup_name, source_symbol, raw_symbols)
                 .into_iter()
                 .find_map(|paths| {
-                    let candidates = symbol_indexes_for_paths(&paths, semantic_path_index);
+                    let candidates = symbol_indexes_for_paths_with_template_fallback(
+                        &paths,
+                        semantic_path_index,
+                    );
                     (!candidates.is_empty()).then_some(candidates)
                 });
         match scoped_candidates {
@@ -342,6 +348,8 @@ fn resolve_reference_path(
 
 fn cpp_constructor_path(type_path: &str) -> Option<String> {
     let constructor_name = type_path.rsplit("::").next()?;
+    let constructor_name =
+        cpp_template_base_path(constructor_name).unwrap_or_else(|| constructor_name.to_string());
     (!constructor_name.is_empty()).then(|| format!("{type_path}::{constructor_name}"))
 }
 
@@ -361,6 +369,66 @@ fn symbol_indexes_for_paths(
         .iter()
         .flat_map(|path| semantic_path_index.get(path).into_iter().flatten().copied())
         .collect()
+}
+
+fn symbol_indexes_for_paths_with_template_fallback(
+    paths: &[String],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Vec<usize> {
+    let candidates = symbol_indexes_for_paths(paths, semantic_path_index);
+    if !candidates.is_empty() {
+        return candidates;
+    }
+
+    let template_base_paths = paths
+        .iter()
+        .filter_map(|path| cpp_template_base_path(path))
+        .collect::<Vec<_>>();
+    symbol_indexes_for_paths(&template_base_paths, semantic_path_index)
+}
+
+pub(super) fn cpp_template_base_path(path: &str) -> Option<String> {
+    let mut depth = 0usize;
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+    let mut base_path = String::with_capacity(path.len());
+    let characters = path.chars().collect::<Vec<_>>();
+
+    for (index, character) in characters.iter().copied().enumerate() {
+        match character {
+            '<' if parentheses == 0 && brackets == 0 && braces == 0 => depth += 1,
+            '>' if depth > 0
+                && parentheses == 0
+                && brackets == 0
+                && braces == 0
+                && cpp_template_argument_closes(&characters[index + 1..]) =>
+            {
+                depth -= 1;
+            }
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.saturating_sub(1),
+            '[' => brackets += 1,
+            ']' => brackets = brackets.saturating_sub(1),
+            '{' => braces += 1,
+            '}' => braces = braces.saturating_sub(1),
+            _ if depth == 0 => base_path.push(character),
+            _ => {}
+        }
+    }
+
+    (depth == 0 && parentheses == 0 && brackets == 0 && braces == 0 && base_path != path)
+        .then_some(base_path)
+}
+
+fn cpp_template_argument_closes(remaining: &[char]) -> bool {
+    matches!(
+        remaining
+            .iter()
+            .copied()
+            .find(|character| !character.is_whitespace()),
+        None | Some('>' | ',' | ')' | ']' | '}' | ':' | '.')
+    )
 }
 
 fn cpp_qualified_reference_path_groups(
@@ -743,5 +811,17 @@ mod tests {
 
         assert!(cpp_callable_accepts_arity(&callable, 1));
         assert!(!cpp_callable_accepts_arity(&callable, 2));
+    }
+
+    #[test]
+    fn cpp_template_base_path_preserves_nested_non_type_arguments() {
+        assert_eq!(
+            cpp_template_base_path("api::Box<detail::Tag>").as_deref(),
+            Some("api::Box")
+        );
+        assert_eq!(
+            cpp_template_base_path("api::Box<(1 > 0)>").as_deref(),
+            Some("api::Box")
+        );
     }
 }
