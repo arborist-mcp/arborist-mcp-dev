@@ -697,6 +697,41 @@ fn resolves_cpp_braced_initializer_constructor_calls_across_live_and_persisted_q
 }
 
 #[test]
+fn resolves_cpp_template_braced_initializer_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("box.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\ntemplate <typename T> class Box { public: Box(T value) {} };\ntemplate <> class Box<int> { public: Box(int value) {} };\n}\nint caller(int value) { api::Box<int> box{value}; return value; }\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Box<int>::Box(int)";
+    let trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
 fn resolves_cpp_template_new_constructor_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("box.cpp");
