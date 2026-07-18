@@ -7,6 +7,7 @@ mod python_patterns;
 mod python_references;
 mod python_replacement;
 mod python_visibility;
+mod syntax_validation;
 
 pub(crate) use c_validation::{
     collect_c_call_arities, collect_c_graph_references, collect_c_reference_validation,
@@ -18,9 +19,9 @@ pub(crate) use python_imports::{
 };
 pub(crate) use python_references::collect_python_references;
 use python_replacement::{
-    leading_indent_len, normalize_python_replacement_indentation,
-    python_replacement_starts_with_decorator,
+    normalize_python_replacement_indentation, python_replacement_starts_with_decorator,
 };
+pub(crate) use syntax_validation::collect_syntax_errors;
 
 pub(crate) use api::unified_diff;
 pub use api::{
@@ -37,7 +38,7 @@ use tree_sitter::Node;
 
 use crate::language::{
     ParsedDocument, contains_node, normalize_absolute_path, normalize_path, offset_for_position,
-    parse_document, position_from, visit_tree,
+    parse_document, position_from,
 };
 use crate::model::{
     LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, Position,
@@ -368,90 +369,6 @@ fn resolve_symbol_id(
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
             .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
     }
-}
-
-pub(crate) fn collect_syntax_errors(root: Node<'_>, source: &str) -> Vec<ValidationIssue> {
-    let mut issues = Vec::new();
-    let mut callback = |node: Node<'_>| {
-        if node.is_error() || node.is_missing() {
-            let kind = if node.is_missing() {
-                "missing"
-            } else {
-                "error"
-            };
-            issues.push(ValidationIssue {
-                kind: kind.to_string(),
-                message: format!("Tree-sitter reported a {kind} node near `{}`", node.kind()),
-                start_byte: node.start_byte(),
-                end_byte: node.end_byte(),
-                start_point: position_from(node.start_position()),
-                end_point: position_from(node.end_position()),
-            });
-        } else if node.kind() == "ERROR" {
-            issues.push(ValidationIssue {
-                kind: "error".to_string(),
-                message: format!(
-                    "Tree-sitter produced an ERROR node near `{}`",
-                    node.utf8_text(source.as_bytes()).unwrap_or(node.kind())
-                ),
-                start_byte: node.start_byte(),
-                end_byte: node.end_byte(),
-                start_point: position_from(node.start_position()),
-                end_point: position_from(node.end_position()),
-            });
-        }
-    };
-
-    visit_tree(root, &mut callback);
-    if root.kind() == "module" {
-        issues.extend(collect_python_indentation_issues(source));
-    }
-    issues
-}
-
-fn collect_python_indentation_issues(source: &str) -> Vec<ValidationIssue> {
-    let mut issues = Vec::new();
-    let mut pending_block: Option<(usize, usize, usize)> = None;
-    let mut byte_start = 0usize;
-
-    for (row, line) in source.split_inclusive('\n').enumerate() {
-        let content = line.trim_end_matches(['\r', '\n']);
-        let trimmed = content.trim();
-        let indent = leading_indent_len(content);
-
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            if let Some((header_indent, header_row, header_start)) = pending_block.take()
-                && indent <= header_indent
-            {
-                issues.push(ValidationIssue {
-                    kind: "indentation".to_string(),
-                    message: format!(
-                        "Python indentation appears invalid: expected an indented block after line {}",
-                        header_row + 1
-                    ),
-                    start_byte: byte_start,
-                    end_byte: byte_start + content.len(),
-                    start_point: Position {
-                        row,
-                        column: 0,
-                    },
-                    end_point: Position {
-                        row,
-                        column: content.len(),
-                    },
-                });
-                pending_block = Some((header_indent, header_row, header_start));
-            }
-
-            if trimmed.ends_with(':') {
-                pending_block = Some((indent, row, byte_start));
-            }
-        }
-
-        byte_start += line.len();
-    }
-
-    issues
 }
 
 fn collect_reference_validation(
