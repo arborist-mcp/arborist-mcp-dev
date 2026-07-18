@@ -125,6 +125,41 @@ fn refreshes_cpp_moved_this_member_call_dependencies() {
 }
 
 #[test]
+fn refreshes_cpp_forward_const_this_member_call_dependencies() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: int adjust(int value) const & { return value + 1; } int adjust(int value) & { return value; } int caller(int value) { return value; } }; }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: int adjust(int value) const & { return value + 1; } int adjust(int value) & { return value; } int caller(int value) { return std::forward<Counter const &>(*this).adjust(value); } }; }\n",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &source).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+
+    let trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::adjust(int) const &"]
+    );
+}
+
+#[test]
 fn refreshes_qualified_cpp_constructor_call_dependencies() {
     let dir = temporary_dir();
     let definitions = dir.join("definitions.cpp");
