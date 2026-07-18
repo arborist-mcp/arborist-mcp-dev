@@ -1724,6 +1724,74 @@ fn resolves_cpp_using_declaration_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_unqualified_cpp_using_declarations_from_local_headers() {
+    let dir = temporary_dir();
+    let header = dir.join("imports.hpp");
+    let caller = dir.join("caller.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &header,
+        "namespace vendor { int convert(int value) { return value; } }\nnamespace app { using vendor::convert; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"imports.hpp\"\nnamespace app { int caller() { return convert(1); } }\n",
+    )
+    .unwrap();
+
+    let expected_callee = "vendor::convert(int)";
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee]
+    );
+}
+
+#[test]
+fn resolves_unqualified_cpp_using_namespaces_from_local_headers() {
+    let dir = temporary_dir();
+    let header = dir.join("imports.hpp");
+    let caller = dir.join("caller.cpp");
+    fs::write(
+        &header,
+        "namespace vendor { int convert(int value) { return value; } }\nnamespace app { using namespace vendor; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"imports.hpp\"\nnamespace app { int caller() { return convert(1); } }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "app::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["vendor::convert(int)"]
+    );
+}
+
+#[test]
 fn resolves_cpp_using_declaration_overloads_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("using_overloads.cpp");

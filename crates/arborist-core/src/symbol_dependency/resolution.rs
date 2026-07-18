@@ -237,16 +237,18 @@ fn resolve_reference_path(
             .map(|candidates| (candidates, false))
             .unwrap_or_default()
     } else if scoped_cpp_direct_call {
-        let scoped_candidates =
-            cpp_unqualified_call_candidate_groups(lookup_name, source_symbol, raw_symbols)
-                .into_iter()
-                .find_map(|paths| {
-                    let candidates = symbol_indexes_for_paths_with_template_fallback(
-                        &paths,
-                        semantic_path_index,
-                    );
-                    (!candidates.is_empty()).then_some(candidates)
-                });
+        let scoped_candidates = cpp_unqualified_call_candidate_groups(
+            lookup_name,
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+        )
+        .into_iter()
+        .find_map(|paths| {
+            let candidates =
+                symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index);
+            (!candidates.is_empty()).then_some(candidates)
+        });
         match scoped_candidates {
             Some(candidates) => (candidates, true),
             None => (
@@ -535,7 +537,14 @@ fn cpp_unqualified_call_candidate_groups(
     reference_name: &str,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<Vec<String>> {
+    let include_context = c_include_context_for_file_before_with_overrides(
+        &source_symbol.file_path,
+        source_symbol.byte_range.0,
+        file_overrides,
+    )
+    .ok();
     let scopes = source_symbol
         .scope_path
         .as_deref()
@@ -568,8 +577,7 @@ fn cpp_unqualified_call_candidate_groups(
                     } else {
                         symbol.scope_path.as_deref() == Some(scope.as_str())
                     }
-                    && symbol.file_path == source_symbol.file_path
-                    && symbol.byte_range.0 < source_symbol.byte_range.0
+                    && cpp_symbol_is_visible_before(symbol, source_symbol, include_context.as_ref())
             }) {
                 let Some(target) = cpp_using_namespace_target(directive) else {
                     if directive.semantic_path != scoped_reference_path {
@@ -603,6 +611,16 @@ fn cpp_unqualified_call_candidate_groups(
             paths
         })
         .collect()
+}
+
+fn cpp_symbol_is_visible_before(
+    symbol: &IndexedSymbol,
+    source_symbol: &IndexedSymbol,
+    include_context: Option<&CIncludeContext>,
+) -> bool {
+    (symbol.file_path == source_symbol.file_path
+        && symbol.byte_range.0 < source_symbol.byte_range.0)
+        || include_context.is_some_and(|context| context.include_paths.contains(&symbol.file_path))
 }
 
 fn cpp_qualified_reference_path_group(
@@ -757,11 +775,7 @@ fn cpp_type_alias_is_visible(
     source_symbol: &IndexedSymbol,
     include_context: Option<&CIncludeContext>,
 ) -> bool {
-    cpp_is_type_alias(alias)
-        && ((alias.file_path == source_symbol.file_path
-            && alias.byte_range.0 < source_symbol.byte_range.0)
-            || include_context
-                .is_some_and(|context| context.include_paths.contains(&alias.file_path)))
+    cpp_is_type_alias(alias) && cpp_symbol_is_visible_before(alias, source_symbol, include_context)
 }
 
 fn cpp_is_type_alias(symbol: &IndexedSymbol) -> bool {
