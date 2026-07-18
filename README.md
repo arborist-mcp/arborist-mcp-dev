@@ -60,7 +60,7 @@ Direct C++ type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter(value)` resolve to the matching constructor overload by
 argument count. Template constructions such as `api::Box<int>{value}` fall
 back to the primary class template when an explicit specialization is not
-indexed.
+indexed; this applies to `new api::Box<int>(value)` as well.
 Namespace aliases are expanded for direct qualified calls, so an alias such as
 `namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
 alias chains are expanded transitively.

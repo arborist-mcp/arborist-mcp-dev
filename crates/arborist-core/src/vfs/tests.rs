@@ -642,6 +642,34 @@ fn traces_cpp_new_constructor_calls_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_template_new_constructor_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("box.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api {\ntemplate <typename T> class Box { public: Box(T value) {} };\ntemplate <> class Box<int> { public: Box(int value) {} };\n}\nint caller(int value) { auto box = new api::Box<int>(value); return value; }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Box<int>::Box(int)"]
+    );
+}
+
+#[test]
 fn traces_cpp_template_constructor_calls_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("box.cpp");
