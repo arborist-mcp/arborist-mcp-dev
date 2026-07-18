@@ -9,6 +9,107 @@ use pyo3::prelude::*;
 
 use crate::{ArboristCore, source_position, to_json_result, to_py_error};
 
+#[pymethods]
+impl ArboristCore {
+    #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
+    fn patch_ast_node_json(
+        &self,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.patch_ast_node_json_impl(file_path, semantic_path, new_code, source, bypass_reason)
+    }
+
+    #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
+    fn patch_ast_node_at_position_json(
+        &self,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.patch_ast_node_at_position_json_impl(
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+        )
+    }
+
+    #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
+    fn preview_patch_ast_node_json(
+        &self,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.preview_patch_ast_node_json_impl(
+            file_path,
+            semantic_path,
+            new_code,
+            source,
+            bypass_reason,
+        )
+    }
+
+    #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
+    fn preview_patch_ast_node_at_position_json(
+        &self,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        new_code: &str,
+        source: Option<String>,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.preview_patch_ast_node_at_position_json_impl(
+            file_path,
+            row,
+            column,
+            new_code,
+            source,
+            bypass_reason,
+        )
+    }
+
+    fn patch_virtual_ast_node_json(
+        &self,
+        file_path: &str,
+        semantic_path: &str,
+        new_code: &str,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.patch_virtual_ast_node_json_impl(file_path, semantic_path, new_code, bypass_reason)
+    }
+
+    #[pyo3(signature = (file_path, row, column, new_code, bypass_reason=None))]
+    fn patch_virtual_ast_node_at_position_json(
+        &self,
+        file_path: &str,
+        row: usize,
+        column: usize,
+        new_code: &str,
+        bypass_reason: Option<String>,
+    ) -> PyResult<String> {
+        self.patch_virtual_ast_node_at_position_json_impl(
+            file_path,
+            row,
+            column,
+            new_code,
+            bypass_reason,
+        )
+    }
+}
+
 impl ArboristCore {
     pub(super) fn patch_ast_node_json_impl(
         &self,
