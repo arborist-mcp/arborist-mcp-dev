@@ -595,6 +595,40 @@ fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_cpp_new_constructor_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: Counter(int value) {} Counter(int left, int right) {} }; }\nint caller(int value) { auto counter = new api::Counter(value); return value; }\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::Counter(int)"]
+    );
+}
+
+#[test]
 fn resolves_cpp_template_constructor_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("box.cpp");

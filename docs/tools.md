@@ -55,8 +55,9 @@ the same overload filtering.
 Explicit template calls such as `convert<int>(value)` are also treated as
 direct calls to `convert` for graph resolution.
 Direct type constructions such as `Counter(value)`, `Counter{value}`, and
-`api::Box<int>{value}` resolve to the matching constructor overload by argument
-count, including primary class templates when an explicit specialization is not
+`new api::Counter(value)` resolve to the matching constructor overload by
+argument count. Template constructions such as `api::Box<int>{value}` fall
+back to the primary class template when an explicit specialization is not
 indexed.
 Direct qualified calls also expand indexed namespace aliases, so
 `namespace vendor = detail;` lets `vendor::convert(value)` resolve to

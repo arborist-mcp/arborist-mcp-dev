@@ -174,6 +174,36 @@ pub(crate) fn collect_cpp_braced_call_arities(
     Ok(())
 }
 
+pub(crate) fn collect_cpp_new_call_arities(
+    node: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "new_expression" {
+            return;
+        }
+        let (Some(type_node), Some(arguments)) = (
+            candidate.child_by_field_name("type"),
+            candidate.child_by_field_name("arguments"),
+        ) else {
+            return;
+        };
+        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+            return;
+        };
+
+        let mut cursor = arguments.walk();
+        let arity = arguments.named_children(&mut cursor).count();
+        call_arities
+            .entry(name.trim().to_string())
+            .or_default()
+            .insert(arity);
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
 fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     match function.kind() {
         "identifier" | "type_identifier" | "template_type" => {
