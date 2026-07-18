@@ -102,7 +102,7 @@ fn refreshes_qualified_cpp_constructor_call_dependencies() {
     .unwrap();
     fs::write(
         &caller,
-        "api::Counter caller(int value) { return api::Counter(value); }\n",
+        "api::Counter caller(int value) { return api::Counter{value}; }\n",
     )
     .unwrap();
 

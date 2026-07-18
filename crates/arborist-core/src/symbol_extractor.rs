@@ -7,7 +7,8 @@ use tree_sitter::Node;
 use crate::language::{ParsedDocument, node_text, normalize_path, visit_tree};
 use crate::model::LanguageId;
 use crate::patching::{
-    collect_c_call_arities, collect_c_graph_references, collect_python_references,
+    collect_c_call_arities, collect_c_graph_references, collect_cpp_braced_call_arities,
+    collect_python_references,
 };
 use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
@@ -23,7 +24,8 @@ pub(crate) fn index_symbols_from_document(
 ) -> Result<Vec<IndexedSymbol>> {
     match document.language_id {
         LanguageId::Python => index_python_symbols(path, source, document.tree.root_node()),
-        LanguageId::C | LanguageId::Cpp => index_c_symbols(path, source, document.tree.root_node()),
+        LanguageId::C => index_c_symbols(path, source, document.tree.root_node(), false),
+        LanguageId::Cpp => index_c_symbols(path, source, document.tree.root_node(), true),
     }
 }
 
@@ -76,7 +78,12 @@ fn python_reference_node(node: Node<'_>) -> Node<'_> {
         .unwrap_or(node)
 }
 
-fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<IndexedSymbol>> {
+fn index_c_symbols(
+    path: &Path,
+    source: &str,
+    root: Node<'_>,
+    is_cpp: bool,
+) -> Result<Vec<IndexedSymbol>> {
     let normalized_path = normalize_path(path);
     let mut symbols = Vec::new();
     for child in c_symbol_nodes(path, root, source)? {
@@ -137,6 +144,9 @@ fn index_c_symbols(path: &Path, source: &str, root: Node<'_>) -> Result<Vec<Inde
                     collect_c_graph_references(child, source, &mut references)?;
                     let mut call_arities = BTreeMap::new();
                     collect_c_call_arities(child, source, &mut call_arities)?;
+                    if is_cpp {
+                        collect_cpp_braced_call_arities(child, source, &mut call_arities)?;
+                    }
                     references.extend(call_arities.keys().cloned());
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {

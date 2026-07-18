@@ -136,9 +136,49 @@ pub(crate) fn collect_c_call_arities(
     Ok(())
 }
 
+pub(crate) fn collect_cpp_braced_call_arities(
+    node: Node<'_>,
+    source: &str,
+    call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> Result<()> {
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() != "compound_literal_expression" {
+            return;
+        }
+        let mut cursor = candidate.walk();
+        let children = candidate.named_children(&mut cursor).collect::<Vec<_>>();
+        let type_node = candidate
+            .child_by_field_name("type")
+            .or_else(|| children.first().copied());
+        let initializer = candidate.child_by_field_name("value").or_else(|| {
+            children
+                .iter()
+                .copied()
+                .find(|child| child.kind() == "initializer_list")
+        });
+        let (Some(type_node), Some(initializer)) = (type_node, initializer) else {
+            return;
+        };
+        let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+            return;
+        };
+
+        let mut initializer_cursor = initializer.walk();
+        let arity = initializer.named_children(&mut initializer_cursor).count();
+        call_arities
+            .entry(name.trim().to_string())
+            .or_default()
+            .insert(arity);
+    };
+    visit_tree(node, &mut callback);
+    Ok(())
+}
+
 fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     match function.kind() {
-        "identifier" => Ok(Some(node_text(function, source)?.trim().to_string())),
+        "identifier" | "type_identifier" => {
+            Ok(Some(node_text(function, source)?.trim().to_string()))
+        }
         "qualified_identifier" => qualified_c_call_name(function, source),
         "template_function" => template_function_name(function, source),
         _ => Ok(None),

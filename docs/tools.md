@@ -54,8 +54,9 @@ as `api::convert(value)` first resolve through enclosing namespaces, then use
 the same overload filtering.
 Explicit template calls such as `convert<int>(value)` are also treated as
 direct calls to `convert` for graph resolution.
-Direct type constructions such as `Counter(value)` and `api::Counter(value)`
-resolve to the matching `Counter::Counter` overload by argument count.
+Direct type constructions such as `Counter(value)`, `Counter{value}`, and
+`api::Counter{value}` resolve to the matching `Counter::Counter` overload by
+argument count.
 Direct qualified calls also expand indexed namespace aliases, so
 `namespace vendor = detail;` lets `vendor::convert(value)` resolve to
 `detail::convert` before overload filtering, including chained aliases.

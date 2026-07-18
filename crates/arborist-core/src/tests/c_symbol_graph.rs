@@ -552,11 +552,17 @@ fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    Counter(int value) {}\n    Counter(int left, int right) {}\n};\nCounter local_caller(int value) { return Counter(value); }\n}\napi::Counter qualified_caller(int value) { return api::Counter(value); }\n",
+        "namespace api {\nclass Counter {\npublic:\n    Counter(int value) {}\n    Counter(int left, int right) {}\n};\nCounter local_caller(int value) { return Counter(value); }\nCounter braced_caller(int value) { return Counter{value}; }\nCounter pair_braced_caller(int left, int right) { return Counter{left, right}; }\n}\napi::Counter qualified_caller(int value) { return api::Counter(value); }\napi::Counter qualified_braced_caller(int value) { return api::Counter{value}; }\n",
     )
     .unwrap();
 
-    for caller in ["api::local_caller", "qualified_caller"] {
+    for (caller, expected_callee) in [
+        ("api::local_caller", "api::Counter::Counter(int)"),
+        ("api::braced_caller", "api::Counter::Counter(int)"),
+        ("api::pair_braced_caller", "api::Counter::Counter(int,int)"),
+        ("qualified_caller", "api::Counter::Counter(int)"),
+        ("qualified_braced_caller", "api::Counter::Counter(int)"),
+    ] {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
         assert_eq!(
             trace
@@ -564,12 +570,18 @@ fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
                 .iter()
                 .map(|symbol| symbol.symbol_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["api::Counter::Counter(int)"]
+            vec![expected_callee]
         );
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    for caller in ["api::local_caller", "qualified_caller"] {
+    for (caller, expected_callee) in [
+        ("api::local_caller", "api::Counter::Counter(int)"),
+        ("api::braced_caller", "api::Counter::Counter(int)"),
+        ("api::pair_braced_caller", "api::Counter::Counter(int,int)"),
+        ("qualified_caller", "api::Counter::Counter(int)"),
+        ("qualified_braced_caller", "api::Counter::Counter(int)"),
+    ] {
         let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
         assert_eq!(
             trace
@@ -577,7 +589,7 @@ fn resolves_cpp_constructor_calls_across_live_and_persisted_queries() {
                 .iter()
                 .map(|symbol| symbol.symbol_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["api::Counter::Counter(int)"]
+            vec![expected_callee]
         );
     }
 }

@@ -595,7 +595,7 @@ fn traces_cpp_constructor_calls_from_unsaved_virtual_changes() {
     vfs.open_file(
         &source,
         Some(
-            "namespace lib { class Counter { public: Counter(int value) {} }; }\nnamespace api { using namespace lib; Counter caller(int value) { return Counter(value); } }\n",
+            "namespace lib { class Counter { public: Counter(int value) {} }; }\nnamespace api { using namespace lib; Counter caller(int value) { return Counter{value}; } }\n",
         ),
     )
     .unwrap();
