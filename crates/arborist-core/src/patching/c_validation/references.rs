@@ -281,7 +281,7 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
             Ok(Some(node_text(function, source)?.trim().to_string()))
         }
         "qualified_identifier" => qualified_c_call_name(function, source),
-        "template_function" => template_function_name(function, source),
+        "template_function" => template_call_name(function, source),
         _ => Ok(None),
     }
 }
@@ -301,10 +301,26 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
         return Ok(None);
     }
 
-    function
-        .child_by_field_name("field")
-        .map(|field| node_text(field, source).map(|field| field.trim().to_string()))
-        .transpose()
+    let Some(field) = function.child_by_field_name("field") else {
+        return Ok(None);
+    };
+    cpp_member_call_name(field, source)
+}
+
+fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
+    if field.kind() == "template_method" {
+        return template_call_name(field, source);
+    }
+    if field.kind() == "dependent_name" {
+        let mut cursor = field.walk();
+        if let Some(template_method) = field
+            .named_children(&mut cursor)
+            .find(|child| child.kind() == "template_method")
+        {
+            return template_call_name(template_method, source);
+        }
+    }
+    node_text(field, source).map(|field| Some(field.trim().to_string()))
 }
 
 fn is_cpp_this_member_receiver(argument: Node<'_>, source: &str) -> Result<bool> {
@@ -324,7 +340,7 @@ fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<Stri
     let Some(template_function) = template_function else {
         return Ok(Some(node_text(function, source)?.trim().to_string()));
     };
-    let Some(name) = template_function_name(template_function, source)? else {
+    let Some(name) = template_call_name(template_function, source)? else {
         return Ok(None);
     };
 
@@ -333,7 +349,7 @@ fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<Stri
     Ok(Some(format!("{prefix}{name}")))
 }
 
-fn template_function_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+fn template_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     function
         .child_by_field_name("name")
         .map(|name| node_text(name, source).map(|name| name.trim().to_string()))
@@ -407,6 +423,20 @@ mod tests {
         assert_eq!(
             arities,
             BTreeMap::from([("adjust".to_string(), BTreeSet::from([1, 2]))])
+        );
+    }
+
+    #[test]
+    fn collects_this_member_template_call_arities() {
+        let source = "class Counter { template <typename T> T adjust(T value) { return value; } int caller(int value) { return this->template adjust<int>(value); } };";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities,
+            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1]))])
         );
     }
 }

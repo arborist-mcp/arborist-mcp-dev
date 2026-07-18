@@ -139,6 +139,9 @@ completed item can land in its own commit unless two changes are inseparable.
   filtering overloads in live and persisted symbol graphs.
 - [x] Trace explicit C++ template calls through the existing direct-call graph
   resolution path in live and persisted indexes.
+- [x] Trace dependent C++ member-template calls such as
+  `this->template method<T>(...)` through enclosing-class overload resolution
+  in live and persisted indexes.
 - [x] Expand C++ namespace aliases for direct qualified calls in live and
   persisted symbol graphs.
 - [x] Resolve direct qualified C++ calls through `using` declarations to their
