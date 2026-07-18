@@ -11,19 +11,24 @@ use crate::language::{detect_language, is_c_header_path, normalize_path};
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
 use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
 use crate::semantic::cpp_callable_symbol_id;
-use crate::symbol_index_model::{CPP_RVALUE_THIS_CALL_PREFIX, IndexedSymbol, symbol_kind_rank};
+use crate::symbol_index_model::{
+    CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
+    CPP_RVALUE_THIS_CALL_PREFIX, IndexedSymbol, symbol_kind_rank,
+};
 
 #[derive(Clone, Copy)]
 struct CallResolutionContext {
     arity: Option<usize>,
     rvalue_this_receiver: bool,
+    const_this_receiver: bool,
 }
 
 impl CallResolutionContext {
-    fn cpp(arity: usize, rvalue_this_receiver: bool) -> Self {
+    fn cpp(arity: usize, rvalue_this_receiver: bool, const_this_receiver: bool) -> Self {
         Self {
             arity: Some(arity),
             rvalue_this_receiver,
+            const_this_receiver,
         }
     }
 
@@ -31,6 +36,7 @@ impl CallResolutionContext {
         Self {
             arity: None,
             rvalue_this_receiver: false,
+            const_this_receiver: false,
         }
     }
 }
@@ -157,10 +163,20 @@ pub(super) fn resolve_dependencies_for_symbol(
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
     for encoded_reference_name in &symbol.references_by_name {
-        let (reference_name, rvalue_this_receiver) = encoded_reference_name
-            .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
-            .map(|name| (name, true))
-            .unwrap_or((encoded_reference_name.as_str(), false));
+        let (reference_name, rvalue_this_receiver, const_this_receiver) = encoded_reference_name
+            .strip_prefix(CPP_CONST_RVALUE_THIS_CALL_PREFIX)
+            .map(|name| (name, true, true))
+            .or_else(|| {
+                encoded_reference_name
+                    .strip_prefix(CPP_CONST_LVALUE_THIS_CALL_PREFIX)
+                    .map(|name| (name, false, true))
+            })
+            .or_else(|| {
+                encoded_reference_name
+                    .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
+                    .map(|name| (name, true, false))
+            })
+            .unwrap_or((encoded_reference_name.as_str(), false, false));
         let call_arities = symbol.call_arities_by_name.get(encoded_reference_name);
         if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
             && let Some(call_arities) = call_arities
@@ -168,7 +184,11 @@ pub(super) fn resolve_dependencies_for_symbol(
             for call_arity in call_arities {
                 if let Some(target_symbol_id) = resolve_reference_path(
                     reference_name,
-                    CallResolutionContext::cpp(*call_arity, rvalue_this_receiver),
+                    CallResolutionContext::cpp(
+                        *call_arity,
+                        rvalue_this_receiver,
+                        const_this_receiver,
+                    ),
                     symbol,
                     raw_symbols,
                     name_index,
@@ -387,8 +407,12 @@ fn resolve_reference_path(
     } else {
         hinted_candidates
     };
-    let arity_candidates =
-        cpp_const_member_candidates(arity_candidates, source_symbol, raw_symbols);
+    let arity_candidates = cpp_const_member_candidates(
+        arity_candidates,
+        source_symbol,
+        raw_symbols,
+        call_context.const_this_receiver,
+    );
     let arity_candidates = if call_context.rvalue_this_receiver {
         cpp_rvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
     } else {
@@ -925,8 +949,9 @@ fn cpp_const_member_candidates(
     candidates: Vec<usize>,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    const_this_receiver: bool,
 ) -> Vec<usize> {
-    if !cpp_callable_is_const_qualified(source_symbol) {
+    if !const_this_receiver && !cpp_callable_is_const_qualified(source_symbol) {
         return candidates;
     }
 

@@ -62,6 +62,7 @@ member callers prefer matching `const` overloads. Because `this` receivers are
 lvalues, matching `&` and `const &` member overloads are preferred over `&&`
 overloads. Explicit rvalue self calls through `std::move(*this).method(value)`
 or `static_cast<T&&>(*this).method(value)` prefer matching `&&` member
+overloads; `const`-qualified casts select matching `const &` or `const &&`
 overloads.
 Direct type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching

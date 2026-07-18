@@ -4,12 +4,17 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use crate::language::{node_text, visit_tree};
-use crate::symbol_index_model::CPP_RVALUE_THIS_CALL_PREFIX;
+use crate::symbol_index_model::{
+    CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
+    CPP_RVALUE_THIS_CALL_PREFIX,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CppThisMemberReceiver {
     Lvalue,
+    ConstLvalue,
     Rvalue,
+    ConstRvalue,
 }
 
 pub(super) fn collect_c_local_definitions(
@@ -152,15 +157,11 @@ fn collect_cpp_call_arity(
     let Some(arguments) = candidate.child_by_field_name("arguments") else {
         return;
     };
-    let Ok(Some((name, rvalue_this_receiver))) = direct_cpp_call_name(function, source) else {
+    let Ok(Some((name, receiver))) = direct_cpp_call_name(function, source) else {
         return;
     };
 
-    let name = if rvalue_this_receiver {
-        format!("{CPP_RVALUE_THIS_CALL_PREFIX}{name}")
-    } else {
-        name
-    };
+    let name = encode_cpp_this_member_call_name(name, receiver);
     record_c_call_arity(name, arguments, call_arities);
 }
 
@@ -298,9 +299,12 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
     }
 }
 
-fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<(String, bool)>> {
+fn direct_cpp_call_name(
+    function: Node<'_>,
+    source: &str,
+) -> Result<Option<(String, CppThisMemberReceiver)>> {
     if let Some(name) = direct_c_call_name(function, source)? {
-        return Ok(Some((name, false)));
+        return Ok(Some((name, CppThisMemberReceiver::Lvalue)));
     }
     if function.kind() != "field_expression" {
         return Ok(None);
@@ -316,8 +320,20 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<(Stri
     let Some(field) = function.child_by_field_name("field") else {
         return Ok(None);
     };
-    cpp_member_call_name(field, source)
-        .map(|name| name.map(|name| (name, receiver == CppThisMemberReceiver::Rvalue)))
+    cpp_member_call_name(field, source).map(|name| name.map(|name| (name, receiver)))
+}
+
+fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceiver) -> String {
+    match receiver {
+        CppThisMemberReceiver::Lvalue => name,
+        CppThisMemberReceiver::ConstLvalue => {
+            format!("{CPP_CONST_LVALUE_THIS_CALL_PREFIX}{name}")
+        }
+        CppThisMemberReceiver::Rvalue => format!("{CPP_RVALUE_THIS_CALL_PREFIX}{name}"),
+        CppThisMemberReceiver::ConstRvalue => {
+            format!("{CPP_CONST_RVALUE_THIS_CALL_PREFIX}{name}")
+        }
+    }
 }
 
 fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -340,23 +356,83 @@ fn cpp_this_member_receiver(
     argument: Node<'_>,
     source: &str,
 ) -> Result<Option<CppThisMemberReceiver>> {
-    let receiver = node_text(argument, source)?
+    let receiver_text = node_text(argument, source)?;
+    let normalized_receiver = receiver_text
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>();
-    Ok(match receiver.as_str() {
+    Ok(match normalized_receiver.as_str() {
         "this" | "(*this)" => Some(CppThisMemberReceiver::Lvalue),
         "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
-        receiver if is_cpp_rvalue_this_static_cast(receiver) => Some(CppThisMemberReceiver::Rvalue),
+        receiver if receiver.starts_with("static_cast<") => {
+            cpp_this_static_cast_receiver(receiver_text)
+        }
         _ => None,
     })
 }
 
-fn is_cpp_rvalue_this_static_cast(receiver: &str) -> bool {
-    receiver
-        .strip_prefix("static_cast<")
-        .and_then(|value| value.strip_suffix(">(*this)"))
-        .is_some_and(|type_name| type_name.ends_with("&&"))
+fn cpp_this_static_cast_receiver(receiver: &str) -> Option<CppThisMemberReceiver> {
+    let cast_contents = receiver
+        .trim()
+        .strip_prefix("static_cast")?
+        .trim_start()
+        .strip_prefix('<')?;
+    let (type_name, value) = cast_contents.rsplit_once('>')?;
+    if value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        != "(*this)"
+    {
+        return None;
+    }
+
+    let raw_type_name = type_name;
+    let normalized_type_name = raw_type_name
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let rvalue = if normalized_type_name.ends_with("&&") {
+        true
+    } else if normalized_type_name.ends_with('&') {
+        false
+    } else {
+        return None;
+    };
+    let const_qualified = cpp_type_is_top_level_const(raw_type_name);
+    Some(match (const_qualified, rvalue) {
+        (false, false) => CppThisMemberReceiver::Lvalue,
+        (true, false) => CppThisMemberReceiver::ConstLvalue,
+        (false, true) => CppThisMemberReceiver::Rvalue,
+        (true, true) => CppThisMemberReceiver::ConstRvalue,
+    })
+}
+
+fn cpp_type_is_top_level_const(type_name: &str) -> bool {
+    let mut template_depth = 0usize;
+    let mut characters = type_name.char_indices().peekable();
+    while let Some((index, character)) = characters.next() {
+        match character {
+            '<' => template_depth += 1,
+            '>' => template_depth = template_depth.saturating_sub(1),
+            character if character.is_ascii_alphabetic() || character == '_' => {
+                let mut end = index + character.len_utf8();
+                while let Some((next_index, next_character)) = characters.peek().copied() {
+                    if next_character.is_ascii_alphanumeric() || next_character == '_' {
+                        end = next_index + next_character.len_utf8();
+                        characters.next();
+                    } else {
+                        break;
+                    }
+                }
+                if template_depth == 0 && &type_name[index..end] == "const" {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -427,7 +503,7 @@ mod tests {
 
     use crate::language::parse_document;
 
-    use super::collect_cpp_call_arities;
+    use super::{collect_cpp_call_arities, cpp_type_is_top_level_const};
 
     #[test]
     fn collects_only_object_braced_initializers() {
@@ -469,5 +545,13 @@ mod tests {
             arities,
             BTreeMap::from([("adjust<int>".to_string(), BTreeSet::from([1]))])
         );
+    }
+
+    #[test]
+    fn identifies_only_top_level_cpp_const_qualifiers() {
+        assert!(cpp_type_is_top_level_const("const Counter&&"));
+        assert!(cpp_type_is_top_level_const("Counter const &"));
+        assert!(!cpp_type_is_top_level_const("constCounter&&"));
+        assert!(!cpp_type_is_top_level_const("Wrapper<const Counter>&&"));
     }
 }
