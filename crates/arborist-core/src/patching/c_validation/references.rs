@@ -297,7 +297,7 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
     let Some(argument) = function.child_by_field_name("argument") else {
         return Ok(None);
     };
-    if node_text(argument, source)?.trim() != "this" {
+    if !is_cpp_this_member_receiver(argument, source)? {
         return Ok(None);
     }
 
@@ -305,6 +305,14 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
         .child_by_field_name("field")
         .map(|field| node_text(field, source).map(|field| field.trim().to_string()))
         .transpose()
+}
+
+fn is_cpp_this_member_receiver(argument: Node<'_>, source: &str) -> Result<bool> {
+    let receiver = node_text(argument, source)?
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    Ok(matches!(receiver.as_str(), "this" | "(*this)"))
 }
 
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -390,7 +398,7 @@ mod tests {
 
     #[test]
     fn collects_this_member_call_arities_without_inferring_other_objects() {
-        let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + other->adjust(1, 2); } };";
+        let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + (*this).adjust(1, 2) + other->adjust(1, 2, 3); } };";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -398,7 +406,7 @@ mod tests {
 
         assert_eq!(
             arities,
-            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1]))])
+            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1, 2]))])
         );
     }
 }

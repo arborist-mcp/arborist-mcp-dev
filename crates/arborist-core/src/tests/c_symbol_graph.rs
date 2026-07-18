@@ -1767,33 +1767,38 @@ fn resolves_cpp_this_member_calls_by_arity_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) { return value; }\n    double adjust(double left, double right) { return left + right; }\n    int caller(int value) { return this->adjust(value); }\n};\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) { return value; }\n    double adjust(double left, double right) { return left + right; }\n    int caller(int value) { return this->adjust(value); }\n    int dereferenced_caller(int value) { return (*this).adjust(value); }\n};\n}\n",
     )
     .unwrap();
 
     let expected_callee = "api::Counter::adjust(int)";
-    let trace = trace_symbol_graph(&dir, "api::Counter::caller", TraceDirection::Both).unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    for symbol_path in ["api::Counter::caller", "api::Counter::dereferenced_caller"] {
+        let trace = trace_symbol_graph(&dir, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{symbol_path}",
+        );
+    }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    let persisted_trace =
-        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Both)
-            .unwrap();
-    assert_eq!(
-        persisted_trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    for symbol_path in ["api::Counter::caller", "api::Counter::dereferenced_caller"] {
+        let trace =
+            trace_symbol_graph_from_index(&db_path, symbol_path, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{symbol_path}",
+        );
+    }
 }
 
 #[test]
