@@ -54,6 +54,8 @@ as `api::convert(value)` first resolve through enclosing namespaces, then use
 the same overload filtering.
 Explicit template calls such as `convert<int>(value)` are also treated as
 direct calls to `convert` for graph resolution.
+Calls through `this->method(value)` resolve against the enclosing class's
+method overloads by argument count.
 Direct type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
@@ -79,6 +81,8 @@ Direct qualified calls also expand indexed namespace aliases, so
 Qualified calls through `using api::function;` declarations resolve to
 the imported callables rather than the declaration symbols themselves; local
 and imported overloads remain part of the same argument-count-filtered set.
+Both qualified alias and `using` resolution require a declaration before the
+caller in the same source file or in a local header included before it.
 Unqualified direct calls also resolve through scoped `using api::function;`
 declarations before global fallback candidates are considered, including
 declarations from local headers included before the caller.

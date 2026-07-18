@@ -56,6 +56,8 @@ matching candidates. Namespace-qualified calls such as `api::convert(value)`
 are resolved relative to enclosing namespaces before overload filtering.
 Explicit template calls such as `convert<int>(value)` are resolved through the
 same direct-call graph path.
+Calls through `this->method(value)` resolve against the enclosing class's
+method overloads by argument count.
 Direct C++ type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
@@ -77,7 +79,9 @@ follows only branches with literal `#if 0` or `#if 1` conditions and leaves
 macro-dependent branches unresolved.
 Namespace aliases are expanded for direct qualified calls, so an alias such as
 `namespace vendor = detail;` resolves `vendor::convert(value)` to `detail`;
-alias chains are expanded transitively.
+alias chains are expanded transitively. Qualified namespace aliases and `using`
+declarations must be declared before the caller in the same source file or in a
+local header included before it.
 Qualified calls through `using api::function;` declarations resolve to
 the imported callables rather than the declaration symbols themselves; local
 and imported overloads remain part of the same argument-count-filtered set.
