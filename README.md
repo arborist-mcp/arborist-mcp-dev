@@ -56,8 +56,8 @@ matching candidates. Namespace-qualified calls such as `api::convert(value)`
 are resolved relative to enclosing namespaces before overload filtering.
 Explicit template calls such as `convert<int>(value)` are resolved through the
 same direct-call graph path.
-Calls through `this->method(value)` resolve against the enclosing class's
-method overloads by argument count.
+Calls through `this->method(value)` and `(*this).method(value)` resolve against
+the enclosing class's method overloads by argument count.
 Direct C++ type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
