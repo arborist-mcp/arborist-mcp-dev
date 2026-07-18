@@ -55,7 +55,8 @@ the same overload filtering.
 Explicit template calls such as `convert<int>(value)` are also treated as
 direct calls to `convert` for graph resolution.
 Calls through `this->method(value)` and `(*this).method(value)` resolve against
-the enclosing class's method overloads by argument count.
+the enclosing class's method overloads by argument count; `const` member
+callers prefer matching `const` overloads.
 Direct type constructions such as `Counter(value)`, `Counter{value}`, and
 `new api::Counter` and `new api::Counter(value)` resolve to the matching
 constructor overload by argument count. Template constructions such as
