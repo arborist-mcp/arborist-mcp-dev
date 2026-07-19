@@ -66,6 +66,39 @@ fn symbol_index_health_rejects_required_migration_without_action() {
 }
 
 #[test]
+fn symbol_index_health_rejects_non_rebuild_action_for_missing_index() {
+    let health = SymbolIndexHealth {
+        response_schema_version: "4".to_string(),
+        db_path: "symbols.db".to_string(),
+        exists: false,
+        ok: false,
+        schema_version: None,
+        expected_schema_version: "4".to_string(),
+        migration: SymbolIndexMigrationPlan {
+            required: true,
+            action: "manual".to_string(),
+            reason: "index cannot be opened".to_string(),
+        },
+        workspace_root: None,
+        indexed_files: None,
+        indexed_symbols: None,
+        file_state_entries: None,
+        fresh_file_count: None,
+        stale_files: Vec::new(),
+        missing_files: Vec::new(),
+        unreadable_files: Vec::new(),
+        unindexed_files: Vec::new(),
+        issues: vec!["symbol index does not exist".to_string()],
+    };
+
+    let error = health
+        .validate_public_output()
+        .expect_err("missing indexes must recommend rebuild");
+
+    assert!(error.to_string().contains("migration.action"));
+}
+
+#[test]
 fn patch_result_rejects_unknown_nested_fields() {
     let error = serde_json::from_str::<PatchAstNodeResult>(
         r#"{

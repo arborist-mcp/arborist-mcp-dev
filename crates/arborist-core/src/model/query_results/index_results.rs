@@ -112,6 +112,11 @@ impl SymbolIndexHealth {
         {
             bail!("invalid symbol_index_health: missing indexes must not report loaded metadata");
         }
+        if !self.exists && self.migration.action != "rebuild" {
+            bail!(
+                "invalid symbol_index_health.migration.action: missing indexes must recommend rebuild"
+            );
+        }
         if let Some(fresh_file_count) = self.fresh_file_count {
             let Some(file_state_entries) = self.file_state_entries else {
                 bail!(
