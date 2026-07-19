@@ -913,7 +913,15 @@ fn cpp_local_member_receiver_from_expression(
 
 fn cpp_standard_smart_pointer_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
-    is_cpp_identifier(receiver).then_some(receiver)
+    if is_cpp_identifier(receiver) {
+        return Some(receiver);
+    }
+    ["std::move", "std::as_const"]
+        .into_iter()
+        .find_map(|wrapper| {
+            cpp_receiver_call_argument(receiver, wrapper)
+                .filter(|argument| is_cpp_identifier(argument))
+        })
 }
 
 fn cpp_visible_local_binding<'a>(
