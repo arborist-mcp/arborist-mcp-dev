@@ -564,10 +564,7 @@ fn cpp_binding_type(
     let compact_type_suffix = compact_cpp_expression(type_suffix);
     let access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Pointer
-    } else if compact_type_suffix
-        .chars()
-        .all(|character| character == '&')
-    {
+    } else if cpp_object_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Object
     } else {
         return None;
@@ -614,16 +611,30 @@ fn cpp_binding_type_qualifier_prefix(type_prefix: &str) -> String {
 }
 
 fn cpp_pointer_declarator_suffix(type_suffix: &str) -> bool {
+    let type_suffix = cpp_strip_cv_qualifiers(type_suffix);
     let Some(type_suffix) = type_suffix.strip_prefix('*') else {
         return false;
     };
-    let qualifiers = type_suffix.trim_end_matches('&');
-    let reference_count = type_suffix.len().saturating_sub(qualifiers.len());
-    matches!(reference_count, 0..=2)
-        && matches!(
-            qualifiers,
-            "" | "const" | "volatile" | "constvolatile" | "volatileconst"
-        )
+    let qualifiers = cpp_strip_cv_qualifiers(type_suffix);
+    let reference_count = qualifiers.chars().count();
+    matches!(reference_count, 0..=2) && qualifiers.chars().all(|character| character == '&')
+}
+
+fn cpp_object_declarator_suffix(type_suffix: &str) -> bool {
+    let type_suffix = cpp_strip_cv_qualifiers(type_suffix);
+    matches!(type_suffix, "" | "&" | "&&")
+}
+
+fn cpp_strip_cv_qualifiers(mut type_suffix: &str) -> &str {
+    loop {
+        if let Some(remaining) = type_suffix.strip_prefix("const") {
+            type_suffix = remaining;
+        } else if let Some(remaining) = type_suffix.strip_prefix("volatile") {
+            type_suffix = remaining;
+        } else {
+            return type_suffix;
+        }
+    }
 }
 
 fn cpp_named_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {

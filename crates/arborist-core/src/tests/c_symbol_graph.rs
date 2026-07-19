@@ -3136,7 +3136,7 @@ fn resolves_cpp_local_variable_member_calls_across_live_and_persisted_queries() 
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint lvalue_caller(int value) { Alias current{}; return current.adjust(value); }\nint const_lvalue_caller(int value) { const Alias current{}; return current.adjust(value); }\nint static_caller(int value) { static Alias current{}; return current.adjust(value); }\nint static_const_caller(int value) { static const Alias current{}; return current.adjust(value); }\nint moved_caller(int value) { Alias current{}; return std::move(current).adjust(value); }\nint shadowed_caller(int value) { Alias current{}; { const Alias current{}; return current.adjust(value); } }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint lvalue_caller(int value) { Alias current{}; return current.adjust(value); }\nint const_lvalue_caller(int value) { const Alias current{}; return current.adjust(value); }\nint postfix_const_caller(int value) { Alias const current{}; return current.adjust(value); }\nint static_caller(int value) { static Alias current{}; return current.adjust(value); }\nint static_const_caller(int value) { static const Alias current{}; return current.adjust(value); }\nint moved_caller(int value) { Alias current{}; return std::move(current).adjust(value); }\nint shadowed_caller(int value) { Alias current{}; { const Alias current{}; return current.adjust(value); } }\n}\n",
     )
     .unwrap();
 
@@ -3144,6 +3144,10 @@ fn resolves_cpp_local_variable_member_calls_across_live_and_persisted_queries() 
         ("api::lvalue_caller", "api::Counter::adjust(int) &"),
         (
             "api::const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::postfix_const_caller",
             "api::Counter::adjust(int) const &",
         ),
         ("api::static_caller", "api::Counter::adjust(int) &"),
