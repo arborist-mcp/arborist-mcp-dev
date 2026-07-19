@@ -4,9 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::super::PythonImportBinding;
 use super::super::is_python_default_parameter_value;
 use super::super::python_bindings::PythonAccessibleSymbol;
+use super::super::python_imports::PythonImportBinding;
 use super::super::python_visibility::python_local_binding_visible;
 use super::PythonReferenceTarget;
 use super::candidates::python_enclosing_local_binding_should_suppress_reference;

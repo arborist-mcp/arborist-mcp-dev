@@ -4,9 +4,19 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::super::PythonImportBinding;
 use super::module_path::resolve_local_python_module_path;
 use crate::language::node_text;
+
+#[derive(Debug, Clone)]
+pub(crate) enum PythonImportBinding {
+    Module {
+        module_name: String,
+    },
+    Symbol {
+        module_name: Option<String>,
+        symbol_name: String,
+    },
+}
 
 pub(crate) fn collect_visible_python_import_bindings(
     current_path: &Path,

@@ -47,17 +47,6 @@ use crate::model::{
     PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
 
-#[derive(Debug, Clone)]
-enum PythonImportBinding {
-    Module {
-        module_name: String,
-    },
-    Symbol {
-        module_name: Option<String>,
-        symbol_name: String,
-    },
-}
-
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {
     if bypass_reason.is_some_and(|reason| reason.trim().is_empty()) {
         bail!("invalid bypass_reason: reason must not be blank");
