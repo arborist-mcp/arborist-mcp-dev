@@ -1,5 +1,6 @@
 mod accessibility;
 mod ambiguity;
+mod cpp_types;
 mod references;
 
 use std::collections::BTreeSet;

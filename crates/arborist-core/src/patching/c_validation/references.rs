@@ -3,6 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::Result;
 use tree_sitter::Node;
 
+use super::cpp_types::{
+    CppThisMemberReceiver, cpp_pointer_target_path, cpp_temporary_type_path,
+    cpp_this_receiver_for_type,
+};
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
@@ -12,14 +16,6 @@ use crate::symbol_index_model::{
     CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CppThisMemberReceiver {
-    Lvalue,
-    ConstLvalue,
-    Rvalue,
-    ConstRvalue,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CppMemberAccess {
@@ -923,15 +919,6 @@ fn cpp_constructor_type_text(expression: &str) -> Option<&str> {
     cpp_type_text(expression[..opening].trim())
 }
 
-fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
-    let type_name = type_name.trim_end().trim_end_matches('&').trim_end();
-    let path = type_name
-        .split_whitespace()
-        .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
-        .collect::<String>();
-    (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
-}
-
 fn cpp_default_initialized_type_path(type_name: &str) -> Option<String> {
     cpp_default_initialized_type_text(type_name).and_then(cpp_temporary_type_path)
 }
@@ -964,10 +951,6 @@ fn is_cpp_new_type_qualifier_recovery_identifier(candidate: Node<'_>, source: &s
         && qualifier_prefix
             .split_whitespace()
             .all(|part| matches!(part, "const" | "volatile"))
-}
-
-fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
-    cpp_temporary_type_path(type_name.split_once('*')?.0)
 }
 
 fn matching_opening_delimiter_index(
@@ -1130,57 +1113,6 @@ fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
     None
 }
 
-fn cpp_this_receiver_for_type(
-    type_name: &str,
-    default_rvalue: Option<bool>,
-) -> Option<CppThisMemberReceiver> {
-    let normalized_type_name = type_name
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    let rvalue = if normalized_type_name.ends_with("&&") {
-        true
-    } else if normalized_type_name.ends_with('&') {
-        false
-    } else {
-        default_rvalue?
-    };
-    let const_qualified = cpp_type_is_top_level_const(type_name);
-    Some(match (const_qualified, rvalue) {
-        (false, false) => CppThisMemberReceiver::Lvalue,
-        (true, false) => CppThisMemberReceiver::ConstLvalue,
-        (false, true) => CppThisMemberReceiver::Rvalue,
-        (true, true) => CppThisMemberReceiver::ConstRvalue,
-    })
-}
-
-fn cpp_type_is_top_level_const(type_name: &str) -> bool {
-    let mut template_depth = 0usize;
-    let mut characters = type_name.char_indices().peekable();
-    while let Some((index, character)) = characters.next() {
-        match character {
-            '<' => template_depth += 1,
-            '>' => template_depth = template_depth.saturating_sub(1),
-            character if character.is_ascii_alphabetic() || character == '_' => {
-                let mut end = index + character.len_utf8();
-                while let Some((next_index, next_character)) = characters.peek().copied() {
-                    if next_character.is_ascii_alphanumeric() || next_character == '_' {
-                        end = next_index + next_character.len_utf8();
-                        characters.next();
-                    } else {
-                        break;
-                    }
-                }
-                if template_depth == 0 && &type_name[index..end] == "const" {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
 fn qualified_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     let mut cursor = function.walk();
     let template_function = function
@@ -1249,11 +1181,12 @@ mod tests {
 
     use crate::language::parse_document;
 
+    use super::super::cpp_types::cpp_type_is_top_level_const;
     use super::{
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
-        cpp_this_receiver_from_expression, cpp_type_is_top_level_const,
+        cpp_this_receiver_from_expression,
     };
 
     #[test]
