@@ -945,10 +945,10 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "->"
-        && let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
-        && binding.standard_unwrap == Some(CppStandardUnwrap::Optional)
+        && let Some((type_name, receiver)) =
+            cpp_standard_optional_arrow_member_receiver(expression, byte_offset, local_bindings)
     {
-        return Some((binding.type_name.clone(), binding.receiver));
+        return Some((type_name, receiver));
     }
     if member_operator == "->"
         && let Some(binding_name) = cpp_local_binding_name_from_expression(expression)
@@ -1060,6 +1060,26 @@ fn cpp_standard_optional_dereference_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_prefix('*')?.trim();
     cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
+}
+
+fn cpp_standard_optional_arrow_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    cpp_optional_local_binding_receiver(expression, byte_offset, local_bindings).map(
+        |(type_name, receiver)| {
+            let receiver = match receiver {
+                CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                    CppThisMemberReceiver::Lvalue
+                }
+                CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                    CppThisMemberReceiver::ConstLvalue
+                }
+            };
+            (type_name, receiver)
+        },
+    )
 }
 
 fn cpp_optional_local_binding_receiver(
