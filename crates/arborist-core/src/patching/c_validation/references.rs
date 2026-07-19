@@ -730,31 +730,30 @@ fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
     ["std::unique_ptr", "std::shared_ptr"]
         .into_iter()
         .find_map(|pointer_type| {
-            let contents = type_name
-                .trim()
-                .strip_prefix(pointer_type)?
-                .strip_prefix('<')?;
-            let target_end = matching_angle_bracket_index(contents)?;
-            cpp_first_template_argument(&contents[..target_end])
+            cpp_standard_template_arguments(type_name, pointer_type)
+                .and_then(cpp_first_template_argument)
         })
 }
 
 fn cpp_standard_reference_wrapper_target_type(type_name: &str) -> Option<&str> {
-    let contents = type_name
-        .trim()
-        .strip_prefix("std::reference_wrapper")?
-        .strip_prefix('<')?;
-    let target_end = matching_angle_bracket_index(contents)?;
-    cpp_first_template_argument(&contents[..target_end])
+    cpp_standard_template_arguments(type_name, "std::reference_wrapper")
+        .filter(|arguments| !cpp_template_arguments_have_top_level_comma(arguments))
+        .and_then(cpp_first_template_argument)
 }
 
 fn cpp_standard_optional_target_type(type_name: &str) -> Option<&str> {
-    let contents = type_name
-        .trim()
-        .strip_prefix("std::optional")?
-        .strip_prefix('<')?;
+    cpp_standard_template_arguments(type_name, "std::optional")
+        .filter(|arguments| !cpp_template_arguments_have_top_level_comma(arguments))
+        .and_then(cpp_first_template_argument)
+}
+
+fn cpp_standard_template_arguments<'a>(type_name: &'a str, wrapper: &str) -> Option<&'a str> {
+    let contents = type_name.trim().strip_prefix(wrapper)?.strip_prefix('<')?;
     let target_end = matching_angle_bracket_index(contents)?;
-    cpp_first_template_argument(&contents[..target_end])
+    contents[target_end + 1..]
+        .trim()
+        .is_empty()
+        .then_some(&contents[..target_end])
 }
 
 fn cpp_first_template_argument(arguments: &str) -> Option<&str> {
@@ -770,6 +769,19 @@ fn cpp_first_template_argument(arguments: &str) -> Option<&str> {
         }
     }
     Some(arguments.trim()).filter(|value| !value.is_empty())
+}
+
+fn cpp_template_arguments_have_top_level_comma(arguments: &str) -> bool {
+    let mut depth = 0usize;
+    for character in arguments.chars() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {
@@ -1629,6 +1641,9 @@ mod tests {
             Some("const Counter")
         );
         assert!(cpp_standard_smart_pointer_target_type("std::unique_ptr<>").is_none());
+        assert!(
+            cpp_standard_smart_pointer_target_type("std::shared_ptr<Counter> trailing").is_none()
+        );
     }
 
     #[test]
@@ -1638,6 +1653,10 @@ mod tests {
             Some("const Counter")
         );
         assert!(cpp_standard_reference_wrapper_target_type("std::reference_wrapper<>").is_none());
+        assert!(
+            cpp_standard_reference_wrapper_target_type("std::reference_wrapper<Counter, Tag>")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1647,6 +1666,8 @@ mod tests {
             Some("const Wrapper<Counter, Tag>")
         );
         assert!(cpp_standard_optional_target_type("std::optional<>").is_none());
+        assert!(cpp_standard_optional_target_type("std::optional<Counter> trailing").is_none());
+        assert!(cpp_standard_optional_target_type("std::optional<Counter, Tag>").is_none());
     }
 
     #[test]
