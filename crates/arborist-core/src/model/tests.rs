@@ -2,15 +2,16 @@ use super::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchAstNodeResult, PatchCommitGateReport, PatchTraceValidationResult, PatchValidationReport,
     Position, PositionEdit, QueryCaptureResult, RegisteredSymbolIndex, SemanticSkeleton,
-    SemanticSkeletonSymbol, SymbolIndexStats, SymbolListContextResult,
-    SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult, SymbolListResult,
-    SymbolMeta, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
-    SymbolReadResult, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
-    SymbolSearchMatchDetail, SymbolSearchNeighborhoodContextResult, SymbolSearchResult,
-    SymbolSummary, TraceBackedPatchResult, TraceDirection, TraceEvidenceKeys,
-    TracePatchEvidenceReplayItem, TracePatchEvidenceReplayResult, TraceSymbolGraphResult,
-    TraceSymbolNeighborhoodNode, TraceSymbolNeighborhoodResult, ValidationBindingDecision,
-    VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
+    SemanticSkeletonSymbol, SymbolIndexHealth, SymbolIndexMigrationPlan, SymbolIndexStats,
+    SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
+    SymbolListResult, SymbolMeta, SymbolNeighborhoodContextResult,
+    SymbolReadDiscoveryContextResult, SymbolReadResult, SymbolSearchContextResult,
+    SymbolSearchDiscoveryContextResult, SymbolSearchMatchDetail,
+    SymbolSearchNeighborhoodContextResult, SymbolSearchResult, SymbolSummary,
+    TraceBackedPatchResult, TraceDirection, TraceEvidenceKeys, TracePatchEvidenceReplayItem,
+    TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodNode,
+    TraceSymbolNeighborhoodResult, ValidationBindingDecision, VirtualEditResult,
+    VirtualFileSnapshot, VirtualFileStatus,
 };
 
 #[test]
@@ -29,6 +30,39 @@ fn position_edit_rejects_unknown_fields() {
     .expect_err("position edits should reject unknown fields");
 
     assert!(error.to_string().contains("unknown field `newText`"));
+}
+
+#[test]
+fn symbol_index_health_rejects_required_migration_without_action() {
+    let health = SymbolIndexHealth {
+        response_schema_version: "4".to_string(),
+        db_path: "symbols.db".to_string(),
+        exists: false,
+        ok: false,
+        schema_version: None,
+        expected_schema_version: "4".to_string(),
+        migration: SymbolIndexMigrationPlan {
+            required: true,
+            action: "none".to_string(),
+            reason: "index must be rebuilt".to_string(),
+        },
+        workspace_root: None,
+        indexed_files: None,
+        indexed_symbols: None,
+        file_state_entries: None,
+        fresh_file_count: None,
+        stale_files: Vec::new(),
+        missing_files: Vec::new(),
+        unreadable_files: Vec::new(),
+        unindexed_files: Vec::new(),
+        issues: vec!["symbol index does not exist".to_string()],
+    };
+
+    let error = health
+        .validate_public_output()
+        .expect_err("required migrations must provide a concrete action");
+
+    assert!(error.to_string().contains("migration.required"));
 }
 
 #[test]

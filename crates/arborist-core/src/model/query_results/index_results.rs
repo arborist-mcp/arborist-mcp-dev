@@ -207,6 +207,11 @@ impl SymbolIndexMigrationPlan {
                 "invalid symbol_index_health.migration.required: optional migration must use action `none`"
             );
         }
+        if self.required && self.action == "none" {
+            bail!(
+                "invalid symbol_index_health.migration.required: required migration must use a concrete action"
+            );
+        }
         Ok(())
     }
 }
