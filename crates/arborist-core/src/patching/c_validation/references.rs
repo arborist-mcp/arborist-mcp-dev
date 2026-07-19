@@ -985,7 +985,10 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "."
-        && let Some(pointer_name) = expression.strip_prefix('*').map(str::trim)
+        && let Some(pointer_name) = expression
+            .strip_prefix('*')
+            .map(str::trim)
+            .and_then(cpp_local_binding_name_from_expression)
         && let Some(binding) = cpp_visible_local_binding(pointer_name, byte_offset, local_bindings)
         && binding.access == CppMemberAccess::Pointer
     {

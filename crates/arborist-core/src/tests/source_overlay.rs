@@ -239,9 +239,10 @@ fn traces_cpp_custom_deleter_unique_pointer_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; struct Deleter {}; using Alias = Counter; int caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); } int get_caller(int value) { std::unique_ptr<const Alias, Deleter> current; return current.get()->adjust(value); } }\n";
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; struct Deleter {}; using Alias = Counter; int caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); } int dereference_caller(int value) { std::unique_ptr<Alias, Deleter> current; return (*std::move(current)).adjust(value); } int get_caller(int value) { std::unique_ptr<const Alias, Deleter> current; return current.get()->adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::caller", "api::Counter::adjust(int) &"),
+        ("api::dereference_caller", "api::Counter::adjust(int) &"),
         ("api::get_caller", "api::Counter::adjust(int) const &"),
     ] {
         let trace = trace_symbol_graph_from_index_with_source(
