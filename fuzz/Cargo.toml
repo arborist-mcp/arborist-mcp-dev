@@ -42,3 +42,10 @@ path = "fuzz_targets/workspace_edit_preview.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "symbol_index_inspection"
+path = "fuzz_targets/symbol_index_inspection.rs"
+test = false
+doc = false
+bench = false
