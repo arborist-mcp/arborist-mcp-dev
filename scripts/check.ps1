@@ -220,7 +220,7 @@ function Invoke-GatewaySmokeCheck {
 
 function Invoke-FuzzManifestCheck {
     Write-Host "Checking stable fuzz manifests..."
-    foreach ($target in @("tree_query", "semantic_skeleton", "patch_preview", "workspace_edit_preview", "symbol_index_inspection")) {
+    foreach ($target in @("tree_query", "semantic_skeleton", "patch_preview", "workspace_edit_preview", "symbol_index_inspection", "workspace_edit_json")) {
         Invoke-NativeOrThrow `
             "Checking fuzz target '$target'..." `
             "cargo" `

@@ -11,6 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1.0"
 
 [dependencies.arborist-core]
 path = "../crates/arborist-core"
@@ -46,6 +47,13 @@ bench = false
 [[bin]]
 name = "symbol_index_inspection"
 path = "fuzz_targets/symbol_index_inspection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "workspace_edit_json"
+path = "fuzz_targets/workspace_edit_json.rs"
 test = false
 doc = false
 bench = false

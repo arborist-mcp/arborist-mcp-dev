@@ -56,6 +56,7 @@ version = "0.0.0"
 dependencies = [
  "arborist-core",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]
