@@ -218,6 +218,16 @@ function Invoke-GatewaySmokeCheck {
         @((Join-Path $PSScriptRoot "gateway_smoke.py"), "--python", $Python, "--require-core")
 }
 
+function Invoke-FuzzManifestCheck {
+    Write-Host "Checking stable fuzz manifests..."
+    foreach ($target in @("tree_query", "semantic_skeleton", "patch_preview", "workspace_edit_preview", "symbol_index_inspection")) {
+        Invoke-NativeOrThrow `
+            "Checking fuzz target '$target'..." `
+            "cargo" `
+            @("check", "--manifest-path", "fuzz\Cargo.toml", "--bin", $target)
+    }
+}
+
 function Invoke-CheckProfile {
     param(
         [Parameter(Mandatory = $true)]
@@ -251,6 +261,10 @@ function Invoke-CheckProfile {
             Invoke-NativeOrThrow "Checking Rust formatting..." "cargo" @("fmt", "--check")
             Invoke-ScriptOrThrow "Running Rust tests..." { & (Join-Path $PSScriptRoot "test.ps1") -Python $Python -Suite rust -Quiet }
             Invoke-NativeOrThrow "Running Rust clippy..." "cargo" @("clippy", "--locked", "--all-targets", "--", "-D", "warnings")
+            return
+        }
+        "fuzz-manifest" {
+            Invoke-FuzzManifestCheck
             return
         }
         "suite" {

@@ -48,6 +48,7 @@ class CheckWorkflowTests(unittest.TestCase):
             [
                 "sanity",
                 "rust",
+                "fuzz-manifest",
                 "gateway-fast",
                 "python-fast",
                 "gateway-native",
@@ -68,6 +69,9 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertEqual(profiles["rust"]["handler"], "rust")
         self.assertFalse(profiles["rust"]["needs_python"])
         self.assertTrue(profiles["rust"]["needs_rust"])
+        self.assertEqual(profiles["fuzz-manifest"]["handler"], "fuzz-manifest")
+        self.assertFalse(profiles["fuzz-manifest"]["needs_python"])
+        self.assertTrue(profiles["fuzz-manifest"]["needs_rust"])
         self.assertEqual(profiles["python-fast"]["handler"], "suite")
         self.assertEqual(profiles["python-fast"]["suite"], "python-fast")
         self.assertEqual(profiles["python-fast"]["suite_target_type"], "group")
@@ -95,7 +99,14 @@ class CheckWorkflowTests(unittest.TestCase):
 
         self.assertEqual(
             profiles["full"]["leaf_profiles"],
-            ["sanity", "rust", "gateway-native", "python-discovery", "gateway-smoke"],
+            [
+                "sanity",
+                "rust",
+                "fuzz-manifest",
+                "gateway-native",
+                "python-discovery",
+                "gateway-smoke",
+            ],
         )
         self.assertFalse(profiles["full"]["leaf"])
         self.assertTrue(profiles["full"]["needs_python"])
@@ -137,10 +148,17 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertEqual(plan["profile_names"], ["full", "python-native"])
         self.assertEqual(
             [step["profile"] for step in plan["steps"]],
-            ["sanity", "rust", "gateway-native", "python-discovery", "gateway-smoke"],
+            [
+                "sanity",
+                "rust",
+                "fuzz-manifest",
+                "gateway-native",
+                "python-discovery",
+                "gateway-smoke",
+            ],
         )
-        self.assertEqual(plan["steps"][2]["suite"], "gateway-native")
-        self.assertTrue(plan["steps"][4]["prepare_extension"])
+        self.assertEqual(plan["steps"][3]["suite"], "gateway-native")
+        self.assertTrue(plan["steps"][5]["prepare_extension"])
 
     @unittest.skipUnless(POWERSHELL, "PowerShell is required for check.ps1 contract checks")
     def test_check_script_lists_profiles_from_snapshot(self) -> None:
@@ -181,6 +199,7 @@ class CheckWorkflowTests(unittest.TestCase):
             [
                 "sanity           sanity [python]",
                 "rust             rust [rust]",
+                "fuzz-manifest    fuzz-manifest [rust]",
                 "gateway-native   suite -> gateway-native -> prepare-extension [rust+python]",
                 "python-discovery suite -> python -> prepare-extension [rust+python]",
                 "gateway-smoke    gateway-smoke -> prepare-extension [rust+python]",
