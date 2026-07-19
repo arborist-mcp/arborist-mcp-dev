@@ -3072,13 +3072,14 @@ fn resolves_cpp_temporary_member_calls_to_rvalue_ref_overloads() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n    int adjust(int value) const & { return value + 2; }\n    int adjust(int value) const && { return value + 3; }\n};\nusing Alias = Counter;\nint caller(int value) { return api::Counter{}.adjust(value); }\nint alias_caller(int value) { return Alias{}.adjust(value); }\nint moved_caller(int value) { return std::move(api::Counter{}).adjust(value); }\nint cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); }\nint cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); }\nint cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); }\nint forward_rvalue_caller(int value) { return std::forward<Counter>(Counter{}).adjust(value); }\nint forward_const_lvalue_caller(int value) { return std::forward<Counter const &>(Counter{}).adjust(value); }\nint forward_const_rvalue_caller(int value) { return std::forward<const Counter&&>(Counter{}).adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n    int adjust(int value) const & { return value + 2; }\n    int adjust(int value) const && { return value + 3; }\n};\nusing Alias = Counter;\nusing Second = Alias;\nint caller(int value) { return api::Counter{}.adjust(value); }\nint alias_caller(int value) { return Alias{}.adjust(value); }\nint chained_alias_caller(int value) { return Second{}.adjust(value); }\nint moved_caller(int value) { return std::move(api::Counter{}).adjust(value); }\nint cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); }\nint cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); }\nint cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); }\nint forward_rvalue_caller(int value) { return std::forward<Counter>(Counter{}).adjust(value); }\nint forward_const_lvalue_caller(int value) { return std::forward<Counter const &>(Counter{}).adjust(value); }\nint forward_const_rvalue_caller(int value) { return std::forward<const Counter&&>(Counter{}).adjust(value); }\n}\n",
     )
     .unwrap();
 
     let expected_callees = [
         ("api::caller", "api::Counter::adjust(int) &&"),
         ("api::alias_caller", "api::Counter::adjust(int) &&"),
+        ("api::chained_alias_caller", "api::Counter::adjust(int) &&"),
         ("api::moved_caller", "api::Counter::adjust(int) &&"),
         ("api::cast_rvalue_caller", "api::Counter::adjust(int) &&"),
         (

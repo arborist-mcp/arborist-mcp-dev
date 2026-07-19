@@ -875,7 +875,7 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } int adjust(int value) const & { return value + 2; } int adjust(int value) const && { return value + 3; } }; using Alias = Counter; int caller(int value) { return Counter{}.adjust(value); } int alias_caller(int value) { return Alias{}.adjust(value); } int moved_caller(int value) { return std::move(Counter{}).adjust(value); } int cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); } int cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); } int cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); } int forward_rvalue_caller(int value) { return std::forward<Counter>(Counter{}).adjust(value); } int forward_const_lvalue_caller(int value) { return std::forward<Counter const &>(Counter{}).adjust(value); } int forward_const_rvalue_caller(int value) { return std::forward<const Counter&&>(Counter{}).adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } int adjust(int value) const & { return value + 2; } int adjust(int value) const && { return value + 3; } }; using Alias = Counter; using Second = Alias; int caller(int value) { return Counter{}.adjust(value); } int alias_caller(int value) { return Alias{}.adjust(value); } int chained_alias_caller(int value) { return Second{}.adjust(value); } int moved_caller(int value) { return std::move(Counter{}).adjust(value); } int cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); } int cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); } int cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); } int forward_rvalue_caller(int value) { return std::forward<Counter>(Counter{}).adjust(value); } int forward_const_lvalue_caller(int value) { return std::forward<Counter const &>(Counter{}).adjust(value); } int forward_const_rvalue_caller(int value) { return std::forward<const Counter&&>(Counter{}).adjust(value); } }\n",
         ),
     )
     .unwrap();
@@ -883,6 +883,7 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
     for (caller, expected_callee) in [
         ("api::caller", "api::Counter::adjust(int) &&"),
         ("api::alias_caller", "api::Counter::adjust(int) &&"),
+        ("api::chained_alias_caller", "api::Counter::adjust(int) &&"),
         ("api::moved_caller", "api::Counter::adjust(int) &&"),
         ("api::cast_rvalue_caller", "api::Counter::adjust(int) &&"),
         (
