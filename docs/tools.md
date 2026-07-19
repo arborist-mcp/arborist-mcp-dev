@@ -79,6 +79,8 @@ temporary is wrapped in `std::move` or an explicit `static_cast<T&&>`. A
 `static_cast<const T&>` or `static_cast<const T&&>` temporary selects matching
 const-qualified member overloads; `std::forward<T>` follows its template
 argument's value category and const qualification.
+Type aliases are expanded for direct temporary member calls, so `using Alias =
+api::Counter; Alias{}.adjust(value)` resolves against `api::Counter` overloads.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
