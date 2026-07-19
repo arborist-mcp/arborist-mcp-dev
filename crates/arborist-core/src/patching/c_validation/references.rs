@@ -913,6 +913,14 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((binding.type_name.clone(), binding.receiver));
     }
+    if member_operator == "->"
+        && let Some(binding_name) = cpp_addressof_local_binding_name(expression)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Object
+        && binding.standard_unwrap.is_none()
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
         if binding.standard_unwrap == Some(CppStandardUnwrap::ReferenceWrapper) {
             return None;
@@ -1001,6 +1009,13 @@ fn cpp_local_binding_name_from_expression(expression: &str) -> Option<&str> {
             cpp_typed_receiver_call(expression, "std::forward")
                 .and_then(|(_, argument)| cpp_local_binding_name_from_expression(argument))
         })
+}
+
+fn cpp_addressof_local_binding_name(expression: &str) -> Option<&str> {
+    cpp_receiver_call_argument(expression, "std::addressof").filter(|argument| {
+        let argument = strip_cpp_outer_parentheses(argument.trim());
+        is_cpp_identifier(argument)
+    })
 }
 
 fn cpp_visible_local_binding<'a>(
