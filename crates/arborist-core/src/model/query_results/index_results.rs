@@ -93,6 +93,19 @@ impl SymbolIndexHealth {
                 "invalid symbol_index_health.migration: healthy indexes must not require migration"
             );
         }
+        if self.ok
+            && (self.schema_version.as_deref() != Some(&self.expected_schema_version)
+                || self.workspace_root.is_none()
+                || self.indexed_files.is_none()
+                || self.indexed_symbols.is_none()
+                || self.file_state_entries.is_none()
+                || self.fresh_file_count.is_none()
+                || self.migration.action != "none")
+        {
+            bail!(
+                "invalid symbol_index_health: healthy indexes must report a complete current inspection"
+            );
+        }
         if !self.ok && self.issues.is_empty() {
             bail!(
                 "invalid symbol_index_health.issues: expected unhealthy indexes to report issues"

@@ -99,6 +99,39 @@ fn symbol_index_health_rejects_non_rebuild_action_for_missing_index() {
 }
 
 #[test]
+fn symbol_index_health_rejects_incomplete_healthy_inspection() {
+    let health = SymbolIndexHealth {
+        response_schema_version: "4".to_string(),
+        db_path: "symbols.db".to_string(),
+        exists: true,
+        ok: true,
+        schema_version: Some("4".to_string()),
+        expected_schema_version: "4".to_string(),
+        migration: SymbolIndexMigrationPlan {
+            required: false,
+            action: "none".to_string(),
+            reason: "index schema and persisted file fingerprints are current".to_string(),
+        },
+        workspace_root: Some("workspace".to_string()),
+        indexed_files: Some(1),
+        indexed_symbols: Some(1),
+        file_state_entries: Some(1),
+        fresh_file_count: None,
+        stale_files: Vec::new(),
+        missing_files: Vec::new(),
+        unreadable_files: Vec::new(),
+        unindexed_files: Vec::new(),
+        issues: Vec::new(),
+    };
+
+    let error = health
+        .validate_public_output()
+        .expect_err("healthy indexes must include a complete inspection snapshot");
+
+    assert!(error.to_string().contains("complete current inspection"));
+}
+
+#[test]
 fn patch_result_rejects_unknown_nested_fields() {
     let error = serde_json::from_str::<PatchAstNodeResult>(
         r#"{
