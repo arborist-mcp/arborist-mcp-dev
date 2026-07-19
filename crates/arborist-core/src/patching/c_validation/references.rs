@@ -561,6 +561,9 @@ fn cpp_parameter_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
         if candidate.kind() == "function_definition" {
             return candidate.child_by_field_name("body");
         }
+        if matches!(candidate.kind(), "declaration" | "field_declaration") {
+            return None;
+        }
         current = candidate.parent();
     }
     None
@@ -1070,6 +1073,20 @@ mod tests {
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn ignores_parameters_of_local_function_prototypes() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } }; int caller(int value) { int declared(Counter current); return current.adjust(value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert!(!arities.keys().any(|name| {
+            name.contains("Counter::adjust")
+                && name.starts_with(CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX)
+        }));
     }
 
     #[test]
