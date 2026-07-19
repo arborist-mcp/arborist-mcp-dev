@@ -593,10 +593,16 @@ fn cpp_binding_type(
 }
 
 fn cpp_pointer_declarator_suffix(type_suffix: &str) -> bool {
-    matches!(
-        type_suffix.strip_prefix('*'),
-        Some("" | "const" | "volatile" | "constvolatile" | "volatileconst")
-    )
+    let Some(type_suffix) = type_suffix.strip_prefix('*') else {
+        return false;
+    };
+    let qualifiers = type_suffix.trim_end_matches('&');
+    let reference_count = type_suffix.len().saturating_sub(qualifiers.len());
+    matches!(reference_count, 0..=2)
+        && matches!(
+            qualifiers,
+            "" | "const" | "volatile" | "constvolatile" | "volatileconst"
+        )
 }
 
 fn cpp_named_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {
@@ -843,12 +849,7 @@ fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
 }
 
 fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
-    let path = type_name
-        .split_whitespace()
-        .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
-        .collect::<String>();
-    let path = path.trim_end_matches('*').trim_end_matches('&');
-    (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
+    cpp_temporary_type_path(type_name.split_once('*')?.0)
 }
 
 fn matching_opening_delimiter_index(
