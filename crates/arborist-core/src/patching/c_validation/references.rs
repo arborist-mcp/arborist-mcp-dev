@@ -927,11 +927,10 @@ fn cpp_local_member_receiver_from_expression(
         return Some((binding.type_name.clone(), binding.receiver));
     }
     if member_operator == "."
-        && let Some(binding_name) = cpp_standard_optional_value_receiver(expression)
-        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
-        && binding.standard_unwrap == Some(CppStandardUnwrap::Optional)
+        && let Some((type_name, receiver)) =
+            cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
     {
-        return Some((binding.type_name.clone(), binding.receiver));
+        return Some((type_name, receiver));
     }
     if member_operator == "->"
         && let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
@@ -1027,9 +1026,54 @@ fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
     cpp_local_binding_name_from_expression(receiver)
 }
 
-fn cpp_standard_optional_value_receiver(expression: &str) -> Option<&str> {
+fn cpp_standard_optional_value_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".value()")?.trim();
-    is_cpp_identifier(receiver).then_some(receiver)
+    cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
+}
+
+fn cpp_optional_local_binding_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
+        && binding.standard_unwrap == Some(CppStandardUnwrap::Optional)
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_optional_local_binding_receiver(argument, byte_offset, local_bindings).map(
+            |(type_name, receiver)| {
+                let receiver = match receiver {
+                    CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                        CppThisMemberReceiver::Rvalue
+                    }
+                    CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                        CppThisMemberReceiver::ConstRvalue
+                    }
+                };
+                (type_name, receiver)
+            },
+        );
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        return cpp_optional_local_binding_receiver(argument, byte_offset, local_bindings)
+            .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        let (target_type, _) =
+            cpp_optional_local_binding_receiver(argument, byte_offset, local_bindings)?;
+        return Some((
+            target_type,
+            cpp_this_receiver_for_type(type_name, Some(true))?,
+        ));
+    }
+    None
 }
 
 fn cpp_local_binding_name_from_expression(expression: &str) -> Option<&str> {
