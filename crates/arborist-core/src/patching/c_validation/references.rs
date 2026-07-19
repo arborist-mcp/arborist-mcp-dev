@@ -429,33 +429,41 @@ fn cpp_temporary_member_receiver_type(
 
 fn collect_cpp_local_bindings(node: Node<'_>, source: &str) -> Vec<CppLocalBinding> {
     let mut bindings = Vec::new();
-    let mut callback = |candidate: Node<'_>| {
-        if candidate.kind() == "declaration"
-            && let Some(binding) = cpp_local_binding(candidate, source)
-        {
-            bindings.push(binding);
+    let mut callback = |candidate: Node<'_>| match candidate.kind() {
+        "declaration" => {
+            if let Some(binding) = cpp_local_binding(candidate, source) {
+                bindings.push(binding);
+            }
         }
+        "parameter_declaration" | "optional_parameter_declaration" => {
+            if let Some(binding) = cpp_parameter_binding(candidate, source) {
+                bindings.push(binding);
+            }
+        }
+        _ => {}
     };
     visit_tree(node, &mut callback);
     bindings
 }
 
 fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBinding> {
+    let scope = cpp_local_binding_scope(declaration)?;
+    cpp_object_binding(declaration, source, scope)
+}
+
+fn cpp_parameter_binding(parameter: Node<'_>, source: &str) -> Option<CppLocalBinding> {
+    let scope = cpp_parameter_binding_scope(parameter)?;
+    cpp_object_binding(parameter, source, scope)
+}
+
+fn cpp_object_binding(
+    declaration: Node<'_>,
+    source: &str,
+    scope: Node<'_>,
+) -> Option<CppLocalBinding> {
     let type_node = declaration.child_by_field_name("type")?;
-    let mut cursor = declaration.walk();
-    let mut declarators = declaration.children_by_field_name("declarator", &mut cursor);
-    let declarator = declarators.next()?;
-    if declarators.next().is_some() {
-        return None;
-    }
-    let identifier = match declarator.kind() {
-        "identifier" => declarator,
-        "init_declarator" => declarator.child_by_field_name("declarator")?,
-        _ => return None,
-    };
-    if identifier.kind() != "identifier" {
-        return None;
-    }
+    let declarator = cpp_single_declarator(declaration)?;
+    let identifier = cpp_declarator_identifier(declarator)?;
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     if !type_prefix
@@ -464,7 +472,7 @@ fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBind
     {
         return None;
     }
-    let type_suffix = source[type_node.end_byte()..declarator.start_byte()].trim();
+    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
     if !type_suffix
         .chars()
         .all(|character| character.is_whitespace() || matches!(character, '&'))
@@ -477,7 +485,6 @@ fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBind
     );
     let receiver = cpp_this_receiver_for_type(&type_name, Some(false))?;
     let type_name = cpp_temporary_type_path(&type_name)?;
-    let scope = cpp_local_binding_scope(declaration)?;
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
@@ -486,6 +493,25 @@ fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBind
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
+}
+
+fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {
+    let mut cursor = declaration.walk();
+    let mut declarators = declaration.children_by_field_name("declarator", &mut cursor);
+    let declarator = declarators.next()?;
+    (declarators.next().is_none()).then_some(declarator)
+}
+
+fn cpp_declarator_identifier(declarator: Node<'_>) -> Option<Node<'_>> {
+    if declarator.kind() == "identifier" {
+        return Some(declarator);
+    }
+    let mut cursor = declarator.walk();
+    let mut identifiers = declarator
+        .named_children(&mut cursor)
+        .filter_map(cpp_declarator_identifier);
+    let identifier = identifiers.next()?;
+    (identifiers.next().is_none()).then_some(identifier)
 }
 
 fn cpp_local_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
@@ -500,6 +526,20 @@ fn cpp_local_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
                 | "while_statement"
         ) {
             return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn cpp_parameter_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "lambda_expression" {
+            return Some(candidate);
+        }
+        if candidate.kind() == "function_definition" {
+            return candidate.child_by_field_name("body");
         }
         current = candidate.parent();
     }

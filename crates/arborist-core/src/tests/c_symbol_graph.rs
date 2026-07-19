@@ -3179,6 +3179,54 @@ fn resolves_cpp_local_variable_member_calls_across_live_and_persisted_queries() 
 }
 
 #[test]
+fn resolves_cpp_parameter_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("parameter_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint lvalue_caller(Alias& current, int value) { return current.adjust(value); }\nint const_lvalue_caller(const Alias& current, int value) { return current.adjust(value); }\nint moved_caller(Alias& current, int value) { return std::move(current).adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::lvalue_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::moved_caller", "api::Counter::adjust(int) &&"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn indexes_cpp_operator_methods() {
     let source = r#"
 namespace math {
