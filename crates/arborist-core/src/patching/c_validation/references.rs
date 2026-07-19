@@ -626,28 +626,51 @@ fn cpp_binding_type(
         return None;
     }
     let compact_type_suffix = compact_cpp_expression(type_suffix);
-    let access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
+    let declared_access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Pointer
     } else if cpp_object_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Object
     } else {
         return None;
     };
-    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
-    let type_name = format!(
-        "{type_qualifiers} {} {type_suffix}",
-        node_text(type_node, source).ok()?.trim()
-    );
-    let receiver = match access {
-        CppMemberAccess::Object => cpp_named_binding_receiver_for_type(&type_name)?,
-        CppMemberAccess::Pointer => cpp_pointer_binding_receiver_for_type(&type_name)?,
+    let declared_type = node_text(type_node, source).ok()?.trim();
+    let smart_pointer_target = cpp_standard_smart_pointer_target_type(declared_type);
+    let access = if smart_pointer_target.is_some() {
+        CppMemberAccess::Pointer
+    } else {
+        declared_access
     };
-    let type_name = match access {
-        CppMemberAccess::Object => cpp_temporary_type_path(&type_name)?,
-        CppMemberAccess::Pointer => cpp_pointer_target_path(&type_name)?,
+    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    let type_name = format!("{type_qualifiers} {} {type_suffix}", declared_type);
+    let receiver = match (access, smart_pointer_target) {
+        (CppMemberAccess::Object, _) => cpp_named_binding_receiver_for_type(&type_name)?,
+        (CppMemberAccess::Pointer, Some(target)) => {
+            cpp_this_receiver_for_type(target, Some(false))?
+        }
+        (CppMemberAccess::Pointer, None) => cpp_pointer_binding_receiver_for_type(&type_name)?,
+    };
+    let type_name = match (access, smart_pointer_target) {
+        (CppMemberAccess::Object, _) => cpp_temporary_type_path(&type_name)?,
+        (CppMemberAccess::Pointer, Some(target)) => cpp_temporary_type_path(target)?,
+        (CppMemberAccess::Pointer, None) => cpp_pointer_target_path(&type_name)?,
     };
 
     Some((type_name, receiver, access))
+}
+
+fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
+    ["std::unique_ptr", "std::shared_ptr"]
+        .into_iter()
+        .find_map(|pointer_type| {
+            let contents = type_name
+                .trim()
+                .strip_prefix(pointer_type)?
+                .strip_prefix('<')?;
+            let target_end = matching_angle_bracket_index(contents)?;
+            (contents[target_end + 1..].trim().is_empty())
+                .then(|| contents[..target_end].trim())
+                .filter(|target| !target.is_empty())
+        })
 }
 
 fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {
