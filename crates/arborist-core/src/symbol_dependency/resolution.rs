@@ -311,6 +311,15 @@ fn resolve_reference_path(
                 );
                 (!candidates.is_empty()).then_some(candidates)
             })
+            .or_else(|| {
+                cpp_type_alias_member_candidates(
+                    lookup_name,
+                    source_symbol,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                )
+            })
             .map(|candidates| (candidates, false))
             .unwrap_or_default()
     } else if scoped_cpp_direct_call {
@@ -473,6 +482,36 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+fn cpp_type_alias_member_candidates(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Option<Vec<usize>> {
+    let (alias_name, member_name) = reference_name.rsplit_once("::")?;
+    let alias_indexes =
+        cpp_qualified_reference_path_groups(alias_name, source_symbol, raw_symbols, file_overrides)
+            .into_iter()
+            .flat_map(|paths| {
+                symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index)
+            })
+            .collect::<Vec<_>>();
+    let member_paths = cpp_type_alias_target_indexes(
+        &alias_indexes,
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+    )
+    .into_iter()
+    .map(|index| format!("{}::{member_name}", raw_symbols[index].semantic_path))
+    .collect::<Vec<_>>();
+    let candidates =
+        symbol_indexes_for_paths_with_template_fallback(&member_paths, semantic_path_index);
+    (!candidates.is_empty()).then_some(candidates)
 }
 
 fn cpp_constructor_path(type_path: &str) -> Option<String> {
