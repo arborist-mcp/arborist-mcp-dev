@@ -15,8 +15,9 @@ completed item can land in its own commit unless two changes are inseparable.
   with public bindings colocated by VFS, index, patch, validation, source-query,
   and symbol-query domains.
 - The remaining strategic gaps are deeper Rust module splits, fuller C++
-  language-aware resolution, fuzz/property tests, and cancellation that can
-  interrupt individual native parse or query operations.
+  language-aware resolution, property testing beyond the existing fuzz targets,
+  and cancellation that can interrupt individual native parse or query
+  operations.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -180,8 +181,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add generated invariant coverage for path normalization, byte/position
   conversion, edit ordering, and VFS commit/discard idempotence, including
   multi-byte edit cases.
-- [ ] Add fuzz targets for JSON request validation, Tree-sitter query limits,
-  patch replacement boundaries, and persisted-index loading.
+- [x] Add fuzz targets for JSON request validation, Tree-sitter query limits,
+  patch replacement boundaries, and persisted-index loading; type-check every
+  fuzz manifest in the full local validation profile.
 - [x] Add benchmark regression thresholds once local benchmark variance is
   understood.
 - [x] Add cross-platform smoke coverage for repo-root gateway startup and
