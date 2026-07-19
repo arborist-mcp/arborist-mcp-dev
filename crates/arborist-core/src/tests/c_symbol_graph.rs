@@ -3194,12 +3194,13 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nAlias make_counter() { return Alias{}; }\nint lvalue_caller(int value) { auto current = Alias{}; return current.adjust(value); }\nint const_lvalue_caller(int value) { const auto current = Alias{}; return current.adjust(value); }\nint const_reference_caller(int value) { const auto& current = Alias{}; return current.adjust(value); }\nint rvalue_reference_caller(int value) { auto&& current = Alias{}; return current.adjust(value); }\nint factory_caller(int value) { auto current = make_counter(); return current.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nAlias make_counter() { return Alias{}; }\nint lvalue_caller(int value) { auto current = Alias{}; return current.adjust(value); }\nint direct_list_caller(int value) { auto current{Alias{}}; return current.adjust(value); }\nint const_lvalue_caller(int value) { const auto current = Alias{}; return current.adjust(value); }\nint const_reference_caller(int value) { const auto& current = Alias{}; return current.adjust(value); }\nint rvalue_reference_caller(int value) { auto&& current = Alias{}; return current.adjust(value); }\nint factory_caller(int value) { auto current = make_counter(); return current.adjust(value); }\n}\n",
     )
     .unwrap();
 
     let expected_callees = [
         ("api::lvalue_caller", "api::Counter::adjust(int) &"),
+        ("api::direct_list_caller", "api::Counter::adjust(int) &"),
         (
             "api::const_lvalue_caller",
             "api::Counter::adjust(int) const &",

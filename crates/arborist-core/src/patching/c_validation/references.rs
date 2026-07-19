@@ -540,7 +540,7 @@ fn cpp_auto_constructor_binding_type(
         return None;
     }
     let initializer = declarator.child_by_field_name("value")?;
-    let initializer_text = node_text(initializer, source).ok()?.trim();
+    let initializer_text = cpp_auto_constructor_initializer_text(initializer, source)?;
     if !initializer_text.ends_with('}') {
         return None;
     }
@@ -550,6 +550,19 @@ fn cpp_auto_constructor_binding_type(
         cpp_this_receiver_for_type(&format!("{type_qualifiers} {type_name}"), Some(false))?;
 
     Some((type_name, receiver, CppMemberAccess::Object))
+}
+
+fn cpp_auto_constructor_initializer_text<'a>(
+    initializer: Node<'_>,
+    source: &'a str,
+) -> Option<&'a str> {
+    if initializer.kind() != "initializer_list" {
+        return node_text(initializer, source).ok().map(str::trim);
+    }
+    let mut cursor = initializer.walk();
+    let mut values = initializer.named_children(&mut cursor);
+    let value = values.next()?;
+    (values.next().is_none()).then(|| node_text(value, source).ok().map(str::trim))?
 }
 
 fn cpp_binding_type(
