@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -147,29 +149,20 @@ impl SymbolIndexHealth {
                 );
             }
         }
-        for (index, file_path) in self.stale_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.stale_files[{index}]"),
-            )?;
-        }
-        for (index, file_path) in self.missing_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.missing_files[{index}]"),
-            )?;
-        }
-        for (index, file_path) in self.unreadable_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.unreadable_files[{index}]"),
-            )?;
-        }
-        for (index, file_path) in self.unindexed_files.iter().enumerate() {
-            ensure_nonblank(
-                file_path,
-                &format!("symbol_index_health.unindexed_files[{index}]"),
-            )?;
+        let mut freshness_file_paths = BTreeSet::new();
+        for (field, file_paths) in [
+            ("stale_files", &self.stale_files),
+            ("missing_files", &self.missing_files),
+            ("unreadable_files", &self.unreadable_files),
+            ("unindexed_files", &self.unindexed_files),
+        ] {
+            for (index, file_path) in file_paths.iter().enumerate() {
+                let path_field = format!("symbol_index_health.{field}[{index}]");
+                ensure_nonblank(file_path, &path_field)?;
+                if !freshness_file_paths.insert(file_path) {
+                    bail!("invalid {path_field}: duplicate freshness file paths are not allowed");
+                }
+            }
         }
         for (index, issue) in self.issues.iter().enumerate() {
             ensure_nonblank(issue, &format!("symbol_index_health.issues[{index}]"))?;

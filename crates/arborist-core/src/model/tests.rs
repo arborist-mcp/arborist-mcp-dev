@@ -132,6 +132,39 @@ fn symbol_index_health_rejects_incomplete_healthy_inspection() {
 }
 
 #[test]
+fn symbol_index_health_rejects_duplicate_freshness_file_paths() {
+    let health = SymbolIndexHealth {
+        response_schema_version: "4".to_string(),
+        db_path: "symbols.db".to_string(),
+        exists: true,
+        ok: false,
+        schema_version: Some("4".to_string()),
+        expected_schema_version: "4".to_string(),
+        migration: SymbolIndexMigrationPlan {
+            required: true,
+            action: "rebuild".to_string(),
+            reason: "index health checks failed".to_string(),
+        },
+        workspace_root: Some("workspace".to_string()),
+        indexed_files: Some(1),
+        indexed_symbols: Some(1),
+        file_state_entries: Some(2),
+        fresh_file_count: Some(0),
+        stale_files: vec!["workspace/helper.py".to_string()],
+        missing_files: vec!["workspace/helper.py".to_string()],
+        unreadable_files: Vec::new(),
+        unindexed_files: Vec::new(),
+        issues: vec!["indexed file is stale".to_string()],
+    };
+
+    let error = health
+        .validate_public_output()
+        .expect_err("freshness categories must not overlap");
+
+    assert!(error.to_string().contains("duplicate freshness file paths"));
+}
+
+#[test]
 fn patch_result_rejects_unknown_nested_fields() {
     let error = serde_json::from_str::<PatchAstNodeResult>(
         r#"{
