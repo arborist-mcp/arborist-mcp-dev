@@ -1,0 +1,23 @@
+[package]
+name = "arborist-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.arborist-core]
+path = "../crates/arborist-core"
+
+[[bin]]
+name = "tree_query"
+path = "fuzz_targets/tree_query.rs"
+test = false
+doc = false
+bench = false
