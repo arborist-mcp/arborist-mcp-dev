@@ -21,11 +21,18 @@ enum CppThisMemberReceiver {
     ConstRvalue,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CppMemberAccess {
+    Object,
+    Pointer,
+}
+
 #[derive(Clone)]
 struct CppLocalBinding {
     name: String,
     type_name: String,
     receiver: CppThisMemberReceiver,
+    access: CppMemberAccess,
     declaration_start: usize,
     scope_range: (usize, usize),
 }
@@ -333,6 +340,10 @@ fn direct_cpp_call_name(
     let Some(field) = function.child_by_field_name("field") else {
         return Ok(None);
     };
+    let Some(operator) = function.child_by_field_name("operator") else {
+        return Ok(None);
+    };
+    let member_operator = node_text(operator, source)?.trim();
     let Some(name) = cpp_member_call_name(field, source)? else {
         return Ok(None);
     };
@@ -345,7 +356,7 @@ fn direct_cpp_call_name(
         )));
     }
     if let Some((type_name, receiver)) =
-        cpp_local_member_receiver_type(argument, source, local_bindings)?
+        cpp_local_member_receiver_type(argument, source, local_bindings, member_operator)?
     {
         return Ok(Some(encode_cpp_local_member_call_name(
             type_name, name, receiver,
@@ -473,23 +484,32 @@ fn cpp_object_binding(
         return None;
     }
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    if !type_suffix
+    let compact_type_suffix = compact_cpp_expression(type_suffix);
+    let access = if compact_type_suffix == "*" {
+        CppMemberAccess::Pointer
+    } else if compact_type_suffix
         .chars()
-        .all(|character| character.is_whitespace() || matches!(character, '&'))
+        .all(|character| character == '&')
     {
+        CppMemberAccess::Object
+    } else {
         return None;
-    }
+    };
     let type_name = format!(
         "{type_prefix} {} {type_suffix}",
         node_text(type_node, source).ok()?.trim()
     );
     let receiver = cpp_this_receiver_for_type(&type_name, Some(false))?;
-    let type_name = cpp_temporary_type_path(&type_name)?;
+    let type_name = match access {
+        CppMemberAccess::Object => cpp_temporary_type_path(&type_name)?,
+        CppMemberAccess::Pointer => cpp_pointer_target_path(&type_name)?,
+    };
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
         type_name,
         receiver,
+        access,
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
@@ -550,12 +570,14 @@ fn cpp_local_member_receiver_type(
     argument: Node<'_>,
     source: &str,
     local_bindings: &[CppLocalBinding],
+    member_operator: &str,
 ) -> Result<Option<(String, CppThisMemberReceiver)>> {
     let receiver = strip_cpp_outer_parentheses(node_text(argument, source)?.trim());
     Ok(cpp_local_member_receiver_from_expression(
         receiver,
         argument.start_byte(),
         local_bindings,
+        member_operator,
     ))
 }
 
@@ -563,32 +585,58 @@ fn cpp_local_member_receiver_from_expression(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
+    member_operator: &str,
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
+        let expected_operator = match binding.access {
+            CppMemberAccess::Object => ".",
+            CppMemberAccess::Pointer => "->",
+        };
+        if member_operator != expected_operator {
+            return None;
+        }
         return Some((binding.type_name.clone(), binding.receiver));
     }
+    if member_operator != "." {
+        return None;
+    }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
-        return cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)
-            .map(|(type_name, receiver)| {
-                let receiver = match receiver {
-                    CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
-                        CppThisMemberReceiver::Rvalue
-                    }
-                    CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-                        CppThisMemberReceiver::ConstRvalue
-                    }
-                };
-                (type_name, receiver)
-            });
+        return cpp_local_member_receiver_from_expression(
+            argument,
+            byte_offset,
+            local_bindings,
+            member_operator,
+        )
+        .map(|(type_name, receiver)| {
+            let receiver = match receiver {
+                CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                    CppThisMemberReceiver::Rvalue
+                }
+                CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                    CppThisMemberReceiver::ConstRvalue
+                }
+            };
+            (type_name, receiver)
+        });
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
-        return cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)
-            .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
+        return cpp_local_member_receiver_from_expression(
+            argument,
+            byte_offset,
+            local_bindings,
+            member_operator,
+        )
+        .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
     }
     for function_name in ["static_cast", "std::forward"] {
         if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, function_name) {
-            cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)?;
+            cpp_local_member_receiver_from_expression(
+                argument,
+                byte_offset,
+                local_bindings,
+                member_operator,
+            )?;
             return Some((
                 cpp_temporary_type_path(type_name)?,
                 cpp_this_receiver_for_type(type_name, Some(true))?,
@@ -683,6 +731,15 @@ fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
         .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
         .collect::<String>();
     let path = path.trim_end_matches('&');
+    (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
+}
+
+fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
+    let path = type_name
+        .split_whitespace()
+        .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
+        .collect::<String>();
+    let path = path.trim_end_matches('*').trim_end_matches('&');
     (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
 }
 
@@ -987,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn collects_this_member_call_arities_without_inferring_other_objects() {
+    fn collects_this_and_typed_pointer_member_call_arities() {
         let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + (*this).adjust(1, 2) + other->adjust(1, 2, 3); } };";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
@@ -996,7 +1053,15 @@ mod tests {
 
         assert_eq!(
             arities,
-            BTreeMap::from([("adjust".to_string(), BTreeSet::from([1, 2]))])
+            BTreeMap::from([
+                ("adjust".to_string(), BTreeSet::from([1, 2])),
+                (
+                    format!(
+                        "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+                    ),
+                    BTreeSet::from([3]),
+                ),
+            ])
         );
     }
 
