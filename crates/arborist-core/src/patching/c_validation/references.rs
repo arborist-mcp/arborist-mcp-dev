@@ -913,14 +913,19 @@ fn cpp_local_member_receiver_from_expression(
 
 fn cpp_standard_smart_pointer_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
-    if is_cpp_identifier(receiver) {
-        return Some(receiver);
+    cpp_standard_smart_pointer_binding_name(receiver)
+}
+
+fn cpp_standard_smart_pointer_binding_name(expression: &str) -> Option<&str> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if is_cpp_identifier(expression) {
+        return Some(expression);
     }
     ["std::move", "std::as_const"]
         .into_iter()
         .find_map(|wrapper| {
-            cpp_receiver_call_argument(receiver, wrapper)
-                .filter(|argument| is_cpp_identifier(argument))
+            cpp_receiver_call_argument(expression, wrapper)
+                .and_then(cpp_standard_smart_pointer_binding_name)
         })
 }
 
