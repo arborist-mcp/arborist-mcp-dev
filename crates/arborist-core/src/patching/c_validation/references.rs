@@ -580,13 +580,18 @@ fn cpp_binding_type(
         "{type_prefix} {} {type_suffix}",
         node_text(type_node, source).ok()?.trim()
     );
-    let receiver = cpp_this_receiver_for_type(&type_name, Some(false))?;
+    let receiver = cpp_named_binding_receiver_for_type(&type_name)?;
     let type_name = match access {
         CppMemberAccess::Object => cpp_temporary_type_path(&type_name)?,
         CppMemberAccess::Pointer => cpp_pointer_target_path(&type_name)?,
     };
 
     Some((type_name, receiver, access))
+}
+
+fn cpp_named_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {
+    let type_name = type_name.trim_end().trim_end_matches('&').trim_end();
+    cpp_this_receiver_for_type(type_name, Some(false))
 }
 
 fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {

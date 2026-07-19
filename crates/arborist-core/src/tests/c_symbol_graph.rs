@@ -3331,7 +3331,7 @@ fn resolves_cpp_parameter_member_calls_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint lvalue_caller(Alias& current, int value) { return current.adjust(value); }\nint const_lvalue_caller(const Alias& current, int value) { return current.adjust(value); }\nint moved_caller(Alias& current, int value) { return std::move(current).adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint lvalue_caller(Alias& current, int value) { return current.adjust(value); }\nint const_lvalue_caller(const Alias& current, int value) { return current.adjust(value); }\nint rvalue_reference_caller(Alias&& current, int value) { return current.adjust(value); }\nint moved_rvalue_reference_caller(Alias&& current, int value) { return std::move(current).adjust(value); }\nint moved_caller(Alias& current, int value) { return std::move(current).adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3340,6 +3340,14 @@ fn resolves_cpp_parameter_member_calls_across_live_and_persisted_queries() {
         (
             "api::const_lvalue_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::rvalue_reference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::moved_rvalue_reference_caller",
+            "api::Counter::adjust(int) &&",
         ),
         ("api::moved_caller", "api::Counter::adjust(int) &&"),
     ];
