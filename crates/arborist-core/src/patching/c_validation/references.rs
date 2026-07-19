@@ -566,7 +566,7 @@ fn cpp_binding_type(
         return None;
     }
     let compact_type_suffix = compact_cpp_expression(type_suffix);
-    let access = if compact_type_suffix == "*" {
+    let access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Pointer
     } else if compact_type_suffix
         .chars()
@@ -580,7 +580,10 @@ fn cpp_binding_type(
         "{type_prefix} {} {type_suffix}",
         node_text(type_node, source).ok()?.trim()
     );
-    let receiver = cpp_named_binding_receiver_for_type(&type_name)?;
+    let receiver = match access {
+        CppMemberAccess::Object => cpp_named_binding_receiver_for_type(&type_name)?,
+        CppMemberAccess::Pointer => cpp_pointer_binding_receiver_for_type(&type_name)?,
+    };
     let type_name = match access {
         CppMemberAccess::Object => cpp_temporary_type_path(&type_name)?,
         CppMemberAccess::Pointer => cpp_pointer_target_path(&type_name)?,
@@ -589,9 +592,21 @@ fn cpp_binding_type(
     Some((type_name, receiver, access))
 }
 
+fn cpp_pointer_declarator_suffix(type_suffix: &str) -> bool {
+    matches!(
+        type_suffix.strip_prefix('*'),
+        Some("" | "const" | "volatile" | "constvolatile" | "volatileconst")
+    )
+}
+
 fn cpp_named_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {
     let type_name = type_name.trim_end().trim_end_matches('&').trim_end();
     cpp_this_receiver_for_type(type_name, Some(false))
+}
+
+fn cpp_pointer_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {
+    let pointee_type = type_name.split_once('*')?.0.trim();
+    cpp_this_receiver_for_type(pointee_type, Some(false))
 }
 
 fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {
