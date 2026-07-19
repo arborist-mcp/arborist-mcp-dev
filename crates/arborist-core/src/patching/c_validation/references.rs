@@ -872,11 +872,11 @@ fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppTh
 }
 
 fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
+    let type_name = type_name.trim_end().trim_end_matches('&').trim_end();
     let path = type_name
         .split_whitespace()
         .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
         .collect::<String>();
-    let path = path.trim_end_matches('&');
     (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
 }
 
