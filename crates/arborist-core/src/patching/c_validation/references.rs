@@ -23,13 +23,19 @@ enum CppMemberAccess {
     Pointer,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CppStandardUnwrap {
+    SmartPointer,
+    ReferenceWrapper,
+}
+
 #[derive(Clone)]
 struct CppLocalBinding {
     name: String,
     type_name: String,
     receiver: CppThisMemberReceiver,
     access: CppMemberAccess,
-    standard_smart_pointer: bool,
+    standard_unwrap: Option<CppStandardUnwrap>,
     declaration_start: usize,
     scope_range: (usize, usize),
 }
@@ -494,7 +500,7 @@ fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBi
     let identifier = cpp_declarator_identifier(declarator)?;
     let type_prefix = cpp_range_for_type_prefix(loop_node, source)?;
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access, standard_smart_pointer) =
+    let (type_name, receiver, access, standard_unwrap) =
         cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
 
     Some(CppLocalBinding {
@@ -502,7 +508,7 @@ fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBi
         type_name,
         receiver,
         access,
-        standard_smart_pointer,
+        standard_unwrap,
         declaration_start: loop_node.start_byte(),
         scope_range: (loop_node.start_byte(), loop_node.end_byte()),
     })
@@ -532,7 +538,7 @@ fn cpp_object_binding(
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access, standard_smart_pointer) =
+    let (type_name, receiver, access, standard_unwrap) =
         if node_text(type_node, source).ok()?.trim() == "auto" {
             cpp_auto_constructor_binding_type(declarator, type_prefix, source)?
         } else {
@@ -544,7 +550,7 @@ fn cpp_object_binding(
         type_name,
         receiver,
         access,
-        standard_smart_pointer,
+        standard_unwrap,
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
@@ -554,7 +560,12 @@ fn cpp_auto_constructor_binding_type(
     declarator: Node<'_>,
     type_prefix: &str,
     source: &str,
-) -> Option<(String, CppThisMemberReceiver, CppMemberAccess, bool)> {
+) -> Option<(
+    String,
+    CppThisMemberReceiver,
+    CppMemberAccess,
+    Option<CppStandardUnwrap>,
+)> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -613,7 +624,7 @@ fn cpp_auto_constructor_binding_type(
         type_name,
         receiver,
         access,
-        smart_pointer_factory_type.is_some(),
+        smart_pointer_factory_type.map(|_| CppStandardUnwrap::SmartPointer),
     ))
 }
 
@@ -643,7 +654,12 @@ fn cpp_binding_type(
     type_prefix: &str,
     type_suffix: &str,
     source: &str,
-) -> Option<(String, CppThisMemberReceiver, CppMemberAccess, bool)> {
+) -> Option<(
+    String,
+    CppThisMemberReceiver,
+    CppMemberAccess,
+    Option<CppStandardUnwrap>,
+)> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -656,28 +672,47 @@ fn cpp_binding_type(
         return None;
     };
     let declared_type = node_text(type_node, source).ok()?.trim();
-    let smart_pointer_target = cpp_standard_smart_pointer_target_type(declared_type);
-    let access = if smart_pointer_target.is_some() {
-        CppMemberAccess::Pointer
-    } else {
-        declared_access
-    };
+    let standard_unwrap = cpp_standard_smart_pointer_target_type(declared_type)
+        .map(|target| (target, CppStandardUnwrap::SmartPointer))
+        .or_else(|| {
+            (declared_access == CppMemberAccess::Object)
+                .then(|| cpp_standard_reference_wrapper_target_type(declared_type))
+                .flatten()
+                .map(|target| (target, CppStandardUnwrap::ReferenceWrapper))
+        });
+    let access =
+        if standard_unwrap.is_some_and(|(_, unwrap)| unwrap == CppStandardUnwrap::SmartPointer) {
+            CppMemberAccess::Pointer
+        } else {
+            declared_access
+        };
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
     let type_name = format!("{type_qualifiers} {} {type_suffix}", declared_type);
-    let receiver = match (access, smart_pointer_target) {
+    let receiver = match (access, standard_unwrap) {
+        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
+            cpp_this_receiver_for_type(target, Some(false))?
+        }
         (CppMemberAccess::Object, _) => cpp_named_binding_receiver_for_type(&type_name)?,
-        (CppMemberAccess::Pointer, Some(target)) => {
+        (CppMemberAccess::Pointer, Some((target, _))) => {
             cpp_this_receiver_for_type(target, Some(false))?
         }
         (CppMemberAccess::Pointer, None) => cpp_pointer_binding_receiver_for_type(&type_name)?,
     };
-    let type_name = match (access, smart_pointer_target) {
+    let type_name = match (access, standard_unwrap) {
+        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
+            cpp_temporary_type_path(target)?
+        }
         (CppMemberAccess::Object, _) => cpp_temporary_type_path(&type_name)?,
-        (CppMemberAccess::Pointer, Some(target)) => cpp_temporary_type_path(target)?,
+        (CppMemberAccess::Pointer, Some((target, _))) => cpp_temporary_type_path(target)?,
         (CppMemberAccess::Pointer, None) => cpp_pointer_target_path(&type_name)?,
     };
 
-    Some((type_name, receiver, access, smart_pointer_target.is_some()))
+    Some((
+        type_name,
+        receiver,
+        access,
+        standard_unwrap.map(|(_, unwrap)| unwrap),
+    ))
 }
 
 fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
@@ -691,6 +726,15 @@ fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
             let target_end = matching_angle_bracket_index(contents)?;
             cpp_first_template_argument(&contents[..target_end])
         })
+}
+
+fn cpp_standard_reference_wrapper_target_type(type_name: &str) -> Option<&str> {
+    let contents = type_name
+        .trim()
+        .strip_prefix("std::reference_wrapper")?
+        .strip_prefix('<')?;
+    let target_end = matching_angle_bracket_index(contents)?;
+    cpp_first_template_argument(&contents[..target_end])
 }
 
 fn cpp_first_template_argument(arguments: &str) -> Option<&str> {
@@ -852,10 +896,13 @@ fn cpp_local_member_receiver_from_expression(
     member_operator: &str,
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
-    if member_operator == "->"
-        && let Some(binding_name) = cpp_standard_smart_pointer_get_receiver(expression)
+    if let Some(binding_name) = cpp_standard_wrapper_get_receiver(expression)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
-        && binding.standard_smart_pointer
+        && matches!(
+            (member_operator, binding.standard_unwrap),
+            ("->", Some(CppStandardUnwrap::SmartPointer))
+                | (".", Some(CppStandardUnwrap::ReferenceWrapper))
+        )
     {
         return Some((binding.type_name.clone(), binding.receiver));
     }
@@ -867,6 +914,9 @@ fn cpp_local_member_receiver_from_expression(
         return Some((binding.type_name.clone(), binding.receiver));
     }
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
+        if binding.standard_unwrap == Some(CppStandardUnwrap::ReferenceWrapper) {
+            return None;
+        }
         let expected_operator = match binding.access {
             CppMemberAccess::Object => ".",
             CppMemberAccess::Pointer => "->",
@@ -931,7 +981,7 @@ fn cpp_local_member_receiver_from_expression(
     None
 }
 
-fn cpp_standard_smart_pointer_get_receiver(expression: &str) -> Option<&str> {
+fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
     cpp_local_binding_name_from_expression(receiver)
 }
@@ -1294,7 +1344,8 @@ mod tests {
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
-        cpp_standard_smart_pointer_target_type, cpp_this_receiver_from_expression,
+        cpp_standard_reference_wrapper_target_type, cpp_standard_smart_pointer_target_type,
+        cpp_this_receiver_from_expression,
     };
 
     #[test]
@@ -1481,6 +1532,15 @@ mod tests {
             Some("const Counter")
         );
         assert!(cpp_standard_smart_pointer_target_type("std::unique_ptr<>").is_none());
+    }
+
+    #[test]
+    fn extracts_standard_reference_wrapper_target_type() {
+        assert_eq!(
+            cpp_standard_reference_wrapper_target_type("std::reference_wrapper<const Counter>"),
+            Some("const Counter")
+        );
+        assert!(cpp_standard_reference_wrapper_target_type("std::reference_wrapper<>").is_none());
     }
 
     #[test]
