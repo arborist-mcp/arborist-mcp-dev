@@ -558,6 +558,9 @@ fn cpp_parameter_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
         if candidate.kind() == "lambda_expression" {
             return Some(candidate);
         }
+        if candidate.kind() == "catch_clause" {
+            return Some(candidate);
+        }
         if candidate.kind() == "function_definition" {
             return candidate.child_by_field_name("body");
         }
@@ -1087,6 +1090,22 @@ mod tests {
             name.contains("Counter::adjust")
                 && name.starts_with(CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX)
         }));
+    }
+
+    #[test]
+    fn collects_catch_parameter_member_call_arities() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } }; int caller(int value) { try { throw value; } catch (Counter current) { return current.adjust(value); } }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
     }
 
     #[test]
