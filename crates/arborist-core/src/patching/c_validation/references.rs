@@ -121,6 +121,7 @@ fn collect_c_references_with_options(
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() == "identifier"
             && !is_c_enumerator_name(candidate)
+            && !is_cpp_new_type_qualifier_recovery_identifier(candidate, source)
             && (!suppress_direct_qualified_call_components
                 || !is_direct_qualified_call_component(candidate))
         {
@@ -273,10 +274,9 @@ fn collect_cpp_new_call_arity(
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
 ) {
-    let Some(type_node) = candidate.child_by_field_name("type") else {
-        return;
-    };
-    let Ok(Some(name)) = direct_c_call_name(type_node, source) else {
+    let Some(name) =
+        cpp_new_allocation_type_text(candidate, source).and_then(cpp_temporary_type_path)
+    else {
         return;
     };
 
@@ -285,6 +285,12 @@ fn collect_cpp_new_call_arity(
         .map(named_child_count)
         .unwrap_or_default();
     record_c_call_arity_with_count(name, arity, call_arities);
+}
+
+fn cpp_new_allocation_type_text<'a>(candidate: Node<'_>, source: &'a str) -> Option<&'a str> {
+    let allocation = node_text(candidate, source).ok()?.trim();
+    let allocation = allocation.strip_prefix("new")?.trim_start();
+    cpp_constructor_type_text(allocation).or_else(|| cpp_default_initialized_type_text(allocation))
 }
 
 fn record_c_call_arity(
@@ -566,8 +572,13 @@ fn cpp_auto_constructor_binding_type(
     } else {
         initializer_text
     };
-    let type_name = cpp_temporary_type_from_expression(initializer_text)
-        .map(|(type_name, _)| type_name)
+    let initializer_type = cpp_constructor_type_text(initializer_text)
+        .or_else(|| cpp_default_initialized_type_text(initializer_text));
+    let type_name = initializer_type
+        .and_then(cpp_temporary_type_path)
+        .or_else(|| {
+            cpp_temporary_type_from_expression(initializer_text).map(|(type_name, _)| type_name)
+        })
         .or_else(|| cpp_default_initialized_type_path(initializer_text))?;
     let type_qualifiers =
         if access == CppMemberAccess::Pointer && declared_access == CppMemberAccess::Object {
@@ -575,8 +586,9 @@ fn cpp_auto_constructor_binding_type(
         } else {
             cpp_binding_type_qualifier_prefix(type_prefix)
         };
+    let receiver_type = initializer_type.unwrap_or(&type_name);
     let receiver =
-        cpp_this_receiver_for_type(&format!("{type_qualifiers} {type_name}"), Some(false))?;
+        cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?;
 
     Some((type_name, receiver, access))
 }
@@ -699,6 +711,9 @@ fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {
 fn cpp_declarator_identifier(declarator: Node<'_>) -> Option<Node<'_>> {
     if declarator.kind() == "identifier" {
         return Some(declarator);
+    }
+    if let Some(nested_declarator) = declarator.child_by_field_name("declarator") {
+        return cpp_declarator_identifier(nested_declarator);
     }
     let mut cursor = declarator.walk();
     let mut identifiers = declarator
@@ -889,28 +904,23 @@ fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppTh
             ));
         }
     }
-    let closing = expression.chars().last()?;
-    if !matches!(closing, ')' | '}') {
-        return None;
-    }
-
-    let opening = match closing {
-        ')' => matching_opening_delimiter_index(expression, '(', ')')?,
-        '}' => matching_opening_delimiter_index(expression, '{', '}')?,
-        _ => return None,
-    };
-    let type_name = expression[..opening].trim();
-    (!type_name.is_empty()
-        && type_name.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
-        }))
-    .then(|| {
+    cpp_constructor_type_text(expression).map(|type_name| {
         (
             compact_cpp_expression(type_name),
             CppThisMemberReceiver::Rvalue,
         )
     })
+}
+
+fn cpp_constructor_type_text(expression: &str) -> Option<&str> {
+    let expression = expression.trim();
+    let closing = expression.chars().last()?;
+    let opening = match closing {
+        ')' => matching_opening_delimiter_index(expression, '(', ')')?,
+        '}' => matching_opening_delimiter_index(expression, '{', '}')?,
+        _ => return None,
+    };
+    cpp_type_text(expression[..opening].trim())
 }
 
 fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
@@ -923,13 +933,37 @@ fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
 }
 
 fn cpp_default_initialized_type_path(type_name: &str) -> Option<String> {
-    let type_name = type_name.trim();
+    cpp_default_initialized_type_text(type_name).and_then(cpp_temporary_type_path)
+}
+
+fn cpp_default_initialized_type_text(type_name: &str) -> Option<&str> {
+    cpp_type_text(type_name.trim())
+}
+
+fn cpp_type_text(type_name: &str) -> Option<&str> {
     (!type_name.is_empty()
         && type_name.chars().all(|character| {
             character.is_ascii_alphanumeric()
                 || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
         }))
-    .then(|| compact_cpp_expression(type_name))
+    .then_some(type_name)
+}
+
+fn is_cpp_new_type_qualifier_recovery_identifier(candidate: Node<'_>, source: &str) -> bool {
+    let Some(error) = candidate.parent().filter(|parent| parent.is_error()) else {
+        return false;
+    };
+    if error
+        .parent()
+        .is_none_or(|parent| parent.kind() != "new_expression")
+    {
+        return false;
+    }
+    let qualifier_prefix = source[error.start_byte()..candidate.start_byte()].trim();
+    !qualifier_prefix.is_empty()
+        && qualifier_prefix
+            .split_whitespace()
+            .all(|part| matches!(part, "const" | "volatile"))
 }
 
 fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
