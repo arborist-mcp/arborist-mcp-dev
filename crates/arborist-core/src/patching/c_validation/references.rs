@@ -536,10 +536,7 @@ fn cpp_auto_constructor_binding_type(
     type_prefix: &str,
     source: &str,
 ) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
-    if !type_prefix
-        .split_whitespace()
-        .all(|part| matches!(part, "const" | "volatile"))
-    {
+    if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
     let initializer = declarator.child_by_field_name("value")?;
@@ -548,7 +545,9 @@ fn cpp_auto_constructor_binding_type(
         return None;
     }
     let (type_name, _) = cpp_temporary_type_from_expression(initializer_text)?;
-    let receiver = cpp_this_receiver_for_type(&format!("{type_prefix} {type_name}"), Some(false))?;
+    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    let receiver =
+        cpp_this_receiver_for_type(&format!("{type_qualifiers} {type_name}"), Some(false))?;
 
     Some((type_name, receiver, CppMemberAccess::Object))
 }
@@ -559,10 +558,7 @@ fn cpp_binding_type(
     type_suffix: &str,
     source: &str,
 ) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
-    if !type_prefix
-        .split_whitespace()
-        .all(|part| matches!(part, "const" | "volatile"))
-    {
+    if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
     let compact_type_suffix = compact_cpp_expression(type_suffix);
@@ -576,8 +572,9 @@ fn cpp_binding_type(
     } else {
         return None;
     };
+    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
     let type_name = format!(
-        "{type_prefix} {} {type_suffix}",
+        "{type_qualifiers} {} {type_suffix}",
         node_text(type_node, source).ok()?.trim()
     );
     let receiver = match access {
@@ -590,6 +587,30 @@ fn cpp_binding_type(
     };
 
     Some((type_name, receiver, access))
+}
+
+fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {
+    type_prefix.split_whitespace().all(|part| {
+        matches!(
+            part,
+            "const"
+                | "volatile"
+                | "auto"
+                | "register"
+                | "static"
+                | "thread_local"
+                | "extern"
+                | "mutable"
+        )
+    })
+}
+
+fn cpp_binding_type_qualifier_prefix(type_prefix: &str) -> String {
+    type_prefix
+        .split_whitespace()
+        .filter(|part| matches!(*part, "const" | "volatile"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn cpp_pointer_declarator_suffix(type_suffix: &str) -> bool {
