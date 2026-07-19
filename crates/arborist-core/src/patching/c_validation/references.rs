@@ -979,6 +979,12 @@ fn cpp_local_member_receiver_from_expression(
         return Some((binding.type_name.clone(), binding.receiver));
     }
     if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
         && let Some(pointer_name) = expression.strip_prefix('*').map(str::trim)
         && let Some(binding) = cpp_visible_local_binding(pointer_name, byte_offset, local_bindings)
         && binding.access == CppMemberAccess::Pointer
@@ -1044,6 +1050,15 @@ fn cpp_standard_optional_value_member_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".value()")?.trim();
+    cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
+}
+
+fn cpp_standard_optional_dereference_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_prefix('*')?.trim();
     cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
 }
 
