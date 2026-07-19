@@ -3072,12 +3072,24 @@ fn resolves_cpp_temporary_member_calls_to_rvalue_ref_overloads() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n};\nint caller(int value) { return api::Counter{}.adjust(value); }\nint moved_caller(int value) { return std::move(api::Counter{}).adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n    int adjust(int value) const & { return value + 2; }\n    int adjust(int value) const && { return value + 3; }\n};\nint caller(int value) { return api::Counter{}.adjust(value); }\nint moved_caller(int value) { return std::move(api::Counter{}).adjust(value); }\nint cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); }\nint cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); }\nint cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); }\n}\n",
     )
     .unwrap();
 
-    let expected_callee = "api::Counter::adjust(int) &&";
-    for caller in ["api::caller", "api::moved_caller"] {
+    let expected_callees = [
+        ("api::caller", "api::Counter::adjust(int) &&"),
+        ("api::moved_caller", "api::Counter::adjust(int) &&"),
+        ("api::cast_rvalue_caller", "api::Counter::adjust(int) &&"),
+        (
+            "api::cast_const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::cast_const_rvalue_caller",
+            "api::Counter::adjust(int) const &&",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
         assert_eq!(
             trace
@@ -3091,7 +3103,7 @@ fn resolves_cpp_temporary_member_calls_to_rvalue_ref_overloads() {
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    for caller in ["api::caller", "api::moved_caller"] {
+    for (caller, expected_callee) in expected_callees {
         let persisted_trace =
             trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
         assert_eq!(

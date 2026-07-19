@@ -77,7 +77,9 @@ indexed; this applies to `new api::Box<int>(value)` as well.
 Member calls on direct temporary constructions, such as
 `api::Counter{}.adjust(value)`, resolve against the constructed type's member
 overloads and prefer matching `&&` qualifiers; the same applies when the
-temporary is wrapped in `std::move`.
+temporary is wrapped in `std::move` or an explicit `static_cast<T&&>`. A
+`static_cast<const T&>` or `static_cast<const T&&>` temporary selects matching
+const-qualified member overloads.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same

@@ -5,7 +5,8 @@ use tree_sitter::Node;
 
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
-    CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
     CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_THIS_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
 };
@@ -319,8 +320,10 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
     if let Some(receiver) = cpp_this_member_receiver(argument, source)? {
         return Ok(Some(encode_cpp_this_member_call_name(name, receiver)));
     }
-    if let Some(type_name) = cpp_temporary_member_receiver_type(argument, source)? {
-        return Ok(Some(encode_cpp_temporary_member_call_name(type_name, name)));
+    if let Some((type_name, receiver)) = cpp_temporary_member_receiver_type(argument, source)? {
+        return Ok(Some(encode_cpp_temporary_member_call_name(
+            type_name, name, receiver,
+        )));
     }
     Ok(None)
 }
@@ -338,10 +341,18 @@ fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceive
     }
 }
 
-fn encode_cpp_temporary_member_call_name(type_name: String, name: String) -> String {
-    format!(
-        "{CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}"
-    )
+fn encode_cpp_temporary_member_call_name(
+    type_name: String,
+    name: String,
+    receiver: CppThisMemberReceiver,
+) -> String {
+    let prefix = match receiver {
+        CppThisMemberReceiver::Lvalue => return name,
+        CppThisMemberReceiver::ConstLvalue => CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+        CppThisMemberReceiver::Rvalue => CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+        CppThisMemberReceiver::ConstRvalue => CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    };
+    format!("{prefix}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}")
 }
 
 fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -368,15 +379,37 @@ fn cpp_this_member_receiver(
     Ok(cpp_this_receiver_from_expression(receiver_text))
 }
 
-fn cpp_temporary_member_receiver_type(argument: Node<'_>, source: &str) -> Result<Option<String>> {
+fn cpp_temporary_member_receiver_type(
+    argument: Node<'_>,
+    source: &str,
+) -> Result<Option<(String, CppThisMemberReceiver)>> {
     let receiver = strip_cpp_outer_parentheses(node_text(argument, source)?.trim());
     Ok(cpp_temporary_type_from_expression(receiver))
 }
 
-fn cpp_temporary_type_from_expression(expression: &str) -> Option<String> {
+fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppThisMemberReceiver)> {
     let expression = expression.trim();
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
-        return cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument));
+        return cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument)).map(
+            |(type_name, receiver)| {
+                let receiver = match receiver {
+                    CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                        CppThisMemberReceiver::Rvalue
+                    }
+                    CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                        CppThisMemberReceiver::ConstRvalue
+                    }
+                };
+                (type_name, receiver)
+            },
+        );
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "static_cast") {
+        cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument))?;
+        return Some((
+            cpp_temporary_type_path(type_name)?,
+            cpp_this_receiver_for_type(type_name, Some(true))?,
+        ));
     }
     let closing = expression.chars().last()?;
     if !matches!(closing, ')' | '}') {
@@ -394,7 +427,21 @@ fn cpp_temporary_type_from_expression(expression: &str) -> Option<String> {
             character.is_ascii_alphanumeric()
                 || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
         }))
-    .then(|| compact_cpp_expression(type_name))
+    .then(|| {
+        (
+            compact_cpp_expression(type_name),
+            CppThisMemberReceiver::Rvalue,
+        )
+    })
+}
+
+fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
+    let path = type_name
+        .split_whitespace()
+        .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
+        .collect::<String>();
+    let path = path.trim_end_matches('&');
+    (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
 }
 
 fn matching_opening_delimiter_index(

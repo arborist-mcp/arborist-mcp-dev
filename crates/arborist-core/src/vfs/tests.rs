@@ -875,12 +875,24 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } }; int caller(int value) { return Counter{}.adjust(value); } int moved_caller(int value) { return std::move(Counter{}).adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } int adjust(int value) const & { return value + 2; } int adjust(int value) const && { return value + 3; } }; int caller(int value) { return Counter{}.adjust(value); } int moved_caller(int value) { return std::move(Counter{}).adjust(value); } int cast_rvalue_caller(int value) { return static_cast<Counter&&>(Counter{}).adjust(value); } int cast_const_lvalue_caller(int value) { return static_cast<Counter const &>(Counter{}).adjust(value); } int cast_const_rvalue_caller(int value) { return static_cast<const Counter&&>(Counter{}).adjust(value); } }\n",
         ),
     )
     .unwrap();
 
-    for caller in ["api::caller", "api::moved_caller"] {
+    for (caller, expected_callee) in [
+        ("api::caller", "api::Counter::adjust(int) &&"),
+        ("api::moved_caller", "api::Counter::adjust(int) &&"),
+        ("api::cast_rvalue_caller", "api::Counter::adjust(int) &&"),
+        (
+            "api::cast_const_lvalue_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::cast_const_rvalue_caller",
+            "api::Counter::adjust(int) const &&",
+        ),
+    ] {
         let trace = vfs
             .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
             .unwrap();
@@ -890,7 +902,7 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
                 .iter()
                 .map(|symbol| symbol.symbol_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["api::Counter::adjust(int) &&"],
+            vec![expected_callee],
             "{caller}",
         );
     }

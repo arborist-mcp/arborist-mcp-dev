@@ -12,7 +12,8 @@ use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
 use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
 use crate::semantic::cpp_callable_symbol_id;
 use crate::symbol_index_model::{
-    CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
     CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_THIS_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, IndexedSymbol, symbol_kind_rank,
 };
@@ -177,6 +178,18 @@ pub(super) fn resolve_dependencies_for_symbol(
                 .strip_prefix(CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
                 .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
                 .map(|(_, name)| (name, true, false, true))
+                .or_else(|| {
+                    encoded_reference_name
+                        .strip_prefix(CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
+                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
+                        .map(|(_, name)| (name, true, true, true))
+                })
+                .or_else(|| {
+                    encoded_reference_name
+                        .strip_prefix(CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
+                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
+                        .map(|(_, name)| (name, false, true, true))
+                })
                 .or_else(|| {
                     encoded_reference_name
                         .strip_prefix(CPP_CONST_RVALUE_THIS_CALL_PREFIX)
