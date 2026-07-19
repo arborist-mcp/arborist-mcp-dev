@@ -343,20 +343,15 @@ fn direct_cpp_call_name(
     let Some(field) = function.child_by_field_name("field") else {
         return Ok(None);
     };
-    let Some(operator) = function.child_by_field_name("operator") else {
+    let Some(member_operator) = cpp_field_expression_operator(function, argument, field, source)?
+    else {
         return Ok(None);
     };
-    let member_operator = node_text(operator, source)?.trim();
     let Some(name) = cpp_member_call_name(field, source)? else {
         return Ok(None);
     };
     if let Some(receiver) = cpp_this_member_receiver(argument, source)? {
         return Ok(Some(encode_cpp_this_member_call_name(name, receiver)));
-    }
-    if let Some((type_name, receiver)) = cpp_temporary_member_receiver_type(argument, source)? {
-        return Ok(Some(encode_cpp_temporary_member_call_name(
-            type_name, name, receiver,
-        )));
     }
     if let Some((type_name, receiver)) =
         cpp_local_member_receiver_type(argument, source, local_bindings, member_operator)?
@@ -365,7 +360,25 @@ fn direct_cpp_call_name(
             type_name, name, receiver,
         )));
     }
+    if let Some((type_name, receiver)) = cpp_temporary_member_receiver_type(argument, source)? {
+        return Ok(Some(encode_cpp_temporary_member_call_name(
+            type_name, name, receiver,
+        )));
+    }
     Ok(None)
+}
+
+fn cpp_field_expression_operator<'a>(
+    function: Node<'_>,
+    argument: Node<'_>,
+    field: Node<'_>,
+    source: &'a str,
+) -> Result<Option<&'a str>> {
+    if let Some(operator) = function.child_by_field_name("operator") {
+        return node_text(operator, source).map(|operator| Some(operator.trim()));
+    }
+    let operator = source[argument.end_byte()..field.start_byte()].trim();
+    Ok(matches!(operator, "." | "->").then_some(operator))
 }
 
 fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceiver) -> String {
@@ -846,6 +859,13 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((binding.type_name.clone(), binding.receiver));
     }
+    if member_operator == "->"
+        && let Some(binding_name) = cpp_local_binding_name_from_expression(expression)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Pointer
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
         let expected_operator = match binding.access {
             CppMemberAccess::Object => ".",
@@ -913,10 +933,10 @@ fn cpp_local_member_receiver_from_expression(
 
 fn cpp_standard_smart_pointer_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
-    cpp_standard_smart_pointer_binding_name(receiver)
+    cpp_local_binding_name_from_expression(receiver)
 }
 
-fn cpp_standard_smart_pointer_binding_name(expression: &str) -> Option<&str> {
+fn cpp_local_binding_name_from_expression(expression: &str) -> Option<&str> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     if is_cpp_identifier(expression) {
         return Some(expression);
@@ -925,11 +945,11 @@ fn cpp_standard_smart_pointer_binding_name(expression: &str) -> Option<&str> {
         .into_iter()
         .find_map(|wrapper| {
             cpp_receiver_call_argument(expression, wrapper)
-                .and_then(cpp_standard_smart_pointer_binding_name)
+                .and_then(cpp_local_binding_name_from_expression)
         })
         .or_else(|| {
             cpp_typed_receiver_call(expression, "std::forward")
-                .and_then(|(_, argument)| cpp_standard_smart_pointer_binding_name(argument))
+                .and_then(|(_, argument)| cpp_local_binding_name_from_expression(argument))
         })
 }
 
@@ -1405,6 +1425,25 @@ mod tests {
             )),
             Some(&BTreeSet::from([1]))
         );
+    }
+
+    #[test]
+    fn collects_wrapped_pointer_member_call_arities() {
+        let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(Counter* current, int value) { return std::as_const(current)->adjust(value); } }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+        assert!(!arities.contains_key(&format!(
+            "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+        )));
     }
 
     #[test]
