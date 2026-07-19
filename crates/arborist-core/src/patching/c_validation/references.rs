@@ -357,45 +357,146 @@ fn cpp_this_member_receiver(
     source: &str,
 ) -> Result<Option<CppThisMemberReceiver>> {
     let receiver_text = node_text(argument, source)?;
-    let normalized_receiver = receiver_text
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    Ok(match normalized_receiver.as_str() {
-        "this" | "(*this)" => Some(CppThisMemberReceiver::Lvalue),
-        "std::move(*this)" => Some(CppThisMemberReceiver::Rvalue),
-        "std::as_const(*this)" => Some(CppThisMemberReceiver::ConstLvalue),
-        receiver if receiver.starts_with("static_cast<") => {
-            cpp_this_receiver_from_typed_call(receiver_text, "static_cast", None)
-        }
-        receiver if receiver.starts_with("std::forward<") => {
-            cpp_this_receiver_from_typed_call(receiver_text, "std::forward", Some(true))
-        }
-        _ => None,
-    })
+    Ok(cpp_this_receiver_from_expression(receiver_text))
 }
 
-fn cpp_this_receiver_from_typed_call(
-    receiver: &str,
+fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberReceiver> {
+    let receiver = strip_cpp_outer_parentheses(receiver.trim());
+    match compact_cpp_expression(receiver).as_str() {
+        "this" | "*this" => return Some(CppThisMemberReceiver::Lvalue),
+        _ => {}
+    }
+
+    if let Some(argument) = cpp_receiver_call_argument(receiver, "std::move") {
+        return cpp_this_receiver_from_expression(argument).map(|receiver| match receiver {
+            CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                CppThisMemberReceiver::Rvalue
+            }
+            CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                CppThisMemberReceiver::ConstRvalue
+            }
+        });
+    }
+    if let Some(argument) = cpp_receiver_call_argument(receiver, "std::as_const") {
+        return cpp_this_receiver_from_expression(argument)
+            .map(|_| CppThisMemberReceiver::ConstLvalue);
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(receiver, "static_cast") {
+        cpp_this_receiver_from_expression(argument)?;
+        return cpp_this_receiver_for_type(type_name, None);
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(receiver, "std::forward") {
+        cpp_this_receiver_from_expression(argument)?;
+        return cpp_this_receiver_for_type(type_name, Some(true));
+    }
+    None
+}
+
+fn cpp_receiver_call_argument<'a>(receiver: &'a str, function_name: &str) -> Option<&'a str> {
+    let argument = receiver
+        .strip_prefix(function_name)?
+        .trim_start()
+        .strip_prefix('(')?;
+    let argument = argument.trim_end().strip_suffix(')')?.trim();
+    if parentheses_are_balanced(argument) {
+        Some(argument)
+    } else {
+        None
+    }
+}
+
+fn cpp_typed_receiver_call<'a>(
+    receiver: &'a str,
     function_name: &str,
-    default_rvalue: Option<bool>,
-) -> Option<CppThisMemberReceiver> {
-    let cast_contents = receiver
-        .trim()
+) -> Option<(&'a str, &'a str)> {
+    let contents = receiver
         .strip_prefix(function_name)?
         .trim_start()
         .strip_prefix('<')?;
-    let (type_name, value) = cast_contents.rsplit_once('>')?;
-    if value
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        != "(*this)"
-    {
+    let type_end = matching_angle_bracket_index(contents)?;
+    let type_name = contents[..type_end].trim();
+    let argument = contents[type_end + 1..]
+        .trim_start()
+        .strip_prefix('(')?
+        .trim_end()
+        .strip_suffix(')')?;
+    let argument = argument.trim();
+    if type_name.is_empty() || !parentheses_are_balanced(argument) {
         return None;
     }
+    Some((type_name, argument))
+}
 
-    cpp_this_receiver_for_type(type_name, default_rvalue)
+fn strip_cpp_outer_parentheses(mut expression: &str) -> &str {
+    while let Some(inner) = expression
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .filter(|_| parentheses_wrap_entire_expression(expression))
+    {
+        expression = inner;
+    }
+    expression
+}
+
+fn compact_cpp_expression(expression: &str) -> String {
+    expression
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn parentheses_wrap_entire_expression(expression: &str) -> bool {
+    let mut depth = 0usize;
+    for (index, character) in expression.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+                if depth == 0 && index + character.len_utf8() != expression.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+fn parentheses_are_balanced(expression: &str) -> bool {
+    let mut depth = 0usize;
+    for character in expression.chars() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    for (index, character) in contents.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn cpp_this_receiver_for_type(

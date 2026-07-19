@@ -951,11 +951,9 @@ fn cpp_const_member_candidates(
     raw_symbols: &[IndexedSymbol],
     const_this_receiver: bool,
 ) -> Vec<usize> {
-    if !const_this_receiver && !cpp_callable_is_const_qualified(source_symbol) {
-        return candidates;
-    }
-
-    let const_members = candidates
+    let prefer_const_members =
+        const_this_receiver || cpp_callable_is_const_qualified(source_symbol);
+    let compatible_members = candidates
         .iter()
         .copied()
         .filter(|index| {
@@ -963,14 +961,14 @@ fn cpp_const_member_candidates(
             source_symbol.scope_path.is_some()
                 && source_symbol.scope_path == candidate.scope_path
                 && is_cpp_callable(candidate)
-                && cpp_callable_is_const_qualified(candidate)
+                && cpp_callable_is_const_qualified(candidate) == prefer_const_members
         })
         .collect::<Vec<_>>();
 
-    if const_members.is_empty() {
+    if compatible_members.is_empty() {
         candidates
     } else {
-        const_members
+        compatible_members
     }
 }
 
