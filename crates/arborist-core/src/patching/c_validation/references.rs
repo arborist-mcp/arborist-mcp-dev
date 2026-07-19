@@ -996,6 +996,15 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_optional_smart_pointer_arrow_member_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
         && let Some(binding_name) = cpp_local_binding_name_from_expression(expression)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && binding.access == CppMemberAccess::Pointer
@@ -1128,6 +1137,21 @@ fn cpp_standard_optional_arrow_member_receiver(
             (type_name, receiver)
         },
     )
+}
+
+fn cpp_optional_smart_pointer_arrow_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_prefix('*')?.trim();
+    let (type_name, _) =
+        cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_smart_pointer_target_type(&type_name)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
 }
 
 fn cpp_optional_local_binding_receiver(
