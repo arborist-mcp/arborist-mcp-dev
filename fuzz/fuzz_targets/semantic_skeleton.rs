@@ -5,7 +5,13 @@ use std::path::Path;
 use arborist_core::get_semantic_skeleton;
 use libfuzzer_sys::fuzz_target;
 
+const MAX_INPUT_BYTES: usize = 192 * 1024;
+
 fuzz_target!(|data: &[u8]| {
+    if data.len() > MAX_INPUT_BYTES {
+        return;
+    }
+
     let (extension, source) = match data.first().copied().unwrap_or_default() % 3 {
         0 => ("fuzz.py", data.get(1..).unwrap_or_default()),
         1 => ("fuzz.c", data.get(1..).unwrap_or_default()),

@@ -35,3 +35,10 @@ path = "fuzz_targets/patch_preview.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "workspace_edit_preview"
+path = "fuzz_targets/workspace_edit_preview.rs"
+test = false
+doc = false
+bench = false
