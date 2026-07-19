@@ -21,3 +21,10 @@ path = "fuzz_targets/tree_query.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "semantic_skeleton"
+path = "fuzz_targets/semantic_skeleton.rs"
+test = false
+doc = false
+bench = false
