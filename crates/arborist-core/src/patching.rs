@@ -7,18 +7,25 @@ mod python_patterns;
 mod python_references;
 mod python_replacement;
 mod python_visibility;
+mod reference_validation;
 mod syntax_validation;
 mod target_resolution;
 
 pub(crate) use c_validation::{
-    collect_c_call_arities, collect_c_graph_references, collect_c_reference_validation,
-    collect_cpp_call_arities,
+    collect_c_call_arities, collect_c_graph_references, collect_cpp_call_arities,
 };
 pub(crate) use commit_gate::evaluate_patch_commit_gate;
 pub(crate) use python_imports::{
     resolve_local_python_imported_symbol, resolve_local_python_module_path,
 };
 pub(crate) use python_references::collect_python_references;
+pub(crate) use reference_validation::{
+    ReferenceValidation, ambiguous_binding_decision, resolved_binding_decision,
+    unresolved_binding_decision,
+};
+pub(super) use reference_validation::{
+    is_python_class_header_expression, is_python_default_parameter_value,
+};
 pub(crate) use syntax_validation::collect_syntax_errors;
 use target_resolution::{locate_patched_symbol, resolve_symbol_id, resolve_symbol_path};
 pub(crate) use target_resolution::{prepare_patch_replacement, semantic_target_at_position};
@@ -34,20 +41,11 @@ use std::ops::Range;
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use tree_sitter::Node;
 
-use crate::language::{ParsedDocument, contains_node, normalize_path, parse_document};
+use crate::language::{normalize_path, parse_document};
 use crate::model::{
-    LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, SymbolSummary,
-    ValidationAmbiguity, ValidationBinding, ValidationBindingDecision, ValidationIssue,
+    PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
-#[derive(Default)]
-pub(crate) struct ReferenceValidation {
-    unresolved_identifiers: Vec<String>,
-    resolved_identifiers: Vec<ValidationBinding>,
-    ambiguous_identifiers: Vec<ValidationAmbiguity>,
-    binding_decisions: Vec<ValidationBindingDecision>,
-}
 
 #[derive(Debug, Clone)]
 enum PythonImportBinding {
@@ -107,8 +105,12 @@ pub(crate) fn build_patch_result(
     if validation.syntax_errors.is_empty()
         && let Some(symbol_node) = patched_symbol
     {
-        let reference_validation =
-            collect_reference_validation(path, &virtual_document, &updated_source, symbol_node)?;
+        let reference_validation = reference_validation::collect_reference_validation(
+            path,
+            &virtual_document,
+            &updated_source,
+            symbol_node,
+        )?;
         validation.unresolved_identifiers = reference_validation.unresolved_identifiers;
         validation.resolved_identifiers = reference_validation.resolved_identifiers;
         validation.ambiguous_identifiers = reference_validation.ambiguous_identifiers;
@@ -149,101 +151,4 @@ pub(crate) fn splice_source(source: &str, range: Range<usize>, replacement: &str
     updated.push_str(replacement);
     updated.push_str(&source[range.end..]);
     updated
-}
-
-fn collect_reference_validation(
-    path: &Path,
-    document: &ParsedDocument,
-    source: &str,
-    symbol_node: Node<'_>,
-) -> Result<ReferenceValidation> {
-    match document.language_id {
-        LanguageId::Python => {
-            python_references::collect_python_reference_validation(path, source, symbol_node)
-        }
-        LanguageId::C | LanguageId::Cpp => {
-            collect_c_reference_validation(path, document, source, symbol_node)
-        }
-    }
-}
-
-fn unresolved_binding_decision(name: &str) -> ValidationBindingDecision {
-    ValidationBindingDecision {
-        name: name.to_string(),
-        status: "unresolved".to_string(),
-        reason: "identifier is not visible from the patched symbol scope".to_string(),
-        selected_symbol_id: None,
-        candidates: Vec::new(),
-    }
-}
-
-fn resolved_binding_decision(name: &str, symbol: &SymbolSummary) -> ValidationBindingDecision {
-    ValidationBindingDecision {
-        name: name.to_string(),
-        status: "resolved".to_string(),
-        reason: "exactly one visible binding candidate remained after scope and include filtering"
-            .to_string(),
-        selected_symbol_id: Some(symbol.symbol_id.clone()),
-        candidates: vec![symbol.clone()],
-    }
-}
-
-fn ambiguous_binding_decision(
-    name: &str,
-    reason: &str,
-    candidates: &[SymbolSummary],
-) -> ValidationBindingDecision {
-    ValidationBindingDecision {
-        name: name.to_string(),
-        status: "ambiguous".to_string(),
-        reason: reason.to_string(),
-        selected_symbol_id: None,
-        candidates: candidates.to_vec(),
-    }
-}
-
-pub(super) fn is_python_default_parameter_value(node: Node<'_>) -> bool {
-    let mut current = node.parent();
-
-    while let Some(candidate) = current {
-        if candidate.kind() == "default_parameter" || candidate.kind() == "typed_default_parameter"
-        {
-            return candidate
-                .child_by_field_name("value")
-                .is_some_and(|value| contains_node(value, node));
-        }
-
-        if matches!(
-            candidate.kind(),
-            "function_definition" | "class_definition" | "module"
-        ) {
-            return false;
-        }
-
-        current = candidate.parent();
-    }
-
-    false
-}
-
-pub(super) fn is_python_class_header_expression(node: Node<'_>) -> bool {
-    let mut current = Some(node);
-
-    while let Some(candidate) = current {
-        if candidate.kind() == "block" {
-            return false;
-        }
-
-        if candidate.kind() == "class_definition" {
-            return true;
-        }
-
-        if matches!(candidate.kind(), "function_definition" | "module") {
-            return false;
-        }
-
-        current = candidate.parent();
-    }
-
-    false
 }
