@@ -176,12 +176,12 @@ validation and edit validation together. All fuzz targets ignore inputs above
 192 KiB. The standalone fuzz manifest can be type-checked on stable Rust with:
 
 ```powershell
-cargo check --manifest-path fuzz\Cargo.toml --bin tree_query
-cargo check --manifest-path fuzz\Cargo.toml --bin semantic_skeleton
-cargo check --manifest-path fuzz\Cargo.toml --bin patch_preview
-cargo check --manifest-path fuzz\Cargo.toml --bin workspace_edit_preview
-cargo check --manifest-path fuzz\Cargo.toml --bin symbol_index_inspection
-cargo check --manifest-path fuzz\Cargo.toml --bin workspace_edit_json
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin tree_query
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin semantic_skeleton
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin patch_preview
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin workspace_edit_preview
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin symbol_index_inspection
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin workspace_edit_json
 ```
 
 The gateway smoke helper can run without loading the native extension unless

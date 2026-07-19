@@ -224,7 +224,7 @@ function Invoke-FuzzManifestCheck {
         Invoke-NativeOrThrow `
             "Checking fuzz target '$target'..." `
             "cargo" `
-            @("check", "--manifest-path", "fuzz\Cargo.toml", "--bin", $target)
+            @("check", "--locked", "--manifest-path", "fuzz\Cargo.toml", "--bin", $target)
     }
 }
 
