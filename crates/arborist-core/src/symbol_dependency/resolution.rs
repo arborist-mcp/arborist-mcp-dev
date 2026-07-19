@@ -407,17 +407,17 @@ fn resolve_reference_path(
     } else {
         hinted_candidates
     };
+    let arity_candidates = if call_context.rvalue_this_receiver {
+        cpp_rvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+    } else {
+        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+    };
     let arity_candidates = cpp_const_member_candidates(
         arity_candidates,
         source_symbol,
         raw_symbols,
         call_context.const_this_receiver,
     );
-    let arity_candidates = if call_context.rvalue_this_receiver {
-        cpp_rvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
-    } else {
-        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
-    };
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
     arity_candidates

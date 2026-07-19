@@ -618,7 +618,9 @@ mod tests {
 
     use crate::language::parse_document;
 
-    use super::{collect_cpp_call_arities, cpp_type_is_top_level_const};
+    use super::{
+        collect_cpp_call_arities, cpp_this_receiver_from_expression, cpp_type_is_top_level_const,
+    };
 
     #[test]
     fn collects_only_object_braced_initializers() {
@@ -668,5 +670,12 @@ mod tests {
         assert!(cpp_type_is_top_level_const("Counter const &"));
         assert!(!cpp_type_is_top_level_const("constCounter&&"));
         assert!(!cpp_type_is_top_level_const("Wrapper<const Counter>&&"));
+    }
+
+    #[test]
+    fn rejects_non_this_and_malformed_cpp_member_receivers() {
+        assert!(cpp_this_receiver_from_expression("std::move(other)").is_none());
+        assert!(cpp_this_receiver_from_expression("std::forward<Counter&>(other)").is_none());
+        assert!(cpp_this_receiver_from_expression("static_cast<Counter&&>(*this").is_none());
     }
 }

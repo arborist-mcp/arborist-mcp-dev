@@ -2073,6 +2073,42 @@ fn resolves_cpp_moved_this_member_calls_to_rvalue_ref_overloads() {
 }
 
 #[test]
+fn resolves_cpp_rvalue_this_calls_with_sparse_const_ref_qualified_overloads() {
+    let dir = temporary_dir();
+    let source = dir.join("sparse_const_rvalue_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const && { return value + 1; }\n    int caller(int value) && { return std::move(*this).adjust(value); }\n};\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Counter::adjust(int) const &&";
+    let trace = trace_symbol_graph(&dir, "api::Counter::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::Counter::caller", TraceDirection::Both)
+            .unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+}
+
+#[test]
 fn resolves_cpp_cast_this_member_calls_to_rvalue_ref_overloads() {
     let dir = temporary_dir();
     let source = dir.join("cast_this_ref_qualified_member_calls.cpp");

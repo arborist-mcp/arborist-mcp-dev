@@ -903,7 +903,7 @@ fn traces_cpp_nested_this_member_receivers_from_unsaved_virtual_changes() {
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } int adjust(int value) const & { return value + 2; } int adjust(int value) const && { return value + 3; } int parenthesized_caller(int value) { return (((*this))).adjust(value); } int moved_caller(int value) { return (std::move(static_cast<Counter &>(*this))).adjust(value); } int const_moved_caller(int value) { return std::move(std::as_const(((*this)))).adjust(value); } }; }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } int adjust(int value) const & { return value + 2; } int adjust(int value) const && { return value + 3; } int parenthesized_caller(int value) { return (((*this))).adjust(value); } int moved_caller(int value) { return (std::move(static_cast<Counter &>(*this))).adjust(value); } int const_moved_caller(int value) { return std::move(std::as_const(((*this)))).adjust(value); } int forwarded_caller(int value) { return ((std::forward<Counter const &>(((*this))))).adjust(value); } }; }\n",
         ),
     )
     .unwrap();
@@ -917,6 +917,10 @@ fn traces_cpp_nested_this_member_receivers_from_unsaved_virtual_changes() {
         (
             "api::Counter::const_moved_caller",
             "api::Counter::adjust(int) const &&",
+        ),
+        (
+            "api::Counter::forwarded_caller",
+            "api::Counter::adjust(int) const &",
         ),
     ] {
         let trace = vfs
