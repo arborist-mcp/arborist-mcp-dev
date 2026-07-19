@@ -120,3 +120,30 @@ fn previews_unsaved_source_without_reading_or_writing_disk() {
     assert_eq!(result.files[0].source, "value = 2\n");
     assert!(!missing.exists());
 }
+
+#[test]
+fn applies_sequential_position_edits_against_updated_utf8_source() {
+    let dir = temporary_dir();
+    let missing = dir.join("sequential.py");
+    let result = preview_workspace_position_edits(&[WorkspacePositionEdits {
+        file_path: missing.display().to_string(),
+        source: Some("value = \"é\"\n".to_string()),
+        edits: vec![
+            PositionEdit {
+                start: Position { row: 0, column: 9 },
+                end: Position { row: 0, column: 11 },
+                new_text: "éé".to_string(),
+            },
+            PositionEdit {
+                start: Position { row: 0, column: 11 },
+                end: Position { row: 0, column: 13 },
+                new_text: "x".to_string(),
+            },
+        ],
+    }])
+    .unwrap();
+
+    assert_eq!(result.files[0].source, "value = \"éx\"\n");
+    assert!(result.files[0].changed);
+    assert!(!missing.exists());
+}
