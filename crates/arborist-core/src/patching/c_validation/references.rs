@@ -587,12 +587,20 @@ fn cpp_auto_constructor_binding_type(
         (allocation.len() < remainder.len()).then_some(allocation)
     });
     let smart_pointer_factory_type = cpp_smart_pointer_factory_type(initializer_text);
+    let direct_initializer_type = cpp_constructor_type_text(initializer_text)
+        .or_else(|| cpp_default_initialized_type_text(initializer_text));
+    let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
                 .or_else(|| cpp_default_initialized_type_text(allocation))
         })
-        .or(smart_pointer_factory_type);
+        .or(smart_pointer_factory_type)
+        .or_else(|| {
+            direct_standard_unwrap.and_then(|(target, unwrap)| {
+                (unwrap == CppStandardUnwrap::SmartPointer).then_some(target)
+            })
+        });
     let access = match (declared_access, inferred_pointer_type) {
         (CppMemberAccess::Pointer, _) | (CppMemberAccess::Object, Some(_)) => {
             CppMemberAccess::Pointer
@@ -602,8 +610,7 @@ fn cpp_auto_constructor_binding_type(
     let initializer_type = if access == CppMemberAccess::Pointer {
         inferred_pointer_type
     } else {
-        cpp_constructor_type_text(initializer_text)
-            .or_else(|| cpp_default_initialized_type_text(initializer_text))
+        direct_initializer_type
     };
     let type_name = initializer_type
         .and_then(cpp_temporary_type_path)
@@ -617,21 +624,32 @@ fn cpp_auto_constructor_binding_type(
         } else {
             cpp_binding_type_qualifier_prefix(type_prefix)
         };
-    let standard_unwrap = (access == CppMemberAccess::Object)
-        .then(|| initializer_type.and_then(cpp_standard_optional_target_type))
-        .flatten()
-        .map(|target| (target, CppStandardUnwrap::Optional));
-    let receiver = match standard_unwrap {
-        Some((target, CppStandardUnwrap::Optional)) => {
+    let standard_unwrap = direct_standard_unwrap.or_else(|| {
+        smart_pointer_factory_type.map(|target| (target, CppStandardUnwrap::SmartPointer))
+    });
+    let receiver = match (access, standard_unwrap) {
+        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
+            cpp_this_receiver_for_type(target, Some(false))?
+        }
+        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
             cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
+        }
+        (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
+            cpp_this_receiver_for_type(target, Some(false))?
         }
         _ => {
             let receiver_type = initializer_type.unwrap_or(&type_name);
             cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?
         }
     };
-    let type_name = match standard_unwrap {
-        Some((target, CppStandardUnwrap::Optional)) => cpp_temporary_type_path(target)?,
+    let type_name = match (access, standard_unwrap) {
+        (
+            CppMemberAccess::Object,
+            Some((target, CppStandardUnwrap::ReferenceWrapper | CppStandardUnwrap::Optional)),
+        )
+        | (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
+            cpp_temporary_type_path(target)?
+        }
         _ => type_name,
     };
 
@@ -639,9 +657,7 @@ fn cpp_auto_constructor_binding_type(
         type_name,
         receiver,
         access,
-        smart_pointer_factory_type
-            .map(|_| CppStandardUnwrap::SmartPointer)
-            .or_else(|| standard_unwrap.map(|(_, unwrap)| unwrap)),
+        standard_unwrap.map(|(_, unwrap)| unwrap),
     ))
 }
 
@@ -761,6 +777,19 @@ fn cpp_standard_optional_target_type(type_name: &str) -> Option<&str> {
     cpp_standard_template_arguments(type_name, "std::optional")
         .filter(|arguments| !cpp_template_arguments_have_top_level_comma(arguments))
         .and_then(cpp_first_template_argument)
+}
+
+fn cpp_standard_wrapper_target_type(type_name: &str) -> Option<(&str, CppStandardUnwrap)> {
+    cpp_standard_smart_pointer_target_type(type_name)
+        .map(|target| (target, CppStandardUnwrap::SmartPointer))
+        .or_else(|| {
+            cpp_standard_reference_wrapper_target_type(type_name)
+                .map(|target| (target, CppStandardUnwrap::ReferenceWrapper))
+        })
+        .or_else(|| {
+            cpp_standard_optional_target_type(type_name)
+                .map(|target| (target, CppStandardUnwrap::Optional))
+        })
 }
 
 fn cpp_standard_template_arguments<'a>(type_name: &'a str, wrapper: &str) -> Option<&'a str> {
