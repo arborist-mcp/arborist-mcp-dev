@@ -617,15 +617,31 @@ fn cpp_auto_constructor_binding_type(
         } else {
             cpp_binding_type_qualifier_prefix(type_prefix)
         };
-    let receiver_type = initializer_type.unwrap_or(&type_name);
-    let receiver =
-        cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?;
+    let standard_unwrap = (access == CppMemberAccess::Object)
+        .then(|| initializer_type.and_then(cpp_standard_optional_target_type))
+        .flatten()
+        .map(|target| (target, CppStandardUnwrap::Optional));
+    let receiver = match standard_unwrap {
+        Some((target, CppStandardUnwrap::Optional)) => {
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
+        }
+        _ => {
+            let receiver_type = initializer_type.unwrap_or(&type_name);
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?
+        }
+    };
+    let type_name = match standard_unwrap {
+        Some((target, CppStandardUnwrap::Optional)) => cpp_temporary_type_path(target)?,
+        _ => type_name,
+    };
 
     Some((
         type_name,
         receiver,
         access,
-        smart_pointer_factory_type.map(|_| CppStandardUnwrap::SmartPointer),
+        smart_pointer_factory_type
+            .map(|_| CppStandardUnwrap::SmartPointer)
+            .or_else(|| standard_unwrap.map(|(_, unwrap)| unwrap)),
     ))
 }
 
