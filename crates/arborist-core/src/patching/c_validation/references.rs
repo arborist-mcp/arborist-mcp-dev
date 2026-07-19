@@ -566,7 +566,9 @@ fn cpp_auto_constructor_binding_type(
     } else {
         initializer_text
     };
-    let (type_name, _) = cpp_temporary_type_from_expression(initializer_text)?;
+    let type_name = cpp_temporary_type_from_expression(initializer_text)
+        .map(|(type_name, _)| type_name)
+        .or_else(|| cpp_default_initialized_type_path(initializer_text))?;
     let type_qualifiers =
         if access == CppMemberAccess::Pointer && declared_access == CppMemberAccess::Object {
             String::new()
@@ -918,6 +920,16 @@ fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
         .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
         .collect::<String>();
     (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
+}
+
+fn cpp_default_initialized_type_path(type_name: &str) -> Option<String> {
+    let type_name = type_name.trim();
+    (!type_name.is_empty()
+        && type_name.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
+        }))
+    .then(|| compact_cpp_expression(type_name))
 }
 
 fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
