@@ -3223,6 +3223,60 @@ fn resolves_cpp_range_for_member_calls_across_live_and_persisted_queries() {
 }
 
 #[test]
+fn resolves_cpp_condition_binding_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("condition_binding_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    operator bool() const { return true; }\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nAlias make_counter() { return Alias{}; }\nint if_caller(int value) { if (Alias current = make_counter()) { return current.adjust(value); } else { return current.adjust(value); } }\nint const_switch_caller(int value) { switch (const Alias current = make_counter()) { default: return current.adjust(value); } }\nint while_caller(int value) { while (Alias current = make_counter()) { return current.adjust(value); } return value; }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        (
+            "api::if_caller",
+            ["api::Counter::adjust(int) &", "api::make_counter()"],
+        ),
+        (
+            "api::const_switch_caller",
+            ["api::Counter::adjust(int) const &", "api::make_counter()"],
+        ),
+        (
+            "api::while_caller",
+            ["api::Counter::adjust(int) &", "api::make_counter()"],
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_callee,
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_callee,
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_parameter_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("parameter_member_calls.cpp");
