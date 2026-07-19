@@ -451,6 +451,11 @@ fn collect_cpp_local_bindings(node: Node<'_>, source: &str) -> Vec<CppLocalBindi
                 bindings.push(binding);
             }
         }
+        "for_range_loop" => {
+            if let Some(binding) = cpp_range_for_binding(candidate, source) {
+                bindings.push(binding);
+            }
+        }
         _ => {}
     };
     visit_tree(node, &mut callback);
@@ -467,6 +472,38 @@ fn cpp_parameter_binding(parameter: Node<'_>, source: &str) -> Option<CppLocalBi
     cpp_object_binding(parameter, source, scope)
 }
 
+fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBinding> {
+    let type_node = loop_node.child_by_field_name("type")?;
+    let declarator = loop_node.child_by_field_name("declarator")?;
+    let identifier = cpp_declarator_identifier(declarator)?;
+    let type_prefix = cpp_range_for_type_prefix(loop_node, source)?;
+    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
+    let (type_name, receiver, access) =
+        cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
+
+    Some(CppLocalBinding {
+        name: node_text(identifier, source).ok()?.trim().to_string(),
+        type_name,
+        receiver,
+        access,
+        declaration_start: loop_node.start_byte(),
+        scope_range: (loop_node.start_byte(), loop_node.end_byte()),
+    })
+}
+
+fn cpp_range_for_type_prefix(loop_node: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = loop_node.walk();
+    let qualifiers = loop_node
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "type_qualifier")
+        .map(|child| node_text(child, source).ok().map(str::trim))
+        .collect::<Option<Vec<_>>>()?;
+    qualifiers
+        .iter()
+        .all(|qualifier| matches!(*qualifier, "const" | "volatile"))
+        .then(|| qualifiers.join(" "))
+}
+
 fn cpp_object_binding(
     declaration: Node<'_>,
     source: &str,
@@ -477,13 +514,32 @@ fn cpp_object_binding(
     let identifier = cpp_declarator_identifier(declarator)?;
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
+    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
+    let (type_name, receiver, access) =
+        cpp_binding_type(type_node, type_prefix, type_suffix, source)?;
+
+    Some(CppLocalBinding {
+        name: node_text(identifier, source).ok()?.trim().to_string(),
+        type_name,
+        receiver,
+        access,
+        declaration_start: declaration.start_byte(),
+        scope_range: (scope.start_byte(), scope.end_byte()),
+    })
+}
+
+fn cpp_binding_type(
+    type_node: Node<'_>,
+    type_prefix: &str,
+    type_suffix: &str,
+    source: &str,
+) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
     if !type_prefix
         .split_whitespace()
         .all(|part| matches!(part, "const" | "volatile"))
     {
         return None;
     }
-    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
     let compact_type_suffix = compact_cpp_expression(type_suffix);
     let access = if compact_type_suffix == "*" {
         CppMemberAccess::Pointer
@@ -505,14 +561,7 @@ fn cpp_object_binding(
         CppMemberAccess::Pointer => cpp_pointer_target_path(&type_name)?,
     };
 
-    Some(CppLocalBinding {
-        name: node_text(identifier, source).ok()?.trim().to_string(),
-        type_name,
-        receiver,
-        access,
-        declaration_start: declaration.start_byte(),
-        scope_range: (scope.start_byte(), scope.end_byte()),
-    })
+    Some((type_name, receiver, access))
 }
 
 fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {
@@ -541,6 +590,7 @@ fn cpp_local_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
             candidate.kind(),
             "compound_statement"
                 | "for_statement"
+                | "for_range_loop"
                 | "if_statement"
                 | "switch_statement"
                 | "while_statement"
@@ -1167,6 +1217,22 @@ mod tests {
         assert_eq!(
             arities.get(&format!(
                 "{CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+    }
+
+    #[test]
+    fn scopes_range_for_bindings_to_the_loop() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } }; int caller() { for (Counter current : values) { current.adjust(1); } return current.adjust(1, 2); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
             Some(&BTreeSet::from([1]))
         );
