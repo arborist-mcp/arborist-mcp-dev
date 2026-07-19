@@ -89,7 +89,8 @@ or `const Alias& current` follows `const &` and
 lexically, so an inner declaration with the same name shadows an outer object
 for graph tracing. Directly typed raw pointers are also resolved through `->`,
 so `Alias* current; current->adjust(value)` follows the pointee's `&` overload
-and `const Alias* current` follows `const &`.
+and `const Alias* current` follows `const &`; the equivalent
+`(*current).adjust(value)` form is resolved as well.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same

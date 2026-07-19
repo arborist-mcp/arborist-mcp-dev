@@ -598,6 +598,13 @@ fn cpp_local_member_receiver_from_expression(
         }
         return Some((binding.type_name.clone(), binding.receiver));
     }
+    if member_operator == "."
+        && let Some(pointer_name) = expression.strip_prefix('*').map(str::trim)
+        && let Some(binding) = cpp_visible_local_binding(pointer_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Pointer
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
     if member_operator != "." {
         return None;
     }
@@ -1045,7 +1052,7 @@ mod tests {
 
     #[test]
     fn collects_this_and_typed_pointer_member_call_arities() {
-        let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + (*this).adjust(1, 2) + other->adjust(1, 2, 3); } };";
+        let source = "class Counter { int adjust(int value) { return value; } int caller(Counter* other) { return this->adjust(1) + (*this).adjust(1, 2) + other->adjust(1, 2, 3) + (*other).adjust(1, 2, 3, 4); } };";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -1059,7 +1066,7 @@ mod tests {
                     format!(
                         "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
                     ),
-                    BTreeSet::from([3]),
+                    BTreeSet::from([3, 4]),
                 ),
             ])
         );

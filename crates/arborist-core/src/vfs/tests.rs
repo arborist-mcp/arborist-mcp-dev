@@ -929,7 +929,7 @@ fn traces_cpp_local_parameter_and_pointer_member_calls_from_unsaved_virtual_chan
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int dereference_caller(Alias* current, int value) { return (*current).adjust(value); } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n",
         ),
     )
     .unwrap();
@@ -938,6 +938,7 @@ fn traces_cpp_local_parameter_and_pointer_member_calls_from_unsaved_virtual_chan
         ("api::local_caller", "api::Counter::adjust(int) &"),
         ("api::parameter_caller", "api::Counter::adjust(int) const &"),
         ("api::pointer_caller", "api::Counter::adjust(int) &"),
+        ("api::dereference_caller", "api::Counter::adjust(int) &"),
         ("api::moved_caller", "api::Counter::adjust(int) &&"),
     ] {
         let trace = vfs
