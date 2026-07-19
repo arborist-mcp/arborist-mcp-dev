@@ -13,7 +13,8 @@ use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python
 use crate::semantic::cpp_callable_symbol_id;
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
-    CPP_RVALUE_THIS_CALL_PREFIX, IndexedSymbol, symbol_kind_rank,
+    CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_THIS_CALL_PREFIX,
+    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, IndexedSymbol, symbol_kind_rank,
 };
 
 #[derive(Clone, Copy)]
@@ -21,14 +22,21 @@ struct CallResolutionContext {
     arity: Option<usize>,
     rvalue_this_receiver: bool,
     const_this_receiver: bool,
+    explicit_member_receiver: bool,
 }
 
 impl CallResolutionContext {
-    fn cpp(arity: usize, rvalue_this_receiver: bool, const_this_receiver: bool) -> Self {
+    fn cpp(
+        arity: usize,
+        rvalue_this_receiver: bool,
+        const_this_receiver: bool,
+        explicit_member_receiver: bool,
+    ) -> Self {
         Self {
             arity: Some(arity),
             rvalue_this_receiver,
             const_this_receiver,
+            explicit_member_receiver,
         }
     }
 
@@ -37,6 +45,7 @@ impl CallResolutionContext {
             arity: None,
             rvalue_this_receiver: false,
             const_this_receiver: false,
+            explicit_member_receiver: false,
         }
     }
 }
@@ -163,20 +172,27 @@ pub(super) fn resolve_dependencies_for_symbol(
 ) -> Vec<String> {
     let mut dependencies = BTreeSet::new();
     for encoded_reference_name in &symbol.references_by_name {
-        let (reference_name, rvalue_this_receiver, const_this_receiver) = encoded_reference_name
-            .strip_prefix(CPP_CONST_RVALUE_THIS_CALL_PREFIX)
-            .map(|name| (name, true, true))
-            .or_else(|| {
-                encoded_reference_name
-                    .strip_prefix(CPP_CONST_LVALUE_THIS_CALL_PREFIX)
-                    .map(|name| (name, false, true))
-            })
-            .or_else(|| {
-                encoded_reference_name
-                    .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
-                    .map(|name| (name, true, false))
-            })
-            .unwrap_or((encoded_reference_name.as_str(), false, false));
+        let (reference_name, rvalue_this_receiver, const_this_receiver, explicit_member_receiver) =
+            encoded_reference_name
+                .strip_prefix(CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
+                .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
+                .map(|(_, name)| (name, true, false, true))
+                .or_else(|| {
+                    encoded_reference_name
+                        .strip_prefix(CPP_CONST_RVALUE_THIS_CALL_PREFIX)
+                        .map(|name| (name, true, true, true))
+                })
+                .or_else(|| {
+                    encoded_reference_name
+                        .strip_prefix(CPP_CONST_LVALUE_THIS_CALL_PREFIX)
+                        .map(|name| (name, false, true, true))
+                })
+                .or_else(|| {
+                    encoded_reference_name
+                        .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
+                        .map(|name| (name, true, false, true))
+                })
+                .unwrap_or((encoded_reference_name.as_str(), false, false, false));
         let call_arities = symbol.call_arities_by_name.get(encoded_reference_name);
         if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
             && let Some(call_arities) = call_arities
@@ -188,6 +204,7 @@ pub(super) fn resolve_dependencies_for_symbol(
                         *call_arity,
                         rvalue_this_receiver,
                         const_this_receiver,
+                        explicit_member_receiver,
                     ),
                     symbol,
                     raw_symbols,
@@ -408,15 +425,26 @@ fn resolve_reference_path(
         hinted_candidates
     };
     let arity_candidates = if call_context.rvalue_this_receiver {
-        cpp_rvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+        cpp_rvalue_member_candidates(
+            arity_candidates,
+            source_symbol,
+            raw_symbols,
+            call_context.explicit_member_receiver,
+        )
     } else {
-        cpp_lvalue_member_candidates(arity_candidates, source_symbol, raw_symbols)
+        cpp_lvalue_member_candidates(
+            arity_candidates,
+            source_symbol,
+            raw_symbols,
+            call_context.explicit_member_receiver,
+        )
     };
     let arity_candidates = cpp_const_member_candidates(
         arity_candidates,
         source_symbol,
         raw_symbols,
         call_context.const_this_receiver,
+        call_context.explicit_member_receiver,
     );
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
@@ -950,16 +978,21 @@ fn cpp_const_member_candidates(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     const_this_receiver: bool,
+    explicit_member_receiver: bool,
 ) -> Vec<usize> {
-    let prefer_const_members =
-        const_this_receiver || cpp_callable_is_const_qualified(source_symbol);
+    let prefer_const_members = if explicit_member_receiver {
+        const_this_receiver
+    } else {
+        const_this_receiver || cpp_callable_is_const_qualified(source_symbol)
+    };
     let compatible_members = candidates
         .iter()
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            source_symbol.scope_path.is_some()
-                && source_symbol.scope_path == candidate.scope_path
+            (explicit_member_receiver
+                || (source_symbol.scope_path.is_some()
+                    && source_symbol.scope_path == candidate.scope_path))
                 && is_cpp_callable(candidate)
                 && cpp_callable_is_const_qualified(candidate) == prefer_const_members
         })
@@ -984,14 +1017,16 @@ fn cpp_lvalue_member_candidates(
     candidates: Vec<usize>,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    explicit_member_receiver: bool,
 ) -> Vec<usize> {
     let lvalue_members = candidates
         .iter()
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            source_symbol.scope_path.is_some()
-                && source_symbol.scope_path == candidate.scope_path
+            (explicit_member_receiver
+                || (source_symbol.scope_path.is_some()
+                    && source_symbol.scope_path == candidate.scope_path))
                 && is_cpp_callable(candidate)
                 && cpp_callable_ref_qualifier(candidate) == Some("&")
         })
@@ -1008,14 +1043,16 @@ fn cpp_rvalue_member_candidates(
     candidates: Vec<usize>,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    explicit_member_receiver: bool,
 ) -> Vec<usize> {
     let rvalue_members = candidates
         .iter()
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            source_symbol.scope_path.is_some()
-                && source_symbol.scope_path == candidate.scope_path
+            (explicit_member_receiver
+                || (source_symbol.scope_path.is_some()
+                    && source_symbol.scope_path == candidate.scope_path))
                 && is_cpp_callable(candidate)
                 && cpp_callable_ref_qualifier(candidate) == Some("&&")
         })

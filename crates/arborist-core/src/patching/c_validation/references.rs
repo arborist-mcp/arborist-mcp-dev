@@ -6,7 +6,8 @@ use tree_sitter::Node;
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
-    CPP_RVALUE_THIS_CALL_PREFIX,
+    CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_THIS_CALL_PREFIX,
+    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -157,11 +158,10 @@ fn collect_cpp_call_arity(
     let Some(arguments) = candidate.child_by_field_name("arguments") else {
         return;
     };
-    let Ok(Some((name, receiver))) = direct_cpp_call_name(function, source) else {
+    let Ok(Some(name)) = direct_cpp_call_name(function, source) else {
         return;
     };
 
-    let name = encode_cpp_this_member_call_name(name, receiver);
     record_c_call_arity(name, arguments, call_arities);
 }
 
@@ -299,12 +299,9 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
     }
 }
 
-fn direct_cpp_call_name(
-    function: Node<'_>,
-    source: &str,
-) -> Result<Option<(String, CppThisMemberReceiver)>> {
+fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
     if let Some(name) = direct_c_call_name(function, source)? {
-        return Ok(Some((name, CppThisMemberReceiver::Lvalue)));
+        return Ok(Some(name));
     }
     if function.kind() != "field_expression" {
         return Ok(None);
@@ -313,14 +310,19 @@ fn direct_cpp_call_name(
     let Some(argument) = function.child_by_field_name("argument") else {
         return Ok(None);
     };
-    let Some(receiver) = cpp_this_member_receiver(argument, source)? else {
-        return Ok(None);
-    };
-
     let Some(field) = function.child_by_field_name("field") else {
         return Ok(None);
     };
-    cpp_member_call_name(field, source).map(|name| name.map(|name| (name, receiver)))
+    let Some(name) = cpp_member_call_name(field, source)? else {
+        return Ok(None);
+    };
+    if let Some(receiver) = cpp_this_member_receiver(argument, source)? {
+        return Ok(Some(encode_cpp_this_member_call_name(name, receiver)));
+    }
+    if let Some(type_name) = cpp_temporary_member_receiver_type(argument, source)? {
+        return Ok(Some(encode_cpp_temporary_member_call_name(type_name, name)));
+    }
+    Ok(None)
 }
 
 fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceiver) -> String {
@@ -334,6 +336,12 @@ fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceive
             format!("{CPP_CONST_RVALUE_THIS_CALL_PREFIX}{name}")
         }
     }
+}
+
+fn encode_cpp_temporary_member_call_name(type_name: String, name: String) -> String {
+    format!(
+        "{CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}"
+    )
 }
 
 fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -358,6 +366,53 @@ fn cpp_this_member_receiver(
 ) -> Result<Option<CppThisMemberReceiver>> {
     let receiver_text = node_text(argument, source)?;
     Ok(cpp_this_receiver_from_expression(receiver_text))
+}
+
+fn cpp_temporary_member_receiver_type(argument: Node<'_>, source: &str) -> Result<Option<String>> {
+    let receiver = strip_cpp_outer_parentheses(node_text(argument, source)?.trim());
+    Ok(cpp_temporary_type_from_expression(receiver))
+}
+
+fn cpp_temporary_type_from_expression(expression: &str) -> Option<String> {
+    let expression = expression.trim();
+    let closing = expression.chars().last()?;
+    if !matches!(closing, ')' | '}') {
+        return None;
+    }
+
+    let opening = match closing {
+        ')' => matching_opening_delimiter_index(expression, '(', ')')?,
+        '}' => matching_opening_delimiter_index(expression, '{', '}')?,
+        _ => return None,
+    };
+    let type_name = expression[..opening].trim();
+    (!type_name.is_empty()
+        && type_name.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
+        }))
+    .then(|| compact_cpp_expression(type_name))
+}
+
+fn matching_opening_delimiter_index(
+    expression: &str,
+    opening: char,
+    closing: char,
+) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, character) in expression.char_indices().rev() {
+        match character {
+            character if character == closing => depth += 1,
+            character if character == opening => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberReceiver> {
@@ -619,6 +674,7 @@ mod tests {
     use crate::language::parse_document;
 
     use super::{
+        CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
         collect_cpp_call_arities, cpp_this_receiver_from_expression, cpp_type_is_top_level_const,
     };
 
@@ -661,6 +717,28 @@ mod tests {
         assert_eq!(
             arities,
             BTreeMap::from([("adjust<int>".to_string(), BTreeSet::from([1]))])
+        );
+    }
+
+    #[test]
+    fn collects_temporary_member_call_arities() {
+        let source = "namespace api { class Counter { public: int adjust(int value) && { return value; } }; int caller(int value) { return Counter{}.adjust(value); } }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities,
+            BTreeMap::from([
+                ("Counter".to_string(), BTreeSet::from([0])),
+                (
+                    format!(
+                        "{CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+                    ),
+                    BTreeSet::from([1]),
+                ),
+            ])
         );
     }
 
