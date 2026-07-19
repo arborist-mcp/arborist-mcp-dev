@@ -929,13 +929,18 @@ fn traces_cpp_local_parameter_and_pointer_member_calls_from_unsaved_virtual_chan
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int dereference_caller(Alias* current, int value) { return (*current).adjust(value); } int range_caller() { for (Alias current : values) { return current.adjust(1); } return 0; } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int auto_caller(int value) { auto current = Alias{}; return current.adjust(value); } int const_auto_caller(int value) { const auto current = Alias{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int dereference_caller(Alias* current, int value) { return (*current).adjust(value); } int range_caller() { for (Alias current : values) { return current.adjust(1); } return 0; } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n",
         ),
     )
     .unwrap();
 
     for (caller, expected_callee) in [
         ("api::local_caller", "api::Counter::adjust(int) &"),
+        ("api::auto_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_caller",
+            "api::Counter::adjust(int) const &",
+        ),
         ("api::parameter_caller", "api::Counter::adjust(int) const &"),
         ("api::pointer_caller", "api::Counter::adjust(int) &"),
         ("api::dereference_caller", "api::Counter::adjust(int) &"),
