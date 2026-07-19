@@ -404,12 +404,14 @@ fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppTh
             },
         );
     }
-    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "static_cast") {
-        cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument))?;
-        return Some((
-            cpp_temporary_type_path(type_name)?,
-            cpp_this_receiver_for_type(type_name, Some(true))?,
-        ));
+    for function_name in ["static_cast", "std::forward"] {
+        if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, function_name) {
+            cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument))?;
+            return Some((
+                cpp_temporary_type_path(type_name)?,
+                cpp_this_receiver_for_type(type_name, Some(true))?,
+            ));
+        }
     }
     let closing = expression.chars().last()?;
     if !matches!(closing, ')' | '}') {

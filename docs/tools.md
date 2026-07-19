@@ -77,7 +77,8 @@ Member calls on direct temporary constructions, such as
 overloads and prefer matching `&&` qualifiers; the same applies when the
 temporary is wrapped in `std::move` or an explicit `static_cast<T&&>`. A
 `static_cast<const T&>` or `static_cast<const T&&>` temporary selects matching
-const-qualified member overloads.
+const-qualified member overloads; `std::forward<T>` follows its template
+argument's value category and const qualification.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
