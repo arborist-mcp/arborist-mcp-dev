@@ -544,15 +544,25 @@ fn cpp_auto_constructor_binding_type(
     let type_suffix =
         source[declarator.start_byte()..cpp_declarator_identifier(declarator)?.start_byte()].trim();
     let compact_type_suffix = compact_cpp_expression(type_suffix);
-    let access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
+    let declared_access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Pointer
     } else if cpp_object_declarator_suffix(&compact_type_suffix) {
         CppMemberAccess::Object
     } else {
         return None;
     };
+    let allocation_initializer = initializer_text.strip_prefix("new").and_then(|remainder| {
+        let allocation = remainder.trim_start();
+        (allocation.len() < remainder.len()).then_some(allocation)
+    });
+    let access = match (declared_access, allocation_initializer) {
+        (CppMemberAccess::Pointer, _) | (CppMemberAccess::Object, Some(_)) => {
+            CppMemberAccess::Pointer
+        }
+        (CppMemberAccess::Object, None) => CppMemberAccess::Object,
+    };
     let initializer_text = if access == CppMemberAccess::Pointer {
-        initializer_text.strip_prefix("new")?.trim_start()
+        allocation_initializer?
     } else {
         initializer_text
     };
@@ -560,7 +570,12 @@ fn cpp_auto_constructor_binding_type(
         return None;
     }
     let (type_name, _) = cpp_temporary_type_from_expression(initializer_text)?;
-    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    let type_qualifiers =
+        if access == CppMemberAccess::Pointer && declared_access == CppMemberAccess::Object {
+            String::new()
+        } else {
+            cpp_binding_type_qualifier_prefix(type_prefix)
+        };
     let receiver =
         cpp_this_receiver_for_type(&format!("{type_qualifiers} {type_name}"), Some(false))?;
 
