@@ -1030,17 +1030,22 @@ fn traces_cpp_standard_smart_pointer_member_calls_from_unsaved_virtual_changes()
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; struct Deleter {}; using Alias = Counter; int unique_caller(int value) { std::unique_ptr<Alias> current; return current->adjust(value); } int custom_unique_caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); } int shared_caller(int value) { std::shared_ptr<Alias> current; return current->adjust(value); } int const_unique_caller(int value) { std::unique_ptr<const Alias> current; return current->adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; struct Deleter {}; using Alias = Counter; int unique_caller(int value) { std::unique_ptr<Alias> current; return current->adjust(value); } int unique_get_caller(int value) { std::unique_ptr<Alias> current; return current.get()->adjust(value); } int custom_unique_caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); } int shared_caller(int value) { std::shared_ptr<Alias> current; return current->adjust(value); } int const_unique_caller(int value) { std::unique_ptr<const Alias> current; return current->adjust(value); } int const_unique_get_caller(int value) { std::unique_ptr<const Alias> current; return current.get()->adjust(value); } }\n",
         ),
     )
     .unwrap();
 
     for (caller, expected_callee) in [
         ("api::unique_caller", "api::Counter::adjust(int) &"),
+        ("api::unique_get_caller", "api::Counter::adjust(int) &"),
         ("api::custom_unique_caller", "api::Counter::adjust(int) &"),
         ("api::shared_caller", "api::Counter::adjust(int) &"),
         (
             "api::const_unique_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::const_unique_get_caller",
             "api::Counter::adjust(int) const &",
         ),
     ] {

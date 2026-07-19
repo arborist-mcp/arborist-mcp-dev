@@ -29,6 +29,7 @@ struct CppLocalBinding {
     type_name: String,
     receiver: CppThisMemberReceiver,
     access: CppMemberAccess,
+    standard_smart_pointer: bool,
     declaration_start: usize,
     scope_range: (usize, usize),
 }
@@ -480,7 +481,7 @@ fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBi
     let identifier = cpp_declarator_identifier(declarator)?;
     let type_prefix = cpp_range_for_type_prefix(loop_node, source)?;
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access) =
+    let (type_name, receiver, access, standard_smart_pointer) =
         cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
 
     Some(CppLocalBinding {
@@ -488,6 +489,7 @@ fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBi
         type_name,
         receiver,
         access,
+        standard_smart_pointer,
         declaration_start: loop_node.start_byte(),
         scope_range: (loop_node.start_byte(), loop_node.end_byte()),
     })
@@ -517,17 +519,19 @@ fn cpp_object_binding(
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access) = if node_text(type_node, source).ok()?.trim() == "auto" {
-        cpp_auto_constructor_binding_type(declarator, type_prefix, source)?
-    } else {
-        cpp_binding_type(type_node, type_prefix, type_suffix, source)?
-    };
+    let (type_name, receiver, access, standard_smart_pointer) =
+        if node_text(type_node, source).ok()?.trim() == "auto" {
+            cpp_auto_constructor_binding_type(declarator, type_prefix, source)?
+        } else {
+            cpp_binding_type(type_node, type_prefix, type_suffix, source)?
+        };
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
         type_name,
         receiver,
         access,
+        standard_smart_pointer,
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
@@ -537,7 +541,7 @@ fn cpp_auto_constructor_binding_type(
     declarator: Node<'_>,
     type_prefix: &str,
     source: &str,
-) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
+) -> Option<(String, CppThisMemberReceiver, CppMemberAccess, bool)> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -592,7 +596,12 @@ fn cpp_auto_constructor_binding_type(
     let receiver =
         cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?;
 
-    Some((type_name, receiver, access))
+    Some((
+        type_name,
+        receiver,
+        access,
+        smart_pointer_factory_type.is_some(),
+    ))
 }
 
 fn cpp_auto_constructor_initializer_text<'a>(
@@ -621,7 +630,7 @@ fn cpp_binding_type(
     type_prefix: &str,
     type_suffix: &str,
     source: &str,
-) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
+) -> Option<(String, CppThisMemberReceiver, CppMemberAccess, bool)> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -655,7 +664,7 @@ fn cpp_binding_type(
         (CppMemberAccess::Pointer, None) => cpp_pointer_target_path(&type_name)?,
     };
 
-    Some((type_name, receiver, access))
+    Some((type_name, receiver, access, smart_pointer_target.is_some()))
 }
 
 fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
@@ -830,6 +839,13 @@ fn cpp_local_member_receiver_from_expression(
     member_operator: &str,
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
+    if member_operator == "->"
+        && let Some(binding_name) = cpp_standard_smart_pointer_get_receiver(expression)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.standard_smart_pointer
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
         let expected_operator = match binding.access {
             CppMemberAccess::Object => ".",
@@ -893,6 +909,11 @@ fn cpp_local_member_receiver_from_expression(
         }
     }
     None
+}
+
+fn cpp_standard_smart_pointer_get_receiver(expression: &str) -> Option<&str> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    is_cpp_identifier(receiver).then_some(receiver)
 }
 
 fn cpp_visible_local_binding<'a>(
