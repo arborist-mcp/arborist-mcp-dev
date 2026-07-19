@@ -515,8 +515,11 @@ fn cpp_object_binding(
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access) =
-        cpp_binding_type(type_node, type_prefix, type_suffix, source)?;
+    let (type_name, receiver, access) = if node_text(type_node, source).ok()?.trim() == "auto" {
+        cpp_auto_constructor_binding_type(declarator, type_prefix, source)?
+    } else {
+        cpp_binding_type(type_node, type_prefix, type_suffix, source)?
+    };
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
@@ -526,6 +529,28 @@ fn cpp_object_binding(
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
+}
+
+fn cpp_auto_constructor_binding_type(
+    declarator: Node<'_>,
+    type_prefix: &str,
+    source: &str,
+) -> Option<(String, CppThisMemberReceiver, CppMemberAccess)> {
+    if !type_prefix
+        .split_whitespace()
+        .all(|part| matches!(part, "const" | "volatile"))
+    {
+        return None;
+    }
+    let initializer = declarator.child_by_field_name("value")?;
+    let initializer_text = node_text(initializer, source).ok()?.trim();
+    if !initializer_text.ends_with('}') {
+        return None;
+    }
+    let (type_name, _) = cpp_temporary_type_from_expression(initializer_text)?;
+    let receiver = cpp_this_receiver_for_type(&format!("{type_prefix} {type_name}"), Some(false))?;
+
+    Some((type_name, receiver, CppMemberAccess::Object))
 }
 
 fn cpp_binding_type(
