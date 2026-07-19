@@ -1236,7 +1236,7 @@ mod tests {
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
-        cpp_this_receiver_from_expression,
+        cpp_standard_smart_pointer_target_type, cpp_this_receiver_from_expression,
     };
 
     #[test]
@@ -1391,6 +1391,19 @@ mod tests {
         assert!(cpp_type_is_top_level_const("Counter const &"));
         assert!(!cpp_type_is_top_level_const("constCounter&&"));
         assert!(!cpp_type_is_top_level_const("Wrapper<const Counter>&&"));
+    }
+
+    #[test]
+    fn extracts_first_standard_smart_pointer_template_argument() {
+        assert_eq!(
+            cpp_standard_smart_pointer_target_type("std::unique_ptr<Wrapper<Alias, Tag>, Deleter>"),
+            Some("Wrapper<Alias, Tag>")
+        );
+        assert_eq!(
+            cpp_standard_smart_pointer_target_type("std::shared_ptr<const Counter>"),
+            Some("const Counter")
+        );
+        assert!(cpp_standard_smart_pointer_target_type("std::unique_ptr<>").is_none());
     }
 
     #[test]
