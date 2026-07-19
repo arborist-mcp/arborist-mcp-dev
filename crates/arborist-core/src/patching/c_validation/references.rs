@@ -557,19 +557,25 @@ fn cpp_auto_constructor_binding_type(
         let allocation = remainder.trim_start();
         (allocation.len() < remainder.len()).then_some(allocation)
     });
-    let access = match (declared_access, allocation_initializer) {
+    let smart_pointer_factory_type = cpp_smart_pointer_factory_type(initializer_text);
+    let inferred_pointer_type = allocation_initializer
+        .and_then(|allocation| {
+            cpp_constructor_type_text(allocation)
+                .or_else(|| cpp_default_initialized_type_text(allocation))
+        })
+        .or(smart_pointer_factory_type);
+    let access = match (declared_access, inferred_pointer_type) {
         (CppMemberAccess::Pointer, _) | (CppMemberAccess::Object, Some(_)) => {
             CppMemberAccess::Pointer
         }
         (CppMemberAccess::Object, None) => CppMemberAccess::Object,
     };
-    let initializer_text = if access == CppMemberAccess::Pointer {
-        allocation_initializer?
+    let initializer_type = if access == CppMemberAccess::Pointer {
+        inferred_pointer_type
     } else {
-        initializer_text
+        cpp_constructor_type_text(initializer_text)
+            .or_else(|| cpp_default_initialized_type_text(initializer_text))
     };
-    let initializer_type = cpp_constructor_type_text(initializer_text)
-        .or_else(|| cpp_default_initialized_type_text(initializer_text));
     let type_name = initializer_type
         .and_then(cpp_temporary_type_path)
         .or_else(|| {
@@ -600,6 +606,14 @@ fn cpp_auto_constructor_initializer_text<'a>(
     let mut values = initializer.named_children(&mut cursor);
     let value = values.next()?;
     (values.next().is_none()).then(|| node_text(value, source).ok().map(str::trim))?
+}
+
+fn cpp_smart_pointer_factory_type(expression: &str) -> Option<&str> {
+    ["std::make_unique", "std::make_shared"]
+        .into_iter()
+        .find_map(|factory| {
+            cpp_typed_receiver_call(expression, factory).map(|(type_name, _)| type_name)
+        })
 }
 
 fn cpp_binding_type(
