@@ -566,9 +566,6 @@ fn cpp_auto_constructor_binding_type(
     } else {
         initializer_text
     };
-    if !initializer_text.ends_with('}') {
-        return None;
-    }
     let (type_name, _) = cpp_temporary_type_from_expression(initializer_text)?;
     let type_qualifiers =
         if access == CppMemberAccess::Pointer && declared_access == CppMemberAccess::Object {
