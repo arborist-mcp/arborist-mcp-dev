@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
@@ -44,16 +46,20 @@ impl WorkspaceEditPreviewResult {
         }
 
         let mut changed = false;
+        let mut files = BTreeSet::new();
         for (index, file) in self.files.iter().enumerate() {
-            ensure_nonblank(
-                &file.file,
-                &format!("workspace_edit_preview.files[{index}].file"),
-            )?;
+            let field = format!("workspace_edit_preview.files[{index}]");
+            ensure_nonblank(&file.file, &format!("{field}.file"))?;
+            if !files.insert(&file.file) {
+                bail!("invalid {field}.file: duplicate preview files are not allowed");
+            }
             if file.changed == file.unified_diff.is_empty() {
                 bail!(
                     "invalid workspace_edit_preview.files[{index}].changed: expected changed to match unified_diff presence"
                 );
             }
+            file.validation
+                .validate_syntax_only_output(&format!("{field}.validation"))?;
             changed |= file.changed;
         }
         if self.changed != changed {

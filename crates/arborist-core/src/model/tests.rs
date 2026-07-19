@@ -11,7 +11,7 @@ use super::{
     TraceBackedPatchResult, TraceDirection, TraceEvidenceKeys, TracePatchEvidenceReplayItem,
     TracePatchEvidenceReplayResult, TraceSymbolGraphResult, TraceSymbolNeighborhoodNode,
     TraceSymbolNeighborhoodResult, ValidationBindingDecision, VirtualEditResult,
-    VirtualFileSnapshot, VirtualFileStatus,
+    VirtualFileSnapshot, VirtualFileStatus, WorkspaceEditPreviewFile, WorkspaceEditPreviewResult,
 };
 
 #[test]
@@ -30,6 +30,35 @@ fn position_edit_rejects_unknown_fields() {
     .expect_err("position edits should reject unknown fields");
 
     assert!(error.to_string().contains("unknown field `newText`"));
+}
+
+#[test]
+fn workspace_edit_preview_rejects_duplicate_files() {
+    let result = WorkspaceEditPreviewResult {
+        changed: false,
+        files: vec![
+            WorkspaceEditPreviewFile {
+                file: "sample.py".to_string(),
+                source: "value = 1\n".to_string(),
+                unified_diff: String::new(),
+                changed: false,
+                validation: PatchValidationReport::default(),
+            },
+            WorkspaceEditPreviewFile {
+                file: "sample.py".to_string(),
+                source: "value = 1\n".to_string(),
+                unified_diff: String::new(),
+                changed: false,
+                validation: PatchValidationReport::default(),
+            },
+        ],
+    };
+
+    let error = result
+        .validate_public_output()
+        .expect_err("workspace previews must not repeat files");
+
+    assert!(error.to_string().contains("duplicate preview files"));
 }
 
 #[test]

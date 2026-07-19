@@ -171,6 +171,37 @@ impl PatchEvidenceInvariantReport {
 }
 
 impl PatchValidationReport {
+    pub(crate) fn validate_syntax_only_output(&self, field: &str) -> Result<()> {
+        for (index, issue) in self.syntax_errors.iter().enumerate() {
+            issue.validate_trace_replay_input(index)?;
+        }
+        ensure_nonblank_strings(
+            &self.unresolved_identifiers,
+            &format!("{field}.unresolved_identifiers"),
+        )?;
+        if !self.resolved_identifiers.is_empty() {
+            bail!(
+                "invalid {field}.resolved_identifiers: syntax-only results must not report resolved identifiers"
+            );
+        }
+        if !self.ambiguous_identifiers.is_empty() {
+            bail!(
+                "invalid {field}.ambiguous_identifiers: syntax-only results must not report ambiguous identifiers"
+            );
+        }
+        if !self.binding_decisions.is_empty() {
+            bail!(
+                "invalid {field}.binding_decisions: syntax-only results must not report binding decisions"
+            );
+        }
+        if self.commit_gate != PatchCommitGateReport::default() {
+            bail!(
+                "invalid {field}.commit_gate: syntax-only results must leave commit_gate at the default not_evaluated state"
+            );
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_trace_replay_input(&self) -> Result<()> {
         for (index, issue) in self.syntax_errors.iter().enumerate() {
             issue.validate_trace_replay_input(index)?;
