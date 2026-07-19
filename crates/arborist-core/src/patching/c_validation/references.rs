@@ -667,10 +667,23 @@ fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
                 .strip_prefix(pointer_type)?
                 .strip_prefix('<')?;
             let target_end = matching_angle_bracket_index(contents)?;
-            (contents[target_end + 1..].trim().is_empty())
-                .then(|| contents[..target_end].trim())
-                .filter(|target| !target.is_empty())
+            cpp_first_template_argument(&contents[..target_end])
         })
+}
+
+fn cpp_first_template_argument(arguments: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                return Some(arguments[..index].trim()).filter(|value| !value.is_empty());
+            }
+            _ => {}
+        }
+    }
+    Some(arguments.trim()).filter(|value| !value.is_empty())
 }
 
 fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {

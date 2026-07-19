@@ -227,6 +227,39 @@ fn traces_cpp_member_calls_from_index_with_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_custom_deleter_unique_pointer_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } }; struct Deleter {}; using Alias = Counter; int caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); } }\n";
+    let trace = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        source,
+        "api::caller",
+        TraceDirection::Both,
+    )
+    .unwrap();
+
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::adjust(int) &"]
+    );
+}
+
+#[test]
 fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
