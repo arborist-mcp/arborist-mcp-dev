@@ -927,6 +927,10 @@ fn cpp_standard_smart_pointer_binding_name(expression: &str) -> Option<&str> {
             cpp_receiver_call_argument(expression, wrapper)
                 .and_then(cpp_standard_smart_pointer_binding_name)
         })
+        .or_else(|| {
+            cpp_typed_receiver_call(expression, "std::forward")
+                .and_then(|(_, argument)| cpp_standard_smart_pointer_binding_name(argument))
+        })
 }
 
 fn cpp_visible_local_binding<'a>(
