@@ -11,10 +11,11 @@ use super::support::{
 };
 use crate::language::normalize_path;
 use crate::{
-    TraceDirection, WorkspaceScanLimits, inspect_symbol_index, migrate_symbol_index,
-    read_symbol_from_index, rebuild_symbol_index, rebuild_symbol_index_with_limits,
-    refresh_symbol_index_for_file, refresh_symbol_index_for_file_with_limits,
-    search_symbols_from_index, trace_symbol_graph_from_index,
+    MAX_WORKSPACE_SCAN_TIMEOUT_MS, TraceDirection, WorkspaceScanLimits, inspect_symbol_index,
+    inspect_symbol_index_with_timeout, migrate_symbol_index, read_symbol_from_index,
+    rebuild_symbol_index, rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
+    refresh_symbol_index_for_file_with_limits, search_symbols_from_index,
+    trace_symbol_graph_from_index,
 };
 
 #[test]
@@ -56,6 +57,25 @@ fn rebuild_symbol_index_skips_cache_and_environment_dirs() {
         trace_symbol_graph_from_index(&db_path, "uppercase_installed", TraceDirection::Both)
             .is_err()
     );
+}
+
+#[test]
+fn inspect_symbol_index_rejects_invalid_timeout_before_opening_database() {
+    let dir = temporary_dir();
+    let db_path = dir.join("missing.db");
+
+    for timeout_ms in [0, MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1] {
+        let error = inspect_symbol_index_with_timeout(&db_path, Some(timeout_ms)).expect_err(
+            "invalid inspection timeout should be rejected before reading the database",
+        );
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid workspace scan timeout_ms")
+        );
+    }
+    assert!(!db_path.exists());
 }
 
 #[test]
