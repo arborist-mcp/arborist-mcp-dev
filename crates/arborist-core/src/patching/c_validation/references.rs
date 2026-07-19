@@ -375,6 +375,9 @@ fn cpp_temporary_member_receiver_type(argument: Node<'_>, source: &str) -> Resul
 
 fn cpp_temporary_type_from_expression(expression: &str) -> Option<String> {
     let expression = expression.trim();
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_temporary_type_from_expression(strip_cpp_outer_parentheses(argument));
+    }
     let closing = expression.chars().last()?;
     if !matches!(closing, ')' | '}') {
         return None;

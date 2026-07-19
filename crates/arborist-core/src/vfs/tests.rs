@@ -875,22 +875,25 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
     vfs.open_file(
         &source,
         Some(
-            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } }; int caller(int value) { return Counter{}.adjust(value); } }\n",
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) && { return value + 1; } }; int caller(int value) { return Counter{}.adjust(value); } int moved_caller(int value) { return std::move(Counter{}).adjust(value); } }\n",
         ),
     )
     .unwrap();
 
-    let trace = vfs
-        .trace_symbol_graph(&workspace, "api::caller", TraceDirection::Both)
-        .unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["api::Counter::adjust(int) &&"]
-    );
+    for caller in ["api::caller", "api::moved_caller"] {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api::Counter::adjust(int) &&"],
+            "{caller}",
+        );
+    }
 }
 
 #[test]

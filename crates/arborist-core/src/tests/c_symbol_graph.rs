@@ -3072,32 +3072,38 @@ fn resolves_cpp_temporary_member_calls_to_rvalue_ref_overloads() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n};\nint caller(int value) { return api::Counter{}.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) && { return value + 1; }\n};\nint caller(int value) { return api::Counter{}.adjust(value); }\nint moved_caller(int value) { return std::move(api::Counter{}).adjust(value); }\n}\n",
     )
     .unwrap();
 
     let expected_callee = "api::Counter::adjust(int) &&";
-    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    for caller in ["api::caller", "api::moved_caller"] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    let persisted_trace =
-        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
-    assert_eq!(
-        persisted_trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    for caller in ["api::caller", "api::moved_caller"] {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 }
 
 #[test]
