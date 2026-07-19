@@ -920,6 +920,42 @@ fn traces_cpp_temporary_member_rvalue_ref_overloads_from_unsaved_virtual_changes
 }
 
 #[test]
+fn traces_cpp_local_parameter_and_pointer_member_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n",
+        ),
+    )
+    .unwrap();
+
+    for (caller, expected_callee) in [
+        ("api::local_caller", "api::Counter::adjust(int) &"),
+        ("api::parameter_caller", "api::Counter::adjust(int) const &"),
+        ("api::pointer_caller", "api::Counter::adjust(int) &"),
+        ("api::moved_caller", "api::Counter::adjust(int) &&"),
+    ] {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_moved_this_member_rvalue_ref_overloads_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("counter.cpp");

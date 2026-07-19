@@ -109,6 +109,53 @@ fn traces_symbol_graph_from_index_with_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_member_calls_from_index_with_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; using Alias = Counter; int local_caller(int value) { Alias current{}; return current.adjust(value); } int parameter_caller(const Alias& current, int value) { return current.adjust(value); } int pointer_caller(Alias* current, int value) { return current->adjust(value); } int moved_caller(Alias& current, int value) { return std::move(current).adjust(value); } }\n";
+
+    for (caller, expected_callee) in [
+        ("api::local_caller", "api::Counter::adjust(int) &"),
+        ("api::parameter_caller", "api::Counter::adjust(int) const &"),
+        ("api::pointer_caller", "api::Counter::adjust(int) &"),
+        ("api::moved_caller", "api::Counter::adjust(int) &&"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    assert!(
+        fs::read_to_string(&source_path)
+            .unwrap()
+            .contains("return value")
+    );
+}
+
+#[test]
 fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
