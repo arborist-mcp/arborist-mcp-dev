@@ -91,6 +91,14 @@ for graph tracing; range-for bindings follow the same rules. Directly typed raw 
 so `Alias* current; current->adjust(value)` follows the pointee's `&` overload
 and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
+Standard local wrappers follow their established access operations too:
+`std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
+and dereference; `std::reference_wrapper<T>::get()` resolves as `T`; and
+`std::optional<T>` resolves through `->`, `.value()`, and dereference while
+preserving the selected value category. Direct `auto` constructions of these
+standard wrappers retain the same receiver behavior. The supported composition
+`std::optional<std::unique_ptr<T>>` or `std::optional<std::shared_ptr<T>>`
+also resolves `(*current)->member()` against `T`.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
