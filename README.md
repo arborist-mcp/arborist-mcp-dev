@@ -83,6 +83,11 @@ const-qualified member overloads; `std::forward<T>` follows its template
 argument's value category and const qualification.
 Type aliases are expanded for direct temporary member calls, so `using Alias =
 api::Counter; Alias{}.adjust(value)` resolves against `api::Counter` overloads.
+Member calls on explicitly typed local C++ objects are resolved too: after
+`Alias current{};`, `current.adjust(value)` follows the `&` overload, while
+`const Alias current{};` follows `const &` and `std::move(current).adjust(value)`
+follows `&&`. Local bindings are selected lexically, so an inner declaration
+with the same name shadows an outer object for graph tracing.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same

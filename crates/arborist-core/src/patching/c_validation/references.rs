@@ -6,8 +6,10 @@ use tree_sitter::Node;
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
-    CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_THIS_CALL_PREFIX,
-    CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    CPP_CONST_RVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+    CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
 };
 
@@ -17,6 +19,15 @@ enum CppThisMemberReceiver {
     ConstLvalue,
     Rvalue,
     ConstRvalue,
+}
+
+#[derive(Clone)]
+struct CppLocalBinding {
+    name: String,
+    type_name: String,
+    receiver: CppThisMemberReceiver,
+    declaration_start: usize,
+    scope_range: (usize, usize),
 }
 
 pub(super) fn collect_c_local_definitions(
@@ -135,8 +146,11 @@ pub(crate) fn collect_cpp_call_arities(
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
 ) -> Result<()> {
+    let local_bindings = collect_cpp_local_bindings(node, source);
     let mut callback = |candidate: Node<'_>| match candidate.kind() {
-        "call_expression" => collect_cpp_call_arity(candidate, source, call_arities),
+        "call_expression" => {
+            collect_cpp_call_arity(candidate, source, call_arities, &local_bindings)
+        }
         "compound_literal_expression" => {
             collect_cpp_braced_call_arity(candidate, source, call_arities)
         }
@@ -152,6 +166,7 @@ fn collect_cpp_call_arity(
     candidate: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
+    local_bindings: &[CppLocalBinding],
 ) {
     let Some(function) = candidate.child_by_field_name("function") else {
         return;
@@ -159,7 +174,7 @@ fn collect_cpp_call_arity(
     let Some(arguments) = candidate.child_by_field_name("arguments") else {
         return;
     };
-    let Ok(Some(name)) = direct_cpp_call_name(function, source) else {
+    let Ok(Some(name)) = direct_cpp_call_name(function, source, local_bindings) else {
         return;
     };
 
@@ -300,7 +315,11 @@ fn direct_c_call_name(function: Node<'_>, source: &str) -> Result<Option<String>
     }
 }
 
-fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<String>> {
+fn direct_cpp_call_name(
+    function: Node<'_>,
+    source: &str,
+    local_bindings: &[CppLocalBinding],
+) -> Result<Option<String>> {
     if let Some(name) = direct_c_call_name(function, source)? {
         return Ok(Some(name));
     }
@@ -322,6 +341,13 @@ fn direct_cpp_call_name(function: Node<'_>, source: &str) -> Result<Option<Strin
     }
     if let Some((type_name, receiver)) = cpp_temporary_member_receiver_type(argument, source)? {
         return Ok(Some(encode_cpp_temporary_member_call_name(
+            type_name, name, receiver,
+        )));
+    }
+    if let Some((type_name, receiver)) =
+        cpp_local_member_receiver_type(argument, source, local_bindings)?
+    {
+        return Ok(Some(encode_cpp_local_member_call_name(
             type_name, name, receiver,
         )));
     }
@@ -351,6 +377,20 @@ fn encode_cpp_temporary_member_call_name(
         CppThisMemberReceiver::ConstLvalue => CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
         CppThisMemberReceiver::Rvalue => CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
         CppThisMemberReceiver::ConstRvalue => CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    };
+    format!("{prefix}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}")
+}
+
+fn encode_cpp_local_member_call_name(
+    type_name: String,
+    name: String,
+    receiver: CppThisMemberReceiver,
+) -> String {
+    let prefix = match receiver {
+        CppThisMemberReceiver::Lvalue => CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+        CppThisMemberReceiver::ConstLvalue => CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+        CppThisMemberReceiver::Rvalue => CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+        CppThisMemberReceiver::ConstRvalue => CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     };
     format!("{prefix}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}")
 }
@@ -385,6 +425,166 @@ fn cpp_temporary_member_receiver_type(
 ) -> Result<Option<(String, CppThisMemberReceiver)>> {
     let receiver = strip_cpp_outer_parentheses(node_text(argument, source)?.trim());
     Ok(cpp_temporary_type_from_expression(receiver))
+}
+
+fn collect_cpp_local_bindings(node: Node<'_>, source: &str) -> Vec<CppLocalBinding> {
+    let mut bindings = Vec::new();
+    let mut callback = |candidate: Node<'_>| {
+        if candidate.kind() == "declaration"
+            && let Some(binding) = cpp_local_binding(candidate, source)
+        {
+            bindings.push(binding);
+        }
+    };
+    visit_tree(node, &mut callback);
+    bindings
+}
+
+fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBinding> {
+    let type_node = declaration.child_by_field_name("type")?;
+    let mut cursor = declaration.walk();
+    let mut declarators = declaration.children_by_field_name("declarator", &mut cursor);
+    let declarator = declarators.next()?;
+    if declarators.next().is_some() {
+        return None;
+    }
+    let identifier = match declarator.kind() {
+        "identifier" => declarator,
+        "init_declarator" => declarator.child_by_field_name("declarator")?,
+        _ => return None,
+    };
+    if identifier.kind() != "identifier" {
+        return None;
+    }
+
+    let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
+    if !type_prefix
+        .split_whitespace()
+        .all(|part| matches!(part, "const" | "volatile"))
+    {
+        return None;
+    }
+    let type_suffix = source[type_node.end_byte()..declarator.start_byte()].trim();
+    if !type_suffix
+        .chars()
+        .all(|character| character.is_whitespace() || matches!(character, '&'))
+    {
+        return None;
+    }
+    let type_name = format!(
+        "{type_prefix} {} {type_suffix}",
+        node_text(type_node, source).ok()?.trim()
+    );
+    let receiver = cpp_this_receiver_for_type(&type_name, Some(false))?;
+    let type_name = cpp_temporary_type_path(&type_name)?;
+    let scope = cpp_local_binding_scope(declaration)?;
+
+    Some(CppLocalBinding {
+        name: node_text(identifier, source).ok()?.trim().to_string(),
+        type_name,
+        receiver,
+        declaration_start: declaration.start_byte(),
+        scope_range: (scope.start_byte(), scope.end_byte()),
+    })
+}
+
+fn cpp_local_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if matches!(
+            candidate.kind(),
+            "compound_statement"
+                | "for_statement"
+                | "if_statement"
+                | "switch_statement"
+                | "while_statement"
+        ) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn cpp_local_member_receiver_type(
+    argument: Node<'_>,
+    source: &str,
+    local_bindings: &[CppLocalBinding],
+) -> Result<Option<(String, CppThisMemberReceiver)>> {
+    let receiver = strip_cpp_outer_parentheses(node_text(argument, source)?.trim());
+    Ok(cpp_local_member_receiver_from_expression(
+        receiver,
+        argument.start_byte(),
+        local_bindings,
+    ))
+}
+
+fn cpp_local_member_receiver_from_expression(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)
+            .map(|(type_name, receiver)| {
+                let receiver = match receiver {
+                    CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                        CppThisMemberReceiver::Rvalue
+                    }
+                    CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                        CppThisMemberReceiver::ConstRvalue
+                    }
+                };
+                (type_name, receiver)
+            });
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        return cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)
+            .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
+    }
+    for function_name in ["static_cast", "std::forward"] {
+        if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, function_name) {
+            cpp_local_member_receiver_from_expression(argument, byte_offset, local_bindings)?;
+            return Some((
+                cpp_temporary_type_path(type_name)?,
+                cpp_this_receiver_for_type(type_name, Some(true))?,
+            ));
+        }
+    }
+    None
+}
+
+fn cpp_visible_local_binding<'a>(
+    name: &str,
+    byte_offset: usize,
+    local_bindings: &'a [CppLocalBinding],
+) -> Option<&'a CppLocalBinding> {
+    if !is_cpp_identifier(name) {
+        return None;
+    }
+    local_bindings
+        .iter()
+        .filter(|binding| {
+            binding.name == name
+                && binding.declaration_start < byte_offset
+                && (binding.scope_range.0..binding.scope_range.1).contains(&byte_offset)
+        })
+        .min_by_key(|binding| {
+            (
+                binding.scope_range.1.saturating_sub(binding.scope_range.0),
+                usize::MAX.saturating_sub(binding.declaration_start),
+            )
+        })
+}
+
+fn is_cpp_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    matches!(characters.next(), Some(character) if character.is_ascii_alphabetic() || character == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppThisMemberReceiver)> {
@@ -726,8 +926,10 @@ mod tests {
     use crate::language::parse_document;
 
     use super::{
-        CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
-        collect_cpp_call_arities, cpp_this_receiver_from_expression, cpp_type_is_top_level_const,
+        CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+        CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+        CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
+        cpp_this_receiver_from_expression, cpp_type_is_top_level_const,
     };
 
     #[test]
@@ -791,6 +993,34 @@ mod tests {
                     BTreeSet::from([1]),
                 ),
             ])
+        );
+    }
+
+    #[test]
+    fn collects_local_variable_member_call_arities() {
+        let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } int adjust(int value) && { return value; } }; int caller(int value) { Counter current{}; const Counter locked{}; return current.adjust(value) + locked.adjust(value) + std::move(current).adjust(value); } }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
         );
     }
 
