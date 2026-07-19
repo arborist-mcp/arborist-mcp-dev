@@ -81,6 +81,7 @@ pub fn inspect_symbol_index_with_timeout(
             health
                 .issues
                 .push(format!("failed to open symbol index: {error}"));
+            health.migration = index_migration::incomplete_or_foreign_database();
             health.validate_public_output()?;
             return Ok(health);
         }

@@ -932,6 +932,28 @@ fn inspect_symbol_index_reports_missing_database_without_creating_it() {
 }
 
 #[test]
+fn inspect_symbol_index_reports_manual_action_when_database_cannot_be_opened() {
+    let dir = temporary_dir();
+    let db_path = dir.join("not-a-database");
+    fs::create_dir_all(&db_path).unwrap();
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+
+    assert!(health.exists);
+    assert!(!health.ok);
+    assert!(health.schema_version.is_none());
+    assert!(health.migration.required);
+    assert_eq!(health.migration.action, "manual");
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains("failed to open symbol index"))
+    );
+    assert!(db_path.is_dir());
+}
+
+#[test]
 fn inspect_symbol_index_reports_manual_action_for_non_index_database() {
     let dir = temporary_dir();
     let db_path = dir.join("not-symbols.db");
