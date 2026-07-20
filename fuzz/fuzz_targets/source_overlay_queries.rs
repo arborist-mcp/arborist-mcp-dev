@@ -4,8 +4,12 @@ use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arborist_core::{
-    TraceDirection, list_symbols_from_index_with_source_filtered,
+    Position, TraceDirection, list_symbols_from_index_with_source_filtered,
     list_symbols_with_source_filtered, rebuild_symbol_index,
+    read_symbol_at_position_from_index_with_source, read_symbol_at_position_with_source,
+    read_symbol_discovery_context_from_index_with_source,
+    read_symbol_discovery_context_with_source, read_symbol_from_index_with_source,
+    read_symbol_with_source,
     search_symbols_from_index_with_source_filtered, search_symbols_with_source_filtered,
     trace_symbol_graph_from_index_with_source_and_timeout,
     trace_symbol_graph_with_source_and_timeout,
@@ -41,6 +45,23 @@ fuzz_target!(|data: &[u8]| {
     let query = String::from_utf8_lossy(
         &data[source_end..(source_end.saturating_add(MAX_SELECTOR_BYTES)).min(data.len())],
     );
+    let position_bytes = data.get(..8).unwrap_or_default();
+    let position = Position {
+        row: u32::from_le_bytes(
+            position_bytes
+                .get(..4)
+                .unwrap_or(&[0; 4])
+                .try_into()
+                .unwrap(),
+        ) as usize,
+        column: u32::from_le_bytes(
+            position_bytes
+                .get(4..8)
+                .unwrap_or(&[0; 4])
+                .try_into()
+                .unwrap(),
+        ) as usize,
+    };
     let overlay_path = match data.first().copied().unwrap_or_default() % 5 {
         0 => source_path,
         1 => workspace_root.join("added.py"),
@@ -68,6 +89,17 @@ fuzz_target!(|data: &[u8]| {
         TraceDirection::Both,
         Some(10),
     );
+    let _ = read_symbol_with_source(&workspace_root, &overlay_path, &source, &query);
+    let _ = read_symbol_at_position_with_source(&workspace_root, &overlay_path, &source, &position);
+    let _ = read_symbol_discovery_context_with_source(
+        &workspace_root,
+        &overlay_path,
+        &source,
+        &query,
+        TraceDirection::Both,
+        2,
+        32,
+    );
     let _ = list_symbols_from_index_with_source_filtered(
         &db_path,
         &overlay_path,
@@ -92,6 +124,17 @@ fuzz_target!(|data: &[u8]| {
         "caller",
         TraceDirection::Both,
         Some(10),
+    );
+    let _ = read_symbol_from_index_with_source(&db_path, &overlay_path, &source, &query);
+    let _ = read_symbol_at_position_from_index_with_source(&db_path, &overlay_path, &source, &position);
+    let _ = read_symbol_discovery_context_from_index_with_source(
+        &db_path,
+        &overlay_path,
+        &source,
+        &query,
+        TraceDirection::Both,
+        2,
+        32,
     );
 
     let _ = fs::remove_dir_all(root);

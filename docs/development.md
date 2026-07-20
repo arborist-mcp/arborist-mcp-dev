@@ -183,7 +183,7 @@ result limits and the trace timeout while fuzzing selectors and search queries,
 so successful loading and query execution are covered without unbounded query
 work or writes outside the temporary workspace. The `source_overlay_queries`
 target similarly starts with a valid isolated index, then fuzzes public live and
-persisted source-overlay list, search, and bounded trace APIs using regular,
+persisted source-overlay list, search, read, and bounded trace APIs using regular,
 new, ignored-directory, unsupported-extension, and out-of-workspace paths. The
 `workspace_edit_json` target
 deserializes generated JSON into the public workspace-edit request model before
