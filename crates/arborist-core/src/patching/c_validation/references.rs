@@ -1575,6 +1575,15 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((type_name, receiver));
     }
+    if member_operator == "."
+        && let Some((type_name, receiver)) = cpp_expected_error_optional_value_member_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_standard_optional_arrow_member_receiver(expression, byte_offset, local_bindings)
@@ -1637,6 +1646,15 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "."
         && let Some((type_name, receiver)) =
             cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) = cpp_expected_error_optional_dereference_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
     {
         return Some((type_name, receiver));
     }
@@ -1863,14 +1881,57 @@ fn cpp_expected_error_optional_arrow_member_receiver(
     let receiver = expression.strip_suffix(".error()")?.trim();
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
-    let target = cpp_standard_optional_target_type(&type_name)?;
-    let receiver = if matches!(
-        error_receiver,
+    cpp_optional_member_receiver(&type_name, error_receiver, false)
+}
+
+fn cpp_expected_error_optional_value_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".value()")?.trim();
+    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let (type_name, error_receiver) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    cpp_optional_member_receiver(&type_name, error_receiver, true)
+}
+
+fn cpp_expected_error_optional_dereference_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_prefix('*')?.trim();
+    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let (type_name, error_receiver) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    cpp_optional_member_receiver(&type_name, error_receiver, true)
+}
+
+fn cpp_optional_member_receiver(
+    type_name: &str,
+    wrapper_receiver: CppThisMemberReceiver,
+    preserves_value_category: bool,
+) -> Option<(String, CppThisMemberReceiver)> {
+    let target = cpp_standard_optional_target_type(type_name)?;
+    let target_receiver = cpp_this_receiver_for_type(target, Some(false))?;
+    let const_qualified = matches!(
+        wrapper_receiver,
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
-    ) {
-        CppThisMemberReceiver::ConstLvalue
-    } else {
-        cpp_this_receiver_for_type(target, Some(false))?
+    ) || matches!(
+        target_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    );
+    let rvalue = preserves_value_category
+        && matches!(
+            wrapper_receiver,
+            CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
+        );
+    let receiver = match (const_qualified, rvalue) {
+        (false, false) => CppThisMemberReceiver::Lvalue,
+        (true, false) => CppThisMemberReceiver::ConstLvalue,
+        (false, true) => CppThisMemberReceiver::Rvalue,
+        (true, true) => CppThisMemberReceiver::ConstRvalue,
     };
     Some((cpp_temporary_type_path(target)?, receiver))
 }
