@@ -932,9 +932,13 @@ fn cpp_auto_optional_alias_binding(
             cpp_this_receiver_for_type(type_name, None)?,
         ));
     }
-    cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings).or_else(
-        || cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings),
-    )
+    cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
+        .or_else(|| {
+            cpp_standard_expected_error_member_receiver(expression, byte_offset, local_bindings)
+        })
+        .or_else(|| {
+            cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+        })
 }
 
 fn cpp_auto_reference_wrapper_get_alias_binding(
@@ -2745,6 +2749,10 @@ mod tests {
         assert_eq!(
             cpp_standard_expected_error_type("std::expected<Counter, void (*)(int, int)>"),
             Some("void (*)(int, int)")
+        );
+        assert_eq!(
+            cpp_standard_expected_error_type("std::expected<Value, Wrapper<Error, Tag>>"),
+            Some("Wrapper<Error, Tag>")
         );
         assert!(cpp_standard_expected_target_type("std::expected<Counter>").is_none());
         assert!(cpp_standard_expected_error_type("std::expected<Counter>").is_none());

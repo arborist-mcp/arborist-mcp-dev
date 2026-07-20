@@ -132,7 +132,8 @@ constructions of these standard wrappers, and `auto` bindings from
 `std::expected<T, E>` follows the same selected-value receiver behavior
 through `->`, `.value()`, and dereference, including const and rvalue wrappers
 and direct `auto` construction. Its `.error()` accessor resolves against `E`
-with the error object's own const and value category.
+with the error object's own const and value category; references bound from it
+retain the same behavior.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
 for direct `lock()->member()` calls and `auto` bindings. Const qualification on
 the weak pointer wrapper does not change the pointee type.

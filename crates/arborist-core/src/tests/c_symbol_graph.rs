@@ -3335,6 +3335,60 @@ fn resolves_cpp_expected_error_member_calls_across_live_and_persisted_queries() 
 }
 
 #[test]
+fn resolves_cpp_expected_error_alias_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("expected_error_alias_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Value {};\nclass Failure {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nint error_alias_caller(std::expected<Value, Failure> current, int value) { auto& alias = current.error(); return alias.adjust(value); }\nint decltype_error_alias_caller(std::expected<Value, Failure> current, int value) { decltype(auto) alias = current.error(); return alias.adjust(value); }\nint const_error_alias_caller(const std::expected<Value, Failure> current, int value) { auto&& alias = current.error(); return alias.adjust(value); }\nint moved_error_alias_caller(std::expected<Value, Failure> current, int value) { auto&& alias = std::move(current).error(); return alias.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::error_alias_caller", "api::Failure::adjust(int) &"),
+        (
+            "api::decltype_error_alias_caller",
+            "api::Failure::adjust(int) &",
+        ),
+        (
+            "api::const_error_alias_caller",
+            "api::Failure::adjust(int) const &",
+        ),
+        (
+            "api::moved_error_alias_caller",
+            "api::Failure::adjust(int) &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("auto_constructor_member_calls.cpp");
