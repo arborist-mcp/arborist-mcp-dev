@@ -2159,6 +2159,33 @@ fn traces_cpp_cast_optional_base_alias_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_addressof_reference_aliases_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(&source, Some("namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; using Alias = Counter; int caller(int value) { Alias target{}; auto& alias = *std::addressof(target); return alias.adjust(value); } int const_caller(int value) { const Alias target{}; auto&& alias = *std::addressof(target); return alias.adjust(value); } int native_caller(int value) { Alias target{}; auto& alias = *&target; return alias.adjust(value); } }\n")).unwrap();
+    for (caller, expected_callee) in [
+        ("api::caller", "api::Counter::adjust(int) &"),
+        ("api::const_caller", "api::Counter::adjust(int) const &"),
+        ("api::native_caller", "api::Counter::adjust(int) &"),
+    ] {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}"
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_smart_pointer_dereference_aliases_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("counter.cpp");

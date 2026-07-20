@@ -905,6 +905,24 @@ fn cpp_auto_reference_alias_target_binding<'a>(
     {
         return Some((binding.type_name.clone(), binding, false, true));
     }
+    if let Some(pointer_expression) = expression.strip_prefix('*').map(str::trim)
+        && let Some(binding_name) = cpp_addressof_local_binding_name(pointer_expression)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Object
+        && binding.standard_unwrap.is_none()
+    {
+        return Some((binding.type_name.clone(), binding, false, true));
+    }
+    if let Some(binding_name) = expression
+        .strip_prefix("*&")
+        .map(str::trim)
+        .filter(|name| is_cpp_identifier(name))
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Object
+        && binding.standard_unwrap.is_none()
+    {
+        return Some((binding.type_name.clone(), binding, false, true));
+    }
     cpp_visible_local_binding(expression, byte_offset, local_bindings)
         .map(|binding| (binding.type_name.clone(), binding, false, false))
 }
