@@ -774,6 +774,16 @@ fn cpp_auto_reference_alias_binding(
         };
         return Some((type_name, receiver));
     }
+    if let Some((type_name, receiver)) =
+        cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+    {
+        let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
+            CppThisMemberReceiver::ConstLvalue
+        } else {
+            cpp_named_reference_alias_receiver(receiver)
+        };
+        return Some((type_name, receiver));
+    }
     let (type_name, binding, force_const, dereferenced_pointer) =
         cpp_auto_reference_alias_target_binding(expression, byte_offset, local_bindings)?;
     if binding.standard_unwrap.is_some()
@@ -2100,6 +2110,28 @@ mod tests {
     #[test]
     fn collects_auto_optional_value_alias_member_call_arities() {
         let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { std::optional<Counter> current; const std::optional<Counter> locked{}; auto& value_alias = current.value(); auto&& const_value_alias = locked.value(); auto&& moved_value_alias = std::move(current).value(); return value_alias.adjust(value) + const_value_alias.adjust(value, value) + moved_value_alias.adjust(value, value, value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1, 3]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([2]))
+        );
+    }
+
+    #[test]
+    fn collects_auto_optional_dereference_alias_member_call_arities() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { std::optional<Counter> current; const std::optional<Counter> locked{}; auto& value_alias = *current; auto&& const_value_alias = *locked; auto&& moved_value_alias = *std::move(current); return value_alias.adjust(value) + const_value_alias.adjust(value, value) + moved_value_alias.adjust(value, value, value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
