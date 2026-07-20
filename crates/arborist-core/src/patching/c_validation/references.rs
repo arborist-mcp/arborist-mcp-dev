@@ -1825,6 +1825,28 @@ mod tests {
     }
 
     #[test]
+    fn scopes_auto_reference_factories_to_visible_bindings() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; { const Counter target{}; auto current = std::ref(target); current.get().adjust(value); } auto current = std::ref(target); return current.get().adjust(value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+    }
+
+    #[test]
     fn scopes_range_for_bindings_to_the_loop() {
         let source = "class Counter { public: int adjust(int value) & { return value; } }; int caller() { for (Counter current : values) { current.adjust(1); } return current.adjust(1, 2); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
