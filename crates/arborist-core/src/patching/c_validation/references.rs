@@ -611,8 +611,7 @@ fn cpp_auto_constructor_binding_type(
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
     let reference_factory_binding =
         cpp_standard_reference_factory_binding(initializer_text, declaration_start, local_bindings);
-    let addressof_binding =
-        cpp_standard_addressof_binding(initializer_text, declaration_start, local_bindings);
+    let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -627,7 +626,7 @@ fn cpp_auto_constructor_binding_type(
     let access = match (
         declared_access,
         inferred_pointer_type,
-        addressof_binding.as_ref(),
+        address_binding.as_ref(),
     ) {
         (CppMemberAccess::Pointer, _, _) | (CppMemberAccess::Object, Some(_), _) => {
             CppMemberAccess::Pointer
@@ -644,7 +643,7 @@ fn cpp_auto_constructor_binding_type(
         .as_ref()
         .map(|(type_name, _)| type_name.clone())
         .or_else(|| {
-            addressof_binding
+            address_binding
                 .as_ref()
                 .map(|(type_name, _)| type_name.clone())
         })
@@ -669,7 +668,7 @@ fn cpp_auto_constructor_binding_type(
     });
     let receiver = if let Some((_, receiver)) = reference_factory_binding.as_ref() {
         *receiver
-    } else if let Some((_, receiver)) = addressof_binding.as_ref() {
+    } else if let Some((_, receiver)) = address_binding.as_ref() {
         *receiver
     } else {
         match (access, standard_unwrap) {
@@ -705,12 +704,14 @@ fn cpp_auto_constructor_binding_type(
     Some((type_name, receiver, access, standard_unwrap_kind))
 }
 
-fn cpp_standard_addressof_binding(
+fn cpp_address_binding(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let argument = cpp_receiver_call_argument(expression, "std::addressof")?;
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    let argument = cpp_receiver_call_argument(expression, "std::addressof")
+        .or_else(|| expression.strip_prefix('&').map(str::trim))?;
     let binding = cpp_visible_local_binding(
         strip_cpp_outer_parentheses(argument.trim()),
         byte_offset,
@@ -1882,7 +1883,7 @@ mod tests {
 
     #[test]
     fn collects_auto_addressof_member_call_arities() {
-        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto mutable_pointer = std::addressof(target); auto const_pointer = std::addressof(locked); return mutable_pointer->adjust(value) + const_pointer->adjust(value) + std::addressof(std::move(target))->adjust(value); }";
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto mutable_pointer = std::addressof(target); auto const_pointer = std::addressof(locked); auto native_pointer = &target; auto native_const_pointer = &locked; return mutable_pointer->adjust(value) + const_pointer->adjust(value) + native_pointer->adjust(value, value) + native_const_pointer->adjust(value, value, value) + std::addressof(std::move(target))->adjust(value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -1892,13 +1893,13 @@ mod tests {
             arities.get(&format!(
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([1]))
+            Some(&BTreeSet::from([1, 2]))
         );
         assert_eq!(
             arities.get(&format!(
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([1]))
+            Some(&BTreeSet::from([1, 3]))
         );
     }
 
