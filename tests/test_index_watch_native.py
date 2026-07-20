@@ -163,7 +163,7 @@ class IndexWatchNativeTests(unittest.TestCase):
 
             event = json.loads(completed.stdout)
             self.assertEqual(event["status"], "refreshed")
-            self.assertEqual(event["workspace_root"], str(workspace))
+            self.assertTrue(Path(event["workspace_root"]).samefile(workspace))
             self.assertTrue(db_path.exists())
 
     def test_native_index_timeout_rejects_zero_budget(self) -> None:

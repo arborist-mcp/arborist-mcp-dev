@@ -137,7 +137,7 @@ pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Valu
     }))
 }
 
-fn sarif_artifact_uri(path: &str) -> String {
+pub(crate) fn sarif_artifact_uri(path: &str) -> String {
     let path = path.replace('\\', "/");
     let path = if path.starts_with('/') {
         path

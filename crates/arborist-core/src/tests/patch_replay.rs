@@ -1,5 +1,7 @@
 use std::fs;
 
+use crate::api_patch_validation::sarif_artifact_uri;
+
 use super::support::temporary_dir;
 use super::{
     TraceDirection, export_patch_diagnostics_sarif, patch_ast_node_from_path,
@@ -82,12 +84,12 @@ fn exports_patch_validation_diagnostics_as_sarif() {
     let results = sarif["runs"][0]["results"]
         .as_array()
         .expect("SARIF results should be an array");
+    let artifact_uri = sarif_artifact_uri(&patch.file);
     assert!(results.iter().any(|result| {
         result["ruleId"]
             .as_str()
             .is_some_and(|id| id.starts_with("arborist.syntax."))
-            && result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
-                == format!("file:///{}", patch.file.replace('\\', "/"))
+            && result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == artifact_uri
     }));
     assert!(
         results
