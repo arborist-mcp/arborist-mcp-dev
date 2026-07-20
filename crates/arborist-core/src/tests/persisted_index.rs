@@ -962,6 +962,57 @@ fn inspect_and_queries_reject_empty_persisted_scope_paths() {
 }
 
 #[test]
+fn inspect_and_queries_reject_empty_persisted_symbol_metadata() {
+    for (column, invalid_value, expected_error) in [
+        ("signature", " \t", "empty signature"),
+        ("parameters_json", "[\"\"]", "empty parameters_json entry"),
+        ("return_type", " \t", "empty return_type"),
+        ("docstring", " \t", "empty docstring"),
+    ] {
+        let dir = temporary_dir();
+        let helper = dir.join("helper.py");
+        let db_path = dir.join("symbols.db");
+        fs::write(
+            &helper,
+            "\"\"\"Helper documentation.\"\"\"\ndef helper(value: int) -> int:\n    return value\n",
+        )
+        .unwrap();
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                &format!("UPDATE symbols SET {column} = ?1 WHERE semantic_path = 'helper'"),
+                [invalid_value],
+            )
+            .unwrap();
+        drop(connection);
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+        assert!(
+            !health.ok,
+            "expected {column} corruption to make index unhealthy"
+        );
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains(expected_error)),
+            "expected {column} corruption issue, got {:#?}",
+            health.issues
+        );
+
+        let error = read_symbol_from_index(&db_path, "helper")
+            .expect_err("persisted reads must reject empty symbol metadata");
+        assert!(error.to_string().contains(expected_error));
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("persisted refreshes must reject empty symbol metadata");
+        assert!(error.to_string().contains(expected_error));
+    }
+}
+
+#[test]
 fn persisted_queries_reject_symbol_paths_for_unsupported_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

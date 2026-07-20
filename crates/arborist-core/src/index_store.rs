@@ -210,7 +210,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
         let parameters_json: String = row.get(8)?;
         let reference_names_json: String = row.get(11)?;
         let reference_call_arities_json: String = row.get(12)?;
-        let parameters: Vec<String> = json_from_column(&parameters_json, 8)?;
+        let parameters = string_list_from_json_column(&parameters_json, 8, "parameters_json")?;
         let reference_names =
             string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
         let call_arities_by_name = call_arities_from_json_column(&reference_call_arities_json, 12)?;
@@ -224,10 +224,10 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
             file_path: nonempty_string_from_row(row, 3, "file_path")?,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             byte_range: byte_range_from_row(row, 5, 6)?,
-            signature: row.get(7)?,
+            signature: optional_nonempty_string_from_row(row, 7, "signature")?,
             parameters,
-            return_type: row.get(9)?,
-            docstring: row.get(10)?,
+            return_type: optional_nonempty_string_from_row(row, 9, "return_type")?,
+            docstring: optional_nonempty_string_from_row(row, 10, "docstring")?,
             references_by_name: reference_names.into_iter().collect(),
             call_arities_by_name,
         })
@@ -265,10 +265,10 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             origin_type: "workspace_symbol".to_string(),
             byte_range: byte_range_from_row(row, 5, 6)?,
-            signature: row.get(7)?,
-            parameters: json_from_column(&parameters_json, 8)?,
-            return_type: row.get(9)?,
-            docstring: row.get(10)?,
+            signature: optional_nonempty_string_from_row(row, 7, "signature")?,
+            parameters: string_list_from_json_column(&parameters_json, 8, "parameters_json")?,
+            return_type: optional_nonempty_string_from_row(row, 9, "return_type")?,
+            docstring: optional_nonempty_string_from_row(row, 10, "docstring")?,
             dependencies: string_list_from_json_column(
                 &dependencies_json,
                 11,
