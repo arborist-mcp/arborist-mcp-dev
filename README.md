@@ -123,7 +123,9 @@ value's lvalue and const receiver behavior, including `std::move`,
 through `->`, `.value()`, and dereference, including const and rvalue wrappers
 and direct `auto` construction. Its `.error()` accessor resolves against `E`
 with the error object's own const and value category; references bound from it
-retain the same behavior.
+retain the same behavior. `std::expected<T, std::unique_ptr<U>>` and
+`std::expected<T, std::shared_ptr<U>>` also resolve `.error()->member()`
+against `U`.
 Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
 pointee's lvalue and const receiver behavior.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
