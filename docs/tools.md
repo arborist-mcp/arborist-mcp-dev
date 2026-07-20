@@ -93,10 +93,12 @@ and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
-and dereference; `std::reference_wrapper<T>::get()` resolves as `T`; and
-`std::optional<T>` resolves through `->`, `.value()`, and dereference while
-preserving the selected value category. Direct `auto` constructions of these
-standard wrappers retain the same receiver behavior. The supported composition
+and dereference; `std::reference_wrapper<T>::get()` and
+`std::ref(value).get()` resolve as `T`, while `std::cref(value).get()` resolves
+as `const T`; and `std::optional<T>` resolves through `->`, `.value()`, and
+dereference while preserving the selected value category. Direct `auto`
+constructions of these standard wrappers retain the same receiver behavior.
+The supported composition
 `std::optional<std::unique_ptr<T>>` or `std::optional<std::shared_ptr<T>>`
 also resolves `(*current)->member()` and `current.value()->member()` against
 `T`.
