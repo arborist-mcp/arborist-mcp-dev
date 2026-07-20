@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
+use crate::language::normalize_absolute_path;
+use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::source_overlay::source_override_for_path;
 
 mod list;
@@ -44,11 +45,17 @@ impl SymbolQueryContext {
     }
 
     pub fn add_source_overlay(&mut self, file_path: &Path, source: &str) -> Result<()> {
-        let (file_path, file_override) = source_override_for_path(file_path, source)?;
+        let (_, file_override) = source_override_for_path(file_path, source)?;
         if let SymbolQueryBackend::Workspace(workspace_root) = &self.backend {
-            ensure_path_inside_workspace(workspace_root, &file_path)?;
+            self.file_overrides
+                .extend(normalize_source_overrides_for_workspace(
+                    workspace_root,
+                    &file_override,
+                    "workspace",
+                )?);
+        } else {
+            self.file_overrides.extend(file_override);
         }
-        self.file_overrides.extend(file_override);
         Ok(())
     }
 

@@ -1142,12 +1142,9 @@ fn symbol_query_context_rejects_workspace_overlay_in_ignored_directory() {
     fs::create_dir_all(ignored.parent().unwrap()).unwrap();
     fs::write(&indexed, "def indexed() -> int:\n    return 1\n").unwrap();
 
-    let context = SymbolQueryContext::workspace(&workspace)
+    let error = SymbolQueryContext::workspace(&workspace)
         .unwrap()
         .with_source_overlay(&ignored, "def ignored() -> int:\n    return 2\n")
-        .unwrap();
-    let error = context
-        .list_symbols(10, None, None)
         .expect_err("workspace contexts should reject overlays in ignored directories");
 
     assert!(error.to_string().contains("ignored workspace directory"));
@@ -1163,12 +1160,9 @@ fn symbol_query_context_rejects_workspace_overlay_with_unsupported_extension() {
     fs::create_dir_all(&workspace).unwrap();
     fs::write(&indexed, "def indexed() -> int:\n    return 1\n").unwrap();
 
-    let context = SymbolQueryContext::workspace(&workspace)
+    let error = SymbolQueryContext::workspace(&workspace)
         .unwrap()
         .with_source_overlay(&unsupported, "not source code")
-        .unwrap();
-    let error = context
-        .list_symbols(10, None, None)
         .expect_err("workspace contexts should reject unsupported source overlays");
 
     assert!(error.to_string().contains("not a supported source file"));
