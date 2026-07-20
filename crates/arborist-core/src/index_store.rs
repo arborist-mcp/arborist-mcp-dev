@@ -236,6 +236,19 @@ fn load_indexed_symbols_grouped_by_file_with_query(
         let reference_names =
             string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
         let call_arities_by_name = call_arities_from_json_column(&reference_call_arities_json, 12)?;
+        if call_arities_by_name
+            .keys()
+            .any(|name| !reference_names.contains(name))
+        {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                12,
+                Type::Text,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "reference_call_arities_json contains a name absent from reference_names_json",
+                )),
+            ));
+        }
         let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
         let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
         let scope_path = validated_scope_path(row, 2, &semantic_path)?;

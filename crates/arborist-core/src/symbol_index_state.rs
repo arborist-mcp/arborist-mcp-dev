@@ -201,6 +201,11 @@ pub fn inspect_symbol_index_with_timeout(
             None
         }
     };
+    if let Err(error) = load_indexed_symbols_grouped_by_file(&connection) {
+        health
+            .issues
+            .push(format!("failed to inspect persisted raw symbols: {error}"));
+    }
     deadline.check("loading persisted index state")?;
 
     if let (Some(workspace_root), Some(file_states)) =

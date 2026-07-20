@@ -1050,6 +1050,43 @@ fn inspect_and_queries_reject_persisted_byte_ranges_outside_source() {
 }
 
 #[test]
+fn inspect_and_refresh_reject_inconsistent_persisted_call_arities() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper,
+        "int helper(int value) { return value; }\nint caller() { return helper(1); }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET reference_names_json = '[]' WHERE semantic_path = 'caller'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let expected_error =
+        "reference_call_arities_json contains a name absent from reference_names_json";
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains(expected_error))
+    );
+
+    let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+        .expect_err("persisted refreshes must reject inconsistent call arities");
+    assert!(error.to_string().contains(expected_error), "{error}");
+}
+
+#[test]
 fn inspect_and_queries_reject_persisted_graph_edges_to_missing_symbols() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
