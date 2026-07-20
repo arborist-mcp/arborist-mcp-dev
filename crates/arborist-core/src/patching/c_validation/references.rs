@@ -754,9 +754,11 @@ fn cpp_auto_reference_alias_binding(
     if !matches!(cpp_strip_cv_qualifiers(type_suffix), "&" | "&&") {
         return None;
     }
-    let (type_name, binding, force_const) =
+    let (type_name, binding, force_const, dereferenced_pointer) =
         cpp_auto_reference_alias_target_binding(expression, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+    if binding.standard_unwrap.is_some()
+        || !(binding.access == CppMemberAccess::Object || dereferenced_pointer)
+    {
         return None;
     }
     let receiver = if force_const || cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
@@ -778,38 +780,50 @@ fn cpp_auto_reference_alias_target_binding<'a>(
     expression: &str,
     byte_offset: usize,
     local_bindings: &'a [CppLocalBinding],
-) -> Option<(String, &'a CppLocalBinding, bool)> {
+) -> Option<(String, &'a CppLocalBinding, bool, bool)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
-        let (type_name, binding, _) =
+        let (type_name, binding, _, dereferenced_pointer) =
             cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings)?;
-        return Some((type_name, binding, true));
+        return Some((type_name, binding, true, dereferenced_pointer));
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings);
     }
     if let Some((forwarded_type, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
-        let (target_type, binding, _) =
+        let (target_type, binding, _, dereferenced_pointer) =
             cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings)?;
         let receiver = cpp_this_receiver_for_type(forwarded_type, Some(true))?;
         let force_const = matches!(
             receiver,
             CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
         );
-        return Some((target_type, binding, force_const));
+        return Some((target_type, binding, force_const, dereferenced_pointer));
     }
     if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "static_cast") {
-        let (_, binding, _) =
+        let (_, binding, _, dereferenced_pointer) =
             cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings)?;
         let receiver = cpp_this_receiver_for_type(type_name, None)?;
         let force_const = matches!(
             receiver,
             CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
         );
-        return Some((cpp_temporary_type_path(type_name)?, binding, force_const));
+        return Some((
+            cpp_temporary_type_path(type_name)?,
+            binding,
+            force_const,
+            dereferenced_pointer,
+        ));
+    }
+    if let Some(pointer_name) = expression.strip_prefix('*').map(str::trim)
+        && let Some(binding) = cpp_visible_local_binding(pointer_name, byte_offset, local_bindings)
+        && binding.access == CppMemberAccess::Pointer
+        && binding.standard_unwrap.is_none()
+    {
+        return Some((binding.type_name.clone(), binding, false, true));
     }
     cpp_visible_local_binding(expression, byte_offset, local_bindings)
-        .map(|binding| (binding.type_name.clone(), binding, false))
+        .map(|binding| (binding.type_name.clone(), binding, false, false))
 }
 
 fn cpp_auto_reference_alias_is_const(type_prefix: &str, type_suffix: &str) -> bool {
@@ -2022,7 +2036,7 @@ mod tests {
 
     #[test]
     fn collects_auto_reference_alias_member_call_arities() {
-        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto const& postfix_const_alias = target; auto&& forwarding_alias = locked; auto&& moved_alias = std::move(target); auto&& as_const_alias = std::as_const(target); auto&& forwarded_alias = std::forward<Counter&&>(target); auto&& const_forwarded_alias = std::forward<const Counter&&>(target); auto&& cast_alias = static_cast<Counter&&>(target); auto&& const_cast_alias = static_cast<const Counter&&>(target); return mutable_alias.adjust(value) + const_alias.adjust(value, value) + postfix_const_alias.adjust(value, value, value) + forwarding_alias.adjust(value, value, value, value) + moved_alias.adjust(value, value, value, value, value) + as_const_alias.adjust(value, value, value, value, value, value) + forwarded_alias.adjust(value, value, value, value, value, value, value) + const_forwarded_alias.adjust(value, value, value, value, value, value, value, value) + cast_alias.adjust(value, value, value, value, value, value, value, value, value) + const_cast_alias.adjust(value, value, value, value, value, value, value, value, value, value); }";
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; Counter* pointer = &target; const Counter* const_pointer = &locked; auto& mutable_alias = target; const auto& const_alias = target; auto const& postfix_const_alias = target; auto&& forwarding_alias = locked; auto&& moved_alias = std::move(target); auto&& as_const_alias = std::as_const(target); auto&& forwarded_alias = std::forward<Counter&&>(target); auto&& const_forwarded_alias = std::forward<const Counter&&>(target); auto&& cast_alias = static_cast<Counter&&>(target); auto&& const_cast_alias = static_cast<const Counter&&>(target); auto& pointer_alias = *pointer; auto&& const_pointer_alias = *const_pointer; return mutable_alias.adjust(value) + const_alias.adjust(value, value) + postfix_const_alias.adjust(value, value, value) + forwarding_alias.adjust(value, value, value, value) + moved_alias.adjust(value, value, value, value, value) + as_const_alias.adjust(value, value, value, value, value, value) + forwarded_alias.adjust(value, value, value, value, value, value, value) + const_forwarded_alias.adjust(value, value, value, value, value, value, value, value) + cast_alias.adjust(value, value, value, value, value, value, value, value, value) + const_cast_alias.adjust(value, value, value, value, value, value, value, value, value, value) + pointer_alias.adjust(value, value, value, value, value, value, value, value, value, value, value) + const_pointer_alias.adjust(value, value, value, value, value, value, value, value, value, value, value, value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -2032,13 +2046,13 @@ mod tests {
             arities.get(&format!(
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([1, 5, 7, 9]))
+            Some(&BTreeSet::from([1, 5, 7, 9, 11]))
         );
         assert_eq!(
             arities.get(&format!(
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([2, 3, 4, 6, 8, 10]))
+            Some(&BTreeSet::from([2, 3, 4, 6, 8, 10, 12]))
         );
     }
 
