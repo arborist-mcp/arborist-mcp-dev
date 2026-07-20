@@ -167,3 +167,69 @@ fn cpp_parameter_has_default(parameter: &str) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+
+    fn cpp_callable(parameters: &[&str]) -> IndexedSymbol {
+        IndexedSymbol {
+            symbol_id: "api::convert".to_string(),
+            base_name: "convert".to_string(),
+            semantic_path: "api::convert".to_string(),
+            scope_path: Some("api".to_string()),
+            file_path: "api.cpp".to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (0, 0),
+            signature: None,
+            parameters: parameters
+                .iter()
+                .map(|parameter| (*parameter).to_string())
+                .collect(),
+            return_type: None,
+            docstring: None,
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn cpp_callable_arity_allows_defaulted_parameters() {
+        let callable = cpp_callable(&["int value", "int radix = 10"]);
+
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(cpp_callable_accepts_arity(&callable, 2));
+        assert!(!cpp_callable_accepts_arity(&callable, 0));
+        assert!(!cpp_callable_accepts_arity(&callable, 3));
+    }
+
+    #[test]
+    fn cpp_callable_arity_allows_variadic_arguments() {
+        let callable = cpp_callable(&["int first", "..."]);
+
+        assert!(!cpp_callable_accepts_arity(&callable, 0));
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(cpp_callable_accepts_arity(&callable, 4));
+    }
+
+    #[test]
+    fn cpp_callable_arity_does_not_treat_parameter_packs_as_variadic_calls() {
+        let callable = cpp_callable(&["Args... values"]);
+
+        assert!(cpp_callable_accepts_arity(&callable, 1));
+        assert!(!cpp_callable_accepts_arity(&callable, 2));
+    }
+
+    #[test]
+    fn cpp_const_qualification_comes_after_the_parameter_list() {
+        let mut const_member = cpp_callable(&[]);
+        const_member.signature = Some("const int convert() const;".to_string());
+        let mut const_return = cpp_callable(&[]);
+        const_return.signature = Some("const int convert();".to_string());
+
+        assert!(cpp_callable_is_const_qualified(&const_member));
+        assert!(!cpp_callable_is_const_qualified(&const_return));
+    }
+}
