@@ -805,10 +805,9 @@ fn cpp_auto_optional_alias_binding(
             .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
     }
     if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
-        let (target_type, _) =
-            cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings)?;
+        let _ = cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings)?;
         return Some((
-            target_type,
+            cpp_temporary_type_path(type_name)?,
             cpp_this_receiver_for_type(type_name, Some(true))?,
         ));
     }
