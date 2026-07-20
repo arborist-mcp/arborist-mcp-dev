@@ -3937,6 +3937,58 @@ fn resolves_cpp_volatile_const_member_calls_across_live_and_persisted_queries() 
 }
 
 #[test]
+fn resolves_cpp_decltype_auto_reference_alias_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("decltype_auto_reference_alias_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } };\nusing Alias = Counter;\nint copied_caller(int value) { Alias target{}; decltype(auto) alias = target; return alias.adjust(value); }\nint copied_const_caller(int value) { const Alias target{}; decltype(auto) alias = target; return alias.adjust(value); }\nint parenthesized_caller(int value) { Alias target{}; decltype(auto) alias = (target); return alias.adjust(value); }\nint const_caller(int value) { const Alias target{}; decltype(auto) alias = (target); return alias.adjust(value); }\nint moved_caller(int value) { Alias target{}; decltype(auto) alias = std::move(target); return alias.adjust(value); }\nint pointer_caller(int value) { Alias* pointer = nullptr; decltype(auto) alias = *pointer; return alias.adjust(value); }\nint optional_caller(int value) { std::optional<Alias> current; decltype(auto) alias = current.value(); return alias.adjust(value); }\nint wrapper_caller(int value) { Alias target{}; std::reference_wrapper<Alias> current(target); decltype(auto) alias = current.get(); return alias.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::copied_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::copied_const_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::parenthesized_caller", "api::Counter::adjust(int) &"),
+        ("api::const_caller", "api::Counter::adjust(int) const &"),
+        ("api::moved_caller", "api::Counter::adjust(int) &"),
+        ("api::pointer_caller", "api::Counter::adjust(int) &"),
+        ("api::optional_caller", "api::Counter::adjust(int) &"),
+        ("api::wrapper_caller", "api::Counter::adjust(int) &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("smart_pointer_dereference_alias_member_calls.cpp");

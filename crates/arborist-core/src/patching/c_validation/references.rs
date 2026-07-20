@@ -562,6 +562,13 @@ fn cpp_object_binding(
                 local_bindings,
                 source,
             )?
+        } else if declared_type == "decltype(auto)" {
+            cpp_decltype_auto_binding_type(
+                declarator,
+                declaration.start_byte(),
+                local_bindings,
+                source,
+            )?
         } else {
             cpp_binding_type(type_node, type_prefix, type_suffix, source)?
         };
@@ -575,6 +582,44 @@ fn cpp_object_binding(
         declaration_start: declaration.start_byte(),
         scope_range: (scope.start_byte(), scope.end_byte()),
     })
+}
+
+fn cpp_decltype_auto_binding_type(
+    declarator: Node<'_>,
+    declaration_start: usize,
+    local_bindings: &[CppLocalBinding],
+    source: &str,
+) -> Option<(
+    String,
+    CppThisMemberReceiver,
+    CppMemberAccess,
+    Option<CppStandardUnwrap>,
+)> {
+    let initializer = declarator.child_by_field_name("value")?;
+    if initializer.kind() == "initializer_list"
+        && source[declarator.start_byte()..initializer.start_byte()].contains('=')
+    {
+        return None;
+    }
+    let initializer_text = cpp_auto_constructor_initializer_text(initializer, source)?;
+    let expression = strip_cpp_outer_parentheses(initializer_text.trim());
+    if !cpp_expression_has_outer_parentheses(initializer_text) && is_cpp_identifier(expression) {
+        let binding = cpp_visible_local_binding(expression, declaration_start, local_bindings)?;
+        return Some((
+            binding.type_name.clone(),
+            binding.receiver,
+            binding.access,
+            binding.standard_unwrap,
+        ));
+    }
+    let (type_name, receiver) = cpp_auto_reference_alias_binding(
+        initializer_text,
+        "auto",
+        "&",
+        declaration_start,
+        local_bindings,
+    )?;
+    Some((type_name, receiver, CppMemberAccess::Object, None))
 }
 
 fn cpp_auto_constructor_binding_type(
@@ -1770,6 +1815,13 @@ fn matching_opening_delimiter_index(
     None
 }
 
+fn cpp_expression_has_outer_parentheses(expression: &str) -> bool {
+    let expression = expression.trim();
+    expression.starts_with('(')
+        && expression.ends_with(')')
+        && matching_opening_delimiter_index(expression, '(', ')') == Some(0)
+}
+
 fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberReceiver> {
     let receiver = strip_cpp_outer_parentheses(receiver.trim());
     match compact_cpp_expression(receiver).as_str() {
@@ -2220,6 +2272,28 @@ mod tests {
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
             Some(&BTreeSet::from([2, 3, 4, 6, 8, 10, 12, 13, 15, 17]))
+        );
+    }
+
+    #[test]
+    fn collects_decltype_auto_reference_alias_member_call_arities() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; Counter* pointer = &target; std::optional<Counter> optional; std::reference_wrapper<Counter> wrapper(target); decltype(auto) copied_value = target; decltype(auto) copied_const_value = locked; decltype(auto) parenthesized_alias = (target); decltype(auto) const_alias = (locked); decltype(auto) moved_alias = std::move(target); decltype(auto) pointer_alias = *pointer; decltype(auto) optional_alias = optional.value(); decltype(auto) wrapper_alias = wrapper.get(); return copied_value.adjust(value) + copied_const_value.adjust(value, value) + parenthesized_alias.adjust(value, value, value) + const_alias.adjust(value, value, value, value) + moved_alias.adjust(value, value, value, value, value) + pointer_alias.adjust(value, value, value, value, value, value) + optional_alias.adjust(value, value, value, value, value, value, value) + wrapper_alias.adjust(value, value, value, value, value, value, value, value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1, 3, 5, 6, 7, 8]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([2, 4]))
         );
     }
 
