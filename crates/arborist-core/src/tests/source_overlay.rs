@@ -717,6 +717,44 @@ fn traces_cpp_decltype_auto_reference_aliases_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn preserves_cpp_decltype_auto_parenthesized_binding_access_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } }; using Alias = Counter; int pointer_caller(int value) { Alias* current = nullptr; decltype(auto) alias = (current); return alias->adjust(value); } int optional_caller(int value) { std::optional<Alias> current; decltype(auto) alias = (current); return alias->adjust(value); } int wrapper_caller(int value) { Alias target{}; std::reference_wrapper<Alias> current(target); decltype(auto) alias = (current); return alias.get().adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::pointer_caller", "api::Counter::adjust(int) &"),
+        ("api::optional_caller", "api::Counter::adjust(int) &"),
+        ("api::wrapper_caller", "api::Counter::adjust(int) &"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

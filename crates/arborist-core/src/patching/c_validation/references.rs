@@ -603,7 +603,7 @@ fn cpp_decltype_auto_binding_type(
     }
     let initializer_text = cpp_auto_constructor_initializer_text(initializer, source)?;
     let expression = strip_cpp_outer_parentheses(initializer_text.trim());
-    if !cpp_expression_has_outer_parentheses(initializer_text) && is_cpp_identifier(expression) {
+    if is_cpp_identifier(expression) {
         let binding = cpp_visible_local_binding(expression, declaration_start, local_bindings)?;
         return Some((
             binding.type_name.clone(),
@@ -1813,13 +1813,6 @@ fn matching_opening_delimiter_index(
         }
     }
     None
-}
-
-fn cpp_expression_has_outer_parentheses(expression: &str) -> bool {
-    let expression = expression.trim();
-    expression.starts_with('(')
-        && expression.ends_with(')')
-        && matching_opening_delimiter_index(expression, '(', ')') == Some(0)
 }
 
 fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberReceiver> {
