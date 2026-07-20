@@ -492,6 +492,7 @@ fn validate_persisted_symbol_paths(
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
 ) -> Result<()> {
+    let mut sources_by_path = BTreeMap::new();
     for symbol in symbols {
         validate_persisted_source_path(workspace_root, &symbol.file_path, "symbols.file_path")?;
         if !file_states.contains_key(&symbol.file_path) {
@@ -499,6 +500,30 @@ fn validate_persisted_symbol_paths(
                 "persisted symbol path {} has no matching file_state entry",
                 symbol.file_path
             );
+        }
+        let path = Path::new(&symbol.file_path);
+        if path.exists() {
+            let source = if let Some(source) = sources_by_path.get(&symbol.file_path) {
+                source
+            } else {
+                let source = read_source(path)?;
+                sources_by_path.insert(symbol.file_path.clone(), source);
+                sources_by_path
+                    .get(&symbol.file_path)
+                    .expect("inserted persisted source must be available")
+            };
+            if source
+                .get(symbol.byte_range.0..symbol.byte_range.1)
+                .is_none()
+            {
+                bail!(
+                    "persisted symbol byte range {}..{} for {} is invalid for {}",
+                    symbol.byte_range.0,
+                    symbol.byte_range.1,
+                    symbol.symbol_id,
+                    symbol.file_path
+                );
+            }
         }
     }
     validate_resolved_symbol_edges(symbols)
