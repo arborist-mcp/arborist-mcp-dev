@@ -310,6 +310,34 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
     Ok((symbols, indexed_files))
 }
 
+pub(crate) fn validate_resolved_symbol_edges(symbols: &[SymbolMeta]) -> Result<()> {
+    let symbol_ids = symbols
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<BTreeSet<_>>();
+
+    for symbol in symbols {
+        for dependency in &symbol.dependencies {
+            if !symbol_ids.contains(dependency.as_str()) {
+                return Err(anyhow!(
+                    "persisted dependency `{dependency}` for symbol `{}` does not exist",
+                    symbol.symbol_id
+                ));
+            }
+        }
+        for reference in &symbol.references {
+            if !symbol_ids.contains(reference.as_str()) {
+                return Err(anyhow!(
+                    "persisted reference `{reference}` for symbol `{}` does not exist",
+                    symbol.symbol_id
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
     let sql = format!("SELECT COUNT(*) FROM {table_name}");
     let count = connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?;

@@ -14,7 +14,8 @@ use crate::index_schema::{
     validate_symbol_index_schema_version,
 };
 use crate::index_store::{
-    count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
+    count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file,
+    load_resolved_symbols, validate_resolved_symbol_edges,
 };
 use crate::language::{
     detect_language, normalize_absolute_path, normalize_path, parse_document,
@@ -500,7 +501,7 @@ fn validate_persisted_symbol_paths(
             );
         }
     }
-    Ok(())
+    validate_resolved_symbol_edges(symbols)
 }
 
 fn validate_persisted_source_path(
