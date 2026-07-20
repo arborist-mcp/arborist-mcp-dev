@@ -2190,6 +2190,33 @@ fn traces_cpp_addressof_reference_aliases_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_cast_addressof_reference_aliases_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { class Base { public: int adjust(int value) & { return value; } }; class Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } }; int caller(int value) { Derived target{}; auto& alias = *std::addressof(static_cast<Base&>(target)); return alias.adjust(value); } }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "api::caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Base::adjust(int) &"],
+    );
+}
+
+#[test]
 fn traces_cpp_smart_pointer_dereference_aliases_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("counter.cpp");

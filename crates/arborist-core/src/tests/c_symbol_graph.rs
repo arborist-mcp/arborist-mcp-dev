@@ -3848,6 +3848,35 @@ fn resolves_cpp_addressof_reference_alias_member_calls_across_live_and_persisted
 }
 
 #[test]
+fn resolves_cpp_cast_addressof_reference_aliases_with_the_cast_static_type() {
+    let dir = temporary_dir();
+    let source = dir.join("cast_addressof_reference_alias.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Base { public: int adjust(int value) & { return value; } };\nclass Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } };\nint caller(int value) { Derived target{}; auto& alias = *std::addressof(static_cast<Base&>(target)); return alias.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    for trace in [
+        trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap(),
+        {
+            rebuild_symbol_index(&dir, &db_path).unwrap();
+            trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap()
+        },
+    ] {
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["api::Base::adjust(int) &"],
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("smart_pointer_dereference_alias_member_calls.cpp");
