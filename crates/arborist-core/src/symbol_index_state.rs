@@ -305,6 +305,7 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
     let indexed_files = load_indexed_files_metadata(&connection)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
+    load_indexed_symbols_grouped_by_file(&connection)?;
     let file_states = load_file_states(&connection)?;
     let resolved_symbols = load_resolved_symbols(&connection)?;
     validate_indexed_file_count(indexed_files, file_states.len())?;

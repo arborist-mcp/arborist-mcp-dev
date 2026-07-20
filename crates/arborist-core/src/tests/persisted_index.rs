@@ -1050,7 +1050,7 @@ fn inspect_and_queries_reject_persisted_byte_ranges_outside_source() {
 }
 
 #[test]
-fn inspect_and_refresh_reject_inconsistent_persisted_call_arities() {
+fn inspect_queries_and_refresh_reject_inconsistent_persisted_call_arities() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cpp");
     let db_path = dir.join("symbols.db");
@@ -1081,9 +1081,22 @@ fn inspect_and_refresh_reject_inconsistent_persisted_call_arities() {
             .any(|issue| issue.contains(expected_error))
     );
 
-    let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
-        .expect_err("persisted refreshes must reject inconsistent call arities");
-    assert!(error.to_string().contains(expected_error), "{error}");
+    for error in [
+        read_symbol_from_index(&db_path, "caller")
+            .expect_err("persisted reads must reject inconsistent call arities")
+            .to_string(),
+        search_symbols_from_index(&db_path, "caller", 10)
+            .expect_err("persisted searches must reject inconsistent call arities")
+            .to_string(),
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both)
+            .expect_err("persisted traces must reject inconsistent call arities")
+            .to_string(),
+        refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("persisted refreshes must reject inconsistent call arities")
+            .to_string(),
+    ] {
+        assert!(error.contains(expected_error), "{error}");
+    }
 }
 
 #[test]
