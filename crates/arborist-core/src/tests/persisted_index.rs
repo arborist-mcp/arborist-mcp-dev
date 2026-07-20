@@ -877,6 +877,44 @@ fn inspect_and_queries_reject_persisted_file_states_in_ignored_directories() {
 }
 
 #[test]
+fn inspect_and_queries_reject_non_normalized_workspace_root_metadata() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    for invalid_workspace_root in [
+        "relative/workspace".to_string(),
+        normalize_path(&dir.join("nested").join("..")),
+    ] {
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE metadata SET value = ?1 WHERE key = 'workspace_root'",
+                [&invalid_workspace_root],
+            )
+            .unwrap();
+        drop(connection);
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+        assert!(!health.ok);
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("workspace_root metadata")
+                    && issue.contains("normalized absolute path"))
+        );
+
+        let error = read_symbol_from_index(&db_path, "helper")
+            .expect_err("persisted reads must reject non-normalized workspace roots");
+        assert!(error.to_string().contains("workspace_root metadata"));
+        assert!(error.to_string().contains("normalized absolute path"));
+    }
+}
+
+#[test]
 fn persisted_queries_reject_symbol_paths_for_unsupported_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

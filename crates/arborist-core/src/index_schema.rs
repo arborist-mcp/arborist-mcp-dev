@@ -58,7 +58,25 @@ pub(crate) fn load_symbol_index_workspace_root(
         ));
     };
 
-    normalize_absolute_path(Path::new(&stored_workspace))
+    let stored_workspace_path = Path::new(&stored_workspace);
+    if !stored_workspace_path.is_absolute() {
+        return Err(anyhow!(
+            "workspace_root metadata in symbol index {} is not a normalized absolute path: {}",
+            db_path.display(),
+            stored_workspace
+        ));
+    }
+
+    let normalized_workspace = normalize_absolute_path(stored_workspace_path)?;
+    if normalize_path(&normalized_workspace) != stored_workspace {
+        return Err(anyhow!(
+            "workspace_root metadata in symbol index {} is not a normalized absolute path: {}",
+            db_path.display(),
+            stored_workspace
+        ));
+    }
+
+    Ok(normalized_workspace)
 }
 
 pub(crate) fn validate_symbol_index_schema_version(
