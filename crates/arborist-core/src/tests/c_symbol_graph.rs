@@ -3854,24 +3854,38 @@ fn resolves_cpp_cast_addressof_reference_aliases_with_the_cast_static_type() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Base { public: int adjust(int value) & { return value; } };\nclass Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } };\nint caller(int value) { Derived target{}; auto& alias = *std::addressof(static_cast<Base&>(target)); return alias.adjust(value); }\n}\n",
+        "namespace api {\nclass Base { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } };\nclass Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } };\nint caller(int value) { Derived target{}; auto& alias = *std::addressof(static_cast<Base&>(target)); return alias.adjust(value); }\nint const_caller(int value) { Derived target{}; auto& alias = *std::addressof(std::as_const(static_cast<const Base&>(target))); return alias.adjust(value); }\n}\n",
     )
     .unwrap();
 
-    for trace in [
-        trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap(),
-        {
-            rebuild_symbol_index(&dir, &db_path).unwrap();
-            trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap()
-        },
-    ] {
+    let expected_callees = [
+        ("api::caller", "api::Base::adjust(int) &"),
+        ("api::const_caller", "api::Base::adjust(int) const &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
         assert_eq!(
             trace
                 .callees
                 .iter()
                 .map(|symbol| symbol.symbol_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["api::Base::adjust(int) &"],
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
         );
     }
 }

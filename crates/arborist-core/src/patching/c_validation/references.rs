@@ -1620,10 +1620,25 @@ fn cpp_addressable_local_binding_name(expression: &str) -> Option<&str> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     let argument = cpp_receiver_call_argument(expression, "std::addressof")
         .or_else(|| expression.strip_prefix('&').map(str::trim))?;
-    cpp_local_binding_name_from_expression(argument).or_else(|| {
-        cpp_typed_receiver_call(argument, "static_cast")
-            .and_then(|(_, argument)| cpp_local_binding_name_from_expression(argument))
-    })
+    cpp_addressable_local_binding_name_from_expression(argument)
+}
+
+fn cpp_addressable_local_binding_name_from_expression(expression: &str) -> Option<&str> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if is_cpp_identifier(expression) {
+        return Some(expression);
+    }
+    for wrapper in ["std::move", "std::as_const"] {
+        if let Some(argument) = cpp_receiver_call_argument(expression, wrapper) {
+            return cpp_addressable_local_binding_name_from_expression(argument);
+        }
+    }
+    for function_name in ["std::forward", "static_cast"] {
+        if let Some((_, argument)) = cpp_typed_receiver_call(expression, function_name) {
+            return cpp_addressable_local_binding_name_from_expression(argument);
+        }
+    }
+    None
 }
 
 fn cpp_visible_local_binding<'a>(
