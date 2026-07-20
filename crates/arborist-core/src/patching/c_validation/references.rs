@@ -860,14 +860,19 @@ fn cpp_auto_reference_alias_target_binding<'a>(
         return cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings);
     }
     if let Some((forwarded_type, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
-        let (target_type, binding, _, dereferenced_pointer) =
+        let (_, binding, _, dereferenced_pointer) =
             cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings)?;
         let receiver = cpp_this_receiver_for_type(forwarded_type, Some(true))?;
         let force_const = matches!(
             receiver,
             CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
         );
-        return Some((target_type, binding, force_const, dereferenced_pointer));
+        return Some((
+            cpp_temporary_type_path(forwarded_type)?,
+            binding,
+            force_const,
+            dereferenced_pointer,
+        ));
     }
     if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "static_cast") {
         let (_, binding, _, dereferenced_pointer) =

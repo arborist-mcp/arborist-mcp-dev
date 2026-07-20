@@ -3687,6 +3687,40 @@ fn resolves_cpp_optional_wrapped_alias_member_calls_across_live_and_persisted_qu
 }
 
 #[test]
+fn resolves_cpp_forwarded_base_alias_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("forwarded_base_alias_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Base { public: int adjust(int value) & { return value; } };\nclass Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } };\nint caller(int value) { Derived target{}; auto&& alias = std::forward<Base&&>(target); return alias.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Base::adjust(int) &"],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        persisted_trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Base::adjust(int) &"],
+    );
+}
+
+#[test]
 fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("smart_pointer_dereference_alias_member_calls.cpp");
