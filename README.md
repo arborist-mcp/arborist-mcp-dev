@@ -103,7 +103,8 @@ lvalue and const receiver behavior.
 Bindings from `std::reference_wrapper<T>::get()`, `std::ref(value).get()`, and
 `std::cref(value).get()` retain the wrapped object's receiver behavior.
 Bindings from `std::optional<T>::value()` or `*optional` retain the selected
-value's lvalue and const receiver behavior.
+value's lvalue and const receiver behavior, including `std::move`,
+`std::as_const`, and `std::forward<T>` wrappers around the selected value.
 Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
 pointee's lvalue and const receiver behavior.
 Braced local initializers such as `api::Counter counter{value}` and
