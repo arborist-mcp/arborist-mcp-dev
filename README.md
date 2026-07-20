@@ -102,6 +102,10 @@ object's lvalue and const receiver behavior, including bindings initialized
 with `std::move(value)`, `std::as_const(value)`, `std::forward<T>(value)`, or
 `static_cast<T&>(value)`. Bindings from `*pointer` retain the raw pointee's
 lvalue and const receiver behavior.
+`decltype(auto)` bindings preserve the same local receiver behavior for
+parenthesized lvalues, xvalues, pointer and optional dereferences, and
+reference-wrapper `.get()` calls; a bare identifier follows its declared
+`decltype` type, including top-level `const`.
 Equivalent address-expression aliases such as `*std::addressof(value)`,
 `*std::addressof(std::as_const(value))`, and `*&value` retain the addressed
 object's lvalue and const receiver behavior. Direct `->` calls through those
