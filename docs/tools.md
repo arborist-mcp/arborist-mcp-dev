@@ -98,6 +98,9 @@ object's lvalue and const receiver behavior, including bindings initialized
 with `std::move(value)`, `std::as_const(value)`, `std::forward<T>(value)`, or
 `static_cast<T&>(value)`. Bindings from `*pointer` retain the raw pointee's
 lvalue and const receiver behavior.
+Reference-returning `.get()` calls can also initialize these aliases:
+`std::reference_wrapper<T>::get()`, `std::ref(value).get()`, and
+`std::cref(value).get()` retain the wrapped object's receiver behavior.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and
