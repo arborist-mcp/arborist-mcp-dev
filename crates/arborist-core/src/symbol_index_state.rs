@@ -338,8 +338,14 @@ pub(crate) fn load_symbol_index_with_overrides(
 
     for (override_path, override_source) in file_overrides {
         let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !path_is_inside_workspace(&workspace_root, &override_path)?
-            || should_skip_index_path(&workspace_root, &override_path)
+        if !path_is_inside_workspace(&workspace_root, &override_path)? {
+            bail!(
+                "source overlay file {} is outside indexed workspace {}",
+                override_path.display(),
+                workspace_root.display()
+            );
+        }
+        if should_skip_index_path(&workspace_root, &override_path)
             || detect_language(&override_path).is_err()
         {
             continue;

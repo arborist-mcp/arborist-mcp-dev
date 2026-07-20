@@ -1133,6 +1133,30 @@ fn symbol_query_context_rejects_workspace_overlay_outside_workspace() {
 }
 
 #[test]
+fn symbol_query_context_rejects_index_overlay_outside_indexed_workspace() {
+    let dir = temporary_dir();
+    let workspace = dir.join("workspace");
+    let indexed = workspace.join("indexed.py");
+    let outside = dir.join("outside.py");
+    let db_path = workspace.join("symbols.db");
+
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(&indexed, "def indexed() -> int:\n    return 1\n").unwrap();
+    fs::write(&outside, "def outside() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&workspace, &db_path).unwrap();
+
+    let context = SymbolQueryContext::index(&db_path)
+        .unwrap()
+        .with_source_overlay(&outside, "def outside() -> int:\n    return 2\n")
+        .unwrap();
+    let error = context
+        .list_symbols(10, None, None)
+        .expect_err("index contexts should reject overlays outside the indexed workspace");
+
+    assert!(error.to_string().contains("outside indexed workspace"));
+}
+
+#[test]
 fn rejects_trace_context_file_outside_workspace() {
     let dir = temporary_dir();
     let workspace = dir.join("workspace");
