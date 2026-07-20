@@ -18,6 +18,8 @@ use libfuzzer_sys::fuzz_target;
 
 const MAX_INPUT_BYTES: usize = 192 * 1024;
 const MAX_SELECTOR_BYTES: usize = 4 * 1024;
+const BASELINE_SOURCE: &str =
+    "def helper(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return helper(value)\n";
 static NEXT_WORKSPACE_ID: AtomicU64 = AtomicU64::new(0);
 
 fuzz_target!(|data: &[u8]| {
@@ -34,10 +36,7 @@ fuzz_target!(|data: &[u8]| {
     let source_path = workspace_root.join("module.py");
     let db_path = workspace_root.join("symbols.db");
     let _ = fs::create_dir_all(&workspace_root);
-    let _ = fs::write(
-        &source_path,
-        "def helper(value: int) -> int:\n    return value + 1\n\ndef caller(value: int) -> int:\n    return helper(value)\n",
-    );
+    let _ = fs::write(&source_path, BASELINE_SOURCE);
     let _ = rebuild_symbol_index(&workspace_root, &db_path);
 
     let source_end = data.len() / 2;
@@ -63,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
         ) as usize,
     };
     let overlay_path = match data.first().copied().unwrap_or_default() % 5 {
-        0 => source_path,
+        0 => source_path.clone(),
         1 => workspace_root.join("added.py"),
         2 => workspace_root.join(".venv").join("ignored.py"),
         3 => workspace_root.join("notes.txt"),
@@ -132,6 +131,40 @@ fuzz_target!(|data: &[u8]| {
         &overlay_path,
         &source,
         &query,
+        TraceDirection::Both,
+        2,
+        32,
+    );
+
+    let baseline_position = Position { row: 3, column: 5 };
+    let _ = read_symbol_with_source(&workspace_root, &source_path, BASELINE_SOURCE, "caller");
+    let _ = read_symbol_at_position_with_source(
+        &workspace_root,
+        &source_path,
+        BASELINE_SOURCE,
+        &baseline_position,
+    );
+    let _ = read_symbol_discovery_context_with_source(
+        &workspace_root,
+        &source_path,
+        BASELINE_SOURCE,
+        "caller",
+        TraceDirection::Both,
+        2,
+        32,
+    );
+    let _ = read_symbol_from_index_with_source(&db_path, &source_path, BASELINE_SOURCE, "caller");
+    let _ = read_symbol_at_position_from_index_with_source(
+        &db_path,
+        &source_path,
+        BASELINE_SOURCE,
+        &baseline_position,
+    );
+    let _ = read_symbol_discovery_context_from_index_with_source(
+        &db_path,
+        &source_path,
+        BASELINE_SOURCE,
+        "caller",
         TraceDirection::Both,
         2,
         32,
