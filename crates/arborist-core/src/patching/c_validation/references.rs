@@ -465,7 +465,7 @@ fn collect_cpp_local_bindings(node: Node<'_>, source: &str) -> Vec<CppLocalBindi
     let mut bindings = Vec::new();
     let mut callback = |candidate: Node<'_>| match candidate.kind() {
         "declaration" => {
-            if let Some(binding) = cpp_local_binding(candidate, source) {
+            if let Some(binding) = cpp_local_binding(candidate, source, &bindings) {
                 bindings.push(binding);
             }
         }
@@ -485,14 +485,18 @@ fn collect_cpp_local_bindings(node: Node<'_>, source: &str) -> Vec<CppLocalBindi
     bindings
 }
 
-fn cpp_local_binding(declaration: Node<'_>, source: &str) -> Option<CppLocalBinding> {
+fn cpp_local_binding(
+    declaration: Node<'_>,
+    source: &str,
+    local_bindings: &[CppLocalBinding],
+) -> Option<CppLocalBinding> {
     let scope = cpp_local_binding_scope(declaration)?;
-    cpp_object_binding(declaration, source, scope)
+    cpp_object_binding(declaration, source, scope, local_bindings)
 }
 
 fn cpp_parameter_binding(parameter: Node<'_>, source: &str) -> Option<CppLocalBinding> {
     let scope = cpp_parameter_binding_scope(parameter)?;
-    cpp_object_binding(parameter, source, scope)
+    cpp_object_binding(parameter, source, scope, &[])
 }
 
 fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBinding> {
@@ -532,6 +536,7 @@ fn cpp_object_binding(
     declaration: Node<'_>,
     source: &str,
     scope: Node<'_>,
+    local_bindings: &[CppLocalBinding],
 ) -> Option<CppLocalBinding> {
     let type_node = declaration.child_by_field_name("type")?;
     let declarator = cpp_single_declarator(declaration)?;
@@ -541,7 +546,13 @@ fn cpp_object_binding(
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
     let (type_name, receiver, access, standard_unwrap) =
         if node_text(type_node, source).ok()?.trim() == "auto" {
-            cpp_auto_constructor_binding_type(declarator, type_prefix, source)?
+            cpp_auto_constructor_binding_type(
+                declarator,
+                type_prefix,
+                declaration.start_byte(),
+                local_bindings,
+                source,
+            )?
         } else {
             cpp_binding_type(type_node, type_prefix, type_suffix, source)?
         };
@@ -560,6 +571,8 @@ fn cpp_object_binding(
 fn cpp_auto_constructor_binding_type(
     declarator: Node<'_>,
     type_prefix: &str,
+    declaration_start: usize,
+    local_bindings: &[CppLocalBinding],
     source: &str,
 ) -> Option<(
     String,
@@ -590,6 +603,8 @@ fn cpp_auto_constructor_binding_type(
     let direct_initializer_type = cpp_constructor_type_text(initializer_text)
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
+    let reference_factory_binding =
+        cpp_standard_reference_factory_binding(initializer_text, declaration_start, local_bindings);
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -612,8 +627,10 @@ fn cpp_auto_constructor_binding_type(
     } else {
         direct_initializer_type
     };
-    let type_name = initializer_type
-        .and_then(cpp_temporary_type_path)
+    let type_name = reference_factory_binding
+        .as_ref()
+        .map(|(type_name, _)| type_name.clone())
+        .or_else(|| initializer_type.and_then(cpp_temporary_type_path))
         .or_else(|| {
             cpp_temporary_type_from_expression(initializer_text).map(|(type_name, _)| type_name)
         })
@@ -627,19 +644,31 @@ fn cpp_auto_constructor_binding_type(
     let standard_unwrap = direct_standard_unwrap.or_else(|| {
         smart_pointer_factory_type.map(|target| (target, CppStandardUnwrap::SmartPointer))
     });
-    let receiver = match (access, standard_unwrap) {
-        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
-            cpp_this_receiver_for_type(target, Some(false))?
-        }
-        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
-            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
-        }
-        (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
-            cpp_this_receiver_for_type(target, Some(false))?
-        }
-        _ => {
-            let receiver_type = initializer_type.unwrap_or(&type_name);
-            cpp_this_receiver_for_type(&format!("{type_qualifiers} {receiver_type}"), Some(false))?
+    let standard_unwrap_kind = standard_unwrap.map(|(_, unwrap)| unwrap).or_else(|| {
+        reference_factory_binding
+            .as_ref()
+            .map(|_| CppStandardUnwrap::ReferenceWrapper)
+    });
+    let receiver = if let Some((_, receiver)) = reference_factory_binding.as_ref() {
+        *receiver
+    } else {
+        match (access, standard_unwrap) {
+            (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
+                cpp_this_receiver_for_type(target, Some(false))?
+            }
+            (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
+                cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
+            }
+            (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
+                cpp_this_receiver_for_type(target, Some(false))?
+            }
+            _ => {
+                let receiver_type = initializer_type.unwrap_or(&type_name);
+                cpp_this_receiver_for_type(
+                    &format!("{type_qualifiers} {receiver_type}"),
+                    Some(false),
+                )?
+            }
         }
     };
     let type_name = match (access, standard_unwrap) {
@@ -653,12 +682,7 @@ fn cpp_auto_constructor_binding_type(
         _ => type_name,
     };
 
-    Some((
-        type_name,
-        receiver,
-        access,
-        standard_unwrap.map(|(_, unwrap)| unwrap),
-    ))
+    Some((type_name, receiver, access, standard_unwrap_kind))
 }
 
 fn cpp_auto_constructor_initializer_text<'a>(
@@ -1113,8 +1137,16 @@ fn cpp_standard_reference_factory_get_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".get()")?.trim();
+    cpp_standard_reference_factory_binding(receiver, byte_offset, local_bindings)
+}
+
+fn cpp_standard_reference_factory_binding(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
     for (factory, force_const) in [("std::ref", false), ("std::cref", true)] {
-        let Some(argument) = cpp_receiver_call_argument(receiver, factory) else {
+        let Some(argument) = cpp_receiver_call_argument(expression, factory) else {
             continue;
         };
         let (type_name, receiver) =
