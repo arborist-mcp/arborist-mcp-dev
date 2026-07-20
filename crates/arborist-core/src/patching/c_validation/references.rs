@@ -1144,7 +1144,10 @@ fn cpp_optional_smart_pointer_arrow_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_prefix('*')?.trim();
+    let receiver = expression
+        .strip_prefix('*')
+        .map(str::trim)
+        .or_else(|| expression.strip_suffix(".value()").map(str::trim))?;
     let (type_name, _) =
         cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_smart_pointer_target_type(&type_name)?;
