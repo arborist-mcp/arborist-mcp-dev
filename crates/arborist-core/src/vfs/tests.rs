@@ -2041,6 +2041,43 @@ fn traces_cpp_optional_dereference_aliases_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_smart_pointer_dereference_aliases_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint unique_alias_caller(int value) { std::unique_ptr<Alias> current; auto& alias = *current; return alias.adjust(value); }\nint const_shared_alias_caller(int value) { std::shared_ptr<const Alias> current; auto&& alias = *current; return alias.adjust(value); }\n}\n",
+        ),
+    )
+    .unwrap();
+
+    for (caller, expected_callee) in [
+        ("api::unique_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_shared_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn commits_refresh_registered_symbol_index() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");

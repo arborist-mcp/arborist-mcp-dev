@@ -786,7 +786,9 @@ fn cpp_auto_reference_alias_binding(
     }
     let (type_name, binding, force_const, dereferenced_pointer) =
         cpp_auto_reference_alias_target_binding(expression, byte_offset, local_bindings)?;
-    if binding.standard_unwrap.is_some()
+    if (binding.standard_unwrap.is_some()
+        && !(dereferenced_pointer
+            && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)))
         || !(binding.access == CppMemberAccess::Object || dereferenced_pointer)
     {
         return None;
@@ -869,7 +871,10 @@ fn cpp_auto_reference_alias_target_binding<'a>(
     if let Some(pointer_name) = expression.strip_prefix('*').map(str::trim)
         && let Some(binding) = cpp_visible_local_binding(pointer_name, byte_offset, local_bindings)
         && binding.access == CppMemberAccess::Pointer
-        && binding.standard_unwrap.is_none()
+        && matches!(
+            binding.standard_unwrap,
+            None | Some(CppStandardUnwrap::SmartPointer)
+        )
     {
         return Some((binding.type_name.clone(), binding, false, true));
     }
@@ -2142,6 +2147,28 @@ mod tests {
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
             Some(&BTreeSet::from([1, 3]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([2]))
+        );
+    }
+
+    #[test]
+    fn collects_auto_smart_pointer_dereference_alias_member_call_arities() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { std::unique_ptr<Counter> current; std::shared_ptr<const Counter> locked; auto& value_alias = *current; auto&& const_value_alias = *locked; return value_alias.adjust(value) + const_value_alias.adjust(value, value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
         );
         assert_eq!(
             arities.get(&format!(
