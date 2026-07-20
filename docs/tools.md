@@ -234,6 +234,8 @@ one-shot unsaved `source` overlays when callers provide the workspace
 
 When `index_db_path` is supplied with a source overlay, Arborist resolves against
 the persisted index plus the in-memory replacement for that one anchored file.
+The overlay file must be inside the indexed workspace; out-of-workspace paths
+are rejected rather than silently ignored.
 When `index_db_path` is omitted, Arborist resolves against the live workspace and
 active VFS buffers.
 
