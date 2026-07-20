@@ -7,13 +7,14 @@ use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
 use crate::model::{
     Position, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
 };
-use crate::symbol_index_state::load_symbol_index_with_overrides;
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides;
 use crate::symbol_query_execution::{
     trace_from_symbols_with_timeout, trace_neighborhood_from_symbols_with_timeout,
     trace_symbol_graph_at_position_from_symbols_with_timeout,
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
 };
+
+use super::load_normalized_symbol_index_with_overrides;
 
 pub fn trace_symbol_graph_with_overrides(
     workspace_root: &Path,
@@ -204,9 +205,8 @@ pub fn trace_symbol_graph_from_index_with_overrides_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     trace_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -244,9 +244,8 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     trace_neighborhood_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -284,10 +283,9 @@ pub fn trace_symbol_graph_at_position_from_index_with_overrides_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     trace_symbol_graph_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -332,10 +330,9 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides_and_timeo
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,

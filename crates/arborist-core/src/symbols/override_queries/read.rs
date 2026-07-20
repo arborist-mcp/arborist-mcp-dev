@@ -8,7 +8,6 @@ use crate::model::{
     Position, SymbolContextResult, SymbolNeighborhoodContextResult,
     SymbolReadDiscoveryContextResult, SymbolReadResult, TraceDirection,
 };
-use crate::symbol_index_state::load_symbol_index_with_overrides;
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides;
 use crate::symbol_query_execution::{
     read_symbol_at_position_from_symbols, read_symbol_context_at_position_from_symbols,
@@ -17,6 +16,8 @@ use crate::symbol_query_execution::{
     read_symbol_neighborhood_context_at_position_from_symbols,
     read_symbol_neighborhood_context_from_symbols,
 };
+
+use super::load_normalized_symbol_index_with_overrides;
 
 pub fn read_symbol_with_overrides(
     workspace_root: &Path,
@@ -191,9 +192,8 @@ pub fn read_symbol_from_index_with_overrides(
     file_overrides: &BTreeMap<String, String>,
     symbol_path: &str,
 ) -> Result<SymbolReadResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -208,9 +208,8 @@ pub fn read_symbol_context_from_index_with_overrides(
     symbol_path: &str,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -228,9 +227,8 @@ pub fn read_symbol_neighborhood_context_from_index_with_overrides(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -250,9 +248,8 @@ pub fn read_symbol_discovery_context_from_index_with_overrides(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -270,10 +267,9 @@ pub fn read_symbol_at_position_from_index_with_overrides(
     file_path: &Path,
     position: &Position,
 ) -> Result<SymbolReadResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -290,10 +286,9 @@ pub fn read_symbol_context_at_position_from_index_with_overrides(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -313,10 +308,9 @@ pub fn read_symbol_neighborhood_context_at_position_from_index_with_overrides(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_neighborhood_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -338,10 +332,9 @@ pub fn read_symbol_discovery_context_at_position_from_index_with_overrides(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
     let (resolved_symbols, indexed_files) =
-        load_symbol_index_with_overrides(&db_path, file_overrides)?;
+        load_normalized_symbol_index_with_overrides(db_path, file_overrides)?;
     read_symbol_discovery_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
