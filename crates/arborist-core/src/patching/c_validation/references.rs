@@ -1117,19 +1117,40 @@ fn cpp_standard_reference_factory_get_receiver(
         let Some(argument) = cpp_receiver_call_argument(receiver, factory) else {
             continue;
         };
-        let binding_name = cpp_local_binding_name_from_expression(argument)?;
-        let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-        if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-            return None;
-        }
+        let (type_name, receiver) =
+            cpp_reference_factory_argument_receiver(argument, byte_offset, local_bindings)?;
         let receiver = if force_const {
             CppThisMemberReceiver::ConstLvalue
         } else {
-            binding.receiver
+            receiver
         };
-        return Some((binding.type_name.clone(), receiver));
+        return Some((type_name, receiver));
     }
     None
+}
+
+fn cpp_reference_factory_argument_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    let (expression, force_const) =
+        if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+            (strip_cpp_outer_parentheses(argument.trim()), true)
+        } else {
+            (expression, false)
+        };
+    let binding = cpp_visible_local_binding(expression, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let receiver = if force_const {
+        CppThisMemberReceiver::ConstLvalue
+    } else {
+        binding.receiver
+    };
+    Some((binding.type_name.clone(), receiver))
 }
 
 fn cpp_standard_optional_value_member_receiver(
