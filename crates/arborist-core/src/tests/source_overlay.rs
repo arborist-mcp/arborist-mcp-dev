@@ -631,6 +631,37 @@ fn traces_cpp_cast_addressof_reference_aliases_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_volatile_const_member_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } }; int caller(int value) { const Counter current{}; return current.adjust(value); } }\n";
+    let trace = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        source,
+        "api::caller",
+        TraceDirection::Both,
+    )
+    .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::adjust(int) volatile const &"],
+    );
+}
+
+#[test]
 fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

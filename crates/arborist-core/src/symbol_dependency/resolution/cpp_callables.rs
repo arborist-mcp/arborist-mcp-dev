@@ -45,11 +45,24 @@ pub(super) fn cpp_const_member_candidates(
 }
 
 pub(super) fn cpp_callable_is_const_qualified(symbol: &IndexedSymbol) -> bool {
-    symbol.signature.as_deref().is_some_and(|signature| {
-        signature
-            .rsplit_once(')')
-            .is_some_and(|(_, suffix)| suffix.trim_start().starts_with("const"))
-    })
+    let Some((_, mut suffix)) = symbol
+        .signature
+        .as_deref()
+        .and_then(|signature| signature.rsplit_once(')'))
+    else {
+        return false;
+    };
+    loop {
+        suffix = suffix.trim_start();
+        if suffix.starts_with("const") {
+            return true;
+        }
+        if let Some(remaining) = suffix.strip_prefix("volatile") {
+            suffix = remaining;
+        } else {
+            return false;
+        }
+    }
 }
 
 pub(super) fn cpp_lvalue_member_candidates(
@@ -228,8 +241,11 @@ mod tests {
         const_member.signature = Some("const int convert() const;".to_string());
         let mut const_return = cpp_callable(&[]);
         const_return.signature = Some("const int convert();".to_string());
+        let mut volatile_const_member = cpp_callable(&[]);
+        volatile_const_member.signature = Some("int convert() volatile const &;".to_string());
 
         assert!(cpp_callable_is_const_qualified(&const_member));
         assert!(!cpp_callable_is_const_qualified(&const_return));
+        assert!(cpp_callable_is_const_qualified(&volatile_const_member));
     }
 }

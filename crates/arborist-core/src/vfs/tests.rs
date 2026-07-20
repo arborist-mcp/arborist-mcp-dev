@@ -2223,6 +2223,33 @@ fn traces_cpp_cast_addressof_reference_aliases_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_volatile_const_member_calls_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } }; int caller(int value) { const Counter current{}; return current.adjust(value); } }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&workspace, "api::caller", TraceDirection::Both)
+        .unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["api::Counter::adjust(int) volatile const &"],
+    );
+}
+
+#[test]
 fn traces_cpp_smart_pointer_dereference_aliases_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("counter.cpp");

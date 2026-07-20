@@ -3891,6 +3891,41 @@ fn resolves_cpp_cast_addressof_reference_aliases_with_the_cast_static_type() {
 }
 
 #[test]
+fn resolves_cpp_volatile_const_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("volatile_const_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } };\nint caller(int value) { const Counter current{}; return current.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callee = "api::Counter::adjust(int) volatile const &";
+    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let trace =
+        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![expected_callee],
+    );
+}
+
+#[test]
 fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("smart_pointer_dereference_alias_member_calls.cpp");
