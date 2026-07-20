@@ -440,20 +440,8 @@ pub(crate) fn validate_symbol_index_workspace(
     db_path: &Path,
 ) -> Result<()> {
     let expected_workspace = normalize_path(workspace_root);
-    let stored_workspace = connection
-        .query_row(
-            "SELECT value FROM metadata WHERE key = 'workspace_root'",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-
-    let Some(stored_workspace) = stored_workspace else {
-        return Err(anyhow!(
-            "missing workspace_root metadata in symbol index {}",
-            db_path.display()
-        ));
-    };
+    let stored_workspace = load_symbol_index_workspace_root(connection, db_path)?;
+    let stored_workspace = normalize_path(&stored_workspace);
 
     if stored_workspace != expected_workspace {
         return Err(anyhow!(

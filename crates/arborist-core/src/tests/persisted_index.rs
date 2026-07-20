@@ -911,6 +911,16 @@ fn inspect_and_queries_reject_non_normalized_workspace_root_metadata() {
             .expect_err("persisted reads must reject non-normalized workspace roots");
         assert!(error.to_string().contains("workspace_root metadata"));
         assert!(error.to_string().contains("normalized absolute path"));
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("persisted refreshes must reject non-normalized workspace roots");
+        assert!(error.to_string().contains("workspace_root metadata"));
+        assert!(error.to_string().contains("normalized absolute path"));
+
+        let error = rebuild_symbol_index(&dir, &db_path)
+            .expect_err("persisted rebuilds must reject non-normalized workspace roots");
+        assert!(error.to_string().contains("workspace_root metadata"));
+        assert!(error.to_string().contains("normalized absolute path"));
     }
 }
 
