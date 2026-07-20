@@ -60,9 +60,11 @@ same direct-call graph path.
 Calls through `this->method(value)`, `(*this).method(value)`, and dependent
 member-template syntax such as `this->template method<T>(value)` resolve
 against the enclosing class's method overloads by argument count; `const`
-member callers prefer matching `const` overloads. Because `this` receivers are
-lvalues, matching `&` and `const &` member overloads are preferred over `&&`
-overloads. Explicit rvalue self calls through `std::move(*this).method(value)`
+member callers prefer matching `const` overloads, including declarations whose
+top-level cv qualifiers are written as either `const volatile` or `volatile const`.
+Because `this` receivers are lvalues, matching `&` and `const &` member overloads
+are preferred over `&&` overloads. Explicit rvalue self calls through
+`std::move(*this).method(value)`
 or `static_cast<T&&>(*this).method(value)` prefer matching `&&` member
 overloads; `const`-qualified casts select matching `const &` or `const &&`
 overloads. `std::as_const(*this).method(value)` selects a matching `const &`
