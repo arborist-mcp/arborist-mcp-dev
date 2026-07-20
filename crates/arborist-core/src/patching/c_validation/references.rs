@@ -926,6 +926,16 @@ fn cpp_reference_alias_binding_type(
             Some(CppStandardUnwrap::Optional),
         ));
     }
+    if let Some(target) = cpp_standard_reference_wrapper_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(target, Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::ReferenceWrapper),
+        ));
+    }
     Some((
         type_name.to_string(),
         None,
@@ -1576,6 +1586,15 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "."
+        && let Some((type_name, receiver)) = cpp_expected_error_reference_wrapper_get_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
         && let Some((type_name, receiver)) = cpp_expected_error_optional_value_member_receiver(
             expression,
             byte_offset,
@@ -1882,6 +1901,22 @@ fn cpp_expected_error_optional_arrow_member_receiver(
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     cpp_optional_member_receiver(&type_name, error_receiver, false)
+}
+
+fn cpp_expected_error_reference_wrapper_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let (type_name, _) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_reference_wrapper_target_type(&type_name)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
 }
 
 fn cpp_expected_error_optional_value_member_receiver(
