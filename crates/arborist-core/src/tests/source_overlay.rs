@@ -109,6 +109,41 @@ fn traces_symbol_graph_from_index_with_unsaved_source_overlay() {
 }
 
 #[test]
+fn index_source_overlay_skips_byte_range_validation_against_stale_disk_source() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let caller = dir.join("caller.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(
+        &caller,
+        "from helper import helper\n\n\ndef orchestrate() -> int:\n    return helper()\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    fs::write(&caller, "def stale():\n    return 0\n").unwrap();
+    let source = "from helper import helper\n\n\ndef orchestrate() -> int:\n    return helper()\n";
+    let trace = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller,
+        source,
+        "orchestrate",
+        TraceDirection::Both,
+    )
+    .expect("source overlays must replace stale disk content before range validation");
+
+    assert_eq!(trace.symbol.semantic_path, "orchestrate");
+    assert!(
+        trace
+            .callees
+            .iter()
+            .any(|symbol| symbol.semantic_path == "helper")
+    );
+}
+
+#[test]
 fn traces_cpp_member_calls_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("counter.cpp");

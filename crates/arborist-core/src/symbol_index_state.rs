@@ -220,7 +220,7 @@ pub fn inspect_symbol_index_with_timeout(
         };
         if let Some(resolved_symbols) = resolved_symbols.as_deref()
             && let Err(error) =
-                validate_persisted_symbol_paths(workspace_root, file_states, resolved_symbols)
+                validate_persisted_symbol_paths(workspace_root, file_states, resolved_symbols, None)
         {
             health.issues.push(error.to_string());
         }
@@ -338,7 +338,12 @@ pub(crate) fn load_symbol_index_with_overrides(
     let persisted_file_states = load_file_states(&connection)?;
     let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
     validate_indexed_file_count(persisted_indexed_files, persisted_file_states.len())?;
-    validate_persisted_index_paths(&workspace_root, &persisted_file_states, &resolved_symbols)?;
+    validate_persisted_index_paths_with_overrides(
+        &workspace_root,
+        &persisted_file_states,
+        &resolved_symbols,
+        Some(&file_overrides),
+    )?;
     ensure_symbol_index_fresh(
         db_path,
         &workspace_root,
@@ -478,8 +483,17 @@ pub(crate) fn validate_persisted_index_paths(
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
 ) -> Result<()> {
+    validate_persisted_index_paths_with_overrides(workspace_root, file_states, symbols, None)
+}
+
+fn validate_persisted_index_paths_with_overrides(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+    symbols: &[SymbolMeta],
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<()> {
     validate_persisted_file_state_paths(workspace_root, file_states)?;
-    validate_persisted_symbol_paths(workspace_root, file_states, symbols)
+    validate_persisted_symbol_paths(workspace_root, file_states, symbols, file_overrides)
 }
 
 fn validate_persisted_file_state_paths(
@@ -496,6 +510,7 @@ fn validate_persisted_symbol_paths(
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<()> {
     let mut sources_by_path = BTreeMap::new();
     for symbol in symbols {
@@ -507,7 +522,9 @@ fn validate_persisted_symbol_paths(
             );
         }
         let path = Path::new(&symbol.file_path);
-        if path.exists() {
+        if path.exists()
+            && !file_overrides.is_some_and(|overrides| overrides.contains_key(&symbol.file_path))
+        {
             let source = if let Some(source) = sources_by_path.get(&symbol.file_path) {
                 source
             } else {
