@@ -908,6 +908,24 @@ fn cpp_reference_alias_binding_type(
             Some(CppStandardUnwrap::SmartPointer),
         ));
     }
+    if let Some(target) = cpp_standard_optional_target_type(type_name) {
+        let receiver = match receiver {
+            CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                CppThisMemberReceiver::ConstLvalue
+            }
+            CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                cpp_this_receiver_for_type(target, Some(false))?
+            }
+        };
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::Optional),
+        ));
+    }
     Some((
         type_name.to_string(),
         None,
@@ -1573,6 +1591,15 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_expected_error_optional_arrow_member_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
         && let Some((type_name, receiver)) = cpp_expected_error_smart_pointer_arrow_member_receiver(
             expression,
             byte_offset,
@@ -1826,6 +1853,26 @@ fn cpp_expected_error_smart_pointer_arrow_member_receiver(
         cpp_temporary_type_path(target)?,
         cpp_this_receiver_for_type(target, Some(false))?,
     ))
+}
+
+fn cpp_expected_error_optional_arrow_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".error()")?.trim();
+    let (type_name, error_receiver) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_optional_target_type(&type_name)?;
+    let receiver = if matches!(
+        error_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    ) {
+        CppThisMemberReceiver::ConstLvalue
+    } else {
+        cpp_this_receiver_for_type(target, Some(false))?
+    };
+    Some((cpp_temporary_type_path(target)?, receiver))
 }
 
 fn cpp_optional_local_binding_receiver(
