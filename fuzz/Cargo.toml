@@ -52,6 +52,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "symbol_index_queries"
+path = "fuzz_targets/symbol_index_queries.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "workspace_edit_json"
 path = "fuzz_targets/workspace_edit_json.rs"
 test = false
