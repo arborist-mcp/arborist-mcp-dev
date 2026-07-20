@@ -3805,13 +3805,17 @@ fn resolves_cpp_addressof_reference_alias_member_calls_across_live_and_persisted
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } };\nusing Alias = Counter;\nint caller(int value) { Alias target{}; auto& alias = *std::addressof(target); return alias.adjust(value); }\nint const_caller(int value) { const Alias target{}; auto&& alias = *std::addressof(target); return alias.adjust(value); }\nint native_caller(int value) { Alias target{}; auto& alias = *&target; return alias.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } };\nusing Alias = Counter;\nint caller(int value) { Alias target{}; auto& alias = *std::addressof(target); return alias.adjust(value); }\nint const_caller(int value) { const Alias target{}; auto&& alias = *std::addressof(target); return alias.adjust(value); }\nint wrapped_const_caller(int value) { Alias target{}; auto& alias = *std::addressof(std::as_const(target)); return alias.adjust(value); }\nint native_caller(int value) { Alias target{}; auto& alias = *&target; return alias.adjust(value); }\n}\n",
     )
     .unwrap();
 
     let expected_callees = [
         ("api::caller", "api::Counter::adjust(int) &"),
         ("api::const_caller", "api::Counter::adjust(int) const &"),
+        (
+            "api::wrapped_const_caller",
+            "api::Counter::adjust(int) const &",
+        ),
         ("api::native_caller", "api::Counter::adjust(int) &"),
     ];
     for (caller, expected_callee) in expected_callees {
