@@ -544,11 +544,20 @@ fn cpp_object_binding(
 
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
+    let declared_type = node_text(type_node, source).ok()?.trim();
     let (type_name, receiver, access, standard_unwrap) =
-        if node_text(type_node, source).ok()?.trim() == "auto" {
+        if cpp_auto_binding_type_is_supported(declared_type) {
+            let auto_type_prefix = format!(
+                "{type_prefix} {declared_type}{}",
+                if cpp_declarator_suffix_has_const_qualifier(type_suffix) {
+                    " const"
+                } else {
+                    ""
+                }
+            );
             cpp_auto_constructor_binding_type(
                 declarator,
-                type_prefix,
+                &auto_type_prefix,
                 declaration.start_byte(),
                 local_bindings,
                 source,
@@ -753,7 +762,7 @@ fn cpp_auto_reference_alias_binding(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let receiver = if type_prefix.split_whitespace().any(|part| part == "const") {
+    let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
         CppThisMemberReceiver::ConstLvalue
     } else {
         match binding.receiver {
@@ -766,6 +775,24 @@ fn cpp_auto_reference_alias_binding(
         }
     };
     Some((binding.type_name.clone(), receiver))
+}
+
+fn cpp_auto_reference_alias_is_const(type_prefix: &str, type_suffix: &str) -> bool {
+    type_prefix.split_whitespace().any(|part| part == "const")
+        || cpp_declarator_suffix_has_const_qualifier(type_suffix)
+}
+
+fn cpp_declarator_suffix_has_const_qualifier(mut type_suffix: &str) -> bool {
+    loop {
+        if type_suffix.strip_prefix("const").is_some() {
+            return true;
+        }
+        if let Some(remaining) = type_suffix.strip_prefix("volatile") {
+            type_suffix = remaining;
+        } else {
+            return false;
+        }
+    }
 }
 
 fn cpp_auto_constructor_initializer_text<'a>(
@@ -950,6 +977,14 @@ fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {
                 | "mutable"
         )
     })
+}
+
+fn cpp_auto_binding_type_is_supported(type_name: &str) -> bool {
+    let mut parts = type_name.split_whitespace();
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    first == "auto" && parts.all(|part| matches!(part, "const" | "volatile"))
 }
 
 fn cpp_binding_type_qualifier_prefix(type_prefix: &str) -> String {
@@ -1952,7 +1987,7 @@ mod tests {
 
     #[test]
     fn collects_auto_reference_alias_member_call_arities() {
-        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto&& forwarding_alias = locked; return mutable_alias.adjust(value) + const_alias.adjust(value, value) + forwarding_alias.adjust(value, value, value); }";
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto const& postfix_const_alias = target; auto&& forwarding_alias = locked; return mutable_alias.adjust(value) + const_alias.adjust(value, value) + postfix_const_alias.adjust(value, value, value) + forwarding_alias.adjust(value, value, value, value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -1968,7 +2003,7 @@ mod tests {
             arities.get(&format!(
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([2, 3]))
+            Some(&BTreeSet::from([2, 3, 4]))
         );
     }
 
