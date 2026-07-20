@@ -154,6 +154,7 @@ cargo +nightly fuzz run patch_preview -- -runs=1000
 cargo +nightly fuzz run workspace_edit_preview -- -runs=1000
 cargo +nightly fuzz run symbol_index_inspection -- -runs=1000
 cargo +nightly fuzz run symbol_index_queries -- -runs=1000
+cargo +nightly fuzz run source_overlay_queries -- -runs=1000
 cargo +nightly fuzz run workspace_edit_json -- -runs=1000
 ```
 
@@ -180,7 +181,11 @@ an isolated temporary workspace to build a small valid index before calling the
 public persisted-index list, search, read, and bounded trace APIs. It fixes
 result limits and the trace timeout while fuzzing selectors and search queries,
 so successful loading and query execution are covered without unbounded query
-work or writes outside the temporary workspace. The `workspace_edit_json` target
+work or writes outside the temporary workspace. The `source_overlay_queries`
+target similarly starts with a valid isolated index, then fuzzes public live and
+persisted source-overlay list, search, and bounded trace APIs using regular,
+new, ignored-directory, unsupported-extension, and out-of-workspace paths. The
+`workspace_edit_json` target
 deserializes generated JSON into the public workspace-edit request model before
 calling the same non-writing preview API, exercising strict request-shape
 validation and edit validation together. All fuzz targets ignore inputs above
@@ -193,6 +198,7 @@ cargo check --locked --manifest-path fuzz\Cargo.toml --bin patch_preview
 cargo check --locked --manifest-path fuzz\Cargo.toml --bin workspace_edit_preview
 cargo check --locked --manifest-path fuzz\Cargo.toml --bin symbol_index_inspection
 cargo check --locked --manifest-path fuzz\Cargo.toml --bin symbol_index_queries
+cargo check --locked --manifest-path fuzz\Cargo.toml --bin source_overlay_queries
 cargo check --locked --manifest-path fuzz\Cargo.toml --bin workspace_edit_json
 ```
 

@@ -59,6 +59,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "source_overlay_queries"
+path = "fuzz_targets/source_overlay_queries.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "workspace_edit_json"
 path = "fuzz_targets/workspace_edit_json.rs"
 test = false
