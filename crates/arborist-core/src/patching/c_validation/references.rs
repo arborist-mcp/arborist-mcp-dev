@@ -645,14 +645,7 @@ fn cpp_decltype_auto_binding_type(
         declaration_start,
         local_bindings,
     )?;
-    Some((
-        type_name,
-        None,
-        None,
-        receiver,
-        CppMemberAccess::Object,
-        None,
-    ))
+    cpp_reference_alias_binding_type(&type_name, receiver)
 }
 
 fn cpp_auto_constructor_binding_type(
@@ -709,6 +702,9 @@ fn cpp_auto_constructor_binding_type(
         declaration_start,
         local_bindings,
     );
+    if let Some((type_name, receiver)) = reference_alias_binding {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -750,11 +746,6 @@ fn cpp_auto_constructor_binding_type(
                 .as_ref()
                 .map(|(type_name, _)| type_name.clone())
         })
-        .or_else(|| {
-            reference_alias_binding
-                .as_ref()
-                .map(|(type_name, _)| type_name.clone())
-        })
         .or_else(|| initializer_type.and_then(cpp_temporary_type_path))
         .or_else(|| {
             cpp_temporary_type_from_expression(initializer_text).map(|(type_name, _)| type_name)
@@ -793,8 +784,6 @@ fn cpp_auto_constructor_binding_type(
     } else if let Some((_, receiver)) = weak_pointer_lock_binding.as_ref() {
         *receiver
     } else if let Some((_, receiver)) = address_binding.as_ref() {
-        *receiver
-    } else if let Some((_, receiver)) = reference_alias_binding.as_ref() {
         *receiver
     } else {
         match (access, standard_unwrap) {
@@ -905,6 +894,30 @@ fn cpp_auto_reference_alias_binding(
     Some((type_name, receiver))
 }
 
+fn cpp_reference_alias_binding_type(
+    type_name: &str,
+    receiver: CppThisMemberReceiver,
+) -> Option<CppBindingType> {
+    if let Some(target) = cpp_standard_smart_pointer_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(target, Some(false))?,
+            CppMemberAccess::Pointer,
+            Some(CppStandardUnwrap::SmartPointer),
+        ));
+    }
+    Some((
+        type_name.to_string(),
+        None,
+        None,
+        receiver,
+        CppMemberAccess::Object,
+        None,
+    ))
+}
+
 fn cpp_auto_optional_alias_binding(
     expression: &str,
     byte_offset: usize,
@@ -934,7 +947,8 @@ fn cpp_auto_optional_alias_binding(
     }
     cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
         .or_else(|| {
-            cpp_standard_expected_error_member_receiver(expression, byte_offset, local_bindings)
+            let receiver = expression.strip_suffix(".error()")?.trim();
+            cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)
         })
         .or_else(|| {
             cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
