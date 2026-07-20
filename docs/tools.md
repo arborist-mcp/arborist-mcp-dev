@@ -94,7 +94,8 @@ and `const Alias* current` follows `const &`; the equivalent
 `auto` bindings from `std::addressof(value)` or `&value` retain the same
 pointee receiver behavior.
 `auto&`, `const auto&`, `auto const&`, and named `auto&&` bindings retain the referenced
-object's lvalue and const receiver behavior.
+object's lvalue and const receiver behavior, including bindings initialized
+with `std::move(value)` or `std::as_const(value)`.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and
