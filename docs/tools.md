@@ -98,7 +98,8 @@ and dereference; `std::reference_wrapper<T>::get()` resolves as `T`; and
 preserving the selected value category. Direct `auto` constructions of these
 standard wrappers retain the same receiver behavior. The supported composition
 `std::optional<std::unique_ptr<T>>` or `std::optional<std::shared_ptr<T>>`
-also resolves `(*current)->member()` against `T`.
+also resolves `(*current)->member()` and `current.value()->member()` against
+`T`.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
