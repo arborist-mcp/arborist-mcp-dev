@@ -765,17 +765,7 @@ fn cpp_auto_reference_alias_binding(
         return Some((type_name, receiver));
     }
     if let Some((type_name, receiver)) =
-        cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
-    {
-        let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
-            CppThisMemberReceiver::ConstLvalue
-        } else {
-            cpp_named_reference_alias_receiver(receiver)
-        };
-        return Some((type_name, receiver));
-    }
-    if let Some((type_name, receiver)) =
-        cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+        cpp_auto_optional_alias_binding(expression, byte_offset, local_bindings)
     {
         let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
             CppThisMemberReceiver::ConstLvalue
@@ -799,6 +789,32 @@ fn cpp_auto_reference_alias_binding(
         cpp_named_reference_alias_receiver(binding.receiver)
     };
     Some((type_name, receiver))
+}
+
+fn cpp_auto_optional_alias_binding(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings);
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        return cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings)
+            .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        let (target_type, _) =
+            cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings)?;
+        return Some((
+            target_type,
+            cpp_this_receiver_for_type(type_name, Some(true))?,
+        ));
+    }
+    cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings).or_else(
+        || cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings),
+    )
 }
 
 fn cpp_auto_reference_wrapper_get_alias_binding(
@@ -2136,7 +2152,7 @@ mod tests {
 
     #[test]
     fn collects_auto_optional_dereference_alias_member_call_arities() {
-        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { std::optional<Counter> current; const std::optional<Counter> locked{}; auto& value_alias = *current; auto&& const_value_alias = *locked; auto&& moved_value_alias = *std::move(current); return value_alias.adjust(value) + const_value_alias.adjust(value, value) + moved_value_alias.adjust(value, value, value); }";
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { std::optional<Counter> current; const std::optional<Counter> locked{}; auto& value_alias = *current; auto&& const_value_alias = *locked; auto&& moved_value_alias = *std::move(current); auto&& moved_alias = std::move(*current); auto&& as_const_alias = std::as_const(*current); auto&& forwarded_alias = std::forward<Counter&&>(*current); auto&& const_forwarded_alias = std::forward<const Counter&&>(*current); return value_alias.adjust(value) + const_value_alias.adjust(value, value) + moved_value_alias.adjust(value, value, value) + moved_alias.adjust(value, value, value, value) + as_const_alias.adjust(value, value, value, value, value) + forwarded_alias.adjust(value, value, value, value, value, value) + const_forwarded_alias.adjust(value, value, value, value, value, value, value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -2146,13 +2162,13 @@ mod tests {
             arities.get(&format!(
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([1, 3]))
+            Some(&BTreeSet::from([1, 3, 4, 6]))
         );
         assert_eq!(
             arities.get(&format!(
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([2]))
+            Some(&BTreeSet::from([2, 5, 7]))
         );
     }
 

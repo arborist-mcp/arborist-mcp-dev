@@ -2041,6 +2041,48 @@ fn traces_cpp_optional_dereference_aliases_from_unsaved_virtual_changes() {
 }
 
 #[test]
+fn traces_cpp_optional_wrapped_aliases_from_unsaved_virtual_changes() {
+    let workspace = temp_workspace();
+    let source = workspace.join("counter.cpp");
+    fs::write(&source, "int caller(int value) { return value; }\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source,
+        Some(
+            "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint moved_alias_caller(int value) { std::optional<Alias> current; auto&& alias = std::move(*current); return alias.adjust(value); }\nint as_const_alias_caller(int value) { std::optional<Alias> current; auto&& alias = std::as_const(*current); return alias.adjust(value); }\nint forwarded_alias_caller(int value) { std::optional<Alias> current; auto&& alias = std::forward<Alias&&>(*current); return alias.adjust(value); }\nint const_forwarded_alias_caller(int value) { std::optional<Alias> current; auto&& alias = std::forward<const Alias&&>(*current); return alias.adjust(value); }\n}\n",
+        ),
+    )
+    .unwrap();
+
+    for (caller, expected_callee) in [
+        ("api::moved_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::as_const_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::forwarded_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_forwarded_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = vfs
+            .trace_symbol_graph(&workspace, caller, TraceDirection::Both)
+            .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_smart_pointer_dereference_aliases_from_unsaved_virtual_changes() {
     let workspace = temp_workspace();
     let source = workspace.join("counter.cpp");
