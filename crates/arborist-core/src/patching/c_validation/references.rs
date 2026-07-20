@@ -1145,6 +1145,7 @@ fn cpp_standard_reference_factory_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
     for (factory, force_const) in [("std::ref", false), ("std::cref", true)] {
         let Some(argument) = cpp_receiver_call_argument(expression, factory) else {
             continue;
@@ -1802,7 +1803,7 @@ mod tests {
 
     #[test]
     fn collects_auto_reference_factory_member_call_arities() {
-        let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; auto mutable_ref = std::ref(target); auto const_ref = std::cref(target); auto as_const_ref = std::ref(std::as_const(target)); return mutable_ref.get().adjust(value) + const_ref.get().adjust(value) + as_const_ref.get().adjust(value) + std::ref(std::move(target)).get().adjust(value); } }";
+        let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; auto mutable_ref = std::ref(target); auto parenthesized_ref = (std::ref(target)); auto const_ref = std::cref(target); auto as_const_ref = std::ref(std::as_const(target)); return mutable_ref.get().adjust(value) + parenthesized_ref.get().adjust(value) + const_ref.get().adjust(value) + as_const_ref.get().adjust(value) + (std::cref(target)).get().adjust(value) + std::ref(std::move(target)).get().adjust(value); } }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
