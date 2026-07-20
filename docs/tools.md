@@ -98,7 +98,8 @@ and dereference; `std::reference_wrapper<T>::get()` and
 `std::ref(std::as_const(value)).get()` resolve as `const T`; and
 `std::optional<T>` resolves through `->`, `.value()`, and
 dereference while preserving the selected value category. Direct `auto`
-constructions of these standard wrappers retain the same receiver behavior.
+constructions of these standard wrappers, and `auto` bindings from
+`std::ref` or `std::cref`, retain the same receiver behavior.
 The supported composition
 `std::optional<std::unique_ptr<T>>` or `std::optional<std::shared_ptr<T>>`
 also resolves `(*current)->member()` and `current.value()->member()` against
