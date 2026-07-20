@@ -101,7 +101,9 @@ lvalue and const receiver behavior.
 Equivalent address-expression aliases such as `*std::addressof(value)`,
 `*std::addressof(std::as_const(value))`, and `*&value` retain the addressed
 object's lvalue and const receiver behavior. Direct `->` calls through those
-same address expressions are resolved as well.
+same address expressions are resolved as well. An explicit
+`static_cast<T&>(value)` inside the address expression preserves `T` as the
+member lookup type.
 For `std::forward<T>(value)`, the explicit `T` determines the alias's static
 member lookup type and const receiver behavior.
 Reference-returning `.get()` calls can also initialize these aliases:
