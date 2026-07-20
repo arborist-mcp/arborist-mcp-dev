@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
+use crate::language::normalize_absolute_path;
 use crate::model::{
     Position, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
 };
@@ -14,7 +14,9 @@ use crate::symbol_query_execution::{
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
 };
 
-use super::load_normalized_symbol_index_with_overrides;
+use super::{
+    load_normalized_symbol_index_with_overrides, load_workspace_symbols_with_overrides_at_path,
+};
 
 pub fn trace_symbol_graph_with_overrides(
     workspace_root: &Path,
@@ -116,11 +118,8 @@ pub fn trace_symbol_graph_at_position_with_overrides_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) =
-        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_workspace_symbols_with_overrides_at_path(workspace_root, file_overrides, file_path)?;
     trace_symbol_graph_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -165,11 +164,8 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) =
-        resolve_workspace_symbols_with_overrides(&workspace_root, file_overrides)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_workspace_symbols_with_overrides_at_path(workspace_root, file_overrides, file_path)?;
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
