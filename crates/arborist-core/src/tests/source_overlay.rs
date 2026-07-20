@@ -410,6 +410,55 @@ fn traces_cpp_standard_wrapper_member_calls_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_auto_reference_aliases_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("counter.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint moved_alias_caller(int value) { Alias target{}; auto&& alias = std::move(target); return alias.adjust(value); }\nint reference_wrapper_alias_caller(int value) { Alias target{}; std::reference_wrapper<Alias> wrapper(target); auto& alias = wrapper.get(); return alias.adjust(value); }\nint optional_alias_caller(int value) { std::optional<Alias> current; auto&& alias = std::as_const(*current); return alias.adjust(value); }\nint smart_pointer_alias_caller(int value) { std::shared_ptr<const Alias> current; auto&& alias = *current; return alias.adjust(value); }\n}\n";
+    for (caller, expected_callee) in [
+        ("api::moved_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::reference_wrapper_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::optional_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::smart_pointer_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn trace_symbol_graph_at_position_from_index_with_unsaved_source_overlay() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
