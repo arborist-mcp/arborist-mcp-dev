@@ -3409,7 +3409,7 @@ fn resolves_cpp_auto_reference_alias_member_calls_across_live_and_persisted_quer
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint mutable_alias_caller(int value) { Alias target{}; auto& current = target; return current.adjust(value); }\nint const_alias_caller(int value) { Alias target{}; const auto& current = target; return current.adjust(value); }\nint postfix_const_alias_caller(int value) { Alias target{}; auto const& current = target; return current.adjust(value); }\nint forwarding_alias_caller(int value) { const Alias target{}; auto&& current = target; return current.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint mutable_alias_caller(int value) { Alias target{}; auto& current = target; return current.adjust(value); }\nint const_alias_caller(int value) { Alias target{}; const auto& current = target; return current.adjust(value); }\nint postfix_const_alias_caller(int value) { Alias target{}; auto const& current = target; return current.adjust(value); }\nint forwarding_alias_caller(int value) { const Alias target{}; auto&& current = target; return current.adjust(value); }\nint moved_alias_caller(int value) { Alias target{}; auto&& current = std::move(target); return current.adjust(value); }\nint as_const_alias_caller(int value) { Alias target{}; auto&& current = std::as_const(target); return current.adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3425,6 +3425,11 @@ fn resolves_cpp_auto_reference_alias_member_calls_across_live_and_persisted_quer
         ),
         (
             "api::forwarding_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::moved_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::as_const_alias_caller",
             "api::Counter::adjust(int) const &",
         ),
     ];
