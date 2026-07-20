@@ -311,24 +311,36 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
 }
 
 pub(crate) fn validate_resolved_symbol_edges(symbols: &[SymbolMeta]) -> Result<()> {
-    let symbol_ids = symbols
+    let symbols_by_id = symbols
         .iter()
-        .map(|symbol| symbol.symbol_id.as_str())
-        .collect::<BTreeSet<_>>();
+        .map(|symbol| (symbol.symbol_id.as_str(), symbol))
+        .collect::<BTreeMap<_, _>>();
 
     for symbol in symbols {
         for dependency in &symbol.dependencies {
-            if !symbol_ids.contains(dependency.as_str()) {
+            let Some(target) = symbols_by_id.get(dependency.as_str()) else {
                 return Err(anyhow!(
                     "persisted dependency `{dependency}` for symbol `{}` does not exist",
+                    symbol.symbol_id
+                ));
+            };
+            if !target.references.contains(&symbol.symbol_id) {
+                return Err(anyhow!(
+                    "persisted dependency `{dependency}` for symbol `{}` has no matching reference",
                     symbol.symbol_id
                 ));
             }
         }
         for reference in &symbol.references {
-            if !symbol_ids.contains(reference.as_str()) {
+            let Some(source) = symbols_by_id.get(reference.as_str()) else {
                 return Err(anyhow!(
                     "persisted reference `{reference}` for symbol `{}` does not exist",
+                    symbol.symbol_id
+                ));
+            };
+            if !source.dependencies.contains(&symbol.symbol_id) {
+                return Err(anyhow!(
+                    "persisted reference `{reference}` for symbol `{}` has no matching dependency",
                     symbol.symbol_id
                 ));
             }

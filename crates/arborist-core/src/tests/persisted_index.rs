@@ -1049,6 +1049,53 @@ fn inspect_and_queries_reject_persisted_graph_edges_to_missing_symbols() {
 }
 
 #[test]
+fn inspect_and_queries_reject_inconsistent_persisted_graph_edges() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper,
+        "def helper() -> int:\n    return 1\n\ndef caller() -> int:\n    return helper()\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET references_json = '[]' WHERE semantic_path = 'helper'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let expected_error =
+        "persisted dependency `helper` for symbol `caller` has no matching reference";
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert!(
+        health
+            .issues
+            .iter()
+            .any(|issue| issue.contains(expected_error))
+    );
+
+    for error in [
+        read_symbol_from_index(&db_path, "caller")
+            .expect_err("persisted reads must reject inconsistent graph edges")
+            .to_string(),
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both)
+            .expect_err("persisted traces must reject inconsistent graph edges")
+            .to_string(),
+        refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("persisted refreshes must reject inconsistent graph edges")
+            .to_string(),
+    ] {
+        assert!(error.contains(expected_error), "{error}");
+    }
+}
+
+#[test]
 fn inspect_and_queries_reject_empty_persisted_symbol_metadata() {
     for (column, invalid_value, expected_error) in [
         ("signature", " \t", "empty signature"),
