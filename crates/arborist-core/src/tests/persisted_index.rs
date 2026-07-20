@@ -915,6 +915,43 @@ fn inspect_and_queries_reject_non_normalized_workspace_root_metadata() {
 }
 
 #[test]
+fn inspect_and_queries_reject_empty_persisted_scope_paths() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    for invalid_scope_path in ["", " \t"] {
+        let connection = Connection::open(&db_path).unwrap();
+        connection
+            .execute(
+                "UPDATE symbols SET scope_path = ?1 WHERE semantic_path = 'helper'",
+                [invalid_scope_path],
+            )
+            .unwrap();
+        drop(connection);
+
+        let health = inspect_symbol_index(&db_path).unwrap();
+        assert!(!health.ok);
+        assert!(
+            health
+                .issues
+                .iter()
+                .any(|issue| issue.contains("empty scope_path"))
+        );
+
+        let error = read_symbol_from_index(&db_path, "helper")
+            .expect_err("persisted reads must reject empty scope paths");
+        assert!(error.to_string().contains("empty scope_path"));
+
+        let error = refresh_symbol_index_for_file(&dir, &db_path, &helper)
+            .expect_err("persisted refreshes must reject empty scope paths");
+        assert!(error.to_string().contains("empty scope_path"));
+    }
+}
+
+#[test]
 fn persisted_queries_reject_symbol_paths_for_unsupported_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

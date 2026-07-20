@@ -220,7 +220,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
             symbol_id,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,
-            scope_path: row.get(2)?,
+            scope_path: optional_nonempty_string_from_row(row, 2, "scope_path")?,
             file_path: nonempty_string_from_row(row, 3, "file_path")?,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             byte_range: byte_range_from_row(row, 5, 6)?,
@@ -260,7 +260,7 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
         Ok(SymbolMeta::new(SymbolMetaInit {
             symbol_id: nonempty_string_from_row(row, 0, "symbol_id")?,
             semantic_path: nonempty_string_from_row(row, 1, "semantic_path")?,
-            scope_path: row.get(2)?,
+            scope_path: optional_nonempty_string_from_row(row, 2, "scope_path")?,
             file_path: nonempty_string_from_row(row, 3, "file_path")?,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             origin_type: "workspace_symbol".to_string(),
@@ -318,6 +318,28 @@ pub(crate) fn nonempty_string_from_row(
 ) -> rusqlite::Result<String> {
     let value: String = row.get(column)?;
     if value.trim().is_empty() {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty {column_name}"),
+            )),
+        ));
+    }
+    Ok(value)
+}
+
+fn optional_nonempty_string_from_row(
+    row: &Row<'_>,
+    column: usize,
+    column_name: &str,
+) -> rusqlite::Result<Option<String>> {
+    let value: Option<String> = row.get(column)?;
+    if value
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
         return Err(rusqlite::Error::FromSqlConversionFailure(
             column,
             Type::Text,
