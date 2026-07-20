@@ -239,6 +239,11 @@ are rejected rather than silently ignored.
 When `index_db_path` is omitted, Arborist resolves against the live workspace and
 active VFS buffers.
 
+Explicit source overlays must name a supported source file outside ignored
+workspace directories (such as `.venv` or `node_modules`). Invalid overlay paths
+are rejected rather than silently omitted. VFS buffers in those locations remain
+excluded from workspace analysis.
+
 Use the VFS methods (`did_open`, `did_change`, `patch_virtual_ast_node`,
 `patch_virtual_ast_node_at_position`, `commit_virtual_file`, and
 `discard_virtual_file`) when the caller wants a longer-lived editor session.

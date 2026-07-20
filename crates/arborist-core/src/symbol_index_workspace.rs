@@ -11,6 +11,7 @@ use crate::language::{
     normalize_path, parse_document, path_is_inside_workspace, read_source, resolve_local_c_include,
 };
 use crate::model::{LanguageId, SymbolMeta};
+use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
     assign_symbol_ids, resolve_symbol_dependencies, resolve_symbol_dependencies_with_overrides,
 };
@@ -19,7 +20,7 @@ use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files,
-    collect_source_files_with_deadline, should_skip_index_path, validate_source_file_size,
+    collect_source_files_with_deadline, validate_source_file_size,
 };
 
 pub(crate) type IncrementalWorkspaceSymbols = (
@@ -108,6 +109,8 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
     file_overrides: &BTreeMap<String, String>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
     let workspace_root = normalize_absolute_path(workspace_root)?;
+    let file_overrides =
+        normalize_source_overrides_for_workspace(&workspace_root, file_overrides, "workspace")?;
     let mut indexed_paths = collect_source_files(&workspace_root)?;
     let mut known_paths: BTreeSet<String> = indexed_paths
         .iter()
@@ -115,14 +118,7 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
         .collect();
 
     for override_path in file_overrides.keys() {
-        let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !path_is_inside_workspace(&workspace_root, &override_path)?
-            || should_skip_index_path(&workspace_root, &override_path)
-            || detect_language(&override_path).is_err()
-        {
-            continue;
-        }
-
+        let override_path = Path::new(override_path).to_path_buf();
         let normalized_path = normalize_path(&override_path);
         if known_paths.insert(normalized_path) {
             indexed_paths.push(override_path);
@@ -131,9 +127,9 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
 
     indexed_paths.sort();
     let indexed_files = indexed_paths.len();
-    let raw_symbols = build_workspace_index(&indexed_paths, Some(file_overrides))?;
+    let raw_symbols = build_workspace_index(&indexed_paths, Some(&file_overrides))?;
     let resolved_symbols =
-        resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(file_overrides));
+        resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(&file_overrides));
     Ok((resolved_symbols, indexed_files))
 }
 

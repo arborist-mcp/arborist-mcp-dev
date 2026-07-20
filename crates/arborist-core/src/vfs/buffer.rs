@@ -22,7 +22,9 @@ use crate::symbols::{
     rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
     refresh_symbol_index_with_limits,
 };
-use crate::workspace_scan::{WorkspaceScanLimits, validate_workspace_scan_limits};
+use crate::workspace_scan::{
+    WorkspaceScanLimits, should_skip_index_path, validate_workspace_scan_limits,
+};
 
 impl VirtualFileSystem {
     pub fn new() -> Self {
@@ -464,7 +466,10 @@ impl VirtualFileSystem {
             }
 
             let absolute_path = normalize_absolute_path(&entry.path)?;
-            if path_is_inside_workspace(workspace_root, &absolute_path)? {
+            if path_is_inside_workspace(workspace_root, &absolute_path)?
+                && !should_skip_index_path(workspace_root, &absolute_path)
+                && crate::language::detect_language(&absolute_path).is_ok()
+            {
                 overrides.insert(normalize_path(&absolute_path), entry.source.clone());
             }
         }

@@ -21,6 +21,7 @@ use crate::language::{
     path_is_inside_workspace, read_source,
 };
 use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth, SymbolMeta};
+use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
     assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
 };
@@ -29,7 +30,7 @@ use crate::symbol_map::resolved_symbol_map;
 use crate::symbols::rebuild_symbol_index;
 use crate::workspace_scan::{
     DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
-    collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
+    collect_source_files_with_deadline, collect_source_files_with_limits,
 };
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
@@ -320,6 +321,11 @@ pub(crate) fn load_symbol_index_with_overrides(
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    let file_overrides = normalize_source_overrides_for_workspace(
+        &workspace_root,
+        file_overrides,
+        "indexed workspace",
+    )?;
 
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
     let original_grouped_symbols = grouped_symbols.clone();
@@ -331,29 +337,17 @@ pub(crate) fn load_symbol_index_with_overrides(
         db_path,
         &workspace_root,
         &persisted_file_states,
-        Some(file_overrides),
+        Some(&file_overrides),
     )?;
     let mut changed_file_paths = BTreeSet::new();
     let mut added_file_paths = BTreeSet::new();
 
-    for (override_path, override_source) in file_overrides {
-        let override_path = normalize_absolute_path(Path::new(override_path))?;
-        if !path_is_inside_workspace(&workspace_root, &override_path)? {
-            bail!(
-                "source overlay file {} is outside indexed workspace {}",
-                override_path.display(),
-                workspace_root.display()
-            );
-        }
-        if should_skip_index_path(&workspace_root, &override_path)
-            || detect_language(&override_path).is_err()
-        {
-            continue;
-        }
+    for (override_path, override_source) in &file_overrides {
+        let override_path = Path::new(override_path);
 
-        let document = parse_document(&override_path, override_source)?;
-        let symbols = index_symbols_from_document(&override_path, override_source, &document)?;
-        let normalized_path = normalize_path(&override_path);
+        let document = parse_document(override_path, override_source)?;
+        let symbols = index_symbols_from_document(override_path, override_source, &document)?;
+        let normalized_path = normalize_path(override_path);
         if !persisted_file_states.contains_key(&normalized_path) {
             added_file_paths.insert(normalized_path.clone());
         }
@@ -384,7 +378,7 @@ pub(crate) fn load_symbol_index_with_overrides(
         &old_changed_symbols,
         &new_changed_symbols,
         &changed_file_paths,
-        Some(file_overrides),
+        Some(&file_overrides),
     );
     let indexed_files = persisted_indexed_files + added_file_paths.len();
 
