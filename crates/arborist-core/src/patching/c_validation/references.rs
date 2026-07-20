@@ -584,7 +584,8 @@ fn cpp_auto_constructor_binding_type(
         return None;
     }
     let initializer = declarator.child_by_field_name("value")?;
-    let initializer_text = cpp_auto_constructor_initializer_text(initializer, source)?;
+    let initializer_text =
+        strip_cpp_outer_parentheses(cpp_auto_constructor_initializer_text(initializer, source)?);
     let type_suffix =
         source[declarator.start_byte()..cpp_declarator_identifier(declarator)?.start_byte()].trim();
     let compact_type_suffix = compact_cpp_expression(type_suffix);
