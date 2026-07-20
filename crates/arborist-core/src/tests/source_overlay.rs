@@ -642,23 +642,32 @@ fn traces_cpp_volatile_const_member_calls_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } }; int caller(int value) { const Counter current{}; return current.adjust(value); } }\n";
-    let trace = trace_symbol_graph_from_index_with_source(
-        &db_path,
-        &source_path,
-        source,
-        "api::caller",
-        TraceDirection::Both,
-    )
-    .unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["api::Counter::adjust(int) volatile const &"],
-    );
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } int const_caller(int value) volatile const { return adjust(value); } }; int caller(int value) { const Counter current{}; return current.adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::caller", "api::Counter::adjust(int) volatile const &"),
+        (
+            "api::Counter::const_caller(int) volatile const",
+            "api::Counter::adjust(int) volatile const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 }
 
 #[test]

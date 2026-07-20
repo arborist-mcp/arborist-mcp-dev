@@ -3897,32 +3897,43 @@ fn resolves_cpp_volatile_const_member_calls_across_live_and_persisted_queries() 
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } };\nint caller(int value) { const Counter current{}; return current.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter { public: int adjust(int value) & { return value; } int adjust(int value) volatile const & { return value + 1; } int const_caller(int value) volatile const { return adjust(value); } };\nint caller(int value) { const Counter current{}; return current.adjust(value); }\n}\n",
     )
     .unwrap();
 
-    let expected_callee = "api::Counter::adjust(int) volatile const &";
-    let trace = trace_symbol_graph(&dir, "api::caller", TraceDirection::Both).unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    let expected_callees = [
+        ("api::caller", "api::Counter::adjust(int) volatile const &"),
+        (
+            "api::Counter::const_caller(int) volatile const",
+            "api::Counter::adjust(int) volatile const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    let trace =
-        trace_symbol_graph_from_index(&db_path, "api::caller", TraceDirection::Both).unwrap();
-    assert_eq!(
-        trace
-            .callees
-            .iter()
-            .map(|symbol| symbol.symbol_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![expected_callee],
-    );
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 }
 
 #[test]
