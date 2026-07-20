@@ -97,7 +97,7 @@ and `const Alias* current` follows `const &`; the equivalent
 pointee receiver behavior.
 `auto&`, `const auto&`, `auto const&`, and named `auto&&` bindings retain the referenced
 object's lvalue and const receiver behavior, including bindings initialized
-with `std::move(value)` or `std::as_const(value)`.
+with `std::move(value)`, `std::as_const(value)`, or `std::forward<T>(value)`.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
