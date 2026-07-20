@@ -962,6 +962,52 @@ fn inspect_and_queries_reject_empty_persisted_scope_paths() {
 }
 
 #[test]
+fn inspect_and_queries_reject_inconsistent_persisted_scope_paths() {
+    let dir = temporary_dir();
+    let source_path = dir.join("module.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int helper() { return 1; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET scope_path = 'other' WHERE semantic_path = 'api::helper'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert!(
+        health.issues.iter().any(|issue| {
+            issue.contains("scope_path does not match semantic_path `api::helper`")
+        })
+    );
+
+    let error = read_symbol_from_index(&db_path, "api::helper")
+        .expect_err("persisted reads must reject inconsistent scope paths");
+    assert!(
+        error
+            .to_string()
+            .contains("scope_path does not match semantic_path `api::helper`")
+    );
+
+    let error = refresh_symbol_index_for_file(&dir, &db_path, &source_path)
+        .expect_err("persisted refreshes must reject inconsistent scope paths");
+    assert!(
+        error
+            .to_string()
+            .contains("scope_path does not match semantic_path `api::helper`")
+    );
+}
+
+#[test]
 fn inspect_and_queries_reject_empty_persisted_symbol_metadata() {
     for (column, invalid_value, expected_error) in [
         ("signature", " \t", "empty signature"),

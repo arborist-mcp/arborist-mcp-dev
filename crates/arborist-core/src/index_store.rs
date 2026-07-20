@@ -9,6 +9,7 @@ use crate::index_schema::{
     ensure_symbol_tables, load_indexed_files_metadata, persist_symbol_index_metadata,
 };
 use crate::model::{SymbolMeta, SymbolMetaInit};
+use crate::semantic::semantic_parent_path;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState, symbol_base_name};
 
 pub(crate) struct SymbolRefreshPersistence<'a> {
@@ -216,11 +217,12 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
         let call_arities_by_name = call_arities_from_json_column(&reference_call_arities_json, 12)?;
         let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
         let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
+        let scope_path = validated_scope_path(row, 2, &semantic_path)?;
         Ok(IndexedSymbol {
             symbol_id,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,
-            scope_path: optional_nonempty_string_from_row(row, 2, "scope_path")?,
+            scope_path,
             file_path: nonempty_string_from_row(row, 3, "file_path")?,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             byte_range: byte_range_from_row(row, 5, 6)?,
@@ -257,10 +259,11 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
         let parameters_json: String = row.get(8)?;
         let dependencies_json: String = row.get(11)?;
         let references_json: String = row.get(12)?;
+        let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
         Ok(SymbolMeta::new(SymbolMetaInit {
             symbol_id: nonempty_string_from_row(row, 0, "symbol_id")?,
-            semantic_path: nonempty_string_from_row(row, 1, "semantic_path")?,
-            scope_path: optional_nonempty_string_from_row(row, 2, "scope_path")?,
+            scope_path: validated_scope_path(row, 2, &semantic_path)?,
+            semantic_path,
             file_path: nonempty_string_from_row(row, 3, "file_path")?,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             origin_type: "workspace_symbol".to_string(),
@@ -350,6 +353,26 @@ fn optional_nonempty_string_from_row(
         ));
     }
     Ok(value)
+}
+
+fn validated_scope_path(
+    row: &Row<'_>,
+    column: usize,
+    semantic_path: &str,
+) -> rusqlite::Result<Option<String>> {
+    let scope_path = optional_nonempty_string_from_row(row, column, "scope_path")?;
+    let expected_scope_path = semantic_parent_path(semantic_path);
+    if scope_path != expected_scope_path {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("scope_path does not match semantic_path `{semantic_path}`"),
+            )),
+        ));
+    }
+    Ok(scope_path)
 }
 
 pub(crate) fn json_from_column<T: DeserializeOwned>(
