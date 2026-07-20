@@ -2,13 +2,12 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
 use crate::model::Position;
 use crate::model::{
     SymbolContextResult, SymbolNeighborhoodContextResult, SymbolReadDiscoveryContextResult,
     SymbolReadResult, TraceDirection,
 };
-use crate::symbol_index_workspace::{load_live_workspace_symbols, resolve_workspace_symbols};
+use crate::symbol_index_workspace::load_live_workspace_symbols;
 use crate::symbol_query_execution::{
     read_symbol_at_position_from_symbols, read_symbol_context_at_position_from_symbols,
     read_symbol_context_from_symbols, read_symbol_discovery_context_at_position_from_symbols,
@@ -16,6 +15,8 @@ use crate::symbol_query_execution::{
     read_symbol_neighborhood_context_at_position_from_symbols,
     read_symbol_neighborhood_context_from_symbols,
 };
+
+use super::load_live_workspace_symbols_at_path;
 
 pub fn read_symbol(workspace_root: &Path, symbol_path: &str) -> Result<SymbolReadResult> {
     let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
@@ -80,10 +81,8 @@ pub fn read_symbol_at_position(
     file_path: &Path,
     position: &Position,
 ) -> Result<SymbolReadResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
     read_symbol_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -99,10 +98,8 @@ pub fn read_symbol_context_at_position(
     position: &Position,
     direction: TraceDirection,
 ) -> Result<SymbolContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
     read_symbol_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -121,10 +118,8 @@ pub fn read_symbol_neighborhood_context_at_position(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
     read_symbol_neighborhood_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -145,10 +140,8 @@ pub fn read_symbol_discovery_context_at_position(
     max_depth: usize,
     max_nodes: usize,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let workspace_root = normalize_absolute_path(workspace_root)?;
-    let file_path = normalize_absolute_path(file_path)?;
-    ensure_path_inside_workspace(&workspace_root, &file_path)?;
-    let (resolved_symbols, indexed_files) = resolve_workspace_symbols(&workspace_root)?;
+    let (file_path, resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
     read_symbol_discovery_context_at_position_from_symbols(
         &resolved_symbols,
         indexed_files,
