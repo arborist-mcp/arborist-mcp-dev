@@ -103,6 +103,8 @@ Reference-returning `.get()` calls can also initialize these aliases:
 `std::cref(value).get()` retain the wrapped object's receiver behavior.
 Bindings from `std::optional<T>::value()` or `*optional` retain the selected
 value's lvalue and const receiver behavior.
+Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
+pointee's lvalue and const receiver behavior.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and
