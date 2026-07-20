@@ -96,7 +96,8 @@ pointee receiver behavior.
 `auto&`, `const auto&`, `auto const&`, and named `auto&&` bindings retain the referenced
 object's lvalue and const receiver behavior, including bindings initialized
 with `std::move(value)`, `std::as_const(value)`, `std::forward<T>(value)`, or
-`static_cast<T&>(value)`.
+`static_cast<T&>(value)`. Bindings from `*pointer` retain the raw pointee's
+lvalue and const receiver behavior.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and
