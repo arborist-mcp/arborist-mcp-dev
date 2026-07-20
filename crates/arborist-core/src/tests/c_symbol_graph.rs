@@ -3755,6 +3755,50 @@ fn resolves_cpp_forwarded_optional_base_alias_member_calls_across_live_and_persi
 }
 
 #[test]
+fn resolves_cpp_cast_optional_base_alias_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("cast_optional_base_alias_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Base { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } };\nclass Derived : public Base { public: int adjust(int value, int extra) & { return value + extra; } };\nint caller(int value) { std::optional<Derived> current; auto&& alias = static_cast<Base&&>(*current); return alias.adjust(value); }\nint const_caller(int value) { std::optional<Derived> current; auto&& alias = static_cast<const Base&&>(*current); return alias.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::caller", "api::Base::adjust(int) &"),
+        ("api::const_caller", "api::Base::adjust(int) const &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("smart_pointer_dereference_alias_member_calls.cpp");

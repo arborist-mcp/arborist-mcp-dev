@@ -811,6 +811,13 @@ fn cpp_auto_optional_alias_binding(
             cpp_this_receiver_for_type(type_name, Some(true))?,
         ));
     }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "static_cast") {
+        let _ = cpp_auto_optional_alias_binding(argument, byte_offset, local_bindings)?;
+        return Some((
+            cpp_temporary_type_path(type_name)?,
+            cpp_this_receiver_for_type(type_name, None)?,
+        ));
+    }
     cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings).or_else(
         || cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings),
     )
