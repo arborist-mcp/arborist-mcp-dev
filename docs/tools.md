@@ -93,7 +93,7 @@ and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
 `auto` bindings from `std::addressof(value)` or `&value` retain the same
 pointee receiver behavior.
-`auto&`, `const auto&`, and named `auto&&` bindings retain the referenced
+`auto&`, `const auto&`, `auto const&`, and named `auto&&` bindings retain the referenced
 object's lvalue and const receiver behavior.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,

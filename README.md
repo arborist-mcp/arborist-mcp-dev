@@ -95,7 +95,7 @@ and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
 `auto` bindings from `std::addressof(value)` or `&value` retain the same
 pointee receiver behavior.
-`auto&`, `const auto&`, and named `auto&&` bindings retain the referenced
+`auto&`, `const auto&`, `auto const&`, and named `auto&&` bindings retain the referenced
 object's lvalue and const receiver behavior.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
