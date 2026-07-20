@@ -30,7 +30,7 @@ use crate::symbol_map::resolved_symbol_map;
 use crate::symbols::rebuild_symbol_index;
 use crate::workspace_scan::{
     DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
-    collect_source_files_with_deadline, collect_source_files_with_limits,
+    collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
 };
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
@@ -519,6 +519,9 @@ fn validate_persisted_source_path(
             file_path,
             workspace_root.display()
         );
+    }
+    if should_skip_index_path(workspace_root, &normalized_path) {
+        bail!("persisted {field_name} is inside an ignored workspace directory: {file_path}");
     }
     if detect_language(&normalized_path).is_err() {
         bail!("persisted {field_name} is not a supported source file: {file_path}");

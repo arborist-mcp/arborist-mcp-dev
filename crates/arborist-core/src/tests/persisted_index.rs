@@ -812,6 +812,71 @@ fn inspect_and_queries_reject_persisted_file_states_outside_workspace() {
 }
 
 #[test]
+fn inspect_and_queries_reject_persisted_symbol_paths_in_ignored_directories() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let ignored = dir.join(".venv").join("installed.py");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(ignored.parent().unwrap()).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&ignored, "def installed() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE symbols SET file_path = ?1 WHERE semantic_path = 'helper'",
+            [normalize_path(&ignored)],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert!(health.issues.iter().any(|issue| {
+        issue.contains("symbols.file_path") && issue.contains("ignored workspace directory")
+    }));
+
+    let error = read_symbol_from_index(&db_path, "helper")
+        .expect_err("persisted reads must reject symbol paths in ignored directories");
+    assert!(error.to_string().contains("symbols.file_path"));
+    assert!(error.to_string().contains("ignored workspace directory"));
+}
+
+#[test]
+fn inspect_and_queries_reject_persisted_file_states_in_ignored_directories() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let ignored = dir.join("node_modules").join("installed.py");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(ignored.parent().unwrap()).unwrap();
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    fs::write(&ignored, "def installed() -> int:\n    return 2\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute(
+            "UPDATE file_state SET file_path = ?1",
+            [normalize_path(&ignored)],
+        )
+        .unwrap();
+    drop(connection);
+
+    let health = inspect_symbol_index(&db_path).unwrap();
+    assert!(!health.ok);
+    assert_eq!(health.fresh_file_count, None);
+    assert!(health.issues.iter().any(|issue| {
+        issue.contains("file_state.file_path") && issue.contains("ignored workspace directory")
+    }));
+
+    let error = read_symbol_from_index(&db_path, "helper")
+        .expect_err("persisted reads must reject file states in ignored directories");
+    assert!(error.to_string().contains("file_state.file_path"));
+    assert!(error.to_string().contains("ignored workspace directory"));
+}
+
+#[test]
 fn persisted_queries_reject_symbol_paths_for_unsupported_files() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
