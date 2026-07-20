@@ -36,12 +36,23 @@ enum CppStandardUnwrap {
 struct CppLocalBinding {
     name: String,
     type_name: String,
+    expected_error_type: Option<String>,
+    expected_error_receiver: Option<CppThisMemberReceiver>,
     receiver: CppThisMemberReceiver,
     access: CppMemberAccess,
     standard_unwrap: Option<CppStandardUnwrap>,
     declaration_start: usize,
     scope_range: (usize, usize),
 }
+
+type CppBindingType = (
+    String,
+    Option<String>,
+    Option<CppThisMemberReceiver>,
+    CppThisMemberReceiver,
+    CppMemberAccess,
+    Option<CppStandardUnwrap>,
+);
 
 pub(super) fn collect_c_local_definitions(
     node: Node<'_>,
@@ -507,12 +518,20 @@ fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBi
     let identifier = cpp_declarator_identifier(declarator)?;
     let type_prefix = cpp_range_for_type_prefix(loop_node, source)?;
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (type_name, receiver, access, standard_unwrap) =
-        cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
+    let (
+        type_name,
+        expected_error_type,
+        expected_error_receiver,
+        receiver,
+        access,
+        standard_unwrap,
+    ) = cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
         type_name,
+        expected_error_type,
+        expected_error_receiver,
         receiver,
         access,
         standard_unwrap,
@@ -547,37 +566,45 @@ fn cpp_object_binding(
     let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
     let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
     let declared_type = node_text(type_node, source).ok()?.trim();
-    let (type_name, receiver, access, standard_unwrap) =
-        if cpp_auto_binding_type_is_supported(declared_type) {
-            let auto_type_prefix = format!(
-                "{type_prefix} {declared_type}{}",
-                if cpp_declarator_suffix_has_const_qualifier(type_suffix) {
-                    " const"
-                } else {
-                    ""
-                }
-            );
-            cpp_auto_constructor_binding_type(
-                declarator,
-                &auto_type_prefix,
-                declaration.start_byte(),
-                local_bindings,
-                source,
-            )?
-        } else if declared_type == "decltype(auto)" {
-            cpp_decltype_auto_binding_type(
-                declarator,
-                declaration.start_byte(),
-                local_bindings,
-                source,
-            )?
-        } else {
-            cpp_binding_type(type_node, type_prefix, type_suffix, source)?
-        };
+    let (
+        type_name,
+        expected_error_type,
+        expected_error_receiver,
+        receiver,
+        access,
+        standard_unwrap,
+    ) = if cpp_auto_binding_type_is_supported(declared_type) {
+        let auto_type_prefix = format!(
+            "{type_prefix} {declared_type}{}",
+            if cpp_declarator_suffix_has_const_qualifier(type_suffix) {
+                " const"
+            } else {
+                ""
+            }
+        );
+        cpp_auto_constructor_binding_type(
+            declarator,
+            &auto_type_prefix,
+            declaration.start_byte(),
+            local_bindings,
+            source,
+        )?
+    } else if declared_type == "decltype(auto)" {
+        cpp_decltype_auto_binding_type(
+            declarator,
+            declaration.start_byte(),
+            local_bindings,
+            source,
+        )?
+    } else {
+        cpp_binding_type(type_node, type_prefix, type_suffix, source)?
+    };
 
     Some(CppLocalBinding {
         name: node_text(identifier, source).ok()?.trim().to_string(),
         type_name,
+        expected_error_type,
+        expected_error_receiver,
         receiver,
         access,
         standard_unwrap,
@@ -591,12 +618,7 @@ fn cpp_decltype_auto_binding_type(
     declaration_start: usize,
     local_bindings: &[CppLocalBinding],
     source: &str,
-) -> Option<(
-    String,
-    CppThisMemberReceiver,
-    CppMemberAccess,
-    Option<CppStandardUnwrap>,
-)> {
+) -> Option<CppBindingType> {
     let initializer = declarator.child_by_field_name("value")?;
     if initializer.kind() == "initializer_list"
         && source[declarator.start_byte()..initializer.start_byte()].contains('=')
@@ -609,6 +631,8 @@ fn cpp_decltype_auto_binding_type(
         let binding = cpp_visible_local_binding(expression, declaration_start, local_bindings)?;
         return Some((
             binding.type_name.clone(),
+            binding.expected_error_type.clone(),
+            binding.expected_error_receiver,
             binding.receiver,
             binding.access,
             binding.standard_unwrap,
@@ -621,7 +645,14 @@ fn cpp_decltype_auto_binding_type(
         declaration_start,
         local_bindings,
     )?;
-    Some((type_name, receiver, CppMemberAccess::Object, None))
+    Some((
+        type_name,
+        None,
+        None,
+        receiver,
+        CppMemberAccess::Object,
+        None,
+    ))
 }
 
 fn cpp_auto_constructor_binding_type(
@@ -630,12 +661,7 @@ fn cpp_auto_constructor_binding_type(
     declaration_start: usize,
     local_bindings: &[CppLocalBinding],
     source: &str,
-) -> Option<(
-    String,
-    CppThisMemberReceiver,
-    CppMemberAccess,
-    Option<CppStandardUnwrap>,
-)> {
+) -> Option<CppBindingType> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -665,6 +691,9 @@ fn cpp_auto_constructor_binding_type(
     let direct_initializer_type = cpp_constructor_type_text(initializer_text)
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
+    let expected_error_type = direct_initializer_type
+        .and_then(cpp_standard_expected_error_type)
+        .map(str::to_string);
     let reference_factory_binding =
         cpp_standard_reference_factory_binding(initializer_text, declaration_start, local_bindings);
     let weak_pointer_lock_binding = cpp_standard_weak_pointer_lock_receiver(
@@ -752,6 +781,13 @@ fn cpp_auto_constructor_binding_type(
                 .as_ref()
                 .map(|_| CppStandardUnwrap::SmartPointer)
         });
+    let expected_error_receiver = (standard_unwrap_kind == Some(CppStandardUnwrap::Expected))
+        .then(|| {
+            expected_error_type.as_ref().and_then(|error_type| {
+                cpp_this_receiver_for_type(&format!("{type_qualifiers} {error_type}"), Some(false))
+            })
+        })
+        .flatten();
     let receiver = if let Some((_, receiver)) = reference_factory_binding.as_ref() {
         *receiver
     } else if let Some((_, receiver)) = weak_pointer_lock_binding.as_ref() {
@@ -801,7 +837,14 @@ fn cpp_auto_constructor_binding_type(
         _ => type_name,
     };
 
-    Some((type_name, receiver, access, standard_unwrap_kind))
+    Some((
+        type_name,
+        expected_error_type,
+        expected_error_receiver,
+        receiver,
+        access,
+        standard_unwrap_kind,
+    ))
 }
 
 fn cpp_address_binding(
@@ -1039,12 +1082,7 @@ fn cpp_binding_type(
     type_prefix: &str,
     type_suffix: &str,
     source: &str,
-) -> Option<(
-    String,
-    CppThisMemberReceiver,
-    CppMemberAccess,
-    Option<CppStandardUnwrap>,
-)> {
+) -> Option<CppBindingType> {
     if !cpp_binding_type_prefix_is_supported(type_prefix) {
         return None;
     }
@@ -1057,6 +1095,7 @@ fn cpp_binding_type(
         return None;
     };
     let declared_type = node_text(type_node, source).ok()?.trim();
+    let expected_error_type = cpp_standard_expected_error_type(declared_type).map(str::to_string);
     let standard_unwrap = cpp_standard_smart_pointer_target_type(declared_type)
         .map(|target| (target, CppStandardUnwrap::SmartPointer))
         .or_else(|| {
@@ -1090,6 +1129,9 @@ fn cpp_binding_type(
             declared_access
         };
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    let expected_error_receiver = expected_error_type.as_ref().and_then(|error_type| {
+        cpp_this_receiver_for_type(&format!("{type_qualifiers} {error_type}"), Some(false))
+    });
     let type_name = format!("{type_qualifiers} {} {type_suffix}", declared_type);
     let receiver = match (access, standard_unwrap) {
         (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
@@ -1126,6 +1168,8 @@ fn cpp_binding_type(
 
     Some((
         type_name,
+        expected_error_type,
+        expected_error_receiver,
         receiver,
         access,
         standard_unwrap.map(|(_, unwrap)| unwrap),
@@ -1163,6 +1207,12 @@ fn cpp_standard_expected_target_type(type_name: &str) -> Option<&str> {
     let arguments = cpp_standard_template_arguments(type_name, "std::expected")?;
     cpp_has_exactly_two_top_level_template_arguments(arguments)
         .then(|| cpp_first_template_argument(arguments))?
+}
+
+fn cpp_standard_expected_error_type(type_name: &str) -> Option<&str> {
+    let arguments = cpp_standard_template_arguments(type_name, "std::expected")?;
+    cpp_has_exactly_two_top_level_template_arguments(arguments)
+        .then(|| cpp_second_template_argument(arguments))?
 }
 
 fn cpp_standard_wrapper_target_type(type_name: &str) -> Option<(&str, CppStandardUnwrap)> {
@@ -1208,6 +1258,31 @@ fn cpp_first_template_argument(arguments: &str) -> Option<&str> {
         }
     }
     Some(arguments.trim()).filter(|value| !value.is_empty())
+}
+
+fn cpp_second_template_argument(arguments: &str) -> Option<&str> {
+    let mut angles = 0usize;
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '<' => angles += 1,
+            '>' => angles = angles.checked_sub(1)?,
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.checked_sub(1)?,
+            '[' => brackets += 1,
+            ']' => brackets = brackets.checked_sub(1)?,
+            '{' => braces += 1,
+            '}' => braces = braces.checked_sub(1)?,
+            ',' if angles == 0 && parentheses == 0 && brackets == 0 && braces == 0 => {
+                return Some(arguments[index + character.len_utf8()..].trim())
+                    .filter(|value| !value.is_empty());
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn cpp_template_arguments_have_top_level_comma(arguments: &str) -> bool {
@@ -1458,6 +1533,12 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((type_name, receiver));
     }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_standard_expected_error_member_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_standard_optional_arrow_member_receiver(expression, byte_offset, local_bindings)
@@ -1645,6 +1726,15 @@ fn cpp_standard_optional_value_member_receiver(
     cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
 }
 
+fn cpp_standard_expected_error_member_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".error()")?.trim();
+    cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)
+}
+
 fn cpp_standard_optional_dereference_receiver(
     expression: &str,
     byte_offset: usize,
@@ -1728,6 +1818,52 @@ fn cpp_optional_local_binding_receiver(
     if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
         let (target_type, _) =
             cpp_optional_local_binding_receiver(argument, byte_offset, local_bindings)?;
+        return Some((
+            target_type,
+            cpp_this_receiver_for_type(type_name, Some(true))?,
+        ));
+    }
+    None
+}
+
+fn cpp_expected_local_binding_error_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
+        && binding.standard_unwrap == Some(CppStandardUnwrap::Expected)
+    {
+        return binding
+            .expected_error_type
+            .as_ref()
+            .zip(binding.expected_error_receiver)
+            .and_then(|(type_name, receiver)| {
+                cpp_temporary_type_path(type_name).map(|type_name| (type_name, receiver))
+            });
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_expected_local_binding_error_receiver(argument, byte_offset, local_bindings)
+            .map(|(type_name, receiver)| {
+                let receiver = match receiver {
+                    CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                        CppThisMemberReceiver::Rvalue
+                    }
+                    CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                        CppThisMemberReceiver::ConstRvalue
+                    }
+                };
+                (type_name, receiver)
+            });
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        return cpp_expected_local_binding_error_receiver(argument, byte_offset, local_bindings)
+            .map(|(type_name, _)| (type_name, CppThisMemberReceiver::ConstLvalue));
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        let (target_type, _) =
+            cpp_expected_local_binding_error_receiver(argument, byte_offset, local_bindings)?;
         return Some((
             target_type,
             cpp_this_receiver_for_type(type_name, Some(true))?,
@@ -2178,9 +2314,9 @@ mod tests {
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
-        cpp_standard_expected_target_type, cpp_standard_optional_target_type,
-        cpp_standard_reference_wrapper_target_type, cpp_standard_smart_pointer_target_type,
-        cpp_this_receiver_from_expression,
+        cpp_standard_expected_error_type, cpp_standard_expected_target_type,
+        cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
+        cpp_standard_smart_pointer_target_type, cpp_this_receiver_from_expression,
     };
 
     #[test]
@@ -2602,7 +2738,16 @@ mod tests {
             cpp_standard_expected_target_type("std::expected<Counter, void (*)(int, int)>"),
             Some("Counter")
         );
+        assert_eq!(
+            cpp_standard_expected_error_type("std::expected<Counter, Error>"),
+            Some("Error")
+        );
+        assert_eq!(
+            cpp_standard_expected_error_type("std::expected<Counter, void (*)(int, int)>"),
+            Some("void (*)(int, int)")
+        );
         assert!(cpp_standard_expected_target_type("std::expected<Counter>").is_none());
+        assert!(cpp_standard_expected_error_type("std::expected<Counter>").is_none());
         assert!(cpp_standard_expected_target_type("std::expected<Counter, >").is_none());
         assert!(
             cpp_standard_expected_target_type("std::expected<Counter, Error, Extra>").is_none()

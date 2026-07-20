@@ -121,7 +121,8 @@ value's lvalue and const receiver behavior, including `std::move`,
 `std::as_const`, and `std::forward<T>` wrappers around the selected value.
 `std::expected<T, E>` follows the same selected-value receiver behavior
 through `->`, `.value()`, and dereference, including const and rvalue wrappers
-and direct `auto` construction.
+and direct `auto` construction. Its `.error()` accessor resolves against `E`
+with the error object's own const and value category.
 Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
 pointee's lvalue and const receiver behavior.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
