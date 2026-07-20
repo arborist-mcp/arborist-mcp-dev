@@ -100,8 +100,10 @@ object's lvalue and const receiver behavior, including bindings initialized
 with `std::move(value)`, `std::as_const(value)`, `std::forward<T>(value)`, or
 `static_cast<T&>(value)`. Bindings from `*pointer` retain the raw pointee's
 lvalue and const receiver behavior.
-Equivalent address-expression aliases such as `*std::addressof(value)` and
-`*&value` retain that object's receiver behavior.
+Equivalent address-expression aliases such as `*std::addressof(value)`,
+`*std::addressof(std::as_const(value))`, and `*&value` retain the addressed
+object's lvalue and const receiver behavior. Direct `->` calls through those
+same address expressions are resolved as well.
 For `std::forward<T>(value)`, the explicit `T` determines the alias's static
 member lookup type and const receiver behavior.
 Bindings from `std::reference_wrapper<T>::get()`, `std::ref(value).get()`, and
