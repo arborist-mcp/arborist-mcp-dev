@@ -119,6 +119,9 @@ Bindings from `std::reference_wrapper<T>::get()`, `std::ref(value).get()`, and
 Bindings from `std::optional<T>::value()` or `*optional` retain the selected
 value's lvalue and const receiver behavior, including `std::move`,
 `std::as_const`, and `std::forward<T>` wrappers around the selected value.
+`std::expected<T, E>` follows the same selected-value receiver behavior
+through `->`, `.value()`, and dereference, including const and rvalue wrappers
+and direct `auto` construction.
 Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
 pointee's lvalue and const receiver behavior.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both

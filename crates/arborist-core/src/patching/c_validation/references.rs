@@ -29,6 +29,7 @@ enum CppStandardUnwrap {
     WeakPointer,
     ReferenceWrapper,
     Optional,
+    Expected,
 }
 
 #[derive(Clone)]
@@ -764,9 +765,10 @@ fn cpp_auto_constructor_binding_type(
             (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
                 cpp_this_receiver_for_type(target, Some(false))?
             }
-            (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
-                cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
-            }
+            (
+                CppMemberAccess::Object,
+                Some((target, CppStandardUnwrap::Optional | CppStandardUnwrap::Expected)),
+            ) => cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
             (CppMemberAccess::Object, Some((target, CppStandardUnwrap::WeakPointer))) => {
                 cpp_this_receiver_for_type(target, Some(false))?
             }
@@ -789,6 +791,7 @@ fn cpp_auto_constructor_binding_type(
                 target,
                 CppStandardUnwrap::ReferenceWrapper
                 | CppStandardUnwrap::Optional
+                | CppStandardUnwrap::Expected
                 | CppStandardUnwrap::WeakPointer,
             )),
         )
@@ -1073,6 +1076,12 @@ fn cpp_binding_type(
                 .then(|| cpp_standard_optional_target_type(declared_type))
                 .flatten()
                 .map(|target| (target, CppStandardUnwrap::Optional))
+        })
+        .or_else(|| {
+            (declared_access == CppMemberAccess::Object)
+                .then(|| cpp_standard_expected_target_type(declared_type))
+                .flatten()
+                .map(|target| (target, CppStandardUnwrap::Expected))
         });
     let access =
         if standard_unwrap.is_some_and(|(_, unwrap)| unwrap == CppStandardUnwrap::SmartPointer) {
@@ -1086,9 +1095,10 @@ fn cpp_binding_type(
         (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
             cpp_this_receiver_for_type(target, Some(false))?
         }
-        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
-            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
-        }
+        (
+            CppMemberAccess::Object,
+            Some((target, CppStandardUnwrap::Optional | CppStandardUnwrap::Expected)),
+        ) => cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
         (CppMemberAccess::Object, Some((target, CppStandardUnwrap::WeakPointer))) => {
             cpp_this_receiver_for_type(target, Some(false))?
         }
@@ -1105,6 +1115,7 @@ fn cpp_binding_type(
                 target,
                 CppStandardUnwrap::ReferenceWrapper
                 | CppStandardUnwrap::Optional
+                | CppStandardUnwrap::Expected
                 | CppStandardUnwrap::WeakPointer,
             )),
         ) => cpp_temporary_type_path(target)?,
@@ -1148,6 +1159,12 @@ fn cpp_standard_optional_target_type(type_name: &str) -> Option<&str> {
         .and_then(cpp_first_template_argument)
 }
 
+fn cpp_standard_expected_target_type(type_name: &str) -> Option<&str> {
+    let arguments = cpp_standard_template_arguments(type_name, "std::expected")?;
+    cpp_has_exactly_two_top_level_template_arguments(arguments)
+        .then(|| cpp_first_template_argument(arguments))?
+}
+
 fn cpp_standard_wrapper_target_type(type_name: &str) -> Option<(&str, CppStandardUnwrap)> {
     cpp_standard_smart_pointer_target_type(type_name)
         .map(|target| (target, CppStandardUnwrap::SmartPointer))
@@ -1162,6 +1179,10 @@ fn cpp_standard_wrapper_target_type(type_name: &str) -> Option<(&str, CppStandar
         .or_else(|| {
             cpp_standard_optional_target_type(type_name)
                 .map(|target| (target, CppStandardUnwrap::Optional))
+        })
+        .or_else(|| {
+            cpp_standard_expected_target_type(type_name)
+                .map(|target| (target, CppStandardUnwrap::Expected))
         })
 }
 
@@ -1200,6 +1221,61 @@ fn cpp_template_arguments_have_top_level_comma(arguments: &str) -> bool {
         }
     }
     false
+}
+
+fn cpp_has_exactly_two_top_level_template_arguments(arguments: &str) -> bool {
+    let mut angles = 0usize;
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+    let mut argument_start = 0usize;
+    let mut argument_count = 0usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '<' => angles += 1,
+            '>' => {
+                let Some(next) = angles.checked_sub(1) else {
+                    return false;
+                };
+                angles = next;
+            }
+            '(' => parentheses += 1,
+            ')' => {
+                let Some(next) = parentheses.checked_sub(1) else {
+                    return false;
+                };
+                parentheses = next;
+            }
+            '[' => brackets += 1,
+            ']' => {
+                let Some(next) = brackets.checked_sub(1) else {
+                    return false;
+                };
+                brackets = next;
+            }
+            '{' => braces += 1,
+            '}' => {
+                let Some(next) = braces.checked_sub(1) else {
+                    return false;
+                };
+                braces = next;
+            }
+            ',' if angles == 0 && parentheses == 0 && brackets == 0 && braces == 0 => {
+                if arguments[argument_start..index].trim().is_empty() {
+                    return false;
+                }
+                argument_count += 1;
+                argument_start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    angles == 0
+        && parentheses == 0
+        && brackets == 0
+        && braces == 0
+        && !arguments[argument_start..].trim().is_empty()
+        && argument_count + 1 == 2
 }
 
 fn cpp_binding_type_prefix_is_supported(type_prefix: &str) -> bool {
@@ -1623,7 +1699,10 @@ fn cpp_optional_local_binding_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
-        && binding.standard_unwrap == Some(CppStandardUnwrap::Optional)
+        && matches!(
+            binding.standard_unwrap,
+            Some(CppStandardUnwrap::Optional | CppStandardUnwrap::Expected)
+        )
     {
         return Some((binding.type_name.clone(), binding.receiver));
     }
@@ -2099,8 +2178,9 @@ mod tests {
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
-        cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
-        cpp_standard_smart_pointer_target_type, cpp_this_receiver_from_expression,
+        cpp_standard_expected_target_type, cpp_standard_optional_target_type,
+        cpp_standard_reference_wrapper_target_type, cpp_standard_smart_pointer_target_type,
+        cpp_this_receiver_from_expression,
     };
 
     #[test]
@@ -2506,6 +2586,27 @@ mod tests {
         assert!(cpp_standard_optional_target_type("std::optional<>").is_none());
         assert!(cpp_standard_optional_target_type("std::optional<Counter> trailing").is_none());
         assert!(cpp_standard_optional_target_type("std::optional<Counter, Tag>").is_none());
+    }
+
+    #[test]
+    fn extracts_standard_expected_value_type() {
+        assert_eq!(
+            cpp_standard_expected_target_type("std::expected<Counter, Error>"),
+            Some("Counter")
+        );
+        assert_eq!(
+            cpp_standard_expected_target_type("std::expected<std::vector<int>, Error>"),
+            Some("std::vector<int>")
+        );
+        assert_eq!(
+            cpp_standard_expected_target_type("std::expected<Counter, void (*)(int, int)>"),
+            Some("Counter")
+        );
+        assert!(cpp_standard_expected_target_type("std::expected<Counter>").is_none());
+        assert!(cpp_standard_expected_target_type("std::expected<Counter, >").is_none());
+        assert!(
+            cpp_standard_expected_target_type("std::expected<Counter, Error, Extra>").is_none()
+        );
     }
 
     #[test]
