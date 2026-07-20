@@ -584,6 +584,11 @@ fn cpp_auto_constructor_binding_type(
         return None;
     }
     let initializer = declarator.child_by_field_name("value")?;
+    if initializer.kind() == "initializer_list"
+        && source[declarator.start_byte()..initializer.start_byte()].contains('=')
+    {
+        return None;
+    }
     let initializer_text =
         strip_cpp_outer_parentheses(cpp_auto_constructor_initializer_text(initializer, source)?);
     let type_suffix =
@@ -1838,6 +1843,22 @@ mod tests {
             )),
             Some(&BTreeSet::from([1]))
         );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+    }
+
+    #[test]
+    fn distinguishes_auto_direct_and_copy_list_initializers() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } }; int caller(int value) { auto direct{Counter{}}; auto copied = {Counter{}}; return direct.adjust(value) + copied.adjust(value, value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
         assert_eq!(
             arities.get(&format!(
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
