@@ -10,6 +10,7 @@ use crate::index_schema::{
     migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
+use crate::index_store::validate_legacy_indexed_symbols;
 use crate::model::SymbolIndexMigrationPlan;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +89,7 @@ pub(crate) fn migrate_symbol_index(connection: &mut Connection, db_path: &Path) 
     }
     load_symbol_index_workspace_root(connection, db_path)?;
     load_indexed_files_metadata(connection)?;
+    validate_legacy_indexed_symbols(connection)?;
     migrate_symbol_index_schema_to_current(connection)
 }
 

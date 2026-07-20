@@ -1616,6 +1616,58 @@ fn migration_rejects_invalid_v1_persisted_paths_without_rewrite() {
 }
 
 #[test]
+fn migration_rejects_invalid_legacy_reference_names_without_rewrite() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute("UPDATE symbols SET reference_names_json = 'not JSON'", [])
+        .unwrap();
+    drop(connection);
+
+    let error = migrate_symbol_index(&db_path)
+        .expect_err("invalid legacy reference names must prevent schema migration");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid persisted legacy symbol row"),
+        "{error}"
+    );
+
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "1");
+    let index_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_symbols_file_path')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!index_exists);
+}
+
+#[test]
 fn inspect_symbol_index_reports_schema_version_issues_without_migration() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
