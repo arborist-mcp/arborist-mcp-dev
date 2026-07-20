@@ -91,6 +91,8 @@ for graph tracing; range-for bindings follow the same rules. Directly typed raw 
 so `Alias* current; current->adjust(value)` follows the pointee's `&` overload
 and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
+`auto` bindings from `std::addressof(value)` or `&value` retain the same
+pointee receiver behavior.
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and

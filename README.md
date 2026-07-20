@@ -93,6 +93,8 @@ for graph tracing; range-for bindings follow the same rules. Directly typed raw 
 so `Alias* current; current->adjust(value)` follows the pointee's `&` overload
 and `const Alias* current` follows `const &`; the equivalent
 `(*current).adjust(value)` form is resolved as well.
+`auto` bindings from `std::addressof(value)` or `&value` retain the same
+pointee receiver behavior.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
