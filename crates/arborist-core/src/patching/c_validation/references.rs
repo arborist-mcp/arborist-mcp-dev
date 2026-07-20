@@ -612,6 +612,13 @@ fn cpp_auto_constructor_binding_type(
     let reference_factory_binding =
         cpp_standard_reference_factory_binding(initializer_text, declaration_start, local_bindings);
     let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
+    let reference_alias_binding = cpp_auto_reference_alias_binding(
+        initializer_text,
+        type_prefix,
+        &compact_type_suffix,
+        declaration_start,
+        local_bindings,
+    );
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -647,6 +654,11 @@ fn cpp_auto_constructor_binding_type(
                 .as_ref()
                 .map(|(type_name, _)| type_name.clone())
         })
+        .or_else(|| {
+            reference_alias_binding
+                .as_ref()
+                .map(|(type_name, _)| type_name.clone())
+        })
         .or_else(|| initializer_type.and_then(cpp_temporary_type_path))
         .or_else(|| {
             cpp_temporary_type_from_expression(initializer_text).map(|(type_name, _)| type_name)
@@ -669,6 +681,8 @@ fn cpp_auto_constructor_binding_type(
     let receiver = if let Some((_, receiver)) = reference_factory_binding.as_ref() {
         *receiver
     } else if let Some((_, receiver)) = address_binding.as_ref() {
+        *receiver
+    } else if let Some((_, receiver)) = reference_alias_binding.as_ref() {
         *receiver
     } else {
         match (access, standard_unwrap) {
@@ -719,6 +733,39 @@ fn cpp_address_binding(
     )?;
     (binding.access == CppMemberAccess::Object && binding.standard_unwrap.is_none())
         .then(|| (binding.type_name.clone(), binding.receiver))
+}
+
+fn cpp_auto_reference_alias_binding(
+    expression: &str,
+    type_prefix: &str,
+    type_suffix: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    if !matches!(cpp_strip_cv_qualifiers(type_suffix), "&" | "&&") {
+        return None;
+    }
+    let binding = cpp_visible_local_binding(
+        strip_cpp_outer_parentheses(expression.trim()),
+        byte_offset,
+        local_bindings,
+    )?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let receiver = if type_prefix.split_whitespace().any(|part| part == "const") {
+        CppThisMemberReceiver::ConstLvalue
+    } else {
+        match binding.receiver {
+            CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                CppThisMemberReceiver::Lvalue
+            }
+            CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                CppThisMemberReceiver::ConstLvalue
+            }
+        }
+    };
+    Some((binding.type_name.clone(), receiver))
 }
 
 fn cpp_auto_constructor_initializer_text<'a>(
@@ -1900,6 +1947,28 @@ mod tests {
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
             Some(&BTreeSet::from([1, 3]))
+        );
+    }
+
+    #[test]
+    fn collects_auto_reference_alias_member_call_arities() {
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto&& forwarding_alias = locked; return mutable_alias.adjust(value) + const_alias.adjust(value, value) + forwarding_alias.adjust(value, value, value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut arities = BTreeMap::new();
+
+        collect_cpp_call_arities(document.tree.root_node(), source, &mut arities).unwrap();
+
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([1]))
+        );
+        assert_eq!(
+            arities.get(&format!(
+                "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
+            )),
+            Some(&BTreeSet::from([2, 3]))
         );
     }
 

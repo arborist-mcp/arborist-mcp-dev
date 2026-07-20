@@ -3192,12 +3192,24 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nstruct Deleter {};\nusing Alias = Counter;\nAlias make_counter() { return Alias{}; }\nint lvalue_caller(int value) { auto current = Alias{}; return current.adjust(value); }\nint direct_list_caller(int value) { auto current{Alias{}}; return current.adjust(value); }\nint copy_list_caller(int value) { auto current = {Alias{}}; return current.adjust(value); }\nint deduced_pointer_caller(int value) { auto current = new Alias{}; return current->adjust(value); }\nint parenthesized_deduced_pointer_caller(int value) { auto current = new Alias(); return current->adjust(value); }\nint default_deduced_pointer_caller(int value) { auto current = new Alias; return current->adjust(value); }\nint pointee_const_deduced_pointer_caller(int value) { auto current = new const Alias{}; return current->adjust(value); }\nint postfix_pointee_const_deduced_pointer_caller(int value) { auto current = new Alias const{}; return current->adjust(value); }\nint make_unique_caller(int value) { auto current = std::make_unique<Alias>(); return current->adjust(value); }\nint make_shared_caller(int value) { auto current = std::make_shared<Alias>(); return current->adjust(value); }\nint auto_unique_pointer_caller(int value) { auto current = std::unique_ptr<Alias>{}; return current->adjust(value); }\nint auto_const_unique_pointer_caller(int value) { const auto current = std::unique_ptr<Alias>{}; return current->adjust(value); }\nint unique_pointer_caller(int value) { std::unique_ptr<Alias> current; return current->adjust(value); }\nint unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return current.get()->adjust(value); }\nint moved_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::move(current)).adjust(value); }\nint as_const_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::as_const(current)).adjust(value); }\nint forwarded_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::forward<std::unique_ptr<Alias>&&>(current)).adjust(value); }\nint reference_wrapper_get_caller(int value) { std::reference_wrapper<Alias> current = *static_cast<Alias*>(nullptr); return current.get().adjust(value); }\nint const_reference_wrapper_get_caller(int value) { std::reference_wrapper<const Alias> current = *static_cast<Alias*>(nullptr); return current.get().adjust(value); }\nint auto_reference_wrapper_caller(int value) { Alias target{}; auto current = std::reference_wrapper<Alias>(target); return current.get().adjust(value); }\nint auto_parenthesized_reference_wrapper_caller(int value) { Alias target{}; auto current = (std::reference_wrapper<Alias>(target)); return current.get().adjust(value); }\nint auto_const_reference_wrapper_caller(int value) { const Alias target{}; auto current = std::reference_wrapper<const Alias>(target); return current.get().adjust(value); }\nint ref_factory_caller(int value) { Alias target{}; return std::ref(target).get().adjust(value); }\nint parenthesized_ref_factory_caller(int value) { Alias target{}; return (std::ref(target)).get().adjust(value); }\nint cref_factory_caller(int value) { Alias target{}; return std::cref(target).get().adjust(value); }\nint ref_as_const_factory_caller(int value) { Alias target{}; return std::ref(std::as_const(target)).get().adjust(value); }\nint auto_ref_factory_caller(int value) { Alias target{}; auto current = std::ref(target); return current.get().adjust(value); }\nint auto_cref_factory_caller(int value) { Alias target{}; auto current = std::cref(target); return current.get().adjust(value); }\nint auto_ref_as_const_factory_caller(int value) { Alias target{}; auto current = std::ref(std::as_const(target)); return current.get().adjust(value); }\nint auto_addressof_caller(int value) { Alias target{}; auto current = std::addressof(target); return current->adjust(value); }\nint auto_const_addressof_caller(int value) { const Alias target{}; auto current = std::addressof(target); return current->adjust(value); }\nint auto_native_addressof_caller(int value) { Alias target{}; auto current = &target; return current->adjust(value); }\nint auto_const_native_addressof_caller(int value) { const Alias target{}; auto current = &target; return current->adjust(value); }\nint nested_wrapped_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return (std::move(std::as_const(current))).get()->adjust(value); }\nint forwarded_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::forward<std::unique_ptr<Alias>&>(current).get()->adjust(value); }\nint moved_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::move(current).get()->adjust(value); }\nint as_const_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::as_const(current).get()->adjust(value); }\nint custom_unique_pointer_caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); }\nint shared_pointer_caller(int value) { std::shared_ptr<Alias> current; return current->adjust(value); }\nint const_unique_pointer_caller(int value) { std::unique_ptr<const Alias> current; return current->adjust(value); }\nint const_deduced_pointer_caller(int value) { const auto current = new Alias{}; return current->adjust(value); }\nint auto_pointer_caller(int value) { auto* current = new Alias{}; return current->adjust(value); }\nint const_auto_pointer_caller(int value) { const auto* current = new Alias{}; return current->adjust(value); }\nint const_lvalue_caller(int value) { const auto current = Alias{}; return current.adjust(value); }\nint const_reference_caller(int value) { const auto& current = Alias{}; return current.adjust(value); }\nint rvalue_reference_caller(int value) { auto&& current = Alias{}; return current.adjust(value); }\nint factory_caller(int value) { auto current = make_counter(); return current.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nstruct Deleter {};\nusing Alias = Counter;\nAlias make_counter() { return Alias{}; }\nint lvalue_caller(int value) { auto current = Alias{}; return current.adjust(value); }\nint auto_reference_alias_caller(int value) { Alias target{}; auto& current = target; return current.adjust(value); }\nint auto_const_reference_alias_caller(int value) { Alias target{}; const auto& current = target; return current.adjust(value); }\nint auto_forwarding_reference_alias_caller(int value) { const Alias target{}; auto&& current = target; return current.adjust(value); }\nint direct_list_caller(int value) { auto current{Alias{}}; return current.adjust(value); }\nint copy_list_caller(int value) { auto current = {Alias{}}; return current.adjust(value); }\nint deduced_pointer_caller(int value) { auto current = new Alias{}; return current->adjust(value); }\nint parenthesized_deduced_pointer_caller(int value) { auto current = new Alias(); return current->adjust(value); }\nint default_deduced_pointer_caller(int value) { auto current = new Alias; return current->adjust(value); }\nint pointee_const_deduced_pointer_caller(int value) { auto current = new const Alias{}; return current->adjust(value); }\nint postfix_pointee_const_deduced_pointer_caller(int value) { auto current = new Alias const{}; return current->adjust(value); }\nint make_unique_caller(int value) { auto current = std::make_unique<Alias>(); return current->adjust(value); }\nint make_shared_caller(int value) { auto current = std::make_shared<Alias>(); return current->adjust(value); }\nint auto_unique_pointer_caller(int value) { auto current = std::unique_ptr<Alias>{}; return current->adjust(value); }\nint auto_const_unique_pointer_caller(int value) { const auto current = std::unique_ptr<Alias>{}; return current->adjust(value); }\nint unique_pointer_caller(int value) { std::unique_ptr<Alias> current; return current->adjust(value); }\nint unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return current.get()->adjust(value); }\nint moved_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::move(current)).adjust(value); }\nint as_const_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::as_const(current)).adjust(value); }\nint forwarded_unique_pointer_dereference_caller(int value) { std::unique_ptr<Alias> current; return (*std::forward<std::unique_ptr<Alias>&&>(current)).adjust(value); }\nint reference_wrapper_get_caller(int value) { std::reference_wrapper<Alias> current = *static_cast<Alias*>(nullptr); return current.get().adjust(value); }\nint const_reference_wrapper_get_caller(int value) { std::reference_wrapper<const Alias> current = *static_cast<Alias*>(nullptr); return current.get().adjust(value); }\nint auto_reference_wrapper_caller(int value) { Alias target{}; auto current = std::reference_wrapper<Alias>(target); return current.get().adjust(value); }\nint auto_parenthesized_reference_wrapper_caller(int value) { Alias target{}; auto current = (std::reference_wrapper<Alias>(target)); return current.get().adjust(value); }\nint auto_const_reference_wrapper_caller(int value) { const Alias target{}; auto current = std::reference_wrapper<const Alias>(target); return current.get().adjust(value); }\nint ref_factory_caller(int value) { Alias target{}; return std::ref(target).get().adjust(value); }\nint parenthesized_ref_factory_caller(int value) { Alias target{}; return (std::ref(target)).get().adjust(value); }\nint cref_factory_caller(int value) { Alias target{}; return std::cref(target).get().adjust(value); }\nint ref_as_const_factory_caller(int value) { Alias target{}; return std::ref(std::as_const(target)).get().adjust(value); }\nint auto_ref_factory_caller(int value) { Alias target{}; auto current = std::ref(target); return current.get().adjust(value); }\nint auto_cref_factory_caller(int value) { Alias target{}; auto current = std::cref(target); return current.get().adjust(value); }\nint auto_ref_as_const_factory_caller(int value) { Alias target{}; auto current = std::ref(std::as_const(target)); return current.get().adjust(value); }\nint auto_addressof_caller(int value) { Alias target{}; auto current = std::addressof(target); return current->adjust(value); }\nint auto_const_addressof_caller(int value) { const Alias target{}; auto current = std::addressof(target); return current->adjust(value); }\nint auto_native_addressof_caller(int value) { Alias target{}; auto current = &target; return current->adjust(value); }\nint auto_const_native_addressof_caller(int value) { const Alias target{}; auto current = &target; return current->adjust(value); }\nint nested_wrapped_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return (std::move(std::as_const(current))).get()->adjust(value); }\nint forwarded_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::forward<std::unique_ptr<Alias>&>(current).get()->adjust(value); }\nint moved_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::move(current).get()->adjust(value); }\nint as_const_unique_pointer_get_caller(int value) { std::unique_ptr<Alias> current; return std::as_const(current).get()->adjust(value); }\nint custom_unique_pointer_caller(int value) { std::unique_ptr<Alias, Deleter> current; return current->adjust(value); }\nint shared_pointer_caller(int value) { std::shared_ptr<Alias> current; return current->adjust(value); }\nint const_unique_pointer_caller(int value) { std::unique_ptr<const Alias> current; return current->adjust(value); }\nint const_deduced_pointer_caller(int value) { const auto current = new Alias{}; return current->adjust(value); }\nint auto_pointer_caller(int value) { auto* current = new Alias{}; return current->adjust(value); }\nint const_auto_pointer_caller(int value) { const auto* current = new Alias{}; return current->adjust(value); }\nint const_lvalue_caller(int value) { const auto current = Alias{}; return current.adjust(value); }\nint const_reference_caller(int value) { const auto& current = Alias{}; return current.adjust(value); }\nint rvalue_reference_caller(int value) { auto&& current = Alias{}; return current.adjust(value); }\nint factory_caller(int value) { auto current = make_counter(); return current.adjust(value); }\n}\n",
     )
     .unwrap();
 
     let expected_callees = [
         ("api::lvalue_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::auto_reference_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_const_reference_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::auto_forwarding_reference_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
         ("api::direct_list_caller", "api::Counter::adjust(int) &"),
         ("api::deduced_pointer_caller", "api::Counter::adjust(int) &"),
         (
@@ -3388,6 +3400,57 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
             .callees
             .is_empty()
     );
+}
+
+#[test]
+fn resolves_cpp_auto_reference_alias_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("auto_reference_alias_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint mutable_alias_caller(int value) { Alias target{}; auto& current = target; return current.adjust(value); }\nint const_alias_caller(int value) { Alias target{}; const auto& current = target; return current.adjust(value); }\nint forwarding_alias_caller(int value) { const Alias target{}; auto&& current = target; return current.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::mutable_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::forwarding_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
 }
 
 #[test]
