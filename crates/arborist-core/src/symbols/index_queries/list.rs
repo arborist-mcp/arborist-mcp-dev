@@ -2,16 +2,16 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::language::normalize_absolute_path;
 use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, TraceDirection,
 };
-use crate::symbol_index_state::load_symbol_index;
 use crate::symbol_query_execution::{
     list_context_from_symbols, list_discovery_context_from_symbols, list_from_symbols,
     list_neighborhood_context_from_symbols,
 };
+
+use super::load_normalized_symbol_index;
 
 pub fn list_symbols_from_index(db_path: &Path, limit: usize) -> Result<SymbolListResult> {
     list_symbols_from_index_filtered(db_path, limit, None, None)
@@ -54,8 +54,7 @@ pub fn list_symbols_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     list_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -71,8 +70,7 @@ pub fn list_symbols_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     list_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -93,8 +91,7 @@ pub fn list_symbols_discovery_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     list_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -118,8 +115,7 @@ pub fn list_symbols_neighborhood_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     list_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,

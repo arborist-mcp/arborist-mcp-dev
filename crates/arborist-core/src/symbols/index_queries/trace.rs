@@ -5,12 +5,13 @@ use anyhow::Result;
 use crate::language::normalize_absolute_path;
 use crate::model::Position;
 use crate::model::{TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult};
-use crate::symbol_index_state::load_symbol_index;
 use crate::symbol_query_execution::{
     trace_from_symbols_with_timeout, trace_neighborhood_from_symbols_with_timeout,
     trace_symbol_graph_at_position_from_symbols_with_timeout,
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
 };
+
+use super::load_normalized_symbol_index;
 
 pub fn trace_symbol_graph_from_index(
     db_path: &Path,
@@ -26,8 +27,7 @@ pub fn trace_symbol_graph_from_index_with_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     trace_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -62,8 +62,7 @@ pub fn trace_symbol_neighborhood_from_index_with_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let db_path = normalize_absolute_path(db_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     trace_neighborhood_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -93,9 +92,8 @@ pub fn trace_symbol_graph_at_position_from_index_with_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     trace_symbol_graph_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
@@ -129,9 +127,8 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let db_path = normalize_absolute_path(db_path)?;
     let file_path = normalize_absolute_path(file_path)?;
-    let (resolved_symbols, indexed_files) = load_symbol_index(&db_path)?;
+    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
