@@ -788,6 +788,16 @@ fn cpp_auto_reference_alias_target_binding<'a>(
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings);
     }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        let (binding, _) =
+            cpp_auto_reference_alias_target_binding(argument, byte_offset, local_bindings)?;
+        let receiver = cpp_this_receiver_for_type(type_name, Some(true))?;
+        let force_const = matches!(
+            receiver,
+            CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+        );
+        return Some((binding, force_const));
+    }
     cpp_visible_local_binding(expression, byte_offset, local_bindings)
         .map(|binding| (binding, false))
 }
@@ -2002,7 +2012,7 @@ mod tests {
 
     #[test]
     fn collects_auto_reference_alias_member_call_arities() {
-        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto const& postfix_const_alias = target; auto&& forwarding_alias = locked; auto&& moved_alias = std::move(target); auto&& as_const_alias = std::as_const(target); return mutable_alias.adjust(value) + const_alias.adjust(value, value) + postfix_const_alias.adjust(value, value, value) + forwarding_alias.adjust(value, value, value, value) + moved_alias.adjust(value, value, value, value, value) + as_const_alias.adjust(value, value, value, value, value, value); }";
+        let source = "class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value; } }; int caller(int value) { Counter target{}; const Counter locked{}; auto& mutable_alias = target; const auto& const_alias = target; auto const& postfix_const_alias = target; auto&& forwarding_alias = locked; auto&& moved_alias = std::move(target); auto&& as_const_alias = std::as_const(target); auto&& forwarded_alias = std::forward<Counter&&>(target); auto&& const_forwarded_alias = std::forward<const Counter&&>(target); return mutable_alias.adjust(value) + const_alias.adjust(value, value) + postfix_const_alias.adjust(value, value, value) + forwarding_alias.adjust(value, value, value, value) + moved_alias.adjust(value, value, value, value, value) + as_const_alias.adjust(value, value, value, value, value, value) + forwarded_alias.adjust(value, value, value, value, value, value, value) + const_forwarded_alias.adjust(value, value, value, value, value, value, value, value); }";
         let document = parse_document(Path::new("sample.cpp"), source).unwrap();
         let mut arities = BTreeMap::new();
 
@@ -2012,13 +2022,13 @@ mod tests {
             arities.get(&format!(
                 "{CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([1, 5]))
+            Some(&BTreeSet::from([1, 5, 7]))
         );
         assert_eq!(
             arities.get(&format!(
                 "{CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX}Counter{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}Counter::adjust"
             )),
-            Some(&BTreeSet::from([2, 3, 4, 6]))
+            Some(&BTreeSet::from([2, 3, 4, 6, 8]))
         );
     }
 

@@ -1871,7 +1871,7 @@ fn traces_cpp_auto_reference_alias_wrappers_from_unsaved_virtual_changes() {
     vfs.open_file(
         &source,
         Some(
-            "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint moved_alias_caller(int value) { Alias target{}; auto&& current = std::move(target); return current.adjust(value); }\nint as_const_alias_caller(int value) { Alias target{}; auto&& current = std::as_const(target); return current.adjust(value); }\n}\n",
+            "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint moved_alias_caller(int value) { Alias target{}; auto&& current = std::move(target); return current.adjust(value); }\nint as_const_alias_caller(int value) { Alias target{}; auto&& current = std::as_const(target); return current.adjust(value); }\nint forwarded_alias_caller(int value) { Alias target{}; auto&& current = std::forward<Alias&&>(target); return current.adjust(value); }\nint const_forwarded_alias_caller(int value) { Alias target{}; auto&& current = std::forward<const Alias&&>(target); return current.adjust(value); }\n}\n",
         ),
     )
     .unwrap();
@@ -1880,6 +1880,11 @@ fn traces_cpp_auto_reference_alias_wrappers_from_unsaved_virtual_changes() {
         ("api::moved_alias_caller", "api::Counter::adjust(int) &"),
         (
             "api::as_const_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::forwarded_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_forwarded_alias_caller",
             "api::Counter::adjust(int) const &",
         ),
     ] {
