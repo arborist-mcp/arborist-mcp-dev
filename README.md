@@ -102,6 +102,8 @@ with `std::move(value)`, `std::as_const(value)`, `std::forward<T>(value)`, or
 lvalue and const receiver behavior.
 Bindings from `std::reference_wrapper<T>::get()`, `std::ref(value).get()`, and
 `std::cref(value).get()` retain the wrapped object's receiver behavior.
+Bindings from `std::optional<T>::value()` retain the selected value's lvalue
+and const receiver behavior.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
