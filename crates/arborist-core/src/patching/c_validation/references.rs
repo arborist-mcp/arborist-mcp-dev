@@ -973,6 +973,12 @@ fn cpp_local_member_receiver_from_expression(
     member_operator: &str,
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_standard_reference_factory_get_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
     if let Some(binding_name) = cpp_standard_wrapper_get_receiver(expression)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && matches!(
@@ -1099,6 +1105,31 @@ fn cpp_local_member_receiver_from_expression(
 fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
     cpp_local_binding_name_from_expression(receiver)
+}
+
+fn cpp_standard_reference_factory_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    for (factory, force_const) in [("std::ref", false), ("std::cref", true)] {
+        let Some(argument) = cpp_receiver_call_argument(receiver, factory) else {
+            continue;
+        };
+        let binding_name = cpp_local_binding_name_from_expression(argument)?;
+        let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+        if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+            return None;
+        }
+        let receiver = if force_const {
+            CppThisMemberReceiver::ConstLvalue
+        } else {
+            binding.receiver
+        };
+        return Some((binding.type_name.clone(), receiver));
+    }
+    None
 }
 
 fn cpp_standard_optional_value_member_receiver(
