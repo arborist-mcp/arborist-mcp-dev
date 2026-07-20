@@ -94,8 +94,9 @@ and `const Alias* current` follows `const &`; the equivalent
 Standard local wrappers follow their established access operations too:
 `std::unique_ptr<T>` and `std::shared_ptr<T>` resolve through `->`, `.get()`,
 and dereference; `std::reference_wrapper<T>::get()` and
-`std::ref(value).get()` resolve as `T`, while `std::cref(value).get()` resolves
-as `const T`; and `std::optional<T>` resolves through `->`, `.value()`, and
+`std::ref(value).get()` resolve as `T`, while `std::cref(value).get()` and
+`std::ref(std::as_const(value)).get()` resolve as `const T`; and
+`std::optional<T>` resolves through `->`, `.value()`, and
 dereference while preserving the selected value category. Direct `auto`
 constructions of these standard wrappers retain the same receiver behavior.
 The supported composition
