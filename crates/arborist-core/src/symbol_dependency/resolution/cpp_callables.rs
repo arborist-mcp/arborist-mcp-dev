@@ -45,24 +45,14 @@ pub(super) fn cpp_const_member_candidates(
 }
 
 pub(super) fn cpp_callable_is_const_qualified(symbol: &IndexedSymbol) -> bool {
-    let Some((_, mut suffix)) = symbol
+    let Some((_, suffix)) = symbol
         .signature
         .as_deref()
         .and_then(|signature| signature.rsplit_once(')'))
     else {
         return false;
     };
-    loop {
-        suffix = suffix.trim_start();
-        if suffix.starts_with("const") {
-            return true;
-        }
-        if let Some(remaining) = suffix.strip_prefix("volatile") {
-            suffix = remaining;
-        } else {
-            return false;
-        }
-    }
+    cpp_callable_cv_qualifiers(suffix).0
 }
 
 pub(super) fn cpp_lvalue_member_candidates(
@@ -118,17 +108,8 @@ pub(super) fn cpp_rvalue_member_candidates(
 }
 
 fn cpp_callable_ref_qualifier(symbol: &IndexedSymbol) -> Option<&'static str> {
-    let (_, mut suffix) = symbol.signature.as_deref()?.rsplit_once(')')?;
-    loop {
-        suffix = suffix.trim_start();
-        if let Some(remaining) = suffix.strip_prefix("const") {
-            suffix = remaining;
-        } else if let Some(remaining) = suffix.strip_prefix("volatile") {
-            suffix = remaining;
-        } else {
-            break;
-        }
-    }
+    let (_, suffix) = symbol.signature.as_deref()?.rsplit_once(')')?;
+    let (_, suffix) = cpp_callable_cv_qualifiers(suffix);
     let suffix = suffix.trim_start();
     if suffix.starts_with("&&") {
         Some("&&")
@@ -137,6 +118,31 @@ fn cpp_callable_ref_qualifier(symbol: &IndexedSymbol) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn cpp_callable_cv_qualifiers(mut suffix: &str) -> (bool, &str) {
+    let mut const_qualified = false;
+    loop {
+        suffix = suffix.trim_start();
+        if let Some(remaining) = cpp_strip_cpp_qualifier(suffix, "const") {
+            const_qualified = true;
+            suffix = remaining;
+        } else if let Some(remaining) = cpp_strip_cpp_qualifier(suffix, "volatile") {
+            suffix = remaining;
+        } else {
+            return (const_qualified, suffix);
+        }
+    }
+}
+
+fn cpp_strip_cpp_qualifier<'a>(suffix: &'a str, qualifier: &str) -> Option<&'a str> {
+    let remaining = suffix.strip_prefix(qualifier)?;
+    remaining
+        .chars()
+        .next()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .is_none()
+        .then_some(remaining)
 }
 
 pub(super) fn cpp_callable_accepts_arity(symbol: &IndexedSymbol, call_arity: usize) -> bool {
@@ -243,9 +249,12 @@ mod tests {
         const_return.signature = Some("const int convert();".to_string());
         let mut volatile_const_member = cpp_callable(&[]);
         volatile_const_member.signature = Some("int convert() volatile const &;".to_string());
+        let mut consteval_member = cpp_callable(&[]);
+        consteval_member.signature = Some("int convert() consteval;".to_string());
 
         assert!(cpp_callable_is_const_qualified(&const_member));
         assert!(!cpp_callable_is_const_qualified(&const_return));
         assert!(cpp_callable_is_const_qualified(&volatile_const_member));
+        assert!(!cpp_callable_is_const_qualified(&consteval_member));
     }
 }
