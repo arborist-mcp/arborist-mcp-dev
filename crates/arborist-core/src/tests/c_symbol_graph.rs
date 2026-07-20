@@ -3186,6 +3186,55 @@ fn resolves_cpp_local_variable_member_calls_across_live_and_persisted_queries() 
 }
 
 #[test]
+fn resolves_cpp_weak_pointer_lock_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("weak_pointer_member_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint direct_caller(std::weak_ptr<Alias> current, int value) { return current.lock()->adjust(value); }\nint local_caller(std::weak_ptr<Alias> current, int value) { auto shared = current.lock(); return shared->adjust(value); }\nint const_wrapper_caller(const std::weak_ptr<Alias> current, int value) { return current.lock()->adjust(value); }\nint auto_const_wrapper_caller(int value) { const auto current = std::weak_ptr<Alias>{}; return current.lock()->adjust(value); }\nint const_caller(std::weak_ptr<const Alias> current, int value) { return current.lock()->adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::direct_caller", "api::Counter::adjust(int) &"),
+        ("api::local_caller", "api::Counter::adjust(int) &"),
+        ("api::const_wrapper_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::auto_const_wrapper_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::const_caller", "api::Counter::adjust(int) const &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("auto_constructor_member_calls.cpp");

@@ -26,6 +26,7 @@ enum CppMemberAccess {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CppStandardUnwrap {
     SmartPointer,
+    WeakPointer,
     ReferenceWrapper,
     Optional,
 }
@@ -665,6 +666,11 @@ fn cpp_auto_constructor_binding_type(
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
     let reference_factory_binding =
         cpp_standard_reference_factory_binding(initializer_text, declaration_start, local_bindings);
+    let weak_pointer_lock_binding = cpp_standard_weak_pointer_lock_receiver(
+        initializer_text,
+        declaration_start,
+        local_bindings,
+    );
     let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
     let reference_alias_binding = cpp_auto_reference_alias_binding(
         initializer_text,
@@ -687,13 +693,14 @@ fn cpp_auto_constructor_binding_type(
     let access = match (
         declared_access,
         inferred_pointer_type,
+        weak_pointer_lock_binding.as_ref(),
         address_binding.as_ref(),
     ) {
-        (CppMemberAccess::Pointer, _, _) | (CppMemberAccess::Object, Some(_), _) => {
-            CppMemberAccess::Pointer
-        }
-        (CppMemberAccess::Object, None, Some(_)) => CppMemberAccess::Pointer,
-        (CppMemberAccess::Object, None, None) => CppMemberAccess::Object,
+        (CppMemberAccess::Pointer, _, _, _)
+        | (CppMemberAccess::Object, Some(_), _, _)
+        | (CppMemberAccess::Object, None, Some(_), _) => CppMemberAccess::Pointer,
+        (CppMemberAccess::Object, None, None, Some(_)) => CppMemberAccess::Pointer,
+        (CppMemberAccess::Object, None, None, None) => CppMemberAccess::Object,
     };
     let initializer_type = if access == CppMemberAccess::Pointer {
         inferred_pointer_type
@@ -703,6 +710,11 @@ fn cpp_auto_constructor_binding_type(
     let type_name = reference_factory_binding
         .as_ref()
         .map(|(type_name, _)| type_name.clone())
+        .or_else(|| {
+            weak_pointer_lock_binding
+                .as_ref()
+                .map(|(type_name, _)| type_name.clone())
+        })
         .or_else(|| {
             address_binding
                 .as_ref()
@@ -727,12 +739,21 @@ fn cpp_auto_constructor_binding_type(
     let standard_unwrap = direct_standard_unwrap.or_else(|| {
         smart_pointer_factory_type.map(|target| (target, CppStandardUnwrap::SmartPointer))
     });
-    let standard_unwrap_kind = standard_unwrap.map(|(_, unwrap)| unwrap).or_else(|| {
-        reference_factory_binding
-            .as_ref()
-            .map(|_| CppStandardUnwrap::ReferenceWrapper)
-    });
+    let standard_unwrap_kind = standard_unwrap
+        .map(|(_, unwrap)| unwrap)
+        .or_else(|| {
+            reference_factory_binding
+                .as_ref()
+                .map(|_| CppStandardUnwrap::ReferenceWrapper)
+        })
+        .or_else(|| {
+            weak_pointer_lock_binding
+                .as_ref()
+                .map(|_| CppStandardUnwrap::SmartPointer)
+        });
     let receiver = if let Some((_, receiver)) = reference_factory_binding.as_ref() {
+        *receiver
+    } else if let Some((_, receiver)) = weak_pointer_lock_binding.as_ref() {
         *receiver
     } else if let Some((_, receiver)) = address_binding.as_ref() {
         *receiver
@@ -745,6 +766,9 @@ fn cpp_auto_constructor_binding_type(
             }
             (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
                 cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
+            }
+            (CppMemberAccess::Object, Some((target, CppStandardUnwrap::WeakPointer))) => {
+                cpp_this_receiver_for_type(target, Some(false))?
             }
             (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
                 cpp_this_receiver_for_type(target, Some(false))?
@@ -761,7 +785,12 @@ fn cpp_auto_constructor_binding_type(
     let type_name = match (access, standard_unwrap) {
         (
             CppMemberAccess::Object,
-            Some((target, CppStandardUnwrap::ReferenceWrapper | CppStandardUnwrap::Optional)),
+            Some((
+                target,
+                CppStandardUnwrap::ReferenceWrapper
+                | CppStandardUnwrap::Optional
+                | CppStandardUnwrap::WeakPointer,
+            )),
         )
         | (CppMemberAccess::Pointer, Some((target, CppStandardUnwrap::SmartPointer))) => {
             cpp_temporary_type_path(target)?
@@ -1029,6 +1058,12 @@ fn cpp_binding_type(
         .map(|target| (target, CppStandardUnwrap::SmartPointer))
         .or_else(|| {
             (declared_access == CppMemberAccess::Object)
+                .then(|| cpp_standard_weak_pointer_target_type(declared_type))
+                .flatten()
+                .map(|target| (target, CppStandardUnwrap::WeakPointer))
+        })
+        .or_else(|| {
+            (declared_access == CppMemberAccess::Object)
                 .then(|| cpp_standard_reference_wrapper_target_type(declared_type))
                 .flatten()
                 .map(|target| (target, CppStandardUnwrap::ReferenceWrapper))
@@ -1054,6 +1089,9 @@ fn cpp_binding_type(
         (CppMemberAccess::Object, Some((target, CppStandardUnwrap::Optional))) => {
             cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?
         }
+        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::WeakPointer))) => {
+            cpp_this_receiver_for_type(target, Some(false))?
+        }
         (CppMemberAccess::Object, _) => cpp_named_binding_receiver_for_type(&type_name)?,
         (CppMemberAccess::Pointer, Some((target, _))) => {
             cpp_this_receiver_for_type(target, Some(false))?
@@ -1063,7 +1101,12 @@ fn cpp_binding_type(
     let type_name = match (access, standard_unwrap) {
         (
             CppMemberAccess::Object,
-            Some((target, CppStandardUnwrap::ReferenceWrapper | CppStandardUnwrap::Optional)),
+            Some((
+                target,
+                CppStandardUnwrap::ReferenceWrapper
+                | CppStandardUnwrap::Optional
+                | CppStandardUnwrap::WeakPointer,
+            )),
         ) => cpp_temporary_type_path(target)?,
         (CppMemberAccess::Object, _) => cpp_temporary_type_path(&type_name)?,
         (CppMemberAccess::Pointer, Some((target, _))) => cpp_temporary_type_path(target)?,
@@ -1093,6 +1136,12 @@ fn cpp_standard_reference_wrapper_target_type(type_name: &str) -> Option<&str> {
         .and_then(cpp_first_template_argument)
 }
 
+fn cpp_standard_weak_pointer_target_type(type_name: &str) -> Option<&str> {
+    cpp_standard_template_arguments(type_name, "std::weak_ptr")
+        .filter(|arguments| !cpp_template_arguments_have_top_level_comma(arguments))
+        .and_then(cpp_first_template_argument)
+}
+
 fn cpp_standard_optional_target_type(type_name: &str) -> Option<&str> {
     cpp_standard_template_arguments(type_name, "std::optional")
         .filter(|arguments| !cpp_template_arguments_have_top_level_comma(arguments))
@@ -1102,6 +1151,10 @@ fn cpp_standard_optional_target_type(type_name: &str) -> Option<&str> {
 fn cpp_standard_wrapper_target_type(type_name: &str) -> Option<(&str, CppStandardUnwrap)> {
     cpp_standard_smart_pointer_target_type(type_name)
         .map(|target| (target, CppStandardUnwrap::SmartPointer))
+        .or_else(|| {
+            cpp_standard_weak_pointer_target_type(type_name)
+                .map(|target| (target, CppStandardUnwrap::WeakPointer))
+        })
         .or_else(|| {
             cpp_standard_reference_wrapper_target_type(type_name)
                 .map(|target| (target, CppStandardUnwrap::ReferenceWrapper))
@@ -1307,6 +1360,12 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((type_name, receiver));
     }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_standard_weak_pointer_lock_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
     if let Some(binding_name) = cpp_standard_wrapper_get_receiver(expression)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && matches!(
@@ -1431,6 +1490,19 @@ fn cpp_local_member_receiver_from_expression(
 fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
     let receiver = expression.strip_suffix(".get()")?.trim();
     cpp_local_binding_name_from_expression(receiver)
+}
+
+fn cpp_standard_weak_pointer_lock_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".lock()")?.trim();
+    let binding_name = cpp_local_binding_name_from_expression(receiver)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    (binding.access == CppMemberAccess::Object
+        && binding.standard_unwrap == Some(CppStandardUnwrap::WeakPointer))
+    .then(|| (binding.type_name.clone(), binding.receiver))
 }
 
 fn cpp_standard_reference_factory_get_receiver(

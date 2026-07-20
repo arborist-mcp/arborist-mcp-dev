@@ -121,6 +121,9 @@ value's lvalue and const receiver behavior, including `std::move`,
 `std::as_const`, and `std::forward<T>` wrappers around the selected value.
 Bindings from `*std::unique_ptr<T>` or `*std::shared_ptr<T>` retain the
 pointee's lvalue and const receiver behavior.
+`std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
+for direct `lock()->member()` calls and `auto` bindings; const on the weak
+pointer wrapper does not make `T` const.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
