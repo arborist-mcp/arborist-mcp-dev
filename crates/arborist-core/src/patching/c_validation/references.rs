@@ -996,15 +996,26 @@ fn cpp_auto_standard_value_copy_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    let receiver = expression.strip_suffix(".value()")?.trim();
-    let (type_name, _) = cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
-        .or_else(|| {
+    let (type_name, _) = if let Some(receiver) = expression.strip_suffix(".value()") {
+        let receiver = receiver.trim();
+        cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings).or_else(|| {
             cpp_expected_error_optional_value_member_receiver(
                 expression,
                 byte_offset,
                 local_bindings,
             )
-        })?;
+        })
+    } else {
+        cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings).or_else(
+            || {
+                cpp_expected_error_optional_dereference_receiver(
+                    expression,
+                    byte_offset,
+                    local_bindings,
+                )
+            },
+        )
+    }?;
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
@@ -1108,7 +1119,21 @@ fn cpp_auto_optional_alias_binding(
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)
         })
         .or_else(|| {
+            cpp_expected_error_optional_value_member_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+        })
+        .or_else(|| {
             cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+        })
+        .or_else(|| {
+            cpp_expected_error_optional_dereference_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
         })
 }
 
