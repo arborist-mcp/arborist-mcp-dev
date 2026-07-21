@@ -3241,7 +3241,7 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint arrow_caller(std::expected<Alias, int> current, int value) { return current->adjust(value); }\nint value_caller(std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint dereference_caller(std::expected<Alias, int> current, int value) { return (*current).adjust(value); }\nint moved_value_caller(std::expected<Alias, int> current, int value) { return std::move(current).value().adjust(value); }\nint const_caller(const std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_expected_value_caller(const std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_optional_value_caller(const std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_caller(int value) { auto current = std::expected<Alias, int>{}; return current->adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint arrow_caller(std::expected<Alias, int> current, int value) { return current->adjust(value); }\nint value_caller(std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint dereference_caller(std::expected<Alias, int> current, int value) { return (*current).adjust(value); }\nint moved_value_caller(std::expected<Alias, int> current, int value) { return std::move(current).value().adjust(value); }\nint const_caller(const std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint const_auto_value_caller(std::expected<Alias, int> current, int value) { const auto current_value = current.value(); return current_value.adjust(value); }\nint copied_const_source_value_caller(const std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint moved_auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = std::move(current).value(); return current_value.adjust(value); }\nint nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_expected_value_caller(const std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { auto current_value = current.value(); return current_value.value().adjust(value); }\nint auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { auto current_value = current.value(); return current_value.error().adjust(value); }\nint const_auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { const auto current_value = current.value(); return current_value.error().adjust(value); }\nint nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_optional_value_caller(const std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint const_auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { const auto current_value = current.value(); return current_value->adjust(value); }\nint auto_pointer_value_caller(std::expected<std::shared_ptr<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint auto_caller(int value) { auto current = std::expected<Alias, int>{}; return current->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3251,6 +3251,19 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
         ("api::dereference_caller", "api::Counter::adjust(int) &"),
         ("api::moved_value_caller", "api::Counter::adjust(int) &&"),
         ("api::const_caller", "api::Counter::adjust(int) const &"),
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::moved_auto_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
         (
             "api::nested_expected_value_caller",
             "api::Counter::adjust(int) &",
@@ -3264,6 +3277,18 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
             "api::Counter::adjust(int) &&",
         ),
         (
+            "api::auto_nested_expected_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_nested_expected_error_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_auto_nested_expected_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
             "api::nested_optional_value_caller",
             "api::Counter::adjust(int) &",
         ),
@@ -3274,6 +3299,18 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
         (
             "api::moved_nested_optional_value_caller",
             "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::auto_optional_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_auto_optional_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
         ),
         ("api::auto_caller", "api::Counter::adjust(int) &"),
     ];

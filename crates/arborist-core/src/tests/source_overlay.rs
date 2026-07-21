@@ -500,8 +500,17 @@ fn traces_cpp_nested_standard_value_access_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int nested_expected_value_caller(std::expected<std::expected<Counter, int>, int> current, int value) { return current.value().value().adjust(value); } int const_nested_expected_value_caller(const std::expected<std::expected<Counter, int>, int> current, int value) { return current.value().value().adjust(value); } int moved_nested_expected_value_caller(std::expected<std::expected<Counter, int>, int> current, int value) { return std::move(current).value().value().adjust(value); } int nested_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { return current.value().value().adjust(value); } int const_nested_optional_value_caller(const std::expected<std::optional<Counter>, int> current, int value) { return current.value().value().adjust(value); } int moved_nested_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { return std::move(current).value().value().adjust(value); } }\n";
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int auto_value_caller(std::expected<Counter, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); } int const_auto_value_caller(std::expected<Counter, int> current, int value) { const auto current_value = current.value(); return current_value.adjust(value); } int copied_const_source_value_caller(const std::expected<Counter, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); } int nested_expected_value_caller(std::expected<std::expected<Counter, int>, int> current, int value) { return current.value().value().adjust(value); } int const_nested_expected_value_caller(const std::expected<std::expected<Counter, int>, int> current, int value) { return current.value().value().adjust(value); } int moved_nested_expected_value_caller(std::expected<std::expected<Counter, int>, int> current, int value) { return std::move(current).value().value().adjust(value); } int auto_nested_expected_value_caller(std::expected<std::expected<Counter, int>, int> current, int value) { auto current_value = current.value(); return current_value.value().adjust(value); } int auto_nested_expected_error_caller(std::expected<std::expected<int, Counter>, int> current, int value) { auto current_value = current.value(); return current_value.error().adjust(value); } int const_auto_nested_expected_error_caller(std::expected<std::expected<int, Counter>, int> current, int value) { const auto current_value = current.value(); return current_value.error().adjust(value); } int nested_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { return current.value().value().adjust(value); } int const_nested_optional_value_caller(const std::expected<std::optional<Counter>, int> current, int value) { return current.value().value().adjust(value); } int moved_nested_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { return std::move(current).value().value().adjust(value); } int auto_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); } int const_auto_optional_value_caller(std::expected<std::optional<Counter>, int> current, int value) { const auto current_value = current.value(); return current_value->adjust(value); } int auto_pointer_value_caller(std::expected<std::shared_ptr<Counter>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); } }\n";
     for (caller, expected_callee) in [
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
         (
             "api::nested_expected_value_caller",
             "api::Counter::adjust(int) &",
@@ -515,6 +524,18 @@ fn traces_cpp_nested_standard_value_access_from_unsaved_source_overlay() {
             "api::Counter::adjust(int) &&",
         ),
         (
+            "api::auto_nested_expected_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_nested_expected_error_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_auto_nested_expected_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
             "api::nested_optional_value_caller",
             "api::Counter::adjust(int) &",
         ),
@@ -525,6 +546,18 @@ fn traces_cpp_nested_standard_value_access_from_unsaved_source_overlay() {
         (
             "api::moved_nested_optional_value_caller",
             "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::auto_optional_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_auto_optional_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
         ),
     ] {
         let trace = trace_symbol_graph_from_index_with_source(
