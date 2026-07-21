@@ -822,6 +822,78 @@ fn traces_cpp_optional_expected_nested_calls_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_nested_optional_expected_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("nested_optional_expected.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int nested_opt_opt_exp_arrow_caller(std::optional<std::optional<std::expected<Counter, Value>>> current, int value) { return (*current)->value().adjust(value); } int nested_opt_opt_exp_value_caller(std::optional<std::optional<std::expected<Counter, Value>>> current, int value) { return current.value().value().value().adjust(value); } int nested_opt_opt_exp_double_arrow_caller(std::optional<std::optional<std::expected<Counter, Value>>> current, int value) { return current->value()->value().adjust(value); } int nested_opt_opt_exp_error_arrow_caller(std::optional<std::optional<std::expected<Value, Counter>>> current, int value) { return (*current)->error().adjust(value); } int exp_opt_exp_error_caller(std::expected<std::optional<std::expected<Value, Counter>>, Value> current, int value) { return current.value().value().error().adjust(value); } int exp_opt_exp_error_arrow_caller(std::expected<std::optional<std::expected<Value, Counter>>, Value> current, int value) { return (*current)->error().adjust(value); } int opt_exp_error_opt_sp_arrow_caller(std::optional<std::expected<Value, std::optional<std::unique_ptr<Counter>>>> current, int value) { return current->error()->adjust(value); } int moved_nested_opt_opt_exp_arrow_caller(std::optional<std::optional<std::expected<Counter, Value>>> current, int value) { return std::move(*current)->value().adjust(value); } int as_const_nested_opt_opt_exp_arrow_caller(std::optional<std::optional<std::expected<Counter, Value>>> current, int value) { return std::as_const(*current)->value().adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        (
+            "api::nested_opt_opt_exp_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::nested_opt_opt_exp_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::nested_opt_opt_exp_double_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::nested_opt_opt_exp_error_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::exp_opt_exp_error_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::exp_opt_exp_error_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::opt_exp_error_opt_sp_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::moved_nested_opt_opt_exp_arrow_caller",
+            "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::as_const_nested_opt_opt_exp_arrow_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_expected_optional_reference_wrapper_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("expected_optional.cpp");

@@ -1935,9 +1935,24 @@ fn cpp_standard_optional_value_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    let used_arrow = expression.ends_with("->value()");
     let receiver = cpp_strip_optional_value_access(expression)?;
     let (type_name, receiver) =
         cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+    // `receiver->value()` first applies operator-> (one optional/expected peel)
+    // and then value() (another peel). Keep both peels so nested forms such as
+    // optional<optional<expected<T>>> resolve through (*current)->value().
+    let (type_name, receiver) = if used_arrow {
+        // Preserve the receiver value category so moved wrappers such as
+        // std::move(current)->value() still select && overloads.
+        match cpp_standard_value_member_receiver(&type_name, receiver, true) {
+            Some(peeled) => peeled,
+            None => (type_name, receiver),
+        }
+    } else {
+        (type_name, receiver)
+    };
     // A trailing .value()/->value() can still be the expected/optional value
     // access on the unwrapped target, for example (*optional).value().
     cpp_standard_value_member_receiver(&type_name, receiver, true).or(Some((type_name, receiver)))
@@ -1963,11 +1978,19 @@ fn cpp_standard_expected_error_member_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = cpp_strip_expected_error_access(expression)?;
-    cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings).and_then(
-        |(type_name, receiver)| {
-            cpp_temporary_type_path(&type_name).map(|type_name| (type_name, receiver))
-        },
-    )
+    let (type_name, receiver) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    // Nested expected/optional layers may still remain after one .error() peel,
+    // for example expected<optional<expected<Value, Counter>>, Value>.error().
+    let mut type_name = type_name;
+    let mut receiver = receiver;
+    while let Some((next_type, next_receiver)) =
+        cpp_standard_value_member_receiver(&type_name, receiver, true)
+    {
+        type_name = next_type;
+        receiver = next_receiver;
+    }
+    Some((cpp_temporary_type_path(&type_name)?, receiver))
 }
 
 fn cpp_strip_expected_error_access(expression: &str) -> Option<&str> {
@@ -2123,7 +2146,37 @@ fn cpp_expected_error_optional_arrow_member_receiver(
     let receiver = cpp_strip_expected_error_access(expression)?;
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
-    cpp_optional_member_receiver(&type_name, error_receiver, false)
+    // Keep peeling nested optional/expected wrappers so forms such as
+    // expected<..., optional<unique_ptr<T>>> and expected<optional<expected<...>>>
+    // resolve through a single operator-> after .error().
+    let mut type_name = type_name;
+    let mut receiver = error_receiver;
+    while let Some((next_type, next_receiver)) =
+        cpp_standard_value_member_receiver(&type_name, receiver, false)
+    {
+        type_name = next_type;
+        receiver = next_receiver;
+    }
+    if let Some(target) = cpp_standard_smart_pointer_target_type(&type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            cpp_this_receiver_for_type(target, Some(false))?,
+        ));
+    }
+    if cpp_standard_optional_target_type(&type_name).is_some()
+        || cpp_standard_expected_target_type(&type_name).is_some()
+    {
+        return None;
+    }
+    let receiver = match receiver {
+        CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+            CppThisMemberReceiver::Lvalue
+        }
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+    };
+    Some((type_name, receiver))
 }
 
 fn cpp_expected_reference_wrapper_get_receiver(
@@ -2296,6 +2349,30 @@ fn cpp_optional_local_binding_receiver(
     None
 }
 
+fn cpp_expected_error_type_from_wrapper(
+    type_name: &str,
+    wrapper_receiver: CppThisMemberReceiver,
+) -> Option<(String, CppThisMemberReceiver)> {
+    // Nested optional/expected layers may remain after one unwrap, for example
+    // expected<optional<expected<Value, Counter>>, Value>. Peel until the error
+    // type of an expected wrapper is reachable.
+    let mut type_name = type_name.to_string();
+    let mut wrapper_receiver = wrapper_receiver;
+    loop {
+        let stripped = cpp_strip_leading_cv_qualifiers(&type_name);
+        if let Some(error_type) = cpp_standard_expected_error_type(stripped) {
+            return Some((
+                error_type.to_string(),
+                cpp_expected_error_receiver(error_type, wrapper_receiver)?,
+            ));
+        }
+        let (next_type, next_receiver) =
+            cpp_standard_value_member_receiver(&type_name, wrapper_receiver, true)?;
+        type_name = next_type;
+        wrapper_receiver = next_receiver;
+    }
+}
+
 fn cpp_expected_local_binding_error_receiver(
     expression: &str,
     byte_offset: usize,
@@ -2305,11 +2382,17 @@ fn cpp_expected_local_binding_error_receiver(
     if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
         && binding.standard_unwrap == Some(CppStandardUnwrap::Expected)
     {
-        return binding
+        if let Some(result) = binding
             .expected_error_type
             .as_ref()
             .zip(binding.expected_error_receiver)
-            .map(|(type_name, receiver)| (type_name.clone(), receiver));
+            .map(|(type_name, receiver)| (type_name.clone(), receiver))
+        {
+            return Some(result);
+        }
+        // Nested wrappers can leave an expected error type behind one more
+        // optional/expected peel on the stored value type.
+        return cpp_expected_error_type_from_wrapper(&binding.type_name, binding.receiver);
     }
     // optional<expected<...>>.value() / *optional peels only the optional layer so
     // the expected error type remains available.
@@ -2317,12 +2400,7 @@ fn cpp_expected_local_binding_error_receiver(
         && let Some((type_name, wrapper_receiver)) =
             cpp_optional_wrapper_only_receiver(receiver, byte_offset, local_bindings)
     {
-        let error_type =
-            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&type_name))?;
-        return Some((
-            error_type.to_string(),
-            cpp_expected_error_receiver(error_type, wrapper_receiver)?,
-        ));
+        return cpp_expected_error_type_from_wrapper(&type_name, wrapper_receiver);
     }
     if let Some(receiver) = expression.strip_prefix('*').map(str::trim)
         && let Some((type_name, wrapper_receiver)) = cpp_optional_wrapper_only_receiver(
@@ -2331,33 +2409,18 @@ fn cpp_expected_local_binding_error_receiver(
             local_bindings,
         )
     {
-        let error_type =
-            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&type_name))?;
-        return Some((
-            error_type.to_string(),
-            cpp_expected_error_receiver(error_type, wrapper_receiver)?,
-        ));
+        return cpp_expected_error_type_from_wrapper(&type_name, wrapper_receiver);
     }
     if let Some((type_name, wrapper_receiver)) =
         cpp_optional_wrapper_only_receiver(expression, byte_offset, local_bindings)
     {
         // Bare optional<expected<...>> receivers such as current->error().
-        let error_type =
-            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&type_name))?;
-        return Some((
-            error_type.to_string(),
-            cpp_expected_error_receiver(error_type, wrapper_receiver)?,
-        ));
+        return cpp_expected_error_type_from_wrapper(&type_name, wrapper_receiver);
     }
     if let Some(receiver) = cpp_strip_expected_error_access(expression) {
         let (expected_type, expected_receiver) =
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
-        let error_type =
-            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&expected_type))?;
-        return Some((
-            error_type.to_string(),
-            cpp_expected_error_receiver(error_type, expected_receiver)?,
-        ));
+        return cpp_expected_error_type_from_wrapper(&expected_type, expected_receiver);
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_expected_local_binding_error_receiver(argument, byte_offset, local_bindings)
@@ -2399,12 +2462,30 @@ fn cpp_optional_wrapper_only_receiver(
     {
         return Some((binding.type_name.clone(), binding.receiver));
     }
+    // expected/optional bindings store one unwrapped layer. When the remaining
+    // type is still optional, keep peeling so nested wrappers stay available for
+    // later .error() / operator-> resolution.
+    if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings)
+        && matches!(
+            binding.standard_unwrap,
+            Some(CppStandardUnwrap::Optional | CppStandardUnwrap::Expected)
+        )
+        && cpp_standard_optional_target_type(cpp_strip_leading_cv_qualifiers(&binding.type_name))
+            .is_some()
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
     if let Some(receiver) = expression.strip_prefix('*').map(str::trim) {
         return cpp_optional_wrapper_only_receiver(
             strip_cpp_outer_parentheses(receiver),
             byte_offset,
             local_bindings,
         );
+    }
+    if let Some(receiver) = cpp_strip_optional_value_access(expression) {
+        let (type_name, receiver) =
+            cpp_optional_wrapper_only_receiver(receiver, byte_offset, local_bindings)?;
+        return cpp_standard_value_member_receiver(&type_name, receiver, true);
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_optional_wrapper_only_receiver(argument, byte_offset, local_bindings).map(
