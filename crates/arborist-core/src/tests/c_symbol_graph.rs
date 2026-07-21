@@ -4273,6 +4273,77 @@ fn resolves_cpp_reference_wrapper_get_alias_member_calls_across_live_and_persist
 }
 
 #[test]
+fn resolves_cpp_optional_auto_value_copies_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("optional_auto_value_copies.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint auto_value_caller(int value) { std::optional<Alias> current; auto current_value = current.value(); return current_value.adjust(value); }\nint const_auto_value_caller(int value) { std::optional<Alias> current; const auto current_value = current.value(); return current_value.adjust(value); }\nint copied_const_source_value_caller(int value) { const std::optional<Alias> current{}; auto current_value = current.value(); return current_value.adjust(value); }\nint auto_dereference_caller(int value) { std::optional<Alias> current; auto current_value = *current; return current_value.adjust(value); }\nint const_auto_dereference_caller(int value) { std::optional<Alias> current; const auto current_value = *current; return current_value.adjust(value); }\nint copied_const_source_dereference_caller(int value) { const std::optional<Alias> current{}; auto current_value = *current; return current_value.adjust(value); }\nint auto_pointer_value_caller(int value) { std::optional<std::shared_ptr<Alias>> current; auto current_value = current.value(); return current_value->adjust(value); }\nint auto_pointer_dereference_caller(int value) { std::optional<std::shared_ptr<Alias>> current; auto current_value = *current; return current_value->adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_auto_dereference_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_pointer_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let persisted_trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            persisted_trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_optional_value_alias_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("optional_value_alias_member_calls.cpp");
