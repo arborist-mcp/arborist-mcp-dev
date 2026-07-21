@@ -710,6 +710,14 @@ fn cpp_auto_constructor_binding_type(
     if let Some((type_name, receiver)) = reference_alias_binding {
         return cpp_reference_alias_binding_type(&type_name, receiver);
     }
+    if let Some(binding_type) = cpp_auto_expected_error_copy_binding(
+        initializer_text,
+        type_prefix,
+        declaration_start,
+        local_bindings,
+    ) {
+        return Some(binding_type);
+    }
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -956,6 +964,71 @@ fn cpp_reference_alias_binding_type(
         None,
         None,
         receiver,
+        CppMemberAccess::Object,
+        None,
+    ))
+}
+
+fn cpp_auto_expected_error_copy_binding(
+    expression: &str,
+    type_prefix: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<CppBindingType> {
+    let receiver = expression.strip_suffix(".error()")?.trim();
+    let (type_name, _) =
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    cpp_copied_error_binding_type(&type_name, type_prefix)
+}
+
+fn cpp_copied_error_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
+    let type_name = cpp_strip_leading_cv_qualifiers(type_name);
+    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    if let Some(target) = cpp_standard_smart_pointer_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(target, Some(false))?,
+            CppMemberAccess::Pointer,
+            Some(CppStandardUnwrap::SmartPointer),
+        ));
+    }
+    if let Some(target) = cpp_standard_optional_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::Optional),
+        ));
+    }
+    if let Some(target) = cpp_standard_reference_wrapper_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(target, Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::ReferenceWrapper),
+        ));
+    }
+    if let Some(target) = cpp_standard_weak_pointer_target_type(type_name) {
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(target, Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::WeakPointer),
+        ));
+    }
+    Some((
+        cpp_temporary_type_path(type_name)?,
+        None,
+        None,
+        cpp_this_receiver_for_type(&format!("{type_qualifiers} {type_name}"), Some(false))?,
         CppMemberAccess::Object,
         None,
     ))
@@ -1313,6 +1386,19 @@ fn cpp_strip_cv_qualifiers(mut type_suffix: &str) -> &str {
             type_suffix = remaining;
         } else {
             return type_suffix;
+        }
+    }
+}
+
+fn cpp_strip_leading_cv_qualifiers(mut type_name: &str) -> &str {
+    loop {
+        let trimmed = type_name.trim_start();
+        if let Some(remaining) = trimmed.strip_prefix("const") {
+            type_name = remaining;
+        } else if let Some(remaining) = trimmed.strip_prefix("volatile") {
+            type_name = remaining;
+        } else {
+            return trimmed;
         }
     }
 }
