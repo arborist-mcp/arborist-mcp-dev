@@ -1013,7 +1013,7 @@ fn cpp_auto_expected_error_copy_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    let receiver = expression.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(expression)?;
     let (type_name, _) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     cpp_copied_standard_binding_type(&type_name, type_prefix)
@@ -1182,7 +1182,7 @@ fn cpp_auto_optional_alias_binding(
     }
     cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
         .or_else(|| {
-            let receiver = expression.strip_suffix(".error()")?.trim();
+            let receiver = cpp_strip_expected_error_access(expression)?;
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)
         })
         .or_else(|| {
@@ -1864,12 +1864,9 @@ fn cpp_expected_weak_pointer_lock_receiver(
     {
         type_name
     } else {
-        let receiver = receiver.strip_suffix(".error()")?;
-        let (type_name, _) = cpp_expected_local_binding_error_receiver(
-            receiver.trim(),
-            byte_offset,
-            local_bindings,
-        )?;
+        let receiver = cpp_strip_expected_error_access(receiver)?;
+        let (type_name, _) =
+            cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
         type_name
     };
     let target = cpp_standard_weak_pointer_target_type(&type_name)?;
@@ -2024,7 +2021,7 @@ fn cpp_expected_error_smart_pointer_arrow_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(expression)?;
     let (type_name, _) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_smart_pointer_target_type(&type_name)?;
@@ -2087,7 +2084,7 @@ fn cpp_smart_pointer_wrapper_type(
     {
         return Some(type_name);
     }
-    if let Some(receiver) = expression.strip_suffix(".error()") {
+    if let Some(receiver) = cpp_strip_expected_error_access(expression) {
         let (type_name, _) =
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
         return Some(type_name);
@@ -2109,7 +2106,7 @@ fn cpp_expected_error_optional_arrow_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(expression)?;
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     cpp_optional_member_receiver(&type_name, error_receiver, false)
@@ -2128,12 +2125,9 @@ fn cpp_expected_reference_wrapper_get_receiver(
     {
         type_name
     } else {
-        let receiver = receiver.strip_suffix(".error()")?;
-        let (type_name, _) = cpp_expected_local_binding_error_receiver(
-            receiver.trim(),
-            byte_offset,
-            local_bindings,
-        )?;
+        let receiver = cpp_strip_expected_error_access(receiver)?;
+        let (type_name, _) =
+            cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
         type_name
     };
     let target = cpp_standard_reference_wrapper_target_type(&type_name)?;
@@ -2175,7 +2169,7 @@ fn cpp_expected_error_optional_value_member_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".value()")?.trim();
-    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(receiver)?;
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     cpp_optional_member_receiver(&type_name, error_receiver, true)
@@ -2187,7 +2181,7 @@ fn cpp_expected_error_optional_dereference_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = strip_cpp_outer_parentheses(expression.strip_prefix('*')?.trim());
-    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(receiver)?;
     let (type_name, error_receiver) =
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
     cpp_optional_member_receiver(&type_name, error_receiver, true)
@@ -2341,7 +2335,7 @@ fn cpp_expected_local_binding_error_receiver(
             cpp_expected_error_receiver(error_type, wrapper_receiver)?,
         ));
     }
-    if let Some(receiver) = expression.strip_suffix(".error()") {
+    if let Some(receiver) = cpp_strip_expected_error_access(expression) {
         let (expected_type, expected_receiver) =
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
         let error_type =
