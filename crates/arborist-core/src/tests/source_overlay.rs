@@ -684,7 +684,7 @@ fn traces_cpp_expected_reference_wrapper_value_calls_from_unsaved_source_overlay
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Error {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_wrapper_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_pointee_caller(std::expected<std::reference_wrapper<const Counter>, Error> current, int value) { return current.value().get().adjust(value); } int alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.get().adjust(value); } int get_alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& target = current.value().get(); return target.adjust(value); } int const_get_alias_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto&& target = current.value().get(); return target.adjust(value); } }\n";
+    let source = "namespace api { class Error {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_wrapper_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_pointee_caller(std::expected<std::reference_wrapper<const Counter>, Error> current, int value) { return current.value().get().adjust(value); } int alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.get().adjust(value); } int get_alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& target = current.value().get(); return target.adjust(value); } int const_get_alias_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto&& target = current.value().get(); return target.adjust(value); } int get_copy_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto target = current.value().get(); return target.adjust(value); } int const_get_copy_caller(std::expected<std::reference_wrapper<const Counter>, Error> current, int value) { auto target = current.value().get(); return target.adjust(value); } int const_auto_get_copy_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { const auto target = current.value().get(); return target.adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::direct_caller", "api::Counter::adjust(int) &"),
         ("api::const_wrapper_caller", "api::Counter::adjust(int) &"),
@@ -695,6 +695,12 @@ fn traces_cpp_expected_reference_wrapper_value_calls_from_unsaved_source_overlay
         ("api::alias_caller", "api::Counter::adjust(int) &"),
         ("api::get_alias_caller", "api::Counter::adjust(int) &"),
         ("api::const_get_alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_copy_caller", "api::Counter::adjust(int) &"),
+        ("api::const_get_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_get_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
     ] {
         let trace = trace_symbol_graph_from_index_with_source(
             &db_path,
@@ -776,7 +782,7 @@ fn traces_cpp_expected_reference_wrapper_error_calls_from_unsaved_source_overlay
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); } int const_wrapper_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); } int const_pointee_caller(std::expected<Value, std::reference_wrapper<const Counter>> current, int value) { return current.error().get().adjust(value); } int alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& error = current.error(); return error.get().adjust(value); } int get_alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& target = current.error().get(); return target.adjust(value); } int const_get_alias_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto&& target = current.error().get(); return target.adjust(value); } }\n";
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); } int const_wrapper_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); } int const_pointee_caller(std::expected<Value, std::reference_wrapper<const Counter>> current, int value) { return current.error().get().adjust(value); } int alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& error = current.error(); return error.get().adjust(value); } int get_alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& target = current.error().get(); return target.adjust(value); } int const_get_alias_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto&& target = current.error().get(); return target.adjust(value); } int get_copy_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto target = current.error().get(); return target.adjust(value); } int const_get_copy_caller(std::expected<Value, std::reference_wrapper<const Counter>> current, int value) { auto target = current.error().get(); return target.adjust(value); } int const_auto_get_copy_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { const auto target = current.error().get(); return target.adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::direct_caller", "api::Counter::adjust(int) &"),
         ("api::const_wrapper_caller", "api::Counter::adjust(int) &"),
@@ -787,6 +793,12 @@ fn traces_cpp_expected_reference_wrapper_error_calls_from_unsaved_source_overlay
         ("api::alias_caller", "api::Counter::adjust(int) &"),
         ("api::get_alias_caller", "api::Counter::adjust(int) &"),
         ("api::const_get_alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_copy_caller", "api::Counter::adjust(int) &"),
+        ("api::const_get_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_get_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
     ] {
         let trace = trace_symbol_graph_from_index_with_source(
             &db_path,

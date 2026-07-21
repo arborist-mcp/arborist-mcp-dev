@@ -738,6 +738,14 @@ fn cpp_auto_constructor_binding_type(
     ) {
         return Some(binding_type);
     }
+    if let Some(binding_type) = cpp_auto_reference_wrapper_get_copy_binding(
+        initializer_text,
+        type_prefix,
+        declaration_start,
+        local_bindings,
+    ) {
+        return Some(binding_type);
+    }
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
             cpp_constructor_type_text(allocation)
@@ -1064,6 +1072,18 @@ fn cpp_auto_expected_error_smart_pointer_binding(
         CppMemberAccess::Pointer,
         Some(CppStandardUnwrap::SmartPointer),
     ))
+}
+
+fn cpp_auto_reference_wrapper_get_copy_binding(
+    expression: &str,
+    type_prefix: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<CppBindingType> {
+    let (type_name, _) =
+        cpp_auto_reference_wrapper_get_alias_binding(expression, byte_offset, local_bindings)?;
+    // By-value auto copy of the referenced object drops top-level const.
+    cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
 fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
