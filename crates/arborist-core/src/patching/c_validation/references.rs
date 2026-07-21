@@ -1977,7 +1977,16 @@ fn cpp_optional_member_receiver(
     wrapper_receiver: CppThisMemberReceiver,
     preserves_value_category: bool,
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let target = cpp_standard_optional_target_type(type_name)?;
+    cpp_standard_value_member_receiver(type_name, wrapper_receiver, preserves_value_category)
+}
+
+fn cpp_standard_value_member_receiver(
+    type_name: &str,
+    wrapper_receiver: CppThisMemberReceiver,
+    preserves_value_category: bool,
+) -> Option<(String, CppThisMemberReceiver)> {
+    let target = cpp_standard_optional_target_type(type_name)
+        .or_else(|| cpp_standard_expected_target_type(type_name))?;
     let target_receiver = cpp_this_receiver_for_type(target, Some(false))?;
     let const_qualified = matches!(
         wrapper_receiver,
@@ -2013,6 +2022,11 @@ fn cpp_optional_local_binding_receiver(
         )
     {
         return Some((binding.type_name.clone(), binding.receiver));
+    }
+    if let Some(receiver) = expression.strip_suffix(".value()") {
+        let (type_name, receiver) =
+            cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+        return cpp_standard_value_member_receiver(&type_name, receiver, true);
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_optional_local_binding_receiver(argument, byte_offset, local_bindings).map(
