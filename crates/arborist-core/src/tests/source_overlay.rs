@@ -457,13 +457,26 @@ fn traces_cpp_expected_optional_error_calls_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int arrow_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); } int moved_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error().value().adjust(value); } int const_dereference_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return (*current.error()).adjust(value); } int alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto& error = current.error(); return error->adjust(value); } }\n";
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int arrow_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); } int moved_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error().value().adjust(value); } int const_dereference_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return (*current.error()).adjust(value); } int auto_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto error_value = current.error().value(); return error_value.adjust(value); } int const_auto_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { const auto error_value = current.error().value(); return error_value.adjust(value); } int copied_const_source_value_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto error_value = current.error().value(); return error_value.adjust(value); } int auto_pointer_value_caller(std::expected<Value, std::optional<std::shared_ptr<Counter>>> current, int value) { auto error_value = current.error().value(); return error_value->adjust(value); } int alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto& error = current.error(); return error->adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::arrow_caller", "api::Counter::adjust(int) &"),
         ("api::moved_value_caller", "api::Counter::adjust(int) &&"),
         (
             "api::const_dereference_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
         ),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
     ] {

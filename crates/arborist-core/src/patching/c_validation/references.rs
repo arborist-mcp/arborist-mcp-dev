@@ -997,8 +997,14 @@ fn cpp_auto_standard_value_copy_binding(
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
     let receiver = expression.strip_suffix(".value()")?.trim();
-    let (type_name, _) =
-        cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+    let (type_name, _) = cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
+        .or_else(|| {
+            cpp_expected_error_optional_value_member_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+        })?;
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 

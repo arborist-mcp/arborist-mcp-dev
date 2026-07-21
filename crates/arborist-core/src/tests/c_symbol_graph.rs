@@ -3550,7 +3550,7 @@ fn resolves_cpp_expected_error_optional_arrow_calls_across_live_and_persisted_qu
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n    int adjust(int value) const && { return value + 3; }\n};\nint error_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); }\nint moved_error_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error()->adjust(value); }\nint const_error_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); }\nint const_pointee_caller(std::expected<Value, std::optional<const Counter>> current, int value) { return current.error()->adjust(value); }\nint value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error().value().adjust(value); }\nint moved_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error().value().adjust(value); }\nint dereference_caller(std::expected<Value, std::optional<Counter>> current, int value) { return (*current.error()).adjust(value); }\nint const_value_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return current.error().value().adjust(value); }\nint alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto& error = current.error(); return error->adjust(value); }\nint decltype_alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { decltype(auto) error = current.error(); return error->adjust(value); }\nint const_alias_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto&& error = current.error(); return error->adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n    int adjust(int value) const && { return value + 3; }\n};\nint error_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); }\nint moved_error_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error()->adjust(value); }\nint const_error_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return current.error()->adjust(value); }\nint const_pointee_caller(std::expected<Value, std::optional<const Counter>> current, int value) { return current.error()->adjust(value); }\nint value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return current.error().value().adjust(value); }\nint moved_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { return std::move(current).error().value().adjust(value); }\nint dereference_caller(std::expected<Value, std::optional<Counter>> current, int value) { return (*current.error()).adjust(value); }\nint const_value_caller(const std::expected<Value, std::optional<Counter>> current, int value) { return current.error().value().adjust(value); }\nint auto_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto error_value = current.error().value(); return error_value.adjust(value); }\nint const_auto_value_caller(std::expected<Value, std::optional<Counter>> current, int value) { const auto error_value = current.error().value(); return error_value.adjust(value); }\nint copied_const_source_value_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto error_value = current.error().value(); return error_value.adjust(value); }\nint auto_pointer_value_caller(std::expected<Value, std::optional<std::shared_ptr<Counter>>> current, int value) { auto error_value = current.error().value(); return error_value->adjust(value); }\nint alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto& error = current.error(); return error->adjust(value); }\nint decltype_alias_caller(std::expected<Value, std::optional<Counter>> current, int value) { decltype(auto) error = current.error(); return error->adjust(value); }\nint const_alias_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto&& error = current.error(); return error->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3571,6 +3571,19 @@ fn resolves_cpp_expected_error_optional_arrow_calls_across_live_and_persisted_qu
         (
             "api::const_value_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_auto_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::copied_const_source_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
         ),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
         ("api::decltype_alias_caller", "api::Counter::adjust(int) &"),
