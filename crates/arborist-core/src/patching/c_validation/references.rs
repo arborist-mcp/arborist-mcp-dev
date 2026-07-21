@@ -144,6 +144,7 @@ fn collect_c_references_with_options(
         if candidate.kind() == "identifier"
             && !is_c_enumerator_name(candidate)
             && !is_cpp_new_type_qualifier_recovery_identifier(candidate, source)
+            && !is_cpp_type_template_argument(candidate)
             && (!suppress_direct_qualified_call_components
                 || !is_direct_qualified_call_component(candidate))
         {
@@ -984,6 +985,20 @@ fn cpp_auto_expected_error_copy_binding(
 fn cpp_copied_error_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
     let type_name = cpp_strip_leading_cv_qualifiers(type_name);
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
+    if let Some(target) = cpp_standard_expected_target_type(type_name) {
+        let expected_error_type = cpp_standard_expected_error_type(type_name)?.to_string();
+        return Some((
+            cpp_temporary_type_path(target)?,
+            Some(expected_error_type.clone()),
+            cpp_this_receiver_for_type(
+                &format!("{type_qualifiers} {expected_error_type}"),
+                Some(false),
+            ),
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::Expected),
+        ));
+    }
     if let Some(target) = cpp_standard_smart_pointer_target_type(type_name) {
         return Some((
             cpp_temporary_type_path(target)?,
@@ -2494,6 +2509,25 @@ fn is_direct_qualified_call(qualified_identifier: Node<'_>) -> bool {
     })
 }
 
+fn is_cpp_type_template_argument(node: Node<'_>) -> bool {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if candidate.kind() == "template_argument_list" {
+            return candidate
+                .parent()
+                .is_some_and(|parent| parent.kind() == "template_type");
+        }
+        if matches!(
+            candidate.kind(),
+            "call_expression" | "declaration" | "parameter_declaration"
+        ) {
+            return false;
+        }
+        current = candidate.parent();
+    }
+    false
+}
+
 fn is_c_enumerator_name(node: Node<'_>) -> bool {
     node.parent().is_some_and(|parent| {
         parent.kind() == "enumerator"
@@ -2514,7 +2548,7 @@ mod tests {
     use super::{
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-        CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_cpp_call_arities,
+        CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_c_graph_references, collect_cpp_call_arities,
         cpp_this_receiver_from_expression,
     };
 
@@ -2888,5 +2922,16 @@ mod tests {
         assert!(cpp_this_receiver_from_expression("std::move(other)").is_none());
         assert!(cpp_this_receiver_from_expression("std::forward<Counter&>(other)").is_none());
         assert!(cpp_this_receiver_from_expression("static_cast<Counter&&>(*this").is_none());
+    }
+
+    #[test]
+    fn skips_nested_cpp_type_template_arguments_when_collecting_references() {
+        let source = "class Value {}; class Counter { public: int adjust(int) &; }; int caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { auto error = current.error(); return error.error().adjust(value); }";
+        let document = parse_document(Path::new("sample.cpp"), source).unwrap();
+        let mut references = BTreeSet::new();
+
+        collect_c_graph_references(document.tree.root_node(), source, &mut references).unwrap();
+
+        assert!(!references.contains("Value"));
     }
 }
