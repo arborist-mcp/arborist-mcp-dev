@@ -743,7 +743,7 @@ fn traces_cpp_optional_expected_nested_calls_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int value_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); } int dereference_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return (*current).value().adjust(value); } int value_error_caller(std::optional<std::expected<Value, Counter>> current, int value) { return current.value().error().adjust(value); } int arrow_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current->value().adjust(value); } int smart_pointer_value_get_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return current.value().value().get()->adjust(value); } int smart_pointer_arrow_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return (*current).value()->adjust(value); } int const_value_value_caller(const std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); } }\n";
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int value_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); } int dereference_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return (*current).value().adjust(value); } int value_error_caller(std::optional<std::expected<Value, Counter>> current, int value) { return current.value().error().adjust(value); } int arrow_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current->value().adjust(value); } int smart_pointer_value_get_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return current.value().value().get()->adjust(value); } int smart_pointer_arrow_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return (*current).value()->adjust(value); } int const_value_value_caller(const std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); } int const_arrow_error_caller(const std::optional<std::expected<Value, Counter>> current, int value) { return current->error().adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::value_value_caller", "api::Counter::adjust(int) &"),
         (
@@ -762,6 +762,10 @@ fn traces_cpp_optional_expected_nested_calls_from_unsaved_source_overlay() {
         ),
         (
             "api::const_value_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::const_arrow_error_caller",
             "api::Counter::adjust(int) const &",
         ),
     ] {

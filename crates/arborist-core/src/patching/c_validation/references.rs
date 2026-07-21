@@ -1960,12 +1960,20 @@ fn cpp_standard_expected_error_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_suffix(".error()")?.trim();
+    let receiver = cpp_strip_expected_error_access(expression)?;
     cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings).and_then(
         |(type_name, receiver)| {
             cpp_temporary_type_path(&type_name).map(|type_name| (type_name, receiver))
         },
     )
+}
+
+fn cpp_strip_expected_error_access(expression: &str) -> Option<&str> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    expression
+        .strip_suffix(".error()")
+        .or_else(|| expression.strip_suffix("->error()"))
+        .map(str::trim)
 }
 
 fn cpp_standard_optional_dereference_receiver(
@@ -2315,6 +2323,17 @@ fn cpp_expected_local_binding_error_receiver(
             local_bindings,
         )
     {
+        let error_type =
+            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&type_name))?;
+        return Some((
+            error_type.to_string(),
+            cpp_expected_error_receiver(error_type, wrapper_receiver)?,
+        ));
+    }
+    if let Some((type_name, wrapper_receiver)) =
+        cpp_optional_wrapper_only_receiver(expression, byte_offset, local_bindings)
+    {
+        // Bare optional<expected<...>> receivers such as current->error().
         let error_type =
             cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&type_name))?;
         return Some((
