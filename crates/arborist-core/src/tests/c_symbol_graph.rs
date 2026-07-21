@@ -3241,7 +3241,7 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint arrow_caller(std::expected<Alias, int> current, int value) { return current->adjust(value); }\nint value_caller(std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint dereference_caller(std::expected<Alias, int> current, int value) { return (*current).adjust(value); }\nint moved_value_caller(std::expected<Alias, int> current, int value) { return std::move(current).value().adjust(value); }\nint const_caller(const std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint const_auto_value_caller(std::expected<Alias, int> current, int value) { const auto current_value = current.value(); return current_value.adjust(value); }\nint copied_const_source_value_caller(const std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint moved_auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = std::move(current).value(); return current_value.adjust(value); }\nint nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_expected_value_caller(const std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { auto current_value = current.value(); return current_value.value().adjust(value); }\nint auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { auto current_value = current.value(); return current_value.error().adjust(value); }\nint const_auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { const auto current_value = current.value(); return current_value.error().adjust(value); }\nint nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_optional_value_caller(const std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint const_auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { const auto current_value = current.value(); return current_value->adjust(value); }\nint auto_pointer_value_caller(std::expected<std::shared_ptr<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint auto_caller(int value) { auto current = std::expected<Alias, int>{}; return current->adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nusing Alias = Counter;\nint arrow_caller(std::expected<Alias, int> current, int value) { return current->adjust(value); }\nint value_caller(std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint dereference_caller(std::expected<Alias, int> current, int value) { return (*current).adjust(value); }\nint moved_value_caller(std::expected<Alias, int> current, int value) { return std::move(current).value().adjust(value); }\nint const_caller(const std::expected<Alias, int> current, int value) { return current.value().adjust(value); }\nint auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint const_auto_value_caller(std::expected<Alias, int> current, int value) { const auto current_value = current.value(); return current_value.adjust(value); }\nint copied_const_source_value_caller(const std::expected<Alias, int> current, int value) { auto current_value = current.value(); return current_value.adjust(value); }\nint moved_auto_value_caller(std::expected<Alias, int> current, int value) { auto current_value = std::move(current).value(); return current_value.adjust(value); }\nint nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_expected_value_caller(const std::expected<std::expected<Alias, int>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_nested_expected_value_caller(std::expected<std::expected<Alias, int>, int> current, int value) { auto current_value = current.value(); return current_value.value().adjust(value); }\nint auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { auto current_value = current.value(); return current_value.error().adjust(value); }\nint const_auto_nested_expected_error_caller(std::expected<std::expected<int, Alias>, int> current, int value) { const auto current_value = current.value(); return current_value.error().adjust(value); }\nint nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint const_nested_optional_value_caller(const std::expected<std::optional<Alias>, int> current, int value) { return current.value().value().adjust(value); }\nint moved_nested_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { return std::move(current).value().value().adjust(value); }\nint auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint const_auto_optional_value_caller(std::expected<std::optional<Alias>, int> current, int value) { const auto current_value = current.value(); return current_value->adjust(value); }\nint auto_pointer_value_caller(std::expected<std::shared_ptr<Alias>, int> current, int value) { auto current_value = current.value(); return current_value->adjust(value); }\nint get_copy_caller(std::expected<std::unique_ptr<Alias>, int> current, int value) { auto pointer = current.value().get(); return pointer->adjust(value); }\nint const_get_copy_caller(std::expected<std::shared_ptr<const Alias>, int> current, int value) { auto pointer = current.value().get(); return pointer->adjust(value); }\nint dereference_copy_caller(std::expected<std::unique_ptr<Alias>, int> current, int value) { auto target = *current.value(); return target.adjust(value); }\nint const_dereference_copy_caller(std::expected<std::shared_ptr<const Alias>, int> current, int value) { auto target = *current.value(); return target.adjust(value); }\nint dereference_alias_caller(std::expected<std::unique_ptr<Alias>, int> current, int value) { auto& target = *current.value(); return target.adjust(value); }\nint const_dereference_alias_caller(const std::expected<std::shared_ptr<Alias>, int> current, int value) { auto&& target = *current.value(); return target.adjust(value); }\nint auto_caller(int value) { auto current = std::expected<Alias, int>{}; return current->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3310,6 +3310,27 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
         ),
         (
             "api::auto_pointer_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::get_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_get_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::dereference_copy_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_dereference_copy_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::dereference_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_dereference_alias_caller",
             "api::Counter::adjust(int) &",
         ),
         ("api::auto_caller", "api::Counter::adjust(int) &"),
@@ -4885,7 +4906,7 @@ fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_per
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint unique_alias_caller(int value) { std::unique_ptr<Alias> current; auto& alias = *current; return alias.adjust(value); }\nint const_shared_alias_caller(int value) { std::shared_ptr<const Alias> current; auto&& alias = *current; return alias.adjust(value); }\n}\n",
+        "namespace api {\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nusing Alias = Counter;\nint unique_alias_caller(int value) { std::unique_ptr<Alias> current; auto& alias = *current; return alias.adjust(value); }\nint const_shared_alias_caller(int value) { std::shared_ptr<const Alias> current; auto&& alias = *current; return alias.adjust(value); }\nint unique_copy_caller(int value) { std::unique_ptr<Alias> current; auto alias = *current; return alias.adjust(value); }\nint const_shared_copy_caller(int value) { std::shared_ptr<const Alias> current; auto alias = *current; return alias.adjust(value); }\nint unique_get_copy_caller(int value) { std::unique_ptr<Alias> current; auto pointer = current.get(); return pointer->adjust(value); }\nint const_shared_get_copy_caller(int value) { std::shared_ptr<const Alias> current; auto pointer = current.get(); return pointer->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -4893,6 +4914,16 @@ fn resolves_cpp_smart_pointer_dereference_alias_member_calls_across_live_and_per
         ("api::unique_alias_caller", "api::Counter::adjust(int) &"),
         (
             "api::const_shared_alias_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::unique_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_shared_copy_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::unique_get_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_shared_get_copy_caller",
             "api::Counter::adjust(int) const &",
         ),
     ];

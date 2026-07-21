@@ -894,11 +894,9 @@ fn cpp_auto_reference_alias_binding(
     if !matches!(cpp_strip_cv_qualifiers(type_suffix), "&" | "&&") {
         return None;
     }
-    if let Some((type_name, receiver)) = cpp_expected_error_smart_pointer_dereference_receiver(
-        expression,
-        byte_offset,
-        local_bindings,
-    ) {
+    if let Some((type_name, receiver)) =
+        cpp_smart_pointer_dereference_receiver(expression, byte_offset, local_bindings)
+    {
         let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
             CppThisMemberReceiver::ConstLvalue
         } else {
@@ -1052,16 +1050,14 @@ fn cpp_auto_expected_error_smart_pointer_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    if let Some((type_name, _)) = cpp_expected_error_smart_pointer_dereference_receiver(
-        expression,
-        byte_offset,
-        local_bindings,
-    ) {
+    if let Some((type_name, _)) =
+        cpp_smart_pointer_dereference_receiver(expression, byte_offset, local_bindings)
+    {
         // By-value auto copy of the pointee drops top-level const.
         return cpp_copied_standard_binding_type(&type_name, type_prefix);
     }
     let (type_name, receiver) =
-        cpp_expected_error_smart_pointer_get_receiver(expression, byte_offset, local_bindings)?;
+        cpp_smart_pointer_get_receiver(expression, byte_offset, local_bindings)?;
     // .get() yields a pointer; pointee constness is preserved under auto.
     let _ = type_prefix;
     Some((
@@ -1652,7 +1648,7 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
-            cpp_expected_error_smart_pointer_get_receiver(expression, byte_offset, local_bindings)
+            cpp_smart_pointer_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
@@ -1669,11 +1665,8 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "."
-        && let Some((type_name, receiver)) = cpp_expected_error_smart_pointer_dereference_receiver(
-            expression,
-            byte_offset,
-            local_bindings,
-        )
+        && let Some((type_name, receiver)) =
+            cpp_smart_pointer_dereference_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
@@ -2000,15 +1993,19 @@ fn cpp_expected_error_smart_pointer_arrow_member_receiver(
     ))
 }
 
-fn cpp_expected_error_smart_pointer_get_receiver(
+fn cpp_smart_pointer_get_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".get()")?.trim();
-    let receiver = receiver.strip_suffix(".error()")?.trim();
-    let (type_name, _) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
+    let type_name = cpp_smart_pointer_wrapper_type(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_smart_pointer_target_type(&type_name)?;
     Some((
         cpp_temporary_type_path(target)?,
@@ -2016,20 +2013,52 @@ fn cpp_expected_error_smart_pointer_get_receiver(
     ))
 }
 
-fn cpp_expected_error_smart_pointer_dereference_receiver(
+fn cpp_smart_pointer_dereference_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_prefix('*')?.trim();
-    let receiver = receiver.strip_suffix(".error()")?.trim();
-    let (type_name, _) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
+        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+        && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)
+    {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
+    let type_name = cpp_smart_pointer_wrapper_type(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_smart_pointer_target_type(&type_name)?;
     Some((
         cpp_temporary_type_path(target)?,
         cpp_this_receiver_for_type(target, Some(false))?,
     ))
+}
+
+fn cpp_smart_pointer_wrapper_type(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<String> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(receiver) = expression.strip_suffix(".error()") {
+        let (type_name, _) =
+            cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+        return Some(type_name);
+    }
+    if let Some(receiver) = expression.strip_suffix(".value()") {
+        let (type_name, _) =
+            cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+        return Some(type_name);
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        return cpp_smart_pointer_wrapper_type(argument, byte_offset, local_bindings);
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        return cpp_smart_pointer_wrapper_type(argument, byte_offset, local_bindings);
+    }
+    if let Some((_, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        return cpp_smart_pointer_wrapper_type(argument, byte_offset, local_bindings);
+    }
+    None
 }
 
 fn cpp_expected_error_optional_arrow_member_receiver(

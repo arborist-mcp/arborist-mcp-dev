@@ -11,8 +11,9 @@ pub(super) fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
     let path = type_name
         .split_whitespace()
         .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
-        .collect::<String>();
-    (!path.is_empty() && !path.contains('*')).then(|| path.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!path.is_empty() && !path.contains('*')).then_some(path)
 }
 
 pub(super) fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
