@@ -5420,6 +5420,66 @@ fn resolves_cpp_expected_optional_smart_pointer_calls_across_live_and_persisted_
 }
 
 #[test]
+fn resolves_cpp_optional_expected_nested_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("optional_expected_nested_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint value_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); }\nint dereference_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return (*current).value().adjust(value); }\nint value_error_caller(std::optional<std::expected<Value, Counter>> current, int value) { return current.value().error().adjust(value); }\nint arrow_value_caller(std::optional<std::expected<Counter, Value>> current, int value) { return current->value().adjust(value); }\nint smart_pointer_value_get_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return current.value().value().get()->adjust(value); }\nint smart_pointer_arrow_caller(std::optional<std::expected<std::unique_ptr<Counter>, Value>> current, int value) { return (*current).value()->adjust(value); }\nint const_value_value_caller(const std::optional<std::expected<Counter, Value>> current, int value) { return current.value().value().adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::value_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::dereference_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::value_error_caller", "api::Counter::adjust(int) &"),
+        ("api::arrow_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::smart_pointer_value_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::smart_pointer_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_value_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_expected_optional_reference_wrapper_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("expected_optional_reference_wrapper_calls.cpp");
