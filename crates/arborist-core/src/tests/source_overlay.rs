@@ -672,6 +672,108 @@ fn traces_cpp_nested_standard_value_access_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_expected_optional_reference_wrapper_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("expected_optional.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int error_value_caller(std::expected<Value, std::optional<std::reference_wrapper<Counter>>> current, int value) { return current.error().value().get().adjust(value); } int error_dereference_caller(std::expected<Value, std::optional<std::reference_wrapper<Counter>>> current, int value) { return (*current.error()).get().adjust(value); } int value_value_caller(std::expected<std::optional<std::reference_wrapper<Counter>>, Value> current, int value) { return current.value().value().get().adjust(value); } int value_dereference_caller(std::expected<std::optional<std::reference_wrapper<Counter>>, Value> current, int value) { return (*current.value()).get().adjust(value); } int const_error_pointee_caller(std::expected<Value, std::optional<std::reference_wrapper<const Counter>>> current, int value) { return (*current.error()).get().adjust(value); } int get_copy_caller(std::expected<Value, std::optional<std::reference_wrapper<Counter>>> current, int value) { auto target = current.error().value().get(); return target.adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::error_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::error_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::value_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::value_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_error_pointee_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::get_copy_caller", "api::Counter::adjust(int) &"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
+fn traces_cpp_expected_optional_weak_pointer_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("expected_optional.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int error_value_caller(std::expected<Value, std::optional<std::weak_ptr<Counter>>> current, int value) { return current.error().value().lock()->adjust(value); } int error_dereference_caller(std::expected<Value, std::optional<std::weak_ptr<Counter>>> current, int value) { return (*current.error()).lock()->adjust(value); } int value_value_caller(std::expected<std::optional<std::weak_ptr<Counter>>, Value> current, int value) { return current.value().value().lock()->adjust(value); } int value_dereference_caller(std::expected<std::optional<std::weak_ptr<Counter>>, Value> current, int value) { return (*current.value()).lock()->adjust(value); } int const_error_pointee_caller(std::expected<Value, std::optional<std::weak_ptr<const Counter>>> current, int value) { return (*current.error()).lock()->adjust(value); } int lock_copy_caller(std::expected<Value, std::optional<std::weak_ptr<Counter>>> current, int value) { auto shared = current.error().value().lock(); return shared->adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::error_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::error_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::value_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::value_dereference_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_error_pointee_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::lock_copy_caller", "api::Counter::adjust(int) &"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_optional_reference_wrapper_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("optional.cpp");
