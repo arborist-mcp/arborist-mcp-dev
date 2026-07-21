@@ -1025,8 +1025,7 @@ fn cpp_auto_standard_value_copy_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    let (type_name, _) = if let Some(receiver) = expression.strip_suffix(".value()") {
-        let receiver = receiver.trim();
+    let (type_name, _) = if let Some(receiver) = cpp_strip_optional_value_access(expression) {
         cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings).or_else(|| {
             cpp_expected_error_optional_value_member_receiver(
                 expression,
@@ -1946,10 +1945,16 @@ fn cpp_standard_optional_value_member_receiver(
 
 fn cpp_strip_optional_value_access(expression: &str) -> Option<&str> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
-    expression
+    let receiver = expression
         .strip_suffix(".value()")
         .or_else(|| expression.strip_suffix("->value()"))
-        .map(str::trim)
+        .map(str::trim)?;
+    // Reject "*expr.value()" where unary * applies to the value call.
+    // "(*expr).value()" keeps parentheses and remains valid.
+    if receiver.starts_with('*') {
+        return None;
+    }
+    Some(receiver)
 }
 
 fn cpp_standard_expected_error_member_receiver(
@@ -1987,19 +1992,28 @@ fn cpp_standard_optional_arrow_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    cpp_optional_local_binding_receiver(expression, byte_offset, local_bindings).map(
-        |(type_name, receiver)| {
-            let receiver = match receiver {
-                CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
-                    CppThisMemberReceiver::Lvalue
-                }
-                CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-                    CppThisMemberReceiver::ConstLvalue
-                }
-            };
-            (type_name, receiver)
-        },
-    )
+    let (type_name, receiver) =
+        cpp_optional_local_binding_receiver(expression, byte_offset, local_bindings)?;
+    // Optional/expected bindings store one unwrapped layer. Keep peeling while
+    // the remaining type is still optional/expected so nested forms such as
+    // optional<expected<optional<T>>> resolve through operator->.
+    let mut type_name = type_name;
+    let mut receiver = receiver;
+    while let Some((next_type, next_receiver)) =
+        cpp_standard_value_member_receiver(&type_name, receiver, false)
+    {
+        type_name = next_type;
+        receiver = next_receiver;
+    }
+    let receiver = match receiver {
+        CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+            CppThisMemberReceiver::Lvalue
+        }
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+    };
+    Some((type_name, receiver))
 }
 
 fn cpp_optional_smart_pointer_arrow_member_receiver(
