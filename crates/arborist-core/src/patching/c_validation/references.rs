@@ -1864,12 +1864,11 @@ fn cpp_expected_weak_pointer_lock_receiver(
             local_bindings,
         )?;
         type_name
-    } else if let Some(receiver) = receiver.strip_suffix(".value()") {
+    } else {
+        let receiver = receiver.strip_suffix(".value()")?;
         let (type_name, _) =
             cpp_optional_local_binding_receiver(receiver.trim(), byte_offset, local_bindings)?;
         type_name
-    } else {
-        return None;
     };
     let target = cpp_standard_weak_pointer_target_type(&type_name)?;
     Some((
@@ -2109,12 +2108,11 @@ fn cpp_expected_reference_wrapper_get_receiver(
             local_bindings,
         )?;
         type_name
-    } else if let Some(receiver) = receiver.strip_suffix(".value()") {
+    } else {
+        let receiver = receiver.strip_suffix(".value()")?;
         let (type_name, _) =
             cpp_optional_local_binding_receiver(receiver.trim(), byte_offset, local_bindings)?;
         type_name
-    } else {
-        return None;
     };
     let target = cpp_standard_reference_wrapper_target_type(&type_name)?;
     Some((
