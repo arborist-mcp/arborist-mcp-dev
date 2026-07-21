@@ -1990,12 +1990,8 @@ fn cpp_optional_smart_pointer_arrow_member_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression
-        .strip_prefix('*')
-        .map(str::trim)
-        .or_else(|| expression.strip_suffix(".value()").map(str::trim))?;
     let (type_name, _) =
-        cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
+        cpp_optional_wrapper_type_from_expression(expression, byte_offset, local_bindings)?;
     let target = cpp_standard_smart_pointer_target_type(&type_name)?;
     Some((
         cpp_temporary_type_path(target)?,
@@ -2023,7 +2019,7 @@ fn cpp_smart_pointer_get_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_suffix(".get()")?.trim();
+    let receiver = strip_cpp_outer_parentheses(expression.strip_suffix(".get()")?.trim());
     if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)
@@ -2043,7 +2039,7 @@ fn cpp_smart_pointer_dereference_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_prefix('*')?.trim();
+    let receiver = strip_cpp_outer_parentheses(expression.strip_prefix('*')?.trim());
     if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)
@@ -2064,14 +2060,16 @@ fn cpp_smart_pointer_wrapper_type(
     local_bindings: &[CppLocalBinding],
 ) -> Option<String> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
+    // Prefer optional unwrap paths first so "*current.error()" is not
+    // misread as a bare expected-error receiver ending in ".error()".
+    if let Some((type_name, _)) =
+        cpp_optional_wrapper_type_from_expression(expression, byte_offset, local_bindings)
+    {
+        return Some(type_name);
+    }
     if let Some(receiver) = expression.strip_suffix(".error()") {
         let (type_name, _) =
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
-        return Some(type_name);
-    }
-    if let Some(receiver) = expression.strip_suffix(".value()") {
-        let (type_name, _) =
-            cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)?;
         return Some(type_name);
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
