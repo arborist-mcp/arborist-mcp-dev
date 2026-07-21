@@ -2059,6 +2059,16 @@ fn cpp_expected_local_binding_error_receiver(
             .zip(binding.expected_error_receiver)
             .map(|(type_name, receiver)| (type_name.clone(), receiver));
     }
+    if let Some(receiver) = expression.strip_suffix(".error()") {
+        let (expected_type, expected_receiver) =
+            cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+        let error_type =
+            cpp_standard_expected_error_type(cpp_strip_leading_cv_qualifiers(&expected_type))?;
+        return Some((
+            error_type.to_string(),
+            cpp_expected_error_receiver(error_type, expected_receiver)?,
+        ));
+    }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_expected_local_binding_error_receiver(argument, byte_offset, local_bindings)
             .map(|(type_name, receiver)| {
@@ -2086,6 +2096,30 @@ fn cpp_expected_local_binding_error_receiver(
         ));
     }
     None
+}
+
+fn cpp_expected_error_receiver(
+    error_type: &str,
+    expected_receiver: CppThisMemberReceiver,
+) -> Option<CppThisMemberReceiver> {
+    let error_receiver = cpp_this_receiver_for_type(error_type, Some(false))?;
+    let const_qualified = matches!(
+        expected_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    ) || matches!(
+        error_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    );
+    let rvalue = matches!(
+        expected_receiver,
+        CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
+    );
+    Some(match (const_qualified, rvalue) {
+        (false, false) => CppThisMemberReceiver::Lvalue,
+        (true, false) => CppThisMemberReceiver::ConstLvalue,
+        (false, true) => CppThisMemberReceiver::Rvalue,
+        (true, true) => CppThisMemberReceiver::ConstRvalue,
+    })
 }
 
 fn cpp_local_binding_name_from_expression(expression: &str) -> Option<&str> {

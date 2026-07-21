@@ -3741,7 +3741,7 @@ fn resolves_cpp_auto_expected_error_wrapper_copies_across_live_and_persisted_que
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint optional_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_optional_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_copied_optional_caller(std::expected<Value, std::optional<Counter>> current, int value) { const auto error = current.error(); return error->adjust(value); }\nint nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { auto error = current.error(); return error.error().adjust(value); }\nint const_nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { const auto error = current.error(); return error.error().adjust(value); }\nint pointer_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_copied_pointer_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { const auto error = current.error(); return error->adjust(value); }\nint const_pointer_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint wrapper_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto error = current.error(); return error.get().adjust(value); }\nint const_copied_wrapper_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { const auto error = current.error(); return error.get().adjust(value); }\nint weak_caller(std::expected<Value, std::weak_ptr<const Counter>> current, int value) { auto error = current.error(); return error.lock()->adjust(value); }\nint const_copied_weak_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { const auto error = current.error(); return error.lock()->adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n    int adjust(int value) && { return value + 2; }\n};\nint optional_caller(std::expected<Value, std::optional<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_optional_caller(const std::expected<Value, std::optional<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_copied_optional_caller(std::expected<Value, std::optional<Counter>> current, int value) { const auto error = current.error(); return error->adjust(value); }\nint nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { auto error = current.error(); return error.error().adjust(value); }\nint const_nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { const auto error = current.error(); return error.error().adjust(value); }\nint direct_nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { return current.error().error().adjust(value); }\nint direct_const_nested_expected_caller(const std::expected<Value, std::expected<Value, Counter>> current, int value) { return current.error().error().adjust(value); }\nint direct_const_nested_error_type_caller(std::expected<Value, const std::expected<Value, Counter>> current, int value) { return current.error().error().adjust(value); }\nint direct_moved_nested_expected_caller(std::expected<Value, std::expected<Value, Counter>> current, int value) { return std::move(current).error().error().adjust(value); }\nint pointer_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint const_copied_pointer_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { const auto error = current.error(); return error->adjust(value); }\nint const_pointer_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { auto error = current.error(); return error->adjust(value); }\nint wrapper_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto error = current.error(); return error.get().adjust(value); }\nint const_copied_wrapper_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { const auto error = current.error(); return error.get().adjust(value); }\nint weak_caller(std::expected<Value, std::weak_ptr<const Counter>> current, int value) { auto error = current.error(); return error.lock()->adjust(value); }\nint const_copied_weak_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { const auto error = current.error(); return error.lock()->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3756,6 +3756,22 @@ fn resolves_cpp_auto_expected_error_wrapper_copies_across_live_and_persisted_que
         (
             "api::const_nested_expected_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::direct_nested_expected_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::direct_const_nested_expected_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::direct_const_nested_error_type_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::direct_moved_nested_expected_caller",
+            "api::Counter::adjust(int) &&",
         ),
         ("api::pointer_caller", "api::Counter::adjust(int) &"),
         (
