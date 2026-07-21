@@ -3675,6 +3675,115 @@ fn resolves_cpp_expected_error_optional_arrow_calls_across_live_and_persisted_qu
 }
 
 #[test]
+fn resolves_cpp_expected_value_reference_wrapper_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("expected_value_reference_wrapper_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Error {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint value_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); }\nint moved_value_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return std::move(current).value().get().adjust(value); }\nint const_wrapper_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); }\nint const_value_caller(std::expected<std::reference_wrapper<const Counter>, Error> current, int value) { return current.value().get().adjust(value); }\nint alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.get().adjust(value); }\nint const_alias_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto&& current_value = current.value(); return current_value.get().adjust(value); }\nint get_alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& target = current.value().get(); return target.adjust(value); }\nint decltype_get_alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { decltype(auto) target = current.value().get(); return target.adjust(value); }\nint const_get_alias_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto&& target = current.value().get(); return target.adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::value_caller", "api::Counter::adjust(int) &"),
+        ("api::moved_value_caller", "api::Counter::adjust(int) &"),
+        ("api::const_wrapper_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::const_alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::decltype_get_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::const_get_alias_caller", "api::Counter::adjust(int) &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
+fn resolves_cpp_expected_value_weak_pointer_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("expected_value_weak_pointer_calls.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Error {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint value_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { return current.value().lock()->adjust(value); }\nint moved_value_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { return std::move(current).value().lock()->adjust(value); }\nint const_value_caller(std::expected<std::weak_ptr<const Counter>, Error> current, int value) { return current.value().lock()->adjust(value); }\nint alias_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.lock()->adjust(value); }\nint lock_copy_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { auto shared = current.value().lock(); return shared->adjust(value); }\nint const_lock_copy_caller(std::expected<std::weak_ptr<const Counter>, Error> current, int value) { auto shared = current.value().lock(); return shared->adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::value_caller", "api::Counter::adjust(int) &"),
+        ("api::moved_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_value_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::lock_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_lock_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_expected_error_reference_wrapper_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("expected_error_reference_wrapper_calls.cpp");

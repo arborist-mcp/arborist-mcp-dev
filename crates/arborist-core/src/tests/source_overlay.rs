@@ -672,6 +672,98 @@ fn traces_cpp_nested_standard_value_access_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_expected_reference_wrapper_value_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("expected.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Error {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_wrapper_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { return current.value().get().adjust(value); } int const_pointee_caller(std::expected<std::reference_wrapper<const Counter>, Error> current, int value) { return current.value().get().adjust(value); } int alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.get().adjust(value); } int get_alias_caller(std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto& target = current.value().get(); return target.adjust(value); } int const_get_alias_caller(const std::expected<std::reference_wrapper<Counter>, Error> current, int value) { auto&& target = current.value().get(); return target.adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::direct_caller", "api::Counter::adjust(int) &"),
+        ("api::const_wrapper_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_pointee_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_alias_caller", "api::Counter::adjust(int) &"),
+        ("api::const_get_alias_caller", "api::Counter::adjust(int) &"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
+fn traces_cpp_expected_weak_pointer_value_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("expected.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Error {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { return current.value().lock()->adjust(value); } int const_pointee_caller(std::expected<std::weak_ptr<const Counter>, Error> current, int value) { return current.value().lock()->adjust(value); } int alias_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { auto& current_value = current.value(); return current_value.lock()->adjust(value); } int lock_copy_caller(std::expected<std::weak_ptr<Counter>, Error> current, int value) { auto shared = current.value().lock(); return shared->adjust(value); } int const_lock_copy_caller(std::expected<std::weak_ptr<const Counter>, Error> current, int value) { auto shared = current.value().lock(); return shared->adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::direct_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_pointee_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::lock_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_lock_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_expected_reference_wrapper_error_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("expected.cpp");

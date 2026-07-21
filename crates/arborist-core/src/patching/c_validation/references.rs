@@ -701,11 +701,7 @@ fn cpp_auto_constructor_binding_type(
         local_bindings,
     )
     .or_else(|| {
-        cpp_expected_error_weak_pointer_lock_receiver(
-            initializer_text,
-            declaration_start,
-            local_bindings,
-        )
+        cpp_expected_weak_pointer_lock_receiver(initializer_text, declaration_start, local_bindings)
     });
     let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
     let reference_alias_binding = cpp_auto_reference_alias_binding(
@@ -1199,7 +1195,7 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
         return Some(binding);
     }
     if let Some(binding) =
-        cpp_expected_error_reference_wrapper_get_receiver(expression, byte_offset, local_bindings)
+        cpp_expected_reference_wrapper_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some(binding);
     }
@@ -1632,7 +1628,7 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
-            cpp_expected_error_weak_pointer_lock_receiver(expression, byte_offset, local_bindings)
+            cpp_expected_weak_pointer_lock_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
@@ -1671,11 +1667,8 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "."
-        && let Some((type_name, receiver)) = cpp_expected_error_reference_wrapper_get_receiver(
-            expression,
-            byte_offset,
-            local_bindings,
-        )
+        && let Some((type_name, receiver)) =
+            cpp_expected_reference_wrapper_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
@@ -1838,15 +1831,26 @@ fn cpp_standard_weak_pointer_lock_receiver(
     .then(|| (binding.type_name.clone(), binding.receiver))
 }
 
-fn cpp_expected_error_weak_pointer_lock_receiver(
+fn cpp_expected_weak_pointer_lock_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".lock()")?.trim();
-    let receiver = receiver.strip_suffix(".error()")?.trim();
-    let (type_name, _) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    let type_name = if let Some(receiver) = receiver.strip_suffix(".error()") {
+        let (type_name, _) = cpp_expected_local_binding_error_receiver(
+            receiver.trim(),
+            byte_offset,
+            local_bindings,
+        )?;
+        type_name
+    } else if let Some(receiver) = receiver.strip_suffix(".value()") {
+        let (type_name, _) =
+            cpp_optional_local_binding_receiver(receiver.trim(), byte_offset, local_bindings)?;
+        type_name
+    } else {
+        return None;
+    };
     let target = cpp_standard_weak_pointer_target_type(&type_name)?;
     Some((
         cpp_temporary_type_path(target)?,
@@ -2072,15 +2076,26 @@ fn cpp_expected_error_optional_arrow_member_receiver(
     cpp_optional_member_receiver(&type_name, error_receiver, false)
 }
 
-fn cpp_expected_error_reference_wrapper_get_receiver(
+fn cpp_expected_reference_wrapper_get_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".get()")?.trim();
-    let receiver = receiver.strip_suffix(".error()")?.trim();
-    let (type_name, _) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    let type_name = if let Some(receiver) = receiver.strip_suffix(".error()") {
+        let (type_name, _) = cpp_expected_local_binding_error_receiver(
+            receiver.trim(),
+            byte_offset,
+            local_bindings,
+        )?;
+        type_name
+    } else if let Some(receiver) = receiver.strip_suffix(".value()") {
+        let (type_name, _) =
+            cpp_optional_local_binding_receiver(receiver.trim(), byte_offset, local_bindings)?;
+        type_name
+    } else {
+        return None;
+    };
     let target = cpp_standard_reference_wrapper_target_type(&type_name)?;
     Some((
         cpp_temporary_type_path(target)?,
