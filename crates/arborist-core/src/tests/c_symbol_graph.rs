@@ -3660,7 +3660,7 @@ fn resolves_cpp_expected_error_reference_wrapper_calls_across_live_and_persisted
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint error_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); }\nint moved_error_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return std::move(current).error().get().adjust(value); }\nint const_wrapper_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); }\nint const_error_caller(std::expected<Value, std::reference_wrapper<const Counter>> current, int value) { return current.error().get().adjust(value); }\nint alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& error = current.error(); return error.get().adjust(value); }\nint const_alias_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto&& error = current.error(); return error.get().adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint error_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); }\nint moved_error_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return std::move(current).error().get().adjust(value); }\nint const_wrapper_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { return current.error().get().adjust(value); }\nint const_error_caller(std::expected<Value, std::reference_wrapper<const Counter>> current, int value) { return current.error().get().adjust(value); }\nint alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& error = current.error(); return error.get().adjust(value); }\nint const_alias_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto&& error = current.error(); return error.get().adjust(value); }\nint get_alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto& target = current.error().get(); return target.adjust(value); }\nint decltype_get_alias_caller(std::expected<Value, std::reference_wrapper<Counter>> current, int value) { decltype(auto) target = current.error().get(); return target.adjust(value); }\nint const_get_alias_caller(const std::expected<Value, std::reference_wrapper<Counter>> current, int value) { auto&& target = current.error().get(); return target.adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3674,6 +3674,12 @@ fn resolves_cpp_expected_error_reference_wrapper_calls_across_live_and_persisted
         ),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
         ("api::const_alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::decltype_get_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::const_get_alias_caller", "api::Counter::adjust(int) &"),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
@@ -3710,7 +3716,7 @@ fn resolves_cpp_expected_error_weak_pointer_calls_across_live_and_persisted_quer
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint error_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { return current.error().lock()->adjust(value); }\nint moved_error_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { return std::move(current).error().lock()->adjust(value); }\nint const_error_caller(std::expected<Value, std::weak_ptr<const Counter>> current, int value) { return current.error().lock()->adjust(value); }\nint alias_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { auto& error = current.error(); return error.lock()->adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint error_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { return current.error().lock()->adjust(value); }\nint moved_error_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { return std::move(current).error().lock()->adjust(value); }\nint const_error_caller(std::expected<Value, std::weak_ptr<const Counter>> current, int value) { return current.error().lock()->adjust(value); }\nint alias_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { auto& error = current.error(); return error.lock()->adjust(value); }\nint lock_copy_caller(std::expected<Value, std::weak_ptr<Counter>> current, int value) { auto shared = current.error().lock(); return shared->adjust(value); }\nint const_lock_copy_caller(std::expected<Value, std::weak_ptr<const Counter>> current, int value) { auto shared = current.error().lock(); return shared->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3722,6 +3728,11 @@ fn resolves_cpp_expected_error_weak_pointer_calls_across_live_and_persisted_quer
             "api::Counter::adjust(int) const &",
         ),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::lock_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_lock_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
@@ -3758,7 +3769,7 @@ fn resolves_cpp_expected_error_smart_pointer_get_calls_across_live_and_persisted
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint unique_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { return current.error().get()->adjust(value); }\nint shared_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { return std::move(current).error().get()->adjust(value); }\nint const_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { return current.error().get()->adjust(value); }\nint alias_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto& error = current.error(); return error.get()->adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint unique_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { return current.error().get()->adjust(value); }\nint shared_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { return std::move(current).error().get()->adjust(value); }\nint const_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { return current.error().get()->adjust(value); }\nint alias_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto& error = current.error(); return error.get()->adjust(value); }\nint get_copy_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto pointer = current.error().get(); return pointer->adjust(value); }\nint const_get_copy_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { auto pointer = current.error().get(); return pointer->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3767,6 +3778,11 @@ fn resolves_cpp_expected_error_smart_pointer_get_calls_across_live_and_persisted
         ("api::shared_caller", "api::Counter::adjust(int) &"),
         ("api::const_caller", "api::Counter::adjust(int) const &"),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
+        ("api::get_copy_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_get_copy_caller",
+            "api::Counter::adjust(int) const &",
+        ),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
@@ -3803,7 +3819,7 @@ fn resolves_cpp_expected_error_smart_pointer_dereferences_across_live_and_persis
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint unique_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { return (*current.error()).adjust(value); }\nint shared_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { return (*std::move(current).error()).adjust(value); }\nint const_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { return (*current.error()).adjust(value); }\nint alias_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto& error = current.error(); return (*error).adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint unique_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { return (*current.error()).adjust(value); }\nint shared_caller(std::expected<Value, std::shared_ptr<Counter>> current, int value) { return (*std::move(current).error()).adjust(value); }\nint const_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { return (*current.error()).adjust(value); }\nint alias_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto& error = current.error(); return (*error).adjust(value); }\nint dereference_copy_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto target = *current.error(); return target.adjust(value); }\nint const_dereference_copy_caller(std::expected<Value, std::shared_ptr<const Counter>> current, int value) { auto target = *current.error(); return target.adjust(value); }\nint dereference_alias_caller(std::expected<Value, std::unique_ptr<Counter>> current, int value) { auto& target = *current.error(); return target.adjust(value); }\nint const_dereference_alias_caller(const std::expected<Value, std::shared_ptr<Counter>> current, int value) { auto&& target = *current.error(); return target.adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -3812,6 +3828,22 @@ fn resolves_cpp_expected_error_smart_pointer_dereferences_across_live_and_persis
         ("api::shared_caller", "api::Counter::adjust(int) &"),
         ("api::const_caller", "api::Counter::adjust(int) const &"),
         ("api::alias_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::dereference_copy_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_dereference_copy_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::dereference_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_dereference_alias_caller",
+            "api::Counter::adjust(int) &",
+        ),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();

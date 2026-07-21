@@ -699,7 +699,14 @@ fn cpp_auto_constructor_binding_type(
         initializer_text,
         declaration_start,
         local_bindings,
-    );
+    )
+    .or_else(|| {
+        cpp_expected_error_weak_pointer_lock_receiver(
+            initializer_text,
+            declaration_start,
+            local_bindings,
+        )
+    });
     let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
     let reference_alias_binding = cpp_auto_reference_alias_binding(
         initializer_text,
@@ -720,6 +727,14 @@ fn cpp_auto_constructor_binding_type(
         return Some(binding_type);
     }
     if let Some(binding_type) = cpp_auto_standard_value_copy_binding(
+        initializer_text,
+        type_prefix,
+        declaration_start,
+        local_bindings,
+    ) {
+        return Some(binding_type);
+    }
+    if let Some(binding_type) = cpp_auto_expected_error_smart_pointer_binding(
         initializer_text,
         type_prefix,
         declaration_start,
@@ -879,6 +894,18 @@ fn cpp_auto_reference_alias_binding(
     if !matches!(cpp_strip_cv_qualifiers(type_suffix), "&" | "&&") {
         return None;
     }
+    if let Some((type_name, receiver)) = cpp_expected_error_smart_pointer_dereference_receiver(
+        expression,
+        byte_offset,
+        local_bindings,
+    ) {
+        let receiver = if cpp_auto_reference_alias_is_const(type_prefix, type_suffix) {
+            CppThisMemberReceiver::ConstLvalue
+        } else {
+            cpp_named_reference_alias_receiver(receiver)
+        };
+        return Some((type_name, receiver));
+    }
     if let Some((type_name, receiver)) =
         cpp_auto_reference_wrapper_get_alias_binding(expression, byte_offset, local_bindings)
     {
@@ -1019,6 +1046,34 @@ fn cpp_auto_standard_value_copy_binding(
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
+fn cpp_auto_expected_error_smart_pointer_binding(
+    expression: &str,
+    type_prefix: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<CppBindingType> {
+    if let Some((type_name, _)) = cpp_expected_error_smart_pointer_dereference_receiver(
+        expression,
+        byte_offset,
+        local_bindings,
+    ) {
+        // By-value auto copy of the pointee drops top-level const.
+        return cpp_copied_standard_binding_type(&type_name, type_prefix);
+    }
+    let (type_name, receiver) =
+        cpp_expected_error_smart_pointer_get_receiver(expression, byte_offset, local_bindings)?;
+    // .get() yields a pointer; pointee constness is preserved under auto.
+    let _ = type_prefix;
+    Some((
+        type_name,
+        None,
+        None,
+        receiver,
+        CppMemberAccess::Pointer,
+        Some(CppStandardUnwrap::SmartPointer),
+    ))
+}
+
 fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
     let type_name = cpp_strip_leading_cv_qualifiers(type_name);
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
@@ -1144,6 +1199,11 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
 ) -> Option<(String, CppThisMemberReceiver)> {
     if let Some(binding) =
         cpp_standard_reference_factory_get_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some(binding);
+    }
+    if let Some(binding) =
+        cpp_expected_error_reference_wrapper_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some(binding);
     }
