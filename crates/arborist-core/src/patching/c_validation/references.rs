@@ -10,7 +10,8 @@ use super::cpp_types::{
 use super::cpp_wrappers::{
     cpp_standard_expected_error_type, cpp_standard_expected_target_type,
     cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
-    cpp_standard_smart_pointer_target_type, cpp_standard_weak_pointer_target_type,
+    cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
+    cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
@@ -1952,6 +1953,12 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "."
         && let Some((type_name, receiver)) =
+            cpp_standard_sequence_element_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
             cpp_standard_expected_error_member_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
@@ -2134,6 +2141,39 @@ fn cpp_local_member_receiver_from_expression(
         }
     }
     None
+}
+
+fn cpp_standard_sequence_element_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = [".front()", ".back()"]
+        .into_iter()
+        .find_map(|suffix| expression.strip_suffix(suffix))
+        .or_else(|| cpp_standard_sequence_at_receiver(expression))?
+        .trim();
+    let binding = cpp_visible_local_binding(receiver, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_sequence_element_type(&binding.type_name)?;
+    let type_name = cpp_temporary_type_path(element_type)?;
+    let receiver = cpp_this_receiver_for_type(element_type, Some(false))?;
+    let receiver = match binding.receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => receiver,
+    };
+    Some((type_name, receiver))
+}
+
+fn cpp_standard_sequence_at_receiver(expression: &str) -> Option<&str> {
+    let receiver = expression.strip_suffix(')')?.trim_end();
+    let opening = receiver.rfind(".at(")?;
+    let arguments = &receiver[opening + ".at(".len()..];
+    (!arguments.is_empty()).then_some(receiver[..opening].trim())
 }
 
 fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {

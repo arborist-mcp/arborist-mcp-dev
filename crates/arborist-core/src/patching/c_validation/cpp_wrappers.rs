@@ -37,6 +37,21 @@ pub(super) fn cpp_standard_expected_error_type(type_name: &str) -> Option<&str> 
         .then(|| cpp_second_template_argument(arguments))?
 }
 
+pub(super) fn cpp_standard_sequence_element_type(type_name: &str) -> Option<&str> {
+    [
+        "std::array",
+        "std::deque",
+        "std::list",
+        "std::span",
+        "std::vector",
+    ]
+    .into_iter()
+    .find_map(|sequence_type| {
+        cpp_standard_template_arguments(type_name, sequence_type)
+            .and_then(cpp_first_template_argument)
+    })
+}
+
 fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
     let mut depth = 1usize;
     for (index, character) in contents.char_indices() {
@@ -176,7 +191,7 @@ mod tests {
     use super::{
         cpp_standard_expected_error_type, cpp_standard_expected_target_type,
         cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
-        cpp_standard_smart_pointer_target_type,
+        cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
     };
 
     #[test]
@@ -245,5 +260,23 @@ mod tests {
         assert!(
             cpp_standard_expected_target_type("std::expected<Counter, Error, Extra>").is_none()
         );
+    }
+
+    #[test]
+    fn extracts_standard_sequence_element_types() {
+        assert_eq!(
+            cpp_standard_sequence_element_type("std::vector<Wrapper<Alias, Tag>>"),
+            Some("Wrapper<Alias, Tag>")
+        );
+        assert_eq!(
+            cpp_standard_sequence_element_type("std::span<const Counter, 4>"),
+            Some("const Counter")
+        );
+        assert_eq!(
+            cpp_standard_sequence_element_type("std::array<Counter, 2>"),
+            Some("Counter")
+        );
+        assert!(cpp_standard_sequence_element_type("std::vector<>").is_none());
+        assert!(cpp_standard_sequence_element_type("std::set<Counter>").is_none());
     }
 }
