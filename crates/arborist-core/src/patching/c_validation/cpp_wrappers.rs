@@ -52,6 +52,15 @@ pub(super) fn cpp_standard_sequence_element_type(type_name: &str) -> Option<&str
     })
 }
 
+pub(super) fn cpp_standard_tuple_element_type(type_name: &str, index: usize) -> Option<&str> {
+    ["std::tuple", "std::pair"]
+        .into_iter()
+        .find_map(|tuple_type| {
+            cpp_standard_template_arguments(type_name, tuple_type)
+                .and_then(|arguments| cpp_nth_template_argument(arguments, index))
+        })
+}
+
 fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
     let mut depth = 1usize;
     for (index, character) in contents.char_indices() {
@@ -116,6 +125,39 @@ fn cpp_second_template_argument(arguments: &str) -> Option<&str> {
         }
     }
     None
+}
+
+fn cpp_nth_template_argument(arguments: &str, wanted_index: usize) -> Option<&str> {
+    let mut angles = 0usize;
+    let mut parentheses = 0usize;
+    let mut brackets = 0usize;
+    let mut braces = 0usize;
+    let mut argument_start = 0usize;
+    let mut argument_index = 0usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '<' => angles += 1,
+            '>' => angles = angles.checked_sub(1)?,
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.checked_sub(1)?,
+            '[' => brackets += 1,
+            ']' => brackets = brackets.checked_sub(1)?,
+            '{' => braces += 1,
+            '}' => braces = braces.checked_sub(1)?,
+            ',' if angles == 0 && parentheses == 0 && brackets == 0 && braces == 0 => {
+                if argument_index == wanted_index {
+                    return Some(arguments[argument_start..index].trim())
+                        .filter(|argument| !argument.is_empty());
+                }
+                argument_index += 1;
+                argument_start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    (argument_index == wanted_index)
+        .then(|| arguments[argument_start..].trim())
+        .filter(|argument| !argument.is_empty())
 }
 
 fn cpp_template_arguments_have_top_level_comma(arguments: &str) -> bool {
@@ -192,6 +234,7 @@ mod tests {
         cpp_standard_expected_error_type, cpp_standard_expected_target_type,
         cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
         cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
+        cpp_standard_tuple_element_type,
     };
 
     #[test]
@@ -278,5 +321,25 @@ mod tests {
         );
         assert!(cpp_standard_sequence_element_type("std::vector<>").is_none());
         assert!(cpp_standard_sequence_element_type("std::set<Counter>").is_none());
+    }
+
+    #[test]
+    fn extracts_standard_tuple_element_types() {
+        assert_eq!(
+            cpp_standard_tuple_element_type("std::tuple<Counter, Wrapper<Alias, Tag>, int>", 1),
+            Some("Wrapper<Alias, Tag>")
+        );
+        assert_eq!(
+            cpp_standard_tuple_element_type("std::pair<const Counter, Value>", 0),
+            Some("const Counter")
+        );
+        assert_eq!(
+            cpp_standard_tuple_element_type("std::pair<Counter, Value>", 2),
+            None
+        );
+        assert_eq!(
+            cpp_standard_tuple_element_type("std::vector<Counter>", 0),
+            None
+        );
     }
 }

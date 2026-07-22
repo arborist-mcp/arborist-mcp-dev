@@ -11,7 +11,7 @@ use super::cpp_wrappers::{
     cpp_standard_expected_error_type, cpp_standard_expected_target_type,
     cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
     cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
-    cpp_standard_weak_pointer_target_type,
+    cpp_standard_tuple_element_type, cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
@@ -737,6 +737,11 @@ fn cpp_decltype_auto_binding_type(
     {
         return cpp_copied_standard_binding_type(type_name, "auto");
     }
+    if let Some((type_name, receiver)) =
+        cpp_indexed_tuple_get_receiver(expression, declaration_start, local_bindings)
+    {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
     if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
         "auto",
@@ -865,6 +870,12 @@ fn cpp_auto_constructor_binding_type(
         local_bindings,
     ) {
         return Some(binding_type);
+    }
+    if let Some((type_name, _)) =
+        cpp_indexed_tuple_get_receiver(initializer_text, declaration_start, local_bindings)
+    {
+        // auto copies std::get<N>(tuple-like) results and drops top-level const.
+        return cpp_copied_standard_binding_type(&type_name, type_prefix);
     }
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
@@ -1624,6 +1635,28 @@ fn cpp_variant_get_type(expression: &str) -> Option<&str> {
         return None;
     }
     Some(type_name)
+}
+
+fn cpp_indexed_tuple_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
+    let index = index.parse::<usize>().ok()?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let receiver = match binding.receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(element_type)?, receiver))
 }
 
 fn cpp_binding_type(
