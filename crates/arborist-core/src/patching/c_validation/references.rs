@@ -1695,6 +1695,27 @@ fn cpp_variant_get_type(expression: &str) -> Option<&str> {
     Some(type_name)
 }
 
+fn cpp_typed_standard_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let type_name = cpp_variant_get_type(expression)?;
+    let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let receiver = match binding.receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(type_name, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(type_name)?, receiver))
+}
+
 fn cpp_indexed_tuple_get_receiver(
     expression: &str,
     byte_offset: usize,
@@ -2911,6 +2932,12 @@ fn cpp_local_member_receiver_from_expression(
             byte_offset,
             local_bindings,
         )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
