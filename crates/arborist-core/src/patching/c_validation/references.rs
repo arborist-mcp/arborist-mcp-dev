@@ -2017,6 +2017,12 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "."
         && let Some((type_name, receiver)) =
+            cpp_indexed_tuple_get_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
             cpp_standard_sequence_element_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
