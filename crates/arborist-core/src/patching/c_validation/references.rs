@@ -2287,7 +2287,7 @@ fn cpp_indexed_tuple_get_expected_sequence_element_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = cpp_subscript_receiver(expression)?;
+    let receiver = cpp_standard_sequence_element_access_receiver(expression)?;
     let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
         (receiver.trim(), true)
     } else {
@@ -2307,7 +2307,7 @@ fn cpp_indexed_tuple_get_expected_sequence_element_receiver(
     } else {
         cpp_standard_expected_error_type(tuple_element)?
     };
-    let element_type = cpp_standard_indexable_sequence_element_type(sequence_type)?;
+    let element_type = cpp_standard_sequence_element_type(sequence_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
             CppThisMemberReceiver::ConstLvalue
@@ -2315,6 +2315,15 @@ fn cpp_indexed_tuple_get_expected_sequence_element_receiver(
         _ => cpp_this_receiver_for_type(element_type, Some(false))?,
     };
     Some((cpp_temporary_type_path(element_type)?, receiver))
+}
+
+fn cpp_standard_sequence_element_access_receiver(expression: &str) -> Option<&str> {
+    cpp_subscript_receiver(expression).or_else(|| {
+        [".front()", ".back()"]
+            .into_iter()
+            .find_map(|suffix| expression.strip_suffix(suffix).map(str::trim))
+            .or_else(|| cpp_standard_sequence_at_receiver(expression))
+    })
 }
 
 fn cpp_indexed_tuple_get_weak_pointer_lock_receiver(
