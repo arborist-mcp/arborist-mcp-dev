@@ -652,15 +652,6 @@ fn cpp_decltype_auto_binding_type(
     {
         return Some(binding_type);
     }
-    if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
-        initializer_text,
-        "auto",
-        "&",
-        declaration_start,
-        local_bindings,
-    ) {
-        return cpp_reference_alias_binding_type(&type_name, receiver);
-    }
     // weak_ptr::lock() yields a temporary shared_ptr. Keep smart-pointer unwrap
     // metadata so later nested->member() still resolves through decltype(auto).
     if let Some((type_name, receiver)) =
@@ -683,7 +674,9 @@ fn cpp_decltype_auto_binding_type(
         ));
     }
     // .get() / *smart_pointer peels for decltype(auto) need the same smart-pointer
-    // binding metadata that by-value auto already keeps.
+    // binding metadata that by-value auto already keeps. Keep these ahead of the
+    // forced reference-alias path so *nested_optional_sp does not collapse into a
+    // plain optional alias.
     if let Some(binding_type) = cpp_auto_expected_error_smart_pointer_binding(
         expression,
         "auto",
@@ -691,6 +684,22 @@ fn cpp_decltype_auto_binding_type(
         local_bindings,
     ) {
         return Some(binding_type);
+    }
+    // Optional/expected value peels such as *current on nested optional wrappers
+    // should keep intermediate unwrap metadata under decltype(auto) as well.
+    if let Some(binding_type) =
+        cpp_auto_standard_value_copy_binding(expression, "auto", declaration_start, local_bindings)
+    {
+        return Some(binding_type);
+    }
+    if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
+        initializer_text,
+        "auto",
+        "&",
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
     }
     // Nested optional/expected peels such as (*current.error())->value() should still
     // bind through decltype(auto) as aliases to the peeled object.
@@ -2245,7 +2254,12 @@ fn cpp_smart_pointer_get_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = strip_cpp_outer_parentheses(expression.strip_suffix(".get()")?.trim());
+    let receiver = strip_cpp_outer_parentheses(
+        expression
+            .strip_suffix(".get()")
+            .or_else(|| expression.strip_suffix("->get()"))
+            .map(str::trim)?,
+    );
     if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
         && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
         && binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer)
@@ -2318,7 +2332,22 @@ fn cpp_smart_pointer_wrapper_type(
     if let Some(receiver) = cpp_strip_expected_error_access(expression) {
         let (type_name, _) =
             cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
-        return Some(type_name);
+        // current->error()->get() peels optional/expected layers after .error()
+        // before calling .get() on the remaining smart pointer.
+        let mut type_name = type_name;
+        loop {
+            if cpp_standard_smart_pointer_target_type(&type_name).is_some() {
+                return Some(type_name);
+            }
+            let stripped = cpp_strip_leading_cv_qualifiers(&type_name);
+            if let Some(target) = cpp_standard_optional_target_type(stripped)
+                .or_else(|| cpp_standard_expected_target_type(stripped))
+            {
+                type_name = cpp_temporary_type_path(target)?;
+                continue;
+            }
+            return Some(type_name);
+        }
     }
     if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
         return cpp_smart_pointer_wrapper_type(argument, byte_offset, local_bindings);
