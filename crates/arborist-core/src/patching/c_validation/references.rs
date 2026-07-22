@@ -1867,10 +1867,9 @@ fn cpp_indexed_tuple_get_expected_optional_smart_pointer_arrow_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let (receiver, value_target) = if let Some(receiver) = expression.strip_suffix(".value()") {
         (receiver.trim(), true)
-    } else if let Some(receiver) = expression.strip_suffix(".error()") {
-        (receiver.trim(), false)
     } else {
-        return None;
+        let receiver = expression.strip_suffix(".error()")?;
+        (receiver.trim(), false)
     };
     let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
     let index = index.parse::<usize>().ok()?;
