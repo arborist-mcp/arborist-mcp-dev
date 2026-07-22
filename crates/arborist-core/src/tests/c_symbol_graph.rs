@@ -4302,6 +4302,59 @@ fn resolves_cpp_direct_indexed_tuple_get_member_calls_across_live_and_persisted_
 }
 
 #[test]
+fn resolves_cpp_direct_indexed_variant_get_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("direct_indexed_variant_get.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int direct_variant_get_caller(std::variant<Value, Counter> current, int value) { return std::get<1>(current).adjust(value); } int const_variant_get_caller(const std::variant<Counter, Value> current, int value) { return std::get<0>(current).adjust(value); } int auto_variant_get_caller(std::variant<Value, Counter> current, int value) { auto nested = std::get<1>(current); return nested.adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        (
+            "api::direct_variant_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_variant_get_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::auto_variant_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_direct_indexed_tuple_get_smart_pointer_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("direct_indexed_tuple_get_smart_pointer.cpp");

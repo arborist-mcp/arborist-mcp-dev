@@ -72,8 +72,8 @@ pub(super) fn cpp_standard_contiguous_sequence_element_type(type_name: &str) -> 
         })
 }
 
-pub(super) fn cpp_standard_tuple_element_type(type_name: &str, index: usize) -> Option<&str> {
-    ["std::tuple", "std::pair"]
+pub(super) fn cpp_standard_indexed_element_type(type_name: &str, index: usize) -> Option<&str> {
+    ["std::tuple", "std::pair", "std::variant"]
         .into_iter()
         .find_map(|tuple_type| {
             cpp_standard_template_arguments(type_name, tuple_type)
@@ -236,9 +236,9 @@ mod tests {
     use super::{
         cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
         cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
-        cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
-        cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
-        cpp_standard_tuple_element_type,
+        cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
+        cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
+        cpp_standard_smart_pointer_target_type,
     };
 
     #[test]
@@ -342,25 +342,29 @@ mod tests {
     }
 
     #[test]
-    fn extracts_standard_tuple_element_types() {
+    fn extracts_standard_indexed_element_types() {
         assert_eq!(
-            cpp_standard_tuple_element_type("std::tuple<Counter, Wrapper<Alias, Tag>, int>", 1),
+            cpp_standard_indexed_element_type("std::tuple<Counter, Wrapper<Alias, Tag>, int>", 1),
             Some("Wrapper<Alias, Tag>")
         );
         assert_eq!(
-            cpp_standard_tuple_element_type("std::pair<const Counter, Value>", 0),
+            cpp_standard_indexed_element_type("std::pair<const Counter, Value>", 0),
             Some("const Counter")
         );
         assert_eq!(
-            cpp_standard_tuple_element_type("std::tuple<Value, Counter*>", 1),
+            cpp_standard_indexed_element_type("std::tuple<Value, Counter*>", 1),
             Some("Counter*")
         );
         assert_eq!(
-            cpp_standard_tuple_element_type("std::pair<Counter, Value>", 2),
+            cpp_standard_indexed_element_type("std::variant<Value, Wrapper<Alias, Tag>>", 1),
+            Some("Wrapper<Alias, Tag>")
+        );
+        assert_eq!(
+            cpp_standard_indexed_element_type("std::pair<Counter, Value>", 2),
             None
         );
         assert_eq!(
-            cpp_standard_tuple_element_type("std::vector<Counter>", 0),
+            cpp_standard_indexed_element_type("std::vector<Counter>", 0),
             None
         );
     }

@@ -15,9 +15,9 @@ use super::cpp_types::{
 use super::cpp_wrappers::{
     cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
     cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
-    cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
-    cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
-    cpp_standard_tuple_element_type, cpp_standard_weak_pointer_target_type,
+    cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
+    cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
+    cpp_standard_smart_pointer_target_type, cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
@@ -1707,7 +1707,7 @@ fn cpp_indexed_tuple_get_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
             CppThisMemberReceiver::ConstLvalue
@@ -1729,7 +1729,7 @@ fn cpp_indexed_tuple_get_smart_pointer_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_smart_pointer_target_type(element_type)?;
     Some((
         cpp_temporary_type_path(target)?,
@@ -1749,7 +1749,7 @@ fn cpp_indexed_tuple_get_raw_pointer_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let pointee_type = element_type.split_once('*')?.0.trim();
     Some((
         cpp_temporary_type_path(pointee_type)?,
@@ -1770,7 +1770,7 @@ fn cpp_indexed_tuple_get_optional_value_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_optional_target_type(element_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
@@ -1793,7 +1793,7 @@ fn cpp_indexed_tuple_get_optional_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_optional_target_type(element_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
@@ -1816,7 +1816,7 @@ fn cpp_indexed_tuple_get_optional_smart_pointer_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let wrapper_target = cpp_standard_optional_target_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(wrapper_target)?;
     Some((
@@ -1838,7 +1838,7 @@ fn cpp_indexed_tuple_get_expected_value_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_expected_target_type(element_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
@@ -1862,7 +1862,7 @@ fn cpp_indexed_tuple_get_expected_value_smart_pointer_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let value_type = cpp_standard_expected_target_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(value_type)?;
     Some((
@@ -1884,7 +1884,7 @@ fn cpp_indexed_tuple_get_expected_value_raw_pointer_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let value_type = cpp_standard_expected_target_type(element_type)?;
     let pointee_type = value_type.split_once('*')?.0.trim();
     Some((
@@ -1911,7 +1911,7 @@ fn cpp_indexed_tuple_get_expected_optional_smart_pointer_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let optional_type = if value_target {
         cpp_standard_expected_target_type(element_type)?
     } else {
@@ -1943,7 +1943,7 @@ fn cpp_indexed_tuple_get_expected_optional_raw_pointer_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let optional_type = if value_target {
         cpp_standard_expected_target_type(element_type)?
     } else {
@@ -1971,7 +1971,7 @@ fn cpp_indexed_tuple_get_expected_value_smart_pointer_get_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let value_type = cpp_standard_expected_target_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(value_type)?;
     Some((
@@ -1992,7 +1992,7 @@ fn cpp_indexed_tuple_get_expected_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_expected_target_type(element_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
@@ -2015,7 +2015,7 @@ fn cpp_indexed_tuple_get_expected_smart_pointer_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let wrapper_target = cpp_standard_expected_target_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(wrapper_target)?;
     Some((
@@ -2037,7 +2037,7 @@ fn cpp_indexed_tuple_get_expected_error_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_expected_error_type(element_type)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
@@ -2061,7 +2061,7 @@ fn cpp_indexed_tuple_get_expected_error_smart_pointer_arrow_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let error_type = cpp_standard_expected_error_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(error_type)?;
     Some((
@@ -2083,7 +2083,7 @@ fn cpp_indexed_tuple_get_expected_error_raw_pointer_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let error_type = cpp_standard_expected_error_type(element_type)?;
     let pointee_type = error_type.split_once('*')?.0.trim();
     Some((
@@ -2106,7 +2106,7 @@ fn cpp_indexed_tuple_get_expected_error_smart_pointer_get_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let error_type = cpp_standard_expected_error_type(element_type)?;
     let target = cpp_standard_smart_pointer_target_type(error_type)?;
     Some((
@@ -2129,7 +2129,7 @@ fn cpp_indexed_tuple_get_expected_value_weak_pointer_lock_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let value_type = cpp_standard_expected_target_type(element_type)?;
     let target = cpp_standard_weak_pointer_target_type(value_type)?;
     Some((
@@ -2152,7 +2152,7 @@ fn cpp_indexed_tuple_get_expected_value_reference_wrapper_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let value_type = cpp_standard_expected_target_type(element_type)?;
     let target = cpp_standard_reference_wrapper_target_type(value_type)?;
     Some((
@@ -2175,7 +2175,7 @@ fn cpp_indexed_tuple_get_expected_error_reference_wrapper_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let error_type = cpp_standard_expected_error_type(element_type)?;
     let target = cpp_standard_reference_wrapper_target_type(error_type)?;
     Some((
@@ -2198,7 +2198,7 @@ fn cpp_indexed_tuple_get_expected_error_weak_pointer_lock_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let error_type = cpp_standard_expected_error_type(element_type)?;
     let target = cpp_standard_weak_pointer_target_type(error_type)?;
     Some((
@@ -2229,7 +2229,7 @@ fn cpp_indexed_tuple_get_expected_optional_weak_pointer_lock_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let expected_target = if value_target {
         cpp_standard_expected_target_type(element_type)?
     } else {
@@ -2265,7 +2265,7 @@ fn cpp_indexed_tuple_get_expected_optional_reference_wrapper_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let expected_target = if value_target {
         cpp_standard_expected_target_type(element_type)?
     } else {
@@ -2301,7 +2301,7 @@ fn cpp_indexed_tuple_get_expected_optional_smart_pointer_get_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let expected_target = if value_target {
         cpp_standard_expected_target_type(element_type)?
     } else {
@@ -2369,7 +2369,7 @@ fn cpp_indexed_tuple_get_expected_sequence_type(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let tuple_element = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let tuple_element = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let sequence_type = if value_target {
         cpp_standard_expected_target_type(tuple_element)?
     } else {
@@ -2400,7 +2400,7 @@ fn cpp_indexed_tuple_get_weak_pointer_lock_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_weak_pointer_target_type(element_type)?;
     Some((
         cpp_temporary_type_path(target)?,
@@ -2430,7 +2430,7 @@ fn cpp_indexed_tuple_get_reference_wrapper_receiver(
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
-    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
     let target = cpp_standard_reference_wrapper_target_type(element_type)?;
     Some((
         cpp_temporary_type_path(target)?,
