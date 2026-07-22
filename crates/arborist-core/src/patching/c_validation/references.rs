@@ -2317,6 +2317,41 @@ fn cpp_indexed_tuple_get_expected_sequence_element_receiver(
     Some((cpp_temporary_type_path(element_type)?, receiver))
 }
 
+fn cpp_indexed_tuple_get_expected_sequence_data_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".data()")?.trim();
+    let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
+        (receiver.trim(), true)
+    } else {
+        let receiver = receiver.strip_suffix(".error()")?;
+        (receiver.trim(), false)
+    };
+    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
+    let index = index.parse::<usize>().ok()?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let tuple_element = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let sequence_type = if value_target {
+        cpp_standard_expected_target_type(tuple_element)?
+    } else {
+        cpp_standard_expected_error_type(tuple_element)?
+    };
+    let element_type = cpp_standard_contiguous_sequence_element_type(sequence_type)?;
+    let receiver = match binding.receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(element_type)?, receiver))
+}
+
 fn cpp_standard_sequence_element_access_receiver(expression: &str) -> Option<&str> {
     cpp_subscript_receiver(expression).or_else(|| {
         [".front()", ".back()"]
@@ -2746,6 +2781,15 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_expected_weak_pointer_lock_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_indexed_tuple_get_expected_sequence_data_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
     {
         return Some((type_name, receiver));
     }
