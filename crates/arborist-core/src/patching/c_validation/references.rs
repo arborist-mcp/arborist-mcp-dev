@@ -692,6 +692,20 @@ fn cpp_decltype_auto_binding_type(
     {
         return Some(binding_type);
     }
+    // Address factories preserve a pointer to the local object's concrete type
+    // under decltype(auto), including std::to_address(smart_pointer).
+    if let Some((type_name, receiver)) =
+        cpp_address_binding(expression, declaration_start, local_bindings)
+    {
+        return Some((
+            type_name,
+            None,
+            None,
+            cpp_named_reference_alias_receiver(receiver),
+            CppMemberAccess::Pointer,
+            None,
+        ));
+    }
     // std::get_if<T>(...) and std::any_cast<T>(...) yield T* for decltype(auto).
     if let Some(type_name) =
         cpp_get_if_pointer_type(expression).or_else(|| cpp_any_cast_pointer_type(expression))
@@ -989,9 +1003,32 @@ fn cpp_address_binding(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::to_address") {
+        return cpp_to_address_binding(argument, byte_offset, local_bindings);
+    }
     let argument = cpp_receiver_call_argument(expression, "std::addressof")
         .or_else(|| expression.strip_prefix('&').map(str::trim))?;
     cpp_addressable_local_object_receiver(argument, byte_offset, local_bindings)
+}
+
+fn cpp_to_address_binding(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let binding_name = cpp_local_binding_name_from_expression(expression)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access == CppMemberAccess::Pointer {
+        return Some((binding.type_name.clone(), binding.receiver));
+    }
+    if binding.standard_unwrap == Some(CppStandardUnwrap::SmartPointer) {
+        let target = cpp_standard_smart_pointer_target_type(&binding.type_name)?;
+        return Some((
+            cpp_temporary_type_path(target)?,
+            cpp_this_receiver_for_type(target, Some(false))?,
+        ));
+    }
+    None
 }
 
 fn cpp_auto_reference_alias_binding(
