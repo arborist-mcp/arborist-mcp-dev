@@ -81,6 +81,12 @@ pub(super) fn cpp_standard_indexed_element_type(type_name: &str, index: usize) -
         })
 }
 
+pub(super) fn cpp_standard_typed_get_is_supported(type_name: &str) -> bool {
+    ["std::tuple", "std::pair", "std::variant"]
+        .into_iter()
+        .any(|tuple_type| cpp_standard_template_arguments(type_name, tuple_type).is_some())
+}
+
 fn cpp_standard_template_arguments<'a>(type_name: &'a str, wrapper: &str) -> Option<&'a str> {
     let contents = type_name.trim().strip_prefix(wrapper)?.strip_prefix('<')?;
     let target_end = matching_angle_bracket_index(contents)?;
@@ -238,7 +244,7 @@ mod tests {
         cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
         cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
         cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-        cpp_standard_smart_pointer_target_type,
+        cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_is_supported,
     };
 
     #[test]
@@ -367,5 +373,12 @@ mod tests {
             cpp_standard_indexed_element_type("std::vector<Counter>", 0),
             None
         );
+        assert!(cpp_standard_typed_get_is_supported(
+            "std::tuple<Counter, Wrapper<Alias, Tag>>"
+        ));
+        assert!(cpp_standard_typed_get_is_supported(
+            "std::variant<Value, Counter>"
+        ));
+        assert!(!cpp_standard_typed_get_is_supported("std::vector<Counter>"));
     }
 }

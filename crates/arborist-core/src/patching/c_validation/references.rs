@@ -17,7 +17,8 @@ use super::cpp_wrappers::{
     cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
     cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
     cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-    cpp_standard_smart_pointer_target_type, cpp_standard_weak_pointer_target_type,
+    cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_is_supported,
+    cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
@@ -739,7 +740,7 @@ fn cpp_decltype_auto_binding_type(
     }
     // std::get<T>(...) / value any_cast yield typed object bindings for decltype(auto).
     if let Some(type_name) =
-        cpp_variant_get_type(expression).or_else(|| cpp_any_cast_value_type(expression))
+        cpp_typed_standard_get_type(expression).or_else(|| cpp_any_cast_value_type(expression))
     {
         return cpp_copied_standard_binding_type(type_name, "auto");
     }
@@ -841,8 +842,8 @@ fn cpp_auto_constructor_binding_type(
         .or_else(|| cpp_pointer_cast_shared_pointer_type(initializer_text));
     let get_if_pointer_type = cpp_get_if_pointer_type(initializer_text)
         .or_else(|| cpp_any_cast_pointer_type(initializer_text));
-    let variant_get_type = cpp_variant_get_type(initializer_text);
-    let direct_initializer_type = variant_get_type
+    let typed_standard_get_type = cpp_typed_standard_get_type(initializer_text);
+    let direct_initializer_type = typed_standard_get_type
         .or_else(|| cpp_any_cast_value_type(initializer_text))
         .or_else(|| cpp_constructor_type_text(initializer_text))
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
@@ -1681,9 +1682,9 @@ fn cpp_any_cast_value_type(expression: &str) -> Option<&str> {
     }
 }
 
-fn cpp_variant_get_type(expression: &str) -> Option<&str> {
-    // std::get<T>(variant) yields T by value/reference for binding copies.
-    // Prefer type-based get; index-based get is intentionally unsupported.
+fn cpp_typed_standard_get_type(expression: &str) -> Option<&str> {
+    // std::get<T>(tuple-like) yields T by value/reference for binding copies.
+    // Prefer type-based get; index-based get is handled through the local binding.
     let (type_name, _) = cpp_typed_receiver_call(expression, "std::get")?;
     // Reject obvious non-type template arguments such as std::get<0>(...).
     if type_name
@@ -1700,11 +1701,14 @@ fn cpp_typed_standard_get_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let type_name = cpp_variant_get_type(expression)?;
+    let type_name = cpp_typed_standard_get_type(expression)?;
     let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
     let binding_name = cpp_local_binding_name_from_expression(argument)?;
     let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+    if binding.access != CppMemberAccess::Object
+        || binding.standard_unwrap.is_some()
+        || !cpp_standard_typed_get_is_supported(&binding.type_name)
+    {
         return None;
     }
     let receiver = match binding.receiver {
@@ -1714,6 +1718,20 @@ fn cpp_typed_standard_get_receiver(
         _ => cpp_this_receiver_for_type(type_name, Some(false))?,
     };
     Some((cpp_temporary_type_path(type_name)?, receiver))
+}
+
+fn cpp_typed_standard_get_smart_pointer_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let (pointer_type, _) =
+        cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
+    let target = cpp_standard_smart_pointer_target_type(&pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
 }
 
 fn cpp_indexed_tuple_get_receiver(
@@ -2757,6 +2775,12 @@ fn cpp_local_member_receiver_from_expression(
                 byte_offset,
                 local_bindings,
             )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_smart_pointer_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
     }
