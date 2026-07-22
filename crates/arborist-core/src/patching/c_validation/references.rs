@@ -3,6 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::Result;
 use tree_sitter::Node;
 
+use super::cpp_syntax::{
+    compact_cpp_expression, cpp_constructor_type_text, cpp_default_initialized_type_path,
+    cpp_default_initialized_type_text, cpp_receiver_call_argument, cpp_typed_receiver_call,
+    strip_cpp_outer_parentheses,
+};
 use super::cpp_types::{
     CppThisMemberReceiver, cpp_pointer_target_path, cpp_temporary_type_path,
     cpp_this_receiver_for_type,
@@ -4422,34 +4427,6 @@ fn cpp_temporary_type_from_expression(expression: &str) -> Option<(String, CppTh
     })
 }
 
-fn cpp_constructor_type_text(expression: &str) -> Option<&str> {
-    let expression = expression.trim();
-    let closing = expression.chars().last()?;
-    let opening = match closing {
-        ')' => matching_opening_delimiter_index(expression, '(', ')')?,
-        '}' => matching_opening_delimiter_index(expression, '{', '}')?,
-        _ => return None,
-    };
-    cpp_type_text(expression[..opening].trim())
-}
-
-fn cpp_default_initialized_type_path(type_name: &str) -> Option<String> {
-    cpp_default_initialized_type_text(type_name).and_then(cpp_temporary_type_path)
-}
-
-fn cpp_default_initialized_type_text(type_name: &str) -> Option<&str> {
-    cpp_type_text(type_name.trim())
-}
-
-fn cpp_type_text(type_name: &str) -> Option<&str> {
-    (!type_name.is_empty()
-        && type_name.chars().all(|character| {
-            character.is_ascii_alphanumeric()
-                || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
-        }))
-    .then_some(type_name)
-}
-
 fn is_cpp_new_type_qualifier_recovery_identifier(candidate: Node<'_>, source: &str) -> bool {
     let Some(error) = candidate.parent().filter(|parent| parent.is_error()) else {
         return false;
@@ -4465,27 +4442,6 @@ fn is_cpp_new_type_qualifier_recovery_identifier(candidate: Node<'_>, source: &s
         && qualifier_prefix
             .split_whitespace()
             .all(|part| matches!(part, "const" | "volatile"))
-}
-
-fn matching_opening_delimiter_index(
-    expression: &str,
-    opening: char,
-    closing: char,
-) -> Option<usize> {
-    let mut depth = 0usize;
-    for (index, character) in expression.char_indices().rev() {
-        match character {
-            character if character == closing => depth += 1,
-            character if character == opening => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberReceiver> {
@@ -4516,113 +4472,6 @@ fn cpp_this_receiver_from_expression(receiver: &str) -> Option<CppThisMemberRece
     if let Some((type_name, argument)) = cpp_typed_receiver_call(receiver, "std::forward") {
         cpp_this_receiver_from_expression(argument)?;
         return cpp_this_receiver_for_type(type_name, Some(true));
-    }
-    None
-}
-
-fn cpp_receiver_call_argument<'a>(receiver: &'a str, function_name: &str) -> Option<&'a str> {
-    let argument = receiver
-        .strip_prefix(function_name)?
-        .trim_start()
-        .strip_prefix('(')?;
-    let argument = argument.trim_end().strip_suffix(')')?.trim();
-    if parentheses_are_balanced(argument) {
-        Some(argument)
-    } else {
-        None
-    }
-}
-
-fn cpp_typed_receiver_call<'a>(
-    receiver: &'a str,
-    function_name: &str,
-) -> Option<(&'a str, &'a str)> {
-    let contents = receiver
-        .strip_prefix(function_name)?
-        .trim_start()
-        .strip_prefix('<')?;
-    let type_end = matching_angle_bracket_index(contents)?;
-    let type_name = contents[..type_end].trim();
-    let argument = contents[type_end + 1..]
-        .trim_start()
-        .strip_prefix('(')?
-        .trim_end()
-        .strip_suffix(')')?;
-    let argument = argument.trim();
-    if type_name.is_empty() || !parentheses_are_balanced(argument) {
-        return None;
-    }
-    Some((type_name, argument))
-}
-
-fn strip_cpp_outer_parentheses(mut expression: &str) -> &str {
-    while let Some(inner) = expression
-        .strip_prefix('(')
-        .and_then(|value| value.strip_suffix(')'))
-        .filter(|_| parentheses_wrap_entire_expression(expression))
-    {
-        expression = inner;
-    }
-    expression
-}
-
-fn compact_cpp_expression(expression: &str) -> String {
-    expression
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect()
-}
-
-fn parentheses_wrap_entire_expression(expression: &str) -> bool {
-    let mut depth = 0usize;
-    for (index, character) in expression.char_indices() {
-        match character {
-            '(' => depth += 1,
-            ')' => {
-                let Some(next_depth) = depth.checked_sub(1) else {
-                    return false;
-                };
-                depth = next_depth;
-                if depth == 0 && index + character.len_utf8() != expression.len() {
-                    return false;
-                }
-            }
-            _ => {}
-        }
-    }
-    depth == 0
-}
-
-fn parentheses_are_balanced(expression: &str) -> bool {
-    let mut depth = 0usize;
-    for character in expression.chars() {
-        match character {
-            '(' => depth += 1,
-            ')' => {
-                let Some(next_depth) = depth.checked_sub(1) else {
-                    return false;
-                };
-                depth = next_depth;
-            }
-            _ => {}
-        }
-    }
-    depth == 0
-}
-
-fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
-    let mut depth = 1usize;
-    for (index, character) in contents.char_indices() {
-        match character {
-            '<' => depth += 1,
-            '>' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
     }
     None
 }

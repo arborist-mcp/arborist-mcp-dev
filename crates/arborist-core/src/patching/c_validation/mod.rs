@@ -1,5 +1,6 @@
 mod accessibility;
 mod ambiguity;
+mod cpp_syntax;
 mod cpp_types;
 mod cpp_wrappers;
 mod references;

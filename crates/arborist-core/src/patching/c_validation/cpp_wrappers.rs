@@ -1,3 +1,5 @@
+use super::cpp_syntax::matching_angle_bracket_index;
+
 pub(super) fn cpp_standard_smart_pointer_target_type(type_name: &str) -> Option<&str> {
     ["std::unique_ptr", "std::shared_ptr"]
         .into_iter()
@@ -77,23 +79,6 @@ pub(super) fn cpp_standard_tuple_element_type(type_name: &str, index: usize) -> 
             cpp_standard_template_arguments(type_name, tuple_type)
                 .and_then(|arguments| cpp_nth_template_argument(arguments, index))
         })
-}
-
-fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
-    let mut depth = 1usize;
-    for (index, character) in contents.char_indices() {
-        match character {
-            '<' => depth += 1,
-            '>' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    return Some(index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn cpp_standard_template_arguments<'a>(type_name: &'a str, wrapper: &str) -> Option<&'a str> {
