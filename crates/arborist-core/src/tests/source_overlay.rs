@@ -1970,6 +1970,47 @@ fn traces_cpp_indexed_tuple_get_expected_sequence_element_access_calls_from_unsa
 }
 
 #[test]
+fn traces_cpp_indexed_tuple_get_expected_sequence_data_pointer_bindings_from_unsaved_source_overlay()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("indexed_tuple_get_expected_sequence_data_pointer.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int auto_value_caller(std::tuple<Value, std::expected<std::vector<Counter>, Value>> current, int value) { auto pointer = std::get<1>(current).value().data(); return pointer->adjust(value); } int decltype_auto_const_error_caller(const std::pair<std::expected<Value, std::span<Counter>>, Value> current, int value) { decltype(auto) pointer = std::get<0>(current).error().data(); return pointer->adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::auto_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::decltype_auto_const_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_indexed_tuple_get_expected_reference_wrapper_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("indexed_tuple_get_expected_reference_wrapper.cpp");
