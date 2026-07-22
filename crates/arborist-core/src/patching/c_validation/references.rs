@@ -644,14 +644,35 @@ fn cpp_decltype_auto_binding_type(
             binding.standard_unwrap,
         ));
     }
-    let (type_name, receiver) = cpp_auto_reference_alias_binding(
+    if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
         "auto",
         "&",
         declaration_start,
         local_bindings,
-    )?;
-    cpp_reference_alias_binding_type(&type_name, receiver)
+    ) {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
+    // Nested optional/expected peels such as (*current.error())->value() should still
+    // bind through decltype(auto) as aliases to the peeled object.
+    if let Some((type_name, receiver)) =
+        cpp_auto_optional_alias_binding(expression, declaration_start, local_bindings)
+    {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
+    if let Some((type_name, receiver)) = cpp_expected_error_nested_arrow_member_receiver(
+        expression,
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
+    if let Some((type_name, receiver)) =
+        cpp_standard_optional_value_member_receiver(expression, declaration_start, local_bindings)
+    {
+        return cpp_reference_alias_binding_type(&type_name, receiver);
+    }
+    None
 }
 
 fn cpp_auto_constructor_binding_type(
@@ -1013,9 +1034,21 @@ fn cpp_auto_expected_error_copy_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    let receiver = cpp_strip_expected_error_access(expression)?;
-    let (type_name, _) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    // Support both .error() and nested peels such as current->error() where the
+    // optional around expected is first unwrapped by operator->.
+    let (type_name, _) = if let Some(receiver) = cpp_strip_expected_error_access(expression) {
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?
+    } else if let Some((type_name, receiver)) =
+        cpp_expected_error_nested_arrow_member_receiver(expression, byte_offset, local_bindings)
+    {
+        (type_name, receiver)
+    } else if let Some((type_name, receiver)) =
+        cpp_expected_error_optional_arrow_member_receiver(expression, byte_offset, local_bindings)
+    {
+        (type_name, receiver)
+    } else {
+        return None;
+    };
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
@@ -1090,20 +1123,8 @@ fn cpp_auto_reference_wrapper_get_copy_binding(
 fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
     let type_name = cpp_strip_leading_cv_qualifiers(type_name);
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
-    if let Some(target) = cpp_standard_expected_target_type(type_name) {
-        let expected_error_type = cpp_standard_expected_error_type(type_name)?.to_string();
-        return Some((
-            cpp_temporary_type_path(target)?,
-            Some(expected_error_type.clone()),
-            cpp_this_receiver_for_type(
-                &format!("{type_qualifiers} {expected_error_type}"),
-                Some(false),
-            ),
-            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
-            CppMemberAccess::Object,
-            Some(CppStandardUnwrap::Expected),
-        ));
-    }
+    // Prefer concrete wrapper targets first so auto copies of nested wrappers such as
+    // optional<unique_ptr<T>> keep usable unwrap metadata.
     if let Some(target) = cpp_standard_smart_pointer_target_type(type_name) {
         return Some((
             cpp_temporary_type_path(target)?,
@@ -1112,16 +1133,6 @@ fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Optio
             cpp_this_receiver_for_type(target, Some(false))?,
             CppMemberAccess::Pointer,
             Some(CppStandardUnwrap::SmartPointer),
-        ));
-    }
-    if let Some(target) = cpp_standard_optional_target_type(type_name) {
-        return Some((
-            cpp_temporary_type_path(target)?,
-            None,
-            None,
-            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
-            CppMemberAccess::Object,
-            Some(CppStandardUnwrap::Optional),
         ));
     }
     if let Some(target) = cpp_standard_reference_wrapper_target_type(type_name) {
@@ -1142,6 +1153,51 @@ fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Optio
             cpp_this_receiver_for_type(target, Some(false))?,
             CppMemberAccess::Object,
             Some(CppStandardUnwrap::WeakPointer),
+        ));
+    }
+    if let Some(target) = cpp_standard_optional_target_type(type_name) {
+        // Recurse so optional<unique_ptr<T>> / optional<expected<...>> auto copies
+        // retain the inner unwrap rather than stopping at Optional.
+        if let Some(inner) = cpp_copied_standard_binding_type(target, type_prefix) {
+            return Some(inner);
+        }
+        return Some((
+            cpp_temporary_type_path(target)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::Optional),
+        ));
+    }
+    if let Some(target) = cpp_standard_expected_target_type(type_name) {
+        let expected_error_type = cpp_standard_expected_error_type(type_name)?.to_string();
+        if let Some(inner) = cpp_copied_standard_binding_type(target, type_prefix) {
+            if inner.5.is_none() {
+                return Some((
+                    inner.0,
+                    Some(expected_error_type.clone()),
+                    cpp_this_receiver_for_type(
+                        &format!("{type_qualifiers} {expected_error_type}"),
+                        Some(false),
+                    ),
+                    inner.3,
+                    inner.4,
+                    Some(CppStandardUnwrap::Expected),
+                ));
+            }
+            return Some(inner);
+        }
+        return Some((
+            cpp_temporary_type_path(target)?,
+            Some(expected_error_type.clone()),
+            cpp_this_receiver_for_type(
+                &format!("{type_qualifiers} {expected_error_type}"),
+                Some(false),
+            ),
+            cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
+            CppMemberAccess::Object,
+            Some(CppStandardUnwrap::Expected),
         ));
     }
     Some((
@@ -2194,10 +2250,9 @@ fn cpp_expected_error_nested_arrow_member_receiver(
         // One dereference peels one optional/expected layer from the error type.
         cpp_standard_value_member_receiver(&type_name, error_receiver, true)
             .or(Some((type_name, error_receiver)))?
-    } else if let Some(receiver) = cpp_strip_expected_error_access(expression) {
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?
     } else {
-        return None;
+        let receiver = cpp_strip_expected_error_access(expression)?;
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?
     };
     let mut type_name = type_name;
     let mut receiver = receiver;
@@ -2358,9 +2413,21 @@ fn cpp_expected_error_optional_value_member_receiver(
         .strip_suffix(".value()")
         .or_else(|| expression.strip_suffix("->value()"))
         .map(str::trim)?;
-    let receiver = cpp_strip_expected_error_access(receiver)?;
-    let (type_name, error_receiver) =
-        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?;
+    let receiver = strip_cpp_outer_parentheses(receiver.trim());
+    // Support both current.error().value() and (*current.error())->value().
+    let (type_name, error_receiver) = if let Some(inner) = receiver.strip_prefix('*').map(str::trim)
+    {
+        let inner = strip_cpp_outer_parentheses(inner);
+        let error_receiver = cpp_strip_expected_error_access(inner)?;
+        let (type_name, error_receiver) =
+            cpp_expected_local_binding_error_receiver(error_receiver, byte_offset, local_bindings)?;
+        // The unary * peels one optional/expected layer from the error type.
+        cpp_standard_value_member_receiver(&type_name, error_receiver, true)
+            .or(Some((type_name, error_receiver)))?
+    } else {
+        let receiver = cpp_strip_expected_error_access(receiver)?;
+        cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?
+    };
     // Keep peeling nested optional/expected layers after the error unwrap so
     // forms such as expected<..., optional<expected<T>>> resolve through
     // .error()->value() / .error().value().
