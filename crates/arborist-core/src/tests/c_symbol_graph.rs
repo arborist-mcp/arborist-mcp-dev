@@ -4103,6 +4103,60 @@ fn resolves_cpp_auto_expected_error_wrapper_copies_across_live_and_persisted_que
 }
 
 #[test]
+fn resolves_cpp_get_if_pointer_bindings_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("get_if_pointer_bindings.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint auto_get_if_caller(std::variant<Counter, Value> current, int value) { auto nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_star_get_if_caller(std::variant<Counter, Value> current, int value) { auto* nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint decltype_auto_get_if_caller(std::variant<Counter, Value> current, int value) { decltype(auto) nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_const_get_if_caller(const std::variant<Counter, Value> current, int value) { auto nested = std::get_if<const Counter>(&current); return nested->adjust(value); }\n}\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::auto_get_if_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::auto_star_get_if_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::decltype_auto_get_if_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_const_get_if_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("auto_constructor_member_calls.cpp");

@@ -692,6 +692,17 @@ fn cpp_decltype_auto_binding_type(
     {
         return Some(binding_type);
     }
+    // std::get_if<T>(...) yields T* for decltype(auto) bindings as well.
+    if let Some(type_name) = cpp_get_if_pointer_type(expression) {
+        return Some((
+            cpp_temporary_type_path(type_name)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(type_name, Some(false))?,
+            CppMemberAccess::Pointer,
+            None,
+        ));
+    }
     if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
         "auto",
@@ -756,6 +767,7 @@ fn cpp_auto_constructor_binding_type(
         (allocation.len() < remainder.len()).then_some(allocation)
     });
     let smart_pointer_factory_type = cpp_smart_pointer_factory_type(initializer_text);
+    let get_if_pointer_type = cpp_get_if_pointer_type(initializer_text);
     let direct_initializer_type = cpp_constructor_type_text(initializer_text)
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
@@ -821,6 +833,7 @@ fn cpp_auto_constructor_binding_type(
                 .or_else(|| cpp_default_initialized_type_text(allocation))
         })
         .or(smart_pointer_factory_type)
+        .or(get_if_pointer_type)
         .or_else(|| {
             direct_standard_unwrap.and_then(|(target, unwrap)| {
                 (unwrap == CppStandardUnwrap::SmartPointer).then_some(target)
@@ -1490,6 +1503,12 @@ fn cpp_smart_pointer_factory_type(expression: &str) -> Option<&str> {
         .find_map(|factory| {
             cpp_typed_receiver_call(expression, factory).map(|(type_name, _)| type_name)
         })
+}
+
+fn cpp_get_if_pointer_type(expression: &str) -> Option<&str> {
+    // std::get_if<T>(...) yields T*. Treat the explicit template argument as the
+    // pointee type for auto/auto* bindings and later nested->member() calls.
+    cpp_typed_receiver_call(expression, "std::get_if").map(|(type_name, _)| type_name)
 }
 
 fn cpp_binding_type(
