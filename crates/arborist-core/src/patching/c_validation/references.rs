@@ -1983,7 +1983,14 @@ fn cpp_local_member_receiver_from_expression(
 }
 
 fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
-    let receiver = expression.strip_suffix(".get()")?.trim();
+    // Accept both nested.get() and nested->get() for local reference_wrapper
+    // bindings. Intermediate auto copies of optional<reference_wrapper<T>> peel
+    // to ReferenceWrapper, and callers still use the same ->get() form as the
+    // original nested chain.
+    let receiver = expression
+        .strip_suffix(".get()")
+        .or_else(|| expression.strip_suffix("->get()"))
+        .map(str::trim)?;
     cpp_local_binding_name_from_expression(receiver)
 }
 
