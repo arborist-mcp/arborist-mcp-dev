@@ -367,6 +367,10 @@ mod tests {
             Some("const Counter")
         );
         assert_eq!(
+            cpp_standard_tuple_element_type("std::tuple<Value, Counter*>", 1),
+            Some("Counter*")
+        );
+        assert_eq!(
             cpp_standard_tuple_element_type("std::pair<Counter, Value>", 2),
             None
         );

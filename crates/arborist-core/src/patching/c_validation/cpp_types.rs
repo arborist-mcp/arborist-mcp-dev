@@ -13,7 +13,20 @@ pub(super) fn cpp_temporary_type_path(type_name: &str) -> Option<String> {
         .filter(|part| !matches!(*part, "const" | "volatile" | "&" | "&&"))
         .collect::<Vec<_>>()
         .join(" ");
-    (!path.is_empty() && !path.contains('*')).then_some(path)
+    (!path.is_empty() && !cpp_type_has_top_level_pointer(&path)).then_some(path)
+}
+
+fn cpp_type_has_top_level_pointer(type_name: &str) -> bool {
+    let mut template_depth = 0usize;
+    for character in type_name.chars() {
+        match character {
+            '<' => template_depth += 1,
+            '>' => template_depth = template_depth.saturating_sub(1),
+            '*' if template_depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 pub(super) fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
@@ -69,4 +82,18 @@ pub(super) fn cpp_type_is_top_level_const(type_name: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cpp_temporary_type_path;
+
+    #[test]
+    fn preserves_pointers_inside_template_arguments() {
+        assert_eq!(
+            cpp_temporary_type_path("std::tuple<Value, Counter*>"),
+            Some("std::tuple<Value, Counter*>".to_string())
+        );
+        assert!(cpp_temporary_type_path("Counter*").is_none());
+    }
 }
