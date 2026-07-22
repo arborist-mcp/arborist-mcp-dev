@@ -1734,6 +1734,57 @@ fn cpp_typed_standard_get_smart_pointer_receiver(
     ))
 }
 
+fn cpp_typed_standard_get_raw_pointer_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let pointer_type = cpp_typed_standard_get_type(expression)?;
+    let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object
+        || binding.standard_unwrap.is_some()
+        || !cpp_standard_typed_get_is_supported(&binding.type_name)
+    {
+        return None;
+    }
+    let target = pointer_type.strip_suffix('*')?.trim();
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
+fn cpp_typed_standard_get_weak_pointer_lock_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".lock()")?.trim();
+    let (weak_pointer_type, _) =
+        cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_weak_pointer_target_type(&weak_pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
+fn cpp_typed_standard_get_reference_wrapper_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    let (wrapper_type, _) = cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_reference_wrapper_target_type(&wrapper_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
 fn cpp_indexed_tuple_get_receiver(
     expression: &str,
     byte_offset: usize,
@@ -2786,6 +2837,21 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_raw_pointer_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_typed_standard_get_weak_pointer_lock_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
             cpp_indexed_tuple_get_expected_optional_smart_pointer_arrow_receiver(
                 expression,
                 byte_offset,
@@ -2952,6 +3018,15 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "."
         && let Some((type_name, receiver)) = cpp_indexed_tuple_get_reference_wrapper_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) = cpp_typed_standard_get_reference_wrapper_receiver(
             expression,
             byte_offset,
             local_bindings,
