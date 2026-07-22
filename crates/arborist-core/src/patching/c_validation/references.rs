@@ -644,6 +644,14 @@ fn cpp_decltype_auto_binding_type(
             binding.standard_unwrap,
         ));
     }
+    // Prefer pure nested error peels before reference-alias handling so forms
+    // such as current->error() and (*current.error()) keep optional/expected/
+    // smart-pointer unwrap metadata for later nested->member() resolution.
+    if let Some(binding_type) =
+        cpp_auto_expected_error_copy_binding(expression, "auto", declaration_start, local_bindings)
+    {
+        return Some(binding_type);
+    }
     if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
         "auto",
@@ -1036,8 +1044,18 @@ fn cpp_auto_expected_error_copy_binding(
 ) -> Option<CppBindingType> {
     // Support both .error() and nested peels such as current->error() where the
     // optional around expected is first unwrapped by operator->.
+    // For binding copies, peel only the layers made explicit by the initializer
+    // so decltype(auto) nested = (*current.error()) keeps the expected unwrap
+    // needed for later nested->member().
     let (type_name, _) = if let Some(receiver) = cpp_strip_expected_error_access(expression) {
         cpp_expected_local_binding_error_receiver(receiver, byte_offset, local_bindings)?
+    } else if let Some(receiver) = expression.strip_prefix('*').map(str::trim) {
+        let receiver = strip_cpp_outer_parentheses(receiver);
+        let error_receiver = cpp_strip_expected_error_access(receiver)?;
+        let (type_name, error_receiver) =
+            cpp_expected_local_binding_error_receiver(error_receiver, byte_offset, local_bindings)?;
+        cpp_standard_value_member_receiver(&type_name, error_receiver, true)
+            .or(Some((type_name, error_receiver)))?
     } else if let Some((type_name, receiver)) =
         cpp_expected_error_nested_arrow_member_receiver(expression, byte_offset, local_bindings)
     {
