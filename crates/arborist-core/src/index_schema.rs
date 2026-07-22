@@ -330,12 +330,48 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
         );
         ",
     )?;
-    ensure_reference_names_column(connection)?;
-    ensure_symbol_id_column(connection)?;
-    ensure_scope_path_column(connection)?;
-    ensure_parameters_json_column(connection)?;
-    ensure_return_type_column(connection)?;
-    ensure_docstring_column(connection)?;
+    let mut symbol_columns = table_columns(connection, "symbols")?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "reference_names_json",
+        "ALTER TABLE symbols ADD COLUMN reference_names_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    if ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "symbol_id",
+        "ALTER TABLE symbols ADD COLUMN symbol_id TEXT NOT NULL DEFAULT ''",
+    )? {
+        connection.execute(
+            "UPDATE symbols SET symbol_id = semantic_path WHERE symbol_id = ''",
+            [],
+        )?;
+    }
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "scope_path",
+        "ALTER TABLE symbols ADD COLUMN scope_path TEXT",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "parameters_json",
+        "ALTER TABLE symbols ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "return_type",
+        "ALTER TABLE symbols ADD COLUMN return_type TEXT",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "docstring",
+        "ALTER TABLE symbols ADD COLUMN docstring TEXT",
+    )?;
     ensure_symbols_primary_key_layout(connection)?;
     ensure_symbols_file_path_index(connection)?;
     Ok(())
@@ -618,95 +654,19 @@ fn table_primary_key_layout(
     Ok(primary_key)
 }
 
-fn ensure_reference_names_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "reference_names_json" {
-            return Ok(());
-        }
+fn ensure_symbols_column(
+    connection: &Connection,
+    columns: &mut BTreeSet<String>,
+    column_name: &str,
+    add_column_sql: &str,
+) -> Result<bool> {
+    if columns.contains(column_name) {
+        return Ok(false);
     }
 
-    connection.execute(
-        "ALTER TABLE symbols ADD COLUMN reference_names_json TEXT NOT NULL DEFAULT '[]'",
-        [],
-    )?;
-    Ok(())
-}
-
-fn ensure_symbol_id_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "symbol_id" {
-            return Ok(());
-        }
-    }
-
-    connection.execute(
-        "ALTER TABLE symbols ADD COLUMN symbol_id TEXT NOT NULL DEFAULT ''",
-        [],
-    )?;
-    connection.execute(
-        "UPDATE symbols SET symbol_id = semantic_path WHERE symbol_id = ''",
-        [],
-    )?;
-    Ok(())
-}
-
-fn ensure_scope_path_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "scope_path" {
-            return Ok(());
-        }
-    }
-
-    connection.execute("ALTER TABLE symbols ADD COLUMN scope_path TEXT", [])?;
-    Ok(())
-}
-
-fn ensure_parameters_json_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "parameters_json" {
-            return Ok(());
-        }
-    }
-
-    connection.execute(
-        "ALTER TABLE symbols ADD COLUMN parameters_json TEXT NOT NULL DEFAULT '[]'",
-        [],
-    )?;
-    Ok(())
-}
-
-fn ensure_return_type_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "return_type" {
-            return Ok(());
-        }
-    }
-
-    connection.execute("ALTER TABLE symbols ADD COLUMN return_type TEXT", [])?;
-    Ok(())
-}
-
-fn ensure_docstring_column(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for column in columns {
-        if column? == "docstring" {
-            return Ok(());
-        }
-    }
-
-    connection.execute("ALTER TABLE symbols ADD COLUMN docstring TEXT", [])?;
-    Ok(())
+    connection.execute(add_column_sql, [])?;
+    columns.insert(column_name.to_string());
+    Ok(true)
 }
 
 fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
@@ -749,11 +709,12 @@ fn ensure_symbols_file_path_index(connection: &Connection) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::Path;
 
     use rusqlite::Connection;
 
-    use super::require_table_primary_key_layout;
+    use super::{ensure_symbols_column, require_table_primary_key_layout, table_columns};
 
     #[test]
     fn current_schema_validation_rejects_incompatible_primary_keys() {
@@ -779,6 +740,41 @@ mod tests {
             error
                 .to_string()
                 .contains("incompatible primary key layout")
+        );
+    }
+
+    #[test]
+    fn ensures_missing_symbols_columns_once() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch("CREATE TABLE symbols (semantic_path TEXT NOT NULL);")
+            .unwrap();
+        let mut columns = table_columns(&connection, "symbols").unwrap();
+
+        assert!(
+            ensure_symbols_column(
+                &connection,
+                &mut columns,
+                "scope_path",
+                "ALTER TABLE symbols ADD COLUMN scope_path TEXT",
+            )
+            .unwrap()
+        );
+        assert!(columns.contains("scope_path"));
+        assert!(
+            !ensure_symbols_column(
+                &connection,
+                &mut columns,
+                "scope_path",
+                "ALTER TABLE symbols ADD COLUMN scope_path TEXT",
+            )
+            .unwrap()
+        );
+
+        assert_eq!(table_columns(&connection, "symbols").unwrap(), columns);
+        assert_eq!(
+            columns,
+            BTreeSet::from(["scope_path".to_string(), "semantic_path".to_string()])
         );
     }
 }
