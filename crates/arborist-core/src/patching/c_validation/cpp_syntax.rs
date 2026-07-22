@@ -24,7 +24,8 @@ pub(super) fn cpp_type_text(type_name: &str) -> Option<&str> {
         && type_name.chars().all(|character| {
             character.is_ascii_alphanumeric()
                 || matches!(character, '_' | ':' | '<' | '>' | ',' | ' ' | '\t')
-        }))
+        })
+        && cpp_template_angles_are_balanced(type_name))
     .then_some(type_name)
 }
 
@@ -95,6 +96,23 @@ pub(super) fn matching_angle_bracket_index(contents: &str) -> Option<usize> {
         }
     }
     None
+}
+
+fn cpp_template_angles_are_balanced(type_name: &str) -> bool {
+    let mut depth = 0usize;
+    for character in type_name.chars() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 fn matching_opening_delimiter_index(
@@ -211,6 +229,16 @@ mod tests {
             Some("api::Counter".to_string()),
         );
         assert_eq!(cpp_default_initialized_type_path("api::Counter*"), None);
+    }
+
+    #[test]
+    fn rejects_constructor_types_with_unbalanced_template_arguments() {
+        assert_eq!(cpp_constructor_type_text("api::Box< { value }"), None);
+        assert_eq!(cpp_constructor_type_text("api::Box<int>> { value }"), None);
+        assert_eq!(
+            cpp_constructor_type_text("api::Box<std::vector<int>> { value }"),
+            Some("api::Box<std::vector<int>>"),
+        );
     }
 
     #[test]
