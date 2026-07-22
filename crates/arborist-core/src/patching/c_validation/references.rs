@@ -1860,6 +1860,29 @@ fn cpp_indexed_tuple_get_expected_value_raw_pointer_receiver(
     ))
 }
 
+fn cpp_indexed_tuple_get_expected_value_smart_pointer_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    let receiver = receiver.strip_suffix(".value()")?.trim();
+    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
+    let index = index.parse::<usize>().ok()?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let value_type = cpp_standard_expected_target_type(element_type)?;
+    let target = cpp_standard_smart_pointer_target_type(value_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
 fn cpp_indexed_tuple_get_expected_arrow_receiver(
     expression: &str,
     byte_offset: usize,
@@ -1969,6 +1992,29 @@ fn cpp_indexed_tuple_get_expected_error_raw_pointer_receiver(
     Some((
         cpp_temporary_type_path(pointee_type)?,
         cpp_this_receiver_for_type(pointee_type, Some(false))?,
+    ))
+}
+
+fn cpp_indexed_tuple_get_expected_error_smart_pointer_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    let receiver = receiver.strip_suffix(".error()")?.trim();
+    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
+    let index = index.parse::<usize>().ok()?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_tuple_element_type(&binding.type_name, index)?;
+    let error_type = cpp_standard_expected_error_type(element_type)?;
+    let target = cpp_standard_smart_pointer_target_type(error_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
     ))
 }
 
@@ -2479,6 +2525,16 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
+            cpp_indexed_tuple_get_expected_value_smart_pointer_get_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
             cpp_smart_pointer_get_receiver(expression, byte_offset, local_bindings)
     {
         return Some((type_name, receiver));
@@ -2665,6 +2721,16 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_indexed_tuple_get_expected_error_raw_pointer_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_indexed_tuple_get_expected_error_smart_pointer_get_receiver(
                 expression,
                 byte_offset,
                 local_bindings,
