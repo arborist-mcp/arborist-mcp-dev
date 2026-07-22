@@ -2185,10 +2185,9 @@ fn cpp_indexed_tuple_get_expected_optional_weak_pointer_lock_receiver(
         .map(str::trim)?;
     let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
         (receiver.trim(), true)
-    } else if let Some(receiver) = receiver.strip_suffix(".error()") {
-        (receiver.trim(), false)
     } else {
-        return None;
+        let receiver = receiver.strip_suffix(".error()")?;
+        (receiver.trim(), false)
     };
     let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
     let index = index.parse::<usize>().ok()?;
@@ -2222,10 +2221,9 @@ fn cpp_indexed_tuple_get_expected_optional_reference_wrapper_receiver(
         .map(str::trim)?;
     let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
         (receiver.trim(), true)
-    } else if let Some(receiver) = receiver.strip_suffix(".error()") {
-        (receiver.trim(), false)
     } else {
-        return None;
+        let receiver = receiver.strip_suffix(".error()")?;
+        (receiver.trim(), false)
     };
     let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
     let index = index.parse::<usize>().ok()?;
@@ -2259,10 +2257,9 @@ fn cpp_indexed_tuple_get_expected_optional_smart_pointer_get_receiver(
         .map(str::trim)?;
     let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
         (receiver.trim(), true)
-    } else if let Some(receiver) = receiver.strip_suffix(".error()") {
-        (receiver.trim(), false)
     } else {
-        return None;
+        let receiver = receiver.strip_suffix(".error()")?;
+        (receiver.trim(), false)
     };
     let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
     let index = index.parse::<usize>().ok()?;
