@@ -4109,7 +4109,7 @@ fn resolves_cpp_get_if_pointer_bindings_across_live_and_persisted_queries() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint auto_get_if_caller(std::variant<Counter, Value> current, int value) { auto nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_star_get_if_caller(std::variant<Counter, Value> current, int value) { auto* nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint decltype_auto_get_if_caller(std::variant<Counter, Value> current, int value) { decltype(auto) nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_const_get_if_caller(const std::variant<Counter, Value> current, int value) { auto nested = std::get_if<const Counter>(&current); return nested->adjust(value); }\n}\n",
+        "namespace api {\nclass Value {};\nclass Counter {\npublic:\n    int adjust(int value) & { return value; }\n    int adjust(int value) const & { return value + 1; }\n};\nint auto_get_if_caller(std::variant<Counter, Value> current, int value) { auto nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_star_get_if_caller(std::variant<Counter, Value> current, int value) { auto* nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint decltype_auto_get_if_caller(std::variant<Counter, Value> current, int value) { decltype(auto) nested = std::get_if<Counter>(&current); return nested->adjust(value); }\nint auto_const_get_if_caller(const std::variant<Counter, Value> current, int value) { auto nested = std::get_if<const Counter>(&current); return nested->adjust(value); }\nint auto_dynamic_pointer_cast_caller(std::shared_ptr<Value> current, int value) { auto nested = std::dynamic_pointer_cast<Counter>(current); return nested->adjust(value); }\nint decltype_auto_dynamic_pointer_cast_caller(std::shared_ptr<Value> current, int value) { decltype(auto) nested = std::dynamic_pointer_cast<Counter>(current); return nested->adjust(value); }\nint auto_static_pointer_cast_caller(std::shared_ptr<Value> current, int value) { auto nested = std::static_pointer_cast<Counter>(current); return nested->adjust(value); }\nint auto_const_pointer_cast_caller(std::shared_ptr<const Counter> current, int value) { auto nested = std::const_pointer_cast<Counter>(current); return nested->adjust(value); }\nint auto_any_cast_pointer_caller(std::any current, int value) { auto nested = std::any_cast<Counter>(&current); return nested->adjust(value); }\nint auto_any_cast_value_caller(std::any current, int value) { auto nested = std::any_cast<Counter>(current); return nested.adjust(value); }\nint decltype_auto_any_cast_value_caller(std::any current, int value) { decltype(auto) nested = std::any_cast<Counter>(current); return nested.adjust(value); }\nint auto_variant_get_caller(std::variant<Counter, Value> current, int value) { auto nested = std::get<Counter>(current); return nested.adjust(value); }\nint decltype_auto_variant_get_caller(std::variant<Counter, Value> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); }\nint auto_get_if_then_member_caller(std::variant<std::unique_ptr<Counter>, Value> current, int value) { auto nested = std::get_if<std::unique_ptr<Counter>>(&current); return (*nested)->adjust(value); }\nint decltype_auto_get_if_unique_caller(std::variant<std::unique_ptr<Counter>, Value> current, int value) { decltype(auto) nested = std::get_if<std::unique_ptr<Counter>>(&current); return (*nested)->adjust(value); }\nint auto_get_if_value_caller(std::variant<Counter, Value> current, int value) { auto nested = std::get_if<Counter>(&current); return nested->adjust(value); }\n}\n",
     )
     .unwrap();
 
@@ -4126,6 +4126,54 @@ fn resolves_cpp_get_if_pointer_bindings_across_live_and_persisted_queries() {
         (
             "api::auto_const_get_if_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::auto_dynamic_pointer_cast_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::decltype_auto_dynamic_pointer_cast_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_static_pointer_cast_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_const_pointer_cast_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_any_cast_pointer_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_any_cast_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::decltype_auto_any_cast_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_variant_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::decltype_auto_variant_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_get_if_then_member_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::decltype_auto_get_if_unique_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::auto_get_if_value_caller",
+            "api::Counter::adjust(int) &",
         ),
     ];
     for (caller, expected_callee) in expected_callees {

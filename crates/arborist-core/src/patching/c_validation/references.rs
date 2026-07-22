@@ -692,8 +692,10 @@ fn cpp_decltype_auto_binding_type(
     {
         return Some(binding_type);
     }
-    // std::get_if<T>(...) yields T* for decltype(auto) bindings as well.
-    if let Some(type_name) = cpp_get_if_pointer_type(expression) {
+    // std::get_if<T>(...) and std::any_cast<T>(...) yield T* for decltype(auto).
+    if let Some(type_name) =
+        cpp_get_if_pointer_type(expression).or_else(|| cpp_any_cast_pointer_type(expression))
+    {
         return Some((
             cpp_temporary_type_path(type_name)?,
             None,
@@ -702,6 +704,23 @@ fn cpp_decltype_auto_binding_type(
             CppMemberAccess::Pointer,
             None,
         ));
+    }
+    // std::*_pointer_cast<T>(...) yields shared_ptr<T> for decltype(auto).
+    if let Some(type_name) = cpp_pointer_cast_shared_pointer_type(expression) {
+        return Some((
+            cpp_temporary_type_path(type_name)?,
+            None,
+            None,
+            cpp_this_receiver_for_type(type_name, Some(false))?,
+            CppMemberAccess::Pointer,
+            Some(CppStandardUnwrap::SmartPointer),
+        ));
+    }
+    // std::get<T>(...) / value any_cast yield typed object bindings for decltype(auto).
+    if let Some(type_name) =
+        cpp_variant_get_type(expression).or_else(|| cpp_any_cast_value_type(expression))
+    {
+        return cpp_copied_standard_binding_type(type_name, "auto");
     }
     if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
@@ -766,9 +785,14 @@ fn cpp_auto_constructor_binding_type(
         let allocation = remainder.trim_start();
         (allocation.len() < remainder.len()).then_some(allocation)
     });
-    let smart_pointer_factory_type = cpp_smart_pointer_factory_type(initializer_text);
-    let get_if_pointer_type = cpp_get_if_pointer_type(initializer_text);
-    let direct_initializer_type = cpp_constructor_type_text(initializer_text)
+    let smart_pointer_factory_type = cpp_smart_pointer_factory_type(initializer_text)
+        .or_else(|| cpp_pointer_cast_shared_pointer_type(initializer_text));
+    let get_if_pointer_type = cpp_get_if_pointer_type(initializer_text)
+        .or_else(|| cpp_any_cast_pointer_type(initializer_text));
+    let variant_get_type = cpp_variant_get_type(initializer_text);
+    let direct_initializer_type = variant_get_type
+        .or_else(|| cpp_any_cast_value_type(initializer_text))
+        .or_else(|| cpp_constructor_type_text(initializer_text))
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
     let direct_standard_unwrap = direct_initializer_type.and_then(cpp_standard_wrapper_target_type);
     let expected_error_type = direct_initializer_type
@@ -1511,6 +1535,59 @@ fn cpp_get_if_pointer_type(expression: &str) -> Option<&str> {
     cpp_typed_receiver_call(expression, "std::get_if").map(|(type_name, _)| type_name)
 }
 
+fn cpp_pointer_cast_shared_pointer_type(expression: &str) -> Option<&str> {
+    // std::*_pointer_cast<T>(shared_ptr<...>) yields shared_ptr<T>. Keep the
+    // smart-pointer unwrap so later nested->member() still resolves.
+    [
+        "std::static_pointer_cast",
+        "std::dynamic_pointer_cast",
+        "std::const_pointer_cast",
+        "std::reinterpret_pointer_cast",
+    ]
+    .into_iter()
+    .find_map(|factory| {
+        cpp_typed_receiver_call(expression, factory).map(|(type_name, _)| type_name)
+    })
+}
+
+fn cpp_any_cast_pointer_type(expression: &str) -> Option<&str> {
+    // std::any_cast<T>(&any) yields T*. Value any_cast forms are handled separately.
+    let (type_name, argument) = cpp_typed_receiver_call(expression, "std::any_cast")?;
+    let argument = strip_cpp_outer_parentheses(argument.trim());
+    if argument.starts_with('&') || cpp_receiver_call_argument(argument, "std::addressof").is_some()
+    {
+        Some(type_name)
+    } else {
+        None
+    }
+}
+
+fn cpp_any_cast_value_type(expression: &str) -> Option<&str> {
+    // std::any_cast<T>(any) yields T by value.
+    let (type_name, argument) = cpp_typed_receiver_call(expression, "std::any_cast")?;
+    let argument = strip_cpp_outer_parentheses(argument.trim());
+    if argument.starts_with('&') || cpp_receiver_call_argument(argument, "std::addressof").is_some()
+    {
+        None
+    } else {
+        Some(type_name)
+    }
+}
+
+fn cpp_variant_get_type(expression: &str) -> Option<&str> {
+    // std::get<T>(variant) yields T by value/reference for binding copies.
+    // Prefer type-based get; index-based get is intentionally unsupported.
+    let (type_name, _) = cpp_typed_receiver_call(expression, "std::get")?;
+    // Reject obvious non-type template arguments such as std::get<0>(...).
+    if type_name
+        .chars()
+        .all(|character| character.is_ascii_digit())
+    {
+        return None;
+    }
+    Some(type_name)
+}
+
 fn cpp_binding_type(
     type_node: Node<'_>,
     type_prefix: &str,
@@ -1862,6 +1939,27 @@ fn cpp_local_member_receiver_from_expression(
         )
     {
         return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some(receiver) = expression.strip_prefix('*').map(str::trim)
+    {
+        // (*pointer)->member peels one pointer layer first. If the pointee is a
+        // smart pointer (for example unique_ptr* from std::get_if), continue
+        // through the smart-pointer arrow.
+        let receiver = strip_cpp_outer_parentheses(receiver);
+        if let Some(binding_name) = cpp_local_binding_name_from_expression(receiver)
+            && let Some(binding) =
+                cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+            && binding.access == CppMemberAccess::Pointer
+        {
+            if let Some(target) = cpp_standard_smart_pointer_target_type(&binding.type_name) {
+                return Some((
+                    cpp_temporary_type_path(target)?,
+                    cpp_this_receiver_for_type(target, Some(false))?,
+                ));
+            }
+            return Some((binding.type_name.clone(), binding.receiver));
+        }
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) = cpp_optional_smart_pointer_arrow_member_receiver(
