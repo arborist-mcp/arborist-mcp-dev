@@ -682,6 +682,16 @@ fn cpp_decltype_auto_binding_type(
             Some(CppStandardUnwrap::SmartPointer),
         ));
     }
+    // .get() / *smart_pointer peels for decltype(auto) need the same smart-pointer
+    // binding metadata that by-value auto already keeps.
+    if let Some(binding_type) = cpp_auto_expected_error_smart_pointer_binding(
+        expression,
+        "auto",
+        declaration_start,
+        local_bindings,
+    ) {
+        return Some(binding_type);
+    }
     // Nested optional/expected peels such as (*current.error())->value() should still
     // bind through decltype(auto) as aliases to the peeled object.
     if let Some((type_name, receiver)) =
@@ -2280,6 +2290,28 @@ fn cpp_smart_pointer_wrapper_type(
     // misread as a bare expected-error receiver ending in ".error()".
     if let Some((type_name, _)) =
         cpp_optional_wrapper_type_from_expression(expression, byte_offset, local_bindings)
+    {
+        return Some(type_name);
+    }
+    // Nested peels such as current->value() / current->error().value() can leave a
+    // smart-pointer wrapper that later .get() still needs to bind. Only accept
+    // results that are still smart-pointer wrappers; deeper peels can already be
+    // the pointee type.
+    if let Some((type_name, _)) =
+        cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
+        && cpp_standard_smart_pointer_target_type(&type_name).is_some()
+    {
+        return Some(type_name);
+    }
+    if let Some((type_name, _)) =
+        cpp_expected_error_optional_value_member_receiver(expression, byte_offset, local_bindings)
+        && cpp_standard_smart_pointer_target_type(&type_name).is_some()
+    {
+        return Some(type_name);
+    }
+    if let Some((type_name, _)) =
+        cpp_expected_error_nested_arrow_member_receiver(expression, byte_offset, local_bindings)
+        && cpp_standard_smart_pointer_target_type(&type_name).is_some()
     {
         return Some(type_name);
     }
