@@ -1076,27 +1076,45 @@ fn cpp_auto_standard_value_copy_binding(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<CppBindingType> {
-    // Reuse the full optional/expected value peel path so auto copies of
-    // nested forms such as (*current)->value() keep intermediate wrappers.
-    let (type_name, _) =
-        cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
-            .or_else(|| {
-                cpp_expected_error_optional_value_member_receiver(
-                    expression,
-                    byte_offset,
-                    local_bindings,
-                )
-            })
-            .or_else(|| {
-                cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
-            })
-            .or_else(|| {
-                cpp_expected_error_optional_dereference_receiver(
-                    expression,
-                    byte_offset,
-                    local_bindings,
-                )
-            })?;
+    // Binding copies must preserve intermediate wrappers. Local optional/expected
+    // bindings already store one unwrapped layer, so plain `.value()` should not
+    // peel again. `->value()` still needs both the operator-> peel and the value
+    // peel, for example (*optional<optional<expected<T>>> )->value().
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    let (type_name, _) = if let Some(receiver) = cpp_strip_optional_value_access(expression) {
+        let used_arrow = expression.ends_with("->value()");
+        let (type_name, receiver) =
+            cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings).or_else(
+                || {
+                    cpp_expected_error_optional_value_member_receiver(
+                        expression,
+                        byte_offset,
+                        local_bindings,
+                    )
+                },
+            )?;
+        if used_arrow {
+            let (type_name, receiver) =
+                match cpp_standard_value_member_receiver(&type_name, receiver, true) {
+                    Some(peeled) => peeled,
+                    None => (type_name, receiver),
+                };
+            cpp_standard_value_member_receiver(&type_name, receiver, true)
+                .or(Some((type_name, receiver)))?
+        } else {
+            (type_name, receiver)
+        }
+    } else if let Some((type_name, receiver)) =
+        cpp_standard_optional_dereference_receiver(expression, byte_offset, local_bindings)
+    {
+        (type_name, receiver)
+    } else if let Some((type_name, receiver)) =
+        cpp_expected_error_optional_dereference_receiver(expression, byte_offset, local_bindings)
+    {
+        (type_name, receiver)
+    } else {
+        return None;
+    };
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
@@ -1174,9 +1192,12 @@ fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Optio
         ));
     }
     if let Some(target) = cpp_standard_optional_target_type(type_name) {
-        // Recurse so optional<unique_ptr<T>> / optional<expected<...>> auto copies
-        // retain the inner unwrap rather than stopping at Optional.
-        if let Some(inner) = cpp_copied_standard_binding_type(target, type_prefix) {
+        // Recurse only into nested wrappers such as optional<unique_ptr<T>>.
+        // Plain optional<T> must keep Optional unwrap metadata so later
+        // error->member() / nested->member() still resolve.
+        if let Some(inner) = cpp_copied_standard_binding_type(target, type_prefix)
+            && inner.5.is_some()
+        {
             return Some(inner);
         }
         return Some((
