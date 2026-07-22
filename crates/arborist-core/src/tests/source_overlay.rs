@@ -959,6 +959,56 @@ fn traces_cpp_get_if_pointer_bindings_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn traces_cpp_indexable_sequence_element_member_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("indexable_sequence_elements.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int vector_index_caller(std::vector<Counter> current, int value) { return current[0].adjust(value); } int vector_nested_index_caller(std::vector<Counter> current, std::array<int, 1> indexes, int value) { return current[indexes[0]].adjust(value); } int span_index_caller(std::span<const Counter> current, int value) { return current[0].adjust(value); } int array_index_caller(std::array<Counter, 2> current, int value) { return current[1].adjust(value); } int const_deque_index_caller(const std::deque<Counter> current, int value) { return current[0].adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::vector_index_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::vector_nested_index_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::span_index_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::array_index_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_deque_index_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_nested_optional_expected_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("nested_optional_expected.cpp");
