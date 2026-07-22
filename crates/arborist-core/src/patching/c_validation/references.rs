@@ -661,6 +661,27 @@ fn cpp_decltype_auto_binding_type(
     ) {
         return cpp_reference_alias_binding_type(&type_name, receiver);
     }
+    // weak_ptr::lock() yields a temporary shared_ptr. Keep smart-pointer unwrap
+    // metadata so later nested->member() still resolves through decltype(auto).
+    if let Some((type_name, receiver)) =
+        cpp_expected_weak_pointer_lock_receiver(expression, declaration_start, local_bindings)
+            .or_else(|| {
+                cpp_standard_weak_pointer_lock_receiver(
+                    expression,
+                    declaration_start,
+                    local_bindings,
+                )
+            })
+    {
+        return Some((
+            type_name,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Pointer,
+            Some(CppStandardUnwrap::SmartPointer),
+        ));
+    }
     // Nested optional/expected peels such as (*current.error())->value() should still
     // bind through decltype(auto) as aliases to the peeled object.
     if let Some((type_name, receiver)) =
@@ -1054,6 +1075,13 @@ fn cpp_auto_expected_error_copy_binding(
         let error_receiver = cpp_strip_expected_error_access(receiver)?;
         let (type_name, error_receiver) =
             cpp_expected_local_binding_error_receiver(error_receiver, byte_offset, local_bindings)?;
+        // *current.error() on a smart-pointer error peels the pointee. Do not keep
+        // SmartPointer unwrap metadata; by-value auto should bind a plain object.
+        if let Some(target) = cpp_standard_smart_pointer_target_type(&type_name) {
+            return cpp_copied_standard_binding_type(target, type_prefix);
+        }
+        // Otherwise peel one optional/expected layer for forms such as
+        // decltype(auto) nested = (*current.error()).
         cpp_standard_value_member_receiver(&type_name, error_receiver, true)
             .or(Some((type_name, error_receiver)))?
     } else if let Some((type_name, receiver)) =
