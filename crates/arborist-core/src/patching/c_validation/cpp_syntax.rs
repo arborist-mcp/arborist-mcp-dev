@@ -154,3 +154,70 @@ fn parentheses_are_balanced(expression: &str) -> bool {
     }
     depth == 0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        compact_cpp_expression, cpp_constructor_type_text, cpp_default_initialized_type_path,
+        cpp_receiver_call_argument, cpp_typed_receiver_call, strip_cpp_outer_parentheses,
+    };
+
+    #[test]
+    fn strips_only_outer_parentheses() {
+        assert_eq!(strip_cpp_outer_parentheses("(((current))"), "(((current))");
+        assert_eq!(strip_cpp_outer_parentheses("(((current)))"), "current");
+        assert_eq!(
+            strip_cpp_outer_parentheses("(current) + value"),
+            "(current) + value"
+        );
+    }
+
+    #[test]
+    fn extracts_receiver_call_arguments_with_nested_parentheses() {
+        assert_eq!(
+            cpp_receiver_call_argument("std::move(factory(value, (other)))", "std::move"),
+            Some("factory(value, (other))"),
+        );
+        assert_eq!(
+            cpp_receiver_call_argument("std::move(value))", "std::move"),
+            None
+        );
+    }
+
+    #[test]
+    fn extracts_typed_receiver_calls_with_nested_template_arguments() {
+        assert_eq!(
+            cpp_typed_receiver_call(
+                "std::forward<std::pair<api::Value, std::vector<int>>>(current)",
+                "std::forward",
+            ),
+            Some(("std::pair<api::Value, std::vector<int>>", "current")),
+        );
+        assert_eq!(
+            cpp_typed_receiver_call("std::forward<std::vector<int>>(current))", "std::forward"),
+            None,
+        );
+    }
+
+    #[test]
+    fn recovers_constructor_and_default_initialized_type_paths() {
+        assert_eq!(
+            cpp_constructor_type_text(" api::Counter { value } "),
+            Some("api::Counter"),
+        );
+        assert_eq!(cpp_constructor_type_text("value + 1"), None);
+        assert_eq!(
+            cpp_default_initialized_type_path("const api::Counter"),
+            Some("api::Counter".to_string()),
+        );
+        assert_eq!(cpp_default_initialized_type_path("api::Counter*"), None);
+    }
+
+    #[test]
+    fn compacts_cpp_expressions() {
+        assert_eq!(
+            compact_cpp_expression(" std::vector< int > "),
+            "std::vector<int>"
+        );
+    }
+}
