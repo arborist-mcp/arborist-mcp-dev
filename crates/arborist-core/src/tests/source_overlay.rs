@@ -1009,6 +1009,52 @@ fn traces_cpp_indexable_sequence_element_member_calls_from_unsaved_source_overla
 }
 
 #[test]
+fn traces_cpp_contiguous_sequence_data_member_calls_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("contiguous_sequence_data.cpp");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int inline_data_caller(std::vector<Counter> current, int value) { return current.data()->adjust(value); } int auto_data_caller(std::array<Counter, 2> current, int value) { auto pointer = current.data(); return pointer->adjust(value); } int decltype_auto_data_caller(std::vector<Counter> current, int value) { decltype(auto) pointer = current.data(); return pointer->adjust(value); } int const_span_data_caller(std::span<const Counter> current, int value) { auto pointer = current.data(); return pointer->adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::inline_data_caller", "api::Counter::adjust(int) &"),
+        ("api::auto_data_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::decltype_auto_data_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_span_data_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn traces_cpp_nested_optional_expected_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("nested_optional_expected.cpp");

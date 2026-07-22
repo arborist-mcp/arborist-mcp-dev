@@ -61,6 +61,15 @@ pub(super) fn cpp_standard_indexable_sequence_element_type(type_name: &str) -> O
         })
 }
 
+pub(super) fn cpp_standard_contiguous_sequence_element_type(type_name: &str) -> Option<&str> {
+    ["std::array", "std::span", "std::vector"]
+        .into_iter()
+        .find_map(|sequence_type| {
+            cpp_standard_template_arguments(type_name, sequence_type)
+                .and_then(cpp_first_template_argument)
+        })
+}
+
 pub(super) fn cpp_standard_tuple_element_type(type_name: &str, index: usize) -> Option<&str> {
     ["std::tuple", "std::pair"]
         .into_iter()
@@ -240,10 +249,11 @@ fn cpp_has_exactly_two_top_level_template_arguments(arguments: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        cpp_standard_expected_error_type, cpp_standard_expected_target_type,
-        cpp_standard_indexable_sequence_element_type, cpp_standard_optional_target_type,
-        cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-        cpp_standard_smart_pointer_target_type, cpp_standard_tuple_element_type,
+        cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
+        cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
+        cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
+        cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
+        cpp_standard_tuple_element_type,
     };
 
     #[test]
@@ -339,6 +349,11 @@ mod tests {
             Some("const Counter")
         );
         assert!(cpp_standard_indexable_sequence_element_type("std::list<Counter>").is_none());
+        assert_eq!(
+            cpp_standard_contiguous_sequence_element_type("std::array<Counter, 2>"),
+            Some("Counter")
+        );
+        assert!(cpp_standard_contiguous_sequence_element_type("std::deque<Counter>").is_none());
     }
 
     #[test]

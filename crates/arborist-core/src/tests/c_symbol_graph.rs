@@ -4308,6 +4308,57 @@ fn resolves_cpp_indexable_sequence_element_member_calls_across_live_and_persiste
 }
 
 #[test]
+fn resolves_cpp_contiguous_sequence_data_member_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("contiguous_sequence_data.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int inline_data_caller(std::vector<Counter> current, int value) { return current.data()->adjust(value); } int auto_data_caller(std::array<Counter, 2> current, int value) { auto pointer = current.data(); return pointer->adjust(value); } int decltype_auto_data_caller(std::vector<Counter> current, int value) { decltype(auto) pointer = current.data(); return pointer->adjust(value); } int const_span_data_caller(std::span<const Counter> current, int value) { auto pointer = current.data(); return pointer->adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::inline_data_caller", "api::Counter::adjust(int) &"),
+        ("api::auto_data_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::decltype_auto_data_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::const_span_data_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("auto_constructor_member_calls.cpp");

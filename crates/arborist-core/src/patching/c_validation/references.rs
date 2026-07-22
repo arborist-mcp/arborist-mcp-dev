@@ -8,11 +8,11 @@ use super::cpp_types::{
     cpp_this_receiver_for_type,
 };
 use super::cpp_wrappers::{
-    cpp_standard_expected_error_type, cpp_standard_expected_target_type,
-    cpp_standard_indexable_sequence_element_type, cpp_standard_optional_target_type,
-    cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-    cpp_standard_smart_pointer_target_type, cpp_standard_tuple_element_type,
-    cpp_standard_weak_pointer_target_type,
+    cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
+    cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
+    cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
+    cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
+    cpp_standard_tuple_element_type, cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
 use crate::symbol_index_model::{
@@ -743,6 +743,18 @@ fn cpp_decltype_auto_binding_type(
     {
         return cpp_reference_alias_binding_type(&type_name, receiver);
     }
+    if let Some((type_name, receiver)) =
+        cpp_standard_sequence_data_receiver(expression, declaration_start, local_bindings)
+    {
+        return Some((
+            type_name,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Pointer,
+            None,
+        ));
+    }
     if let Some((type_name, receiver)) = cpp_auto_reference_alias_binding(
         initializer_text,
         "auto",
@@ -877,6 +889,18 @@ fn cpp_auto_constructor_binding_type(
     {
         // auto copies std::get<N>(tuple-like) results and drops top-level const.
         return cpp_copied_standard_binding_type(&type_name, type_prefix);
+    }
+    if let Some((type_name, receiver)) =
+        cpp_standard_sequence_data_receiver(initializer_text, declaration_start, local_bindings)
+    {
+        return Some((
+            type_name,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Pointer,
+            None,
+        ));
     }
     let inferred_pointer_type = allocation_initializer
         .and_then(|allocation| {
@@ -1979,6 +2003,12 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((type_name, receiver));
     }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_standard_sequence_data_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
     if member_operator == "."
         && let Some((type_name, receiver)) =
             cpp_standard_optional_value_member_receiver(expression, byte_offset, local_bindings)
@@ -2230,6 +2260,26 @@ fn cpp_standard_indexable_sequence_element_receiver(
         return None;
     }
     let element_type = cpp_standard_indexable_sequence_element_type(&binding.type_name)?;
+    let receiver = match binding.receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(element_type)?, receiver))
+}
+
+fn cpp_standard_sequence_data_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".data()")?.trim();
+    let binding = cpp_visible_local_binding(receiver, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_contiguous_sequence_element_type(&binding.type_name)?;
     let receiver = match binding.receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
             CppThisMemberReceiver::ConstLvalue
