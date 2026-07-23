@@ -61,7 +61,41 @@ fn cpp_type_has_top_level_pointer(type_name: &str) -> bool {
 }
 
 pub(super) fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
-    cpp_temporary_type_path(type_name.split_once('*')?.0)
+    cpp_temporary_type_path(cpp_top_level_pointer_pointee(type_name)?)
+}
+
+/// Peel one top-level pointer declarator, allowing trailing cv on the pointer
+/// itself (`T* const`, `const T*`, `T const*`). Multi-level top-level pointers
+/// and non-cv trailing tokens fail closed.
+pub(super) fn cpp_top_level_pointer_pointee(type_name: &str) -> Option<&str> {
+    let mut template_depth = 0usize;
+    let mut pointer_index = None;
+    for (index, character) in type_name.char_indices() {
+        match character {
+            '<' => template_depth += 1,
+            '>' => template_depth = template_depth.saturating_sub(1),
+            '*' if template_depth == 0 => {
+                if pointer_index.is_some() {
+                    return None;
+                }
+                pointer_index = Some(index);
+            }
+            _ => {}
+        }
+    }
+    let pointer_index = pointer_index?;
+    let pointee = type_name[..pointer_index].trim();
+    if pointee.is_empty() {
+        return None;
+    }
+    let suffix = type_name[pointer_index + '*'.len_utf8()..].trim();
+    if suffix
+        .split_whitespace()
+        .any(|token| token != "const" && token != "volatile")
+    {
+        return None;
+    }
+    Some(pointee)
 }
 
 pub(super) fn cpp_this_receiver_for_type(
@@ -117,7 +151,7 @@ pub(super) fn cpp_type_is_top_level_const(type_name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::cpp_temporary_type_path;
+    use super::{cpp_pointer_target_path, cpp_temporary_type_path, cpp_top_level_pointer_pointee};
 
     #[test]
     fn preserves_pointers_inside_template_arguments() {
@@ -130,5 +164,35 @@ mod tests {
             Some("std::expected<Value, const Counter>".to_string())
         );
         assert!(cpp_temporary_type_path("Counter*").is_none());
+    }
+
+    #[test]
+    fn peels_top_level_pointer_pointees_including_trailing_cv() {
+        assert_eq!(
+            cpp_top_level_pointer_pointee("const Counter*"),
+            Some("const Counter")
+        );
+        assert_eq!(
+            cpp_top_level_pointer_pointee("Counter const*"),
+            Some("Counter const")
+        );
+        assert_eq!(
+            cpp_top_level_pointer_pointee("Counter* const"),
+            Some("Counter")
+        );
+        assert_eq!(
+            cpp_top_level_pointer_pointee("Counter const * volatile"),
+            Some("Counter const")
+        );
+        assert!(cpp_top_level_pointer_pointee("Counter**").is_none());
+        assert!(cpp_top_level_pointer_pointee("Counter* const &").is_none());
+        assert_eq!(
+            cpp_pointer_target_path("Counter* const"),
+            Some("Counter".to_string())
+        );
+        assert_eq!(
+            cpp_pointer_target_path("const Counter*"),
+            Some("Counter".to_string())
+        );
     }
 }

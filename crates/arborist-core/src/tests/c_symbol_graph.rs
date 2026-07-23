@@ -4578,7 +4578,7 @@ fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queri
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int postfix_const_caller(std::variant<Value, Counter const> current, int value) { return std::get<const Counter>(current).adjust(value); } int postfix_volatile_caller(std::variant<Value, volatile Counter> current, int value) { return std::get<Counter volatile>(current).adjust(value); } int get_if_postfix_const_caller(std::variant<Value, Counter const> current, int value) { return std::get_if<const Counter>(&current)->adjust(value); } int get_if_postfix_volatile_caller(std::variant<Value, volatile Counter> current, int value) { return std::get_if<Counter volatile>(&current)->adjust(value); } int pointer_const_caller(std::variant<Value, const Counter*> current, int value) { return std::get<Counter const*>(current)->adjust(value); } }\n",
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int postfix_const_caller(std::variant<Value, Counter const> current, int value) { return std::get<const Counter>(current).adjust(value); } int postfix_volatile_caller(std::variant<Value, volatile Counter> current, int value) { return std::get<Counter volatile>(current).adjust(value); } int get_if_postfix_const_caller(std::variant<Value, Counter const> current, int value) { return std::get_if<const Counter>(&current)->adjust(value); } int get_if_postfix_volatile_caller(std::variant<Value, volatile Counter> current, int value) { return std::get_if<Counter volatile>(&current)->adjust(value); } int pointer_const_caller(std::variant<Value, const Counter*> current, int value) { return std::get<Counter const*>(current)->adjust(value); } int const_pointer_caller(std::variant<Value, Counter* const> current, int value) { return std::get<Counter* const>(current)->adjust(value); } }\n",
     )
     .unwrap();
 
@@ -4602,6 +4602,10 @@ fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queri
         (
             "api::pointer_const_caller",
             "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::const_pointer_caller",
+            "api::Counter::adjust(int) &",
         ),
     ];
     for (caller, expected_callee) in expected_callees {

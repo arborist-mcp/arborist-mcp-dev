@@ -10,7 +10,7 @@ use super::cpp_syntax::{
 };
 use super::cpp_types::{
     CppThisMemberReceiver, cpp_pointer_target_path, cpp_temporary_type_path,
-    cpp_this_receiver_for_type,
+    cpp_this_receiver_for_type, cpp_top_level_pointer_pointee,
 };
 use super::cpp_wrappers::{
     cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
@@ -2387,7 +2387,7 @@ fn cpp_typed_standard_get_raw_pointer_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let (pointer_type, _) =
         cpp_typed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
-    let target = pointer_type.strip_suffix('*')?.trim();
+    let target = cpp_top_level_pointer_pointee(&pointer_type)?;
     Some((
         cpp_temporary_type_path(target)?,
         cpp_this_receiver_for_type(target, Some(false))?,
@@ -2471,7 +2471,7 @@ fn cpp_indexed_tuple_get_raw_pointer_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let (element_type, _) =
         cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
-    let pointee_type = element_type.split_once('*')?.0.trim();
+    let pointee_type = cpp_top_level_pointer_pointee(&element_type)?;
     Some((
         cpp_temporary_type_path(pointee_type)?,
         cpp_this_receiver_for_type(pointee_type, Some(false))?,
