@@ -7,9 +7,19 @@ from tests.gateway_protocol import GROUPS as GATEWAY_GROUPS
 from tests.gateway_protocol import SUITES as GATEWAY_SUITES
 
 
+def _reject_nonstandard_json_constant(name: str) -> object:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
 def _load_manifest() -> dict[str, object]:
     manifest_path = Path(__file__).with_name("suites.json")
-    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"invalid python suite manifest JSON: {exc}") from exc
     if not isinstance(raw, dict) or "suites" not in raw or "groups" not in raw:
         raise RuntimeError("python test suite manifest must define object keys 'suites' and 'groups'")
     return raw

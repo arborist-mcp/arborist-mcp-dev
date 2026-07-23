@@ -13,9 +13,19 @@ from tests import GROUPS as TEST_GROUPS
 from tests import SUITES as TEST_SUITES
 
 
+def _reject_nonstandard_json_constant(name: str) -> object:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
 def _load_manifest() -> dict[str, object]:
     manifest_path = Path(__file__).with_name("check_profiles.json")
-    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"invalid check profile manifest JSON: {exc}") from exc
     if not isinstance(raw, dict) or "profiles" not in raw or "ci_profiles" not in raw:
         raise RuntimeError(
             "check profile manifest must define object keys 'profiles' and 'ci_profiles'"
