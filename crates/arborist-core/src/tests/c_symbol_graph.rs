@@ -4572,6 +4572,57 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
 }
 
 #[test]
+fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("typed_get_expected_wrappers.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int weak_value_caller(std::variant<Value, std::expected<std::weak_ptr<Counter>, Value>> current, int value) { return std::get<std::expected<std::weak_ptr<Counter>, Value>>(std::move(current)).value().lock()->adjust(value); } int weak_error_caller(std::variant<Value, std::expected<Value, std::weak_ptr<const Counter>>> current, int value) { return std::get<std::expected<Value, std::weak_ptr<const Counter>>>(std::as_const(current)).error().lock()->adjust(value); } int reference_value_caller(std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>> current, int value) { return std::get<std::expected<std::reference_wrapper<Counter>, Value>>(std::forward<std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>>&&>(current)).value().get().adjust(value); } int reference_error_caller(std::variant<Value, std::expected<Value, std::reference_wrapper<const Counter>>> current, int value) { return std::get<std::expected<Value, std::reference_wrapper<const Counter>>>(std::as_const(current)).error().get().adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::weak_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::weak_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::reference_value_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::reference_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn preserves_cpp_decltype_auto_typed_get_receiver_categories_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("decltype_auto_typed_get_receiver_categories.cpp");
