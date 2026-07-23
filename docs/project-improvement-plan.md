@@ -77,6 +77,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Continue splitting large Rust surfaces along existing module boundaries:
   `patching.rs`, `symbols.rs`, `model.rs`, and test modules should remain
   focused facades over submodules.
+- [x] Split `tests/c_symbol_graph` into thematic submodules (`core`,
+  `constructors`, `templates`, `methods`, `namespaces`, `overloads`,
+  `wrappers`, `std_get`) under `tests/c_symbol_graph/`.
 - [x] Split `semantic/c` into `identity` (callable overload identity) and
   `skeleton` (skeleton build, symbol-id anchoring, semantic node lookup)
   submodules under `semantic/c/`.
