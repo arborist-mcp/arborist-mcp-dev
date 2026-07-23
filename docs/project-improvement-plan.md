@@ -9,11 +9,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - Public protocol metadata is healthy: `python scripts/tool_catalog.py --check`
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
-- The gateway remains the largest production file at about 1370 lines after
-  the protocol-helper splits, batch dispatch extraction, and validation,
-  index-route, and VFS-route mixins. The PyO3 root facade is now 92 lines,
-  with public bindings colocated by VFS, index, patch, validation, source-query,
-  and symbol-query domains.
+- The gateway facade is now about 300 lines after symbol-query, patch,
+  and trace route mixins join the earlier index/VFS/parameter helpers. The
+  PyO3 root facade remains a thin registration surface over domain bindings.
 - The remaining strategic gaps are deeper Rust module splits, fuller C++
   language-aware resolution, property testing beyond the existing fuzz targets,
   and cancellation that can interrupt individual native parse or query
@@ -35,6 +33,9 @@ completed item can land in its own commit unless two changes are inseparable.
   with any protocol-facing change.
 
 ### P1: Small Reliability And Maintainability Fixes
+
+- [x] Extract gateway symbol query, patch/validation, and trace route
+  handlers into focused mixins without changing public response shapes.
 
 - [x] Make the gateway-suite manifest helper expose the same basic CLI
   ergonomics as the Python-suite manifest helper, including descriptions or
