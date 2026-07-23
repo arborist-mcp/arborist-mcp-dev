@@ -39,6 +39,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway symbol routes further into read/search/list mixins
   (`gateway_symbol_read_routes.py`, `gateway_symbol_search_routes.py`,
   `gateway_symbol_list_routes.py`) with a thin composition facade.
+- [x] Split gateway patch routes into apply/preview and validation mixins
+  (`gateway_patch_apply_routes.py`, `gateway_patch_validation_routes.py`).
 
 - [x] Make the gateway-suite manifest helper expose the same basic CLI
   ergonomics as the Python-suite manifest helper, including descriptions or
@@ -80,6 +82,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `tests/c_symbol_graph` into thematic submodules (`core`,
   `constructors`, `templates`, `methods`, `namespaces`, `overloads`,
   `wrappers`, `std_get`) under `tests/c_symbol_graph/`.
+- [x] Split `tests/source_overlay` into thematic submodules under
+  `tests/source_overlay/`.
 - [x] Split `semantic/c` into `identity` (callable overload identity) and
   `skeleton` (skeleton build, symbol-id anchoring, semantic node lookup)
   submodules under `semantic/c/`.
