@@ -77,6 +77,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split C++ reference validation's typed/indexed `std::get` receiver helpers
   into `patching/c_validation/references/std_get.rs` while keeping the public
   collection APIs stable.
+- [x] Extract C++ local-binding shared types into
+  `patching/c_validation/references/types.rs` (`CppLocalBinding` and related
+  enums/aliases) as the next module boundary for the bindings split.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
 - [x] Detect source files added after an index build during health inspection
