@@ -4,6 +4,7 @@ import io
 from unittest import mock
 
 from arborist_mcp import gateway as gateway_module
+from arborist_mcp.mcp_tools import tools_call
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase, make_recording_json_core
 
@@ -18,6 +19,19 @@ COVERED_TOOLS = (
 
 
 class GatewayRuntimeTests(GatewayProtocolTestCase):
+    def test_tools_call_returns_mcp_error_for_non_serializable_tool_result(self) -> None:
+        result = tools_call(
+            {
+                "name": "arborist/get_semantic_skeleton",
+                "arguments": {"file_path": "sample.py"},
+            },
+            lambda _tool_name, _arguments: {"invalid": float("nan")},
+        )
+
+        self.assertTrue(result["isError"])
+        self.assertNotIn("structuredContent", result)
+        self.assertIn("Out of range float values", result["content"][0]["text"])
+
     def test_live_initialize_reports_cpp_support(self) -> None:
         result = self.assert_jsonrpc_ok(
             self.call_gateway(self.make_live_gateway(), "initialize", {}, request_id=0),

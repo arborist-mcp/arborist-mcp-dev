@@ -40,14 +40,13 @@ def tools_call(params: dict[str, Any], execute_tool: ToolExecutor) -> dict[str, 
         spec = tool_spec(tool_name)
         reject_unexpected_params(arguments, spec.params)
         tool_result = execute_tool(tool_name, arguments)
+        return mcp_tool_result(tool_result)
     except JsonRpcError as exc:
         return mcp_tool_error(str(exc))
     except ValueError as exc:
         return mcp_tool_error(str(exc))
     except Exception as exc:  # noqa: BLE001
         return mcp_tool_error(str(exc))
-
-    return mcp_tool_result(tool_result)
 
 
 def mcp_tool_result(tool_result: Any) -> dict[str, Any]:
