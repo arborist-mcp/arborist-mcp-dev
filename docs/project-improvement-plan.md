@@ -85,6 +85,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `patching/c_validation/references/call_arities.rs`.
 - [x] Extract C++ type-qualifier and declarator-suffix helpers into
   `patching/c_validation/references/type_qualifiers.rs`.
+- [x] Extract C/C++ local-definition and reference-name collection into
+  `patching/c_validation/references/name_collection.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
 - [x] Detect source files added after an index build during health inspection
