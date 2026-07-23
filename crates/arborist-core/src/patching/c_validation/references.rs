@@ -754,7 +754,10 @@ fn cpp_decltype_auto_binding_type(
     if let Some((type_name, receiver)) =
         cpp_indexed_tuple_get_receiver(expression, declaration_start, local_bindings)
     {
-        return cpp_reference_alias_binding_type(&type_name, receiver);
+        return cpp_reference_alias_binding_type(
+            &type_name,
+            cpp_named_reference_alias_receiver(receiver),
+        );
     }
     if let Some((type_name, receiver)) =
         cpp_standard_sequence_data_receiver(expression, declaration_start, local_bindings)
