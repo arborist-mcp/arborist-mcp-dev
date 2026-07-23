@@ -17,12 +17,22 @@ def _reject_nonstandard_json_constant(name: str) -> object:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
+def _reject_duplicate_object_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    obj: dict[str, object] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        obj[key] = value
+    return obj
+
+
 def _load_manifest() -> dict[str, object]:
     manifest_path = Path(__file__).with_name("check_profiles.json")
     try:
         raw = json.loads(
             manifest_path.read_text(encoding="utf-8"),
             parse_constant=_reject_nonstandard_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
         )
     except ValueError as exc:
         raise RuntimeError(f"invalid check profile manifest JSON: {exc}") from exc
