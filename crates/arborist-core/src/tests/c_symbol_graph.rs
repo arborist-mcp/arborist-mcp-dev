@@ -5791,7 +5791,7 @@ fn resolves_cpp_indexed_tuple_get_optional_smart_pointer_arrow_calls_across_live
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int unique_tuple_get_caller(std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(current)->adjust(value); } int const_shared_pair_get_caller(std::pair<std::optional<std::shared_ptr<const Counter>>, Value> current, int value) { return std::get<0>(current)->adjust(value); } int const_tuple_get_caller(const std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(current)->adjust(value); } }\n",
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int unique_tuple_get_caller(std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(current)->adjust(value); } int const_shared_pair_get_caller(std::pair<std::optional<std::shared_ptr<const Counter>>, Value> current, int value) { return std::get<0>(current)->adjust(value); } int const_tuple_get_caller(const std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(current)->adjust(value); } int moved_tuple_get_caller(std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(std::move(current))->adjust(value); } int forwarded_tuple_get_caller(std::tuple<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<1>(std::forward<std::tuple<Value, std::optional<std::unique_ptr<Counter>>>&&>(current))->adjust(value); } int as_const_tuple_get_caller(std::tuple<Value, std::optional<std::shared_ptr<const Counter>>> current, int value) { return std::get<1>(std::as_const(current))->adjust(value); } }\n",
     )
     .unwrap();
 
@@ -5805,6 +5805,15 @@ fn resolves_cpp_indexed_tuple_get_optional_smart_pointer_arrow_calls_across_live
             "api::Counter::adjust(int) const &",
         ),
         ("api::const_tuple_get_caller", "api::Counter::adjust(int) &"),
+        ("api::moved_tuple_get_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::forwarded_tuple_get_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::as_const_tuple_get_caller",
+            "api::Counter::adjust(int) const &",
+        ),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
