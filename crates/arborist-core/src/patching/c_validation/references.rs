@@ -1710,20 +1710,24 @@ fn cpp_typed_standard_get_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let (type_name, binding_receiver) =
         cpp_typed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
-    let receiver = cpp_standard_get_element_receiver(&type_name, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(&type_name, binding_receiver, true)?;
     Some((cpp_temporary_type_path(&type_name)?, receiver))
 }
 
 fn cpp_standard_get_element_receiver(
     element_type: &str,
     container_receiver: CppThisMemberReceiver,
+    preserves_value_category: bool,
 ) -> Option<CppThisMemberReceiver> {
     let element_receiver = cpp_this_receiver_for_type(
         element_type,
-        Some(matches!(
-            container_receiver,
-            CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
-        )),
+        Some(
+            preserves_value_category
+                && matches!(
+                    container_receiver,
+                    CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
+                ),
+        ),
     )?;
     let const_qualified = matches!(
         container_receiver,
@@ -1826,7 +1830,7 @@ fn cpp_typed_standard_get_optional_arrow_receiver(
     let (optional_type, binding_receiver) =
         cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
     let target = cpp_standard_optional_target_type(&optional_type)?;
-    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver, false)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1853,7 +1857,7 @@ fn cpp_typed_standard_get_expected_arrow_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_target_type(&expected_type)?;
-    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver, false)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1881,7 +1885,7 @@ fn cpp_typed_standard_get_optional_value_receiver(
     let (optional_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_optional_target_type(&optional_type)?;
-    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1894,7 +1898,7 @@ fn cpp_typed_standard_get_expected_value_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_target_type(&expected_type)?;
-    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1907,7 +1911,7 @@ fn cpp_typed_standard_get_expected_error_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_error_type(&expected_type)?;
-    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 

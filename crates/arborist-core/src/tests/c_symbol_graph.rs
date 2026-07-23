@@ -4413,7 +4413,7 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } int adjust(int value) const && { return value + 3; } }; int optional_value_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(current).value().adjust(value); } int expected_value_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { return std::get<std::expected<Counter, Value>>(current).value().adjust(value); } int const_expected_error_caller(const std::variant<Value, std::expected<Value, Counter>> current, int value) { return std::get<std::expected<Value, Counter>>(current).error().adjust(value); } int moved_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::move(current)).adjust(value); } int const_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::as_const(current)).adjust(value); } int forwarded_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::forward<std::variant<Value, Counter>&&>(current)).adjust(value); } int optional_unique_caller(std::variant<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<std::optional<std::unique_ptr<Counter>>>(current)->adjust(value); } int expected_const_shared_caller(std::variant<std::expected<std::shared_ptr<const Counter>, Value>, Value> current, int value) { return std::get<std::expected<std::shared_ptr<const Counter>, Value>>(current)->adjust(value); } int shared_get_caller(std::variant<Value, std::shared_ptr<Counter>> current, int value) { return std::get<std::shared_ptr<Counter>>(current).get()->adjust(value); } int const_shared_get_caller(std::variant<std::shared_ptr<const Counter>, Value> current, int value) { return std::get<std::shared_ptr<const Counter>>(current).get()->adjust(value); } }\n",
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } int adjust(int value) const && { return value + 3; } }; int optional_value_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(current).value().adjust(value); } int expected_value_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { return std::get<std::expected<Counter, Value>>(current).value().adjust(value); } int const_expected_error_caller(const std::variant<Value, std::expected<Value, Counter>> current, int value) { return std::get<std::expected<Value, Counter>>(current).error().adjust(value); } int moved_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::move(current)).adjust(value); } int const_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::as_const(current)).adjust(value); } int forwarded_typed_get_caller(std::variant<Value, Counter> current, int value) { return std::get<Counter>(std::forward<std::variant<Value, Counter>&&>(current)).adjust(value); } int moved_optional_value_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(std::move(current)).value().adjust(value); } int moved_expected_error_caller(std::variant<Value, std::expected<Value, Counter>> current, int value) { return std::get<std::expected<Value, Counter>>(std::move(current)).error().adjust(value); } int moved_optional_arrow_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(std::move(current))->adjust(value); } int moved_expected_arrow_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { return std::get<std::expected<Counter, Value>>(std::move(current))->adjust(value); } int optional_unique_caller(std::variant<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<std::optional<std::unique_ptr<Counter>>>(current)->adjust(value); } int expected_const_shared_caller(std::variant<std::expected<std::shared_ptr<const Counter>, Value>, Value> current, int value) { return std::get<std::expected<std::shared_ptr<const Counter>, Value>>(current)->adjust(value); } int shared_get_caller(std::variant<Value, std::shared_ptr<Counter>> current, int value) { return std::get<std::shared_ptr<Counter>>(current).get()->adjust(value); } int const_shared_get_caller(std::variant<std::shared_ptr<const Counter>, Value> current, int value) { return std::get<std::shared_ptr<const Counter>>(current).get()->adjust(value); } }\n",
     )
     .unwrap();
 
@@ -4435,6 +4435,22 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
         (
             "api::forwarded_typed_get_caller",
             "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::moved_optional_value_caller",
+            "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::moved_expected_error_caller",
+            "api::Counter::adjust(int) &&",
+        ),
+        (
+            "api::moved_optional_arrow_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::moved_expected_arrow_caller",
+            "api::Counter::adjust(int) &",
         ),
         ("api::optional_unique_caller", "api::Counter::adjust(int) &"),
         (
