@@ -206,10 +206,62 @@ fn compact_cpp_type_text(type_name: &str) -> String {
 }
 
 fn normalized_cpp_typed_get_type(type_name: &str) -> String {
-    if type_name.contains('&') || cpp_type_has_top_level_pointer(type_name) {
+    if type_name.contains('&') {
         return compact_cpp_type_text(type_name);
     }
+    if let Some(normalized) = normalized_cpp_single_pointer_type(type_name) {
+        return normalized;
+    }
+    if cpp_type_has_top_level_pointer(type_name) {
+        return compact_cpp_type_text(type_name);
+    }
+    normalized_cpp_non_pointer_type(type_name)
+}
 
+fn normalized_cpp_single_pointer_type(type_name: &str) -> Option<String> {
+    let mut template_depth = 0usize;
+    let mut pointer_index = None;
+    for (index, character) in type_name.char_indices() {
+        match character {
+            '<' => template_depth += 1,
+            '>' => template_depth = template_depth.saturating_sub(1),
+            '*' if template_depth == 0 => {
+                if pointer_index.is_some() {
+                    return None;
+                }
+                pointer_index = Some(index);
+            }
+            _ => {}
+        }
+    }
+    let pointer_index = pointer_index?;
+    let pointee = type_name[..pointer_index].trim();
+    let pointer_suffix = type_name[pointer_index + '*'.len_utf8()..].trim();
+    if pointee.is_empty() || cpp_type_has_top_level_pointer(pointee) {
+        return None;
+    }
+    if pointer_suffix
+        .split_whitespace()
+        .any(|token| token != "const" && token != "volatile")
+    {
+        return None;
+    }
+
+    let mut normalized = normalized_cpp_non_pointer_type(pointee);
+    normalized.push('*');
+    if pointer_suffix.split_whitespace().any(|token| token == "const") {
+        normalized.push_str("#const");
+    }
+    if pointer_suffix
+        .split_whitespace()
+        .any(|token| token == "volatile")
+    {
+        normalized.push_str("#volatile");
+    }
+    Some(normalized)
+}
+
+fn normalized_cpp_non_pointer_type(type_name: &str) -> String {
     let mut template_depth = 0usize;
     let mut normalized = String::with_capacity(type_name.len());
     let mut const_qualified = false;
@@ -487,6 +539,20 @@ mod tests {
                 "Wrapper<const Counter> volatile"
             ),
             Some("volatile Wrapper<const Counter>")
+        );
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::tuple<Value, const Counter*>",
+                "Counter const*"
+            ),
+            Some("const Counter*")
+        );
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::variant<Value, Counter const * const>",
+                "const Counter* const"
+            ),
+            Some("Counter const * const")
         );
         assert!(
             cpp_standard_typed_get_element_type(
