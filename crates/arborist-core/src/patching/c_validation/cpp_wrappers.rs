@@ -81,10 +81,26 @@ pub(super) fn cpp_standard_indexed_element_type(type_name: &str, index: usize) -
         })
 }
 
-pub(super) fn cpp_standard_typed_get_is_supported(type_name: &str) -> bool {
-    ["std::tuple", "std::pair", "std::variant"]
+pub(super) fn cpp_standard_typed_get_element_type<'a>(
+    container_type: &'a str,
+    requested_type: &str,
+) -> Option<&'a str> {
+    let arguments = ["std::tuple", "std::pair", "std::variant"]
         .into_iter()
-        .any(|tuple_type| cpp_standard_template_arguments(type_name, tuple_type).is_some())
+        .find_map(|tuple_type| cpp_standard_template_arguments(container_type, tuple_type))?;
+    let requested_type = compact_cpp_type_text(requested_type);
+    let mut matching_element = None;
+    let mut index = 0usize;
+    while let Some(element_type) = cpp_nth_template_argument(arguments, index) {
+        if compact_cpp_type_text(element_type) == requested_type {
+            if matching_element.is_some() {
+                return None;
+            }
+            matching_element = Some(element_type);
+        }
+        index += 1;
+    }
+    matching_element
 }
 
 fn cpp_standard_template_arguments<'a>(type_name: &'a str, wrapper: &str) -> Option<&'a str> {
@@ -182,6 +198,13 @@ fn cpp_template_arguments_have_top_level_comma(arguments: &str) -> bool {
     false
 }
 
+fn compact_cpp_type_text(type_name: &str) -> String {
+    type_name
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
 fn cpp_has_exactly_two_top_level_template_arguments(arguments: &str) -> bool {
     let mut angles = 0usize;
     let mut parentheses = 0usize;
@@ -244,7 +267,7 @@ mod tests {
         cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
         cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
         cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-        cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_is_supported,
+        cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_element_type,
     };
 
     #[test]
@@ -373,12 +396,24 @@ mod tests {
             cpp_standard_indexed_element_type("std::vector<Counter>", 0),
             None
         );
-        assert!(cpp_standard_typed_get_is_supported(
-            "std::tuple<Counter, Wrapper<Alias, Tag>>"
-        ));
-        assert!(cpp_standard_typed_get_is_supported(
-            "std::variant<Value, Counter>"
-        ));
-        assert!(!cpp_standard_typed_get_is_supported("std::vector<Counter>"));
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::tuple<Value, Wrapper<Alias, Tag>>",
+                "Wrapper<Alias, Tag>"
+            ),
+            Some("Wrapper<Alias, Tag>")
+        );
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::variant<Value, std::shared_ptr< const Counter >>",
+                "std::shared_ptr<const Counter>"
+            ),
+            Some("std::shared_ptr< const Counter >")
+        );
+        assert!(
+            cpp_standard_typed_get_element_type("std::pair<Value, Counter>", "Missing").is_none()
+        );
+        assert!(cpp_standard_typed_get_element_type("std::tuple<Value, Value>", "Value").is_none());
+        assert!(cpp_standard_typed_get_element_type("std::vector<Counter>", "Counter").is_none());
     }
 }

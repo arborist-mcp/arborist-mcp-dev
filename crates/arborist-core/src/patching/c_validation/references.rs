@@ -17,7 +17,7 @@ use super::cpp_wrappers::{
     cpp_standard_expected_target_type, cpp_standard_indexable_sequence_element_type,
     cpp_standard_indexed_element_type, cpp_standard_optional_target_type,
     cpp_standard_reference_wrapper_target_type, cpp_standard_sequence_element_type,
-    cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_is_supported,
+    cpp_standard_smart_pointer_target_type, cpp_standard_typed_get_element_type,
     cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
@@ -738,10 +738,14 @@ fn cpp_decltype_auto_binding_type(
             Some(CppStandardUnwrap::SmartPointer),
         ));
     }
-    // std::get<T>(...) / value any_cast yield typed object bindings for decltype(auto).
-    if let Some(type_name) =
-        cpp_typed_standard_get_type(expression).or_else(|| cpp_any_cast_value_type(expression))
+    // std::get<T>(...) yields a typed object binding only when T identifies one
+    // tuple-like element. value any_cast uses its explicit type directly.
+    if let Some((type_name, _)) =
+        cpp_typed_standard_get_element_binding(expression, declaration_start, local_bindings)
     {
+        return cpp_copied_standard_binding_type(&type_name, "auto");
+    }
+    if let Some(type_name) = cpp_any_cast_value_type(expression) {
         return cpp_copied_standard_binding_type(type_name, "auto");
     }
     if let Some((type_name, receiver)) =
@@ -842,8 +846,11 @@ fn cpp_auto_constructor_binding_type(
         .or_else(|| cpp_pointer_cast_shared_pointer_type(initializer_text));
     let get_if_pointer_type = cpp_get_if_pointer_type(initializer_text)
         .or_else(|| cpp_any_cast_pointer_type(initializer_text));
-    let typed_standard_get_type = cpp_typed_standard_get_type(initializer_text);
+    let typed_standard_get_type =
+        cpp_typed_standard_get_element_binding(initializer_text, declaration_start, local_bindings)
+            .map(|(type_name, _)| type_name);
     let direct_initializer_type = typed_standard_get_type
+        .as_deref()
         .or_else(|| cpp_any_cast_value_type(initializer_text))
         .or_else(|| cpp_constructor_type_text(initializer_text))
         .or_else(|| cpp_default_initialized_type_text(initializer_text));
@@ -1701,23 +1708,31 @@ fn cpp_typed_standard_get_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let type_name = cpp_typed_standard_get_type(expression)?;
-    let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object
-        || binding.standard_unwrap.is_some()
-        || !cpp_standard_typed_get_is_supported(&binding.type_name)
-    {
-        return None;
-    }
-    let receiver = match binding.receiver {
+    let (type_name, binding_receiver) =
+        cpp_typed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
+    let receiver = match binding_receiver {
         CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
             CppThisMemberReceiver::ConstLvalue
         }
-        _ => cpp_this_receiver_for_type(type_name, Some(false))?,
+        _ => cpp_this_receiver_for_type(&type_name, Some(false))?,
     };
-    Some((cpp_temporary_type_path(type_name)?, receiver))
+    Some((cpp_temporary_type_path(&type_name)?, receiver))
+}
+
+fn cpp_typed_standard_get_element_binding(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let requested_type = cpp_typed_standard_get_type(expression)?;
+    let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
+    let binding_name = cpp_local_binding_name_from_expression(argument)?;
+    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
+        return None;
+    }
+    let element_type = cpp_standard_typed_get_element_type(&binding.type_name, requested_type)?;
+    Some((element_type.to_string(), binding.receiver))
 }
 
 fn cpp_typed_standard_get_smart_pointer_receiver(
@@ -1739,16 +1754,8 @@ fn cpp_typed_standard_get_raw_pointer_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let pointer_type = cpp_typed_standard_get_type(expression)?;
-    let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object
-        || binding.standard_unwrap.is_some()
-        || !cpp_standard_typed_get_is_supported(&binding.type_name)
-    {
-        return None;
-    }
+    let (pointer_type, _) =
+        cpp_typed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
     let target = pointer_type.strip_suffix('*')?.trim();
     Some((
         cpp_temporary_type_path(target)?,
