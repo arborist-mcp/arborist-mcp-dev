@@ -771,6 +771,20 @@ fn cpp_decltype_auto_binding_type(
             None,
         ));
     }
+    if let Some((type_name, receiver)) = cpp_typed_standard_get_expected_sequence_data_receiver(
+        expression,
+        declaration_start,
+        local_bindings,
+    ) {
+        return Some((
+            type_name,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Pointer,
+            None,
+        ));
+    }
     if let Some((type_name, receiver)) = cpp_indexed_tuple_get_expected_sequence_data_receiver(
         expression,
         declaration_start,
@@ -926,6 +940,20 @@ fn cpp_auto_constructor_binding_type(
     if let Some((type_name, receiver)) =
         cpp_standard_sequence_data_receiver(initializer_text, declaration_start, local_bindings)
     {
+        return Some((
+            type_name,
+            None,
+            None,
+            receiver,
+            CppMemberAccess::Pointer,
+            None,
+        ));
+    }
+    if let Some((type_name, receiver)) = cpp_typed_standard_get_expected_sequence_data_receiver(
+        initializer_text,
+        declaration_start,
+        local_bindings,
+    ) {
         return Some((
             type_name,
             None,
