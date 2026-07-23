@@ -4578,7 +4578,7 @@ fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queri
     let db_path = dir.join("symbols.db");
     fs::write(
         &source,
-        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int weak_value_caller(std::variant<Value, std::expected<std::weak_ptr<Counter>, Value>> current, int value) { return std::get<std::expected<std::weak_ptr<Counter>, Value>>(std::move(current)).value().lock()->adjust(value); } int weak_error_caller(std::variant<Value, std::expected<Value, std::weak_ptr<const Counter>>> current, int value) { return std::get<std::expected<Value, std::weak_ptr<const Counter>>>(std::as_const(current)).error().lock()->adjust(value); } int reference_value_caller(std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>> current, int value) { return std::get<std::expected<std::reference_wrapper<Counter>, Value>>(std::forward<std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>>&&>(current)).value().get().adjust(value); } int reference_error_caller(std::variant<Value, std::expected<Value, std::reference_wrapper<const Counter>>> current, int value) { return std::get<std::expected<Value, std::reference_wrapper<const Counter>>>(std::as_const(current)).error().get().adjust(value); } }\n",
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int weak_value_caller(std::variant<Value, std::expected<std::weak_ptr<Counter>, Value>> current, int value) { return std::get<std::expected<std::weak_ptr<Counter>, Value>>(std::move(current)).value().lock()->adjust(value); } int weak_error_caller(std::variant<Value, std::expected<Value, std::weak_ptr<const Counter>>> current, int value) { return std::get<std::expected<Value, std::weak_ptr<const Counter>>>(std::as_const(current)).error().lock()->adjust(value); } int reference_value_caller(std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>> current, int value) { return std::get<std::expected<std::reference_wrapper<Counter>, Value>>(std::forward<std::variant<Value, std::expected<std::reference_wrapper<Counter>, Value>>&&>(current)).value().get().adjust(value); } int reference_error_caller(std::variant<Value, std::expected<Value, std::reference_wrapper<const Counter>>> current, int value) { return std::get<std::expected<Value, std::reference_wrapper<const Counter>>>(std::as_const(current)).error().get().adjust(value); } int optional_weak_value_caller(std::variant<Value, std::expected<std::optional<std::weak_ptr<Counter>>, Value>> current, int value) { return std::get<std::expected<std::optional<std::weak_ptr<Counter>>, Value>>(std::move(current)).value()->lock()->adjust(value); } int optional_reference_error_caller(std::variant<Value, std::expected<Value, std::optional<std::reference_wrapper<const Counter>>>> current, int value) { return std::get<std::expected<Value, std::optional<std::reference_wrapper<const Counter>>>>(std::as_const(current)).error()->get().adjust(value); } int optional_smart_value_caller(std::variant<Value, std::expected<std::optional<std::unique_ptr<Counter>>, Value>> current, int value) { return std::get<std::expected<std::optional<std::unique_ptr<Counter>>, Value>>(std::forward<std::variant<Value, std::expected<std::optional<std::unique_ptr<Counter>>, Value>>&&>(current)).value()->get()->adjust(value); } int optional_smart_error_caller(std::variant<Value, std::expected<Value, std::optional<std::shared_ptr<const Counter>>>> current, int value) { return std::get<std::expected<Value, std::optional<std::shared_ptr<const Counter>>>>(std::as_const(current)).error()->adjust(value); } }\n",
     )
     .unwrap();
 
@@ -4591,6 +4591,22 @@ fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queri
         ("api::reference_value_caller", "api::Counter::adjust(int) &"),
         (
             "api::reference_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::optional_weak_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::optional_reference_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::optional_smart_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::optional_smart_error_caller",
             "api::Counter::adjust(int) const &",
         ),
     ];

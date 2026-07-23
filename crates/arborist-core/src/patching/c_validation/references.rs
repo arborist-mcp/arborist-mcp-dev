@@ -2047,6 +2047,95 @@ fn cpp_typed_standard_get_expected_error_reference_wrapper_receiver(
     ))
 }
 
+fn cpp_typed_standard_get_expected_optional_target(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<String> {
+    let (receiver, value_target) = if let Some(receiver) = expression.strip_suffix(".value()") {
+        (receiver.trim(), true)
+    } else {
+        let receiver = expression.strip_suffix(".error()")?;
+        (receiver.trim(), false)
+    };
+    let (expected_type, _) =
+        cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
+    let optional_type = if value_target {
+        cpp_standard_expected_target_type(&expected_type)?
+    } else {
+        cpp_standard_expected_error_type(&expected_type)?
+    };
+    Some(cpp_standard_optional_target_type(optional_type)?.to_string())
+}
+
+fn cpp_typed_standard_get_expected_optional_smart_pointer_arrow_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let pointer_type =
+        cpp_typed_standard_get_expected_optional_target(expression, byte_offset, local_bindings)?;
+    let target = cpp_standard_smart_pointer_target_type(&pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
+fn cpp_typed_standard_get_expected_optional_weak_pointer_lock_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression
+        .strip_suffix(".lock()")
+        .or_else(|| expression.strip_suffix("->lock()"))
+        .map(str::trim)?;
+    let weak_pointer_type =
+        cpp_typed_standard_get_expected_optional_target(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_weak_pointer_target_type(&weak_pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
+fn cpp_typed_standard_get_expected_optional_reference_wrapper_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression
+        .strip_suffix(".get()")
+        .or_else(|| expression.strip_suffix("->get()"))
+        .map(str::trim)?;
+    let wrapper_type =
+        cpp_typed_standard_get_expected_optional_target(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_reference_wrapper_target_type(&wrapper_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
+fn cpp_typed_standard_get_expected_optional_smart_pointer_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression
+        .strip_suffix(".get()")
+        .or_else(|| expression.strip_suffix("->get()"))
+        .map(str::trim)?;
+    let pointer_type =
+        cpp_typed_standard_get_expected_optional_target(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_smart_pointer_target_type(&pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
 fn cpp_typed_standard_get_optional_value_receiver(
     expression: &str,
     byte_offset: usize,
@@ -3002,6 +3091,16 @@ fn cpp_local_member_receiver_from_expression(
     }
     if member_operator == "->"
         && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_optional_smart_pointer_get_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
             cpp_typed_standard_get_expected_value_smart_pointer_get_receiver(
                 expression,
                 byte_offset,
@@ -3033,6 +3132,16 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_typed_standard_get_expected_smart_pointer_arrow_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_optional_smart_pointer_arrow_receiver(
                 expression,
                 byte_offset,
                 local_bindings,
@@ -3098,6 +3207,16 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "->"
         && let Some((type_name, receiver)) =
             cpp_typed_standard_get_expected_error_weak_pointer_lock_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_optional_weak_pointer_lock_receiver(
                 expression,
                 byte_offset,
                 local_bindings,
@@ -3208,6 +3327,16 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "."
         && let Some((type_name, receiver)) =
             cpp_typed_standard_get_expected_error_reference_wrapper_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_optional_reference_wrapper_receiver(
                 expression,
                 byte_offset,
                 local_bindings,
