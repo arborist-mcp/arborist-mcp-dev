@@ -454,20 +454,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional cooperative health and workspace scan timeout in milliseconds.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--once",
         action="store_true",
         help="Inspect and reconcile once, then exit.",
+    )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Check configured targets without writing; exit nonzero unless all are healthy.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Report refresh or migration actions without writing the index.",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Check configured targets without writing; exit nonzero unless all are healthy.",
     )
     return parser
 
@@ -495,6 +496,10 @@ def run_cli(
         print(json.dumps(event, ensure_ascii=False, allow_nan=False), file=output)
 
     try:
+        if args.check and args.dry_run:
+            raise IndexWatchError("--check cannot be combined with --dry-run")
+        if args.check and args.interval_seconds != 1.0:
+            raise IndexWatchError("--check cannot be combined with --interval-seconds")
         if args.config_path is not None:
             if args.workspace_root != Path("."):
                 raise IndexWatchError(

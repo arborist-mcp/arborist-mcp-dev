@@ -556,6 +556,30 @@ class IndexWatchTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run_cli(["--db-path", "symbols.db", "--timeout-ms", "300001"])
 
+    def test_cli_rejects_conflicting_check_mode_flags(self) -> None:
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                run_cli(["--db-path", "symbols.db", "--check", "--once"])
+
+        stderr = io.StringIO()
+        result = run_cli(
+            ["--db-path", "symbols.db", "--check", "--dry-run"],
+            stderr=stderr,
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("--check cannot be combined with --dry-run", stderr.getvalue())
+
+        stderr = io.StringIO()
+        result = run_cli(
+            ["--db-path", "symbols.db", "--check", "--interval-seconds", "2"],
+            stderr=stderr,
+        )
+        self.assertEqual(result, 1)
+        self.assertIn(
+            "--check cannot be combined with --interval-seconds",
+            stderr.getvalue(),
+        )
+
     def test_pyproject_registers_index_watch_console_script(self) -> None:
         pyproject = Path(__file__).resolve().parents[1].joinpath("pyproject.toml")
         self.assertIn(
