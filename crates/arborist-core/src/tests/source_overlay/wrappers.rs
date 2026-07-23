@@ -1695,4 +1695,3 @@ fn traces_cpp_cast_optional_base_alias_from_unsaved_source_overlay() {
         vec!["api::Base::adjust(int) &"]
     );
 }
-

@@ -66,4 +66,3 @@ fn index_overlay_accepts_new_disk_file_when_source_is_overridden() {
             .all(|symbol| symbol.semantic_path != "stale_alias")
     );
 }
-
