@@ -74,6 +74,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Continue splitting large Rust surfaces along existing module boundaries:
   `patching.rs`, `symbols.rs`, `model.rs`, and test modules should remain
   focused facades over submodules.
+- [x] Split C++ reference validation's typed/indexed `std::get` receiver helpers
+  into `patching/c_validation/references/std_get.rs` while keeping the public
+  collection APIs stable.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
 - [x] Detect source files added after an index build during health inspection
