@@ -743,7 +743,10 @@ fn cpp_decltype_auto_binding_type(
     if let Some((type_name, receiver)) =
         cpp_typed_standard_get_receiver(expression, declaration_start, local_bindings)
     {
-        return cpp_reference_alias_binding_type(&type_name, receiver);
+        return cpp_reference_alias_binding_type(
+            &type_name,
+            cpp_named_reference_alias_receiver(receiver),
+        );
     }
     if let Some(type_name) = cpp_any_cast_value_type(expression) {
         return cpp_copied_standard_binding_type(type_name, "auto");
