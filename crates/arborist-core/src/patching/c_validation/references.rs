@@ -1749,6 +1749,15 @@ fn cpp_typed_standard_get_smart_pointer_receiver(
     ))
 }
 
+fn cpp_typed_standard_get_smart_pointer_get_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".get()")?.trim();
+    cpp_typed_standard_get_smart_pointer_receiver(receiver, byte_offset, local_bindings)
+}
+
 fn cpp_typed_standard_get_optional_arrow_receiver(
     expression: &str,
     byte_offset: usize,
@@ -2921,6 +2930,15 @@ fn cpp_local_member_receiver_from_expression(
                 byte_offset,
                 local_bindings,
             )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_typed_standard_get_smart_pointer_get_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
     {
         return Some((type_name, receiver));
     }
