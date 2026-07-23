@@ -665,6 +665,20 @@ fn cpp_decltype_auto_binding_type(
     if let Some((type_name, receiver)) =
         cpp_expected_weak_pointer_lock_receiver(expression, declaration_start, local_bindings)
             .or_else(|| {
+                cpp_typed_standard_get_expected_value_weak_pointer_lock_receiver(
+                    expression,
+                    declaration_start,
+                    local_bindings,
+                )
+            })
+            .or_else(|| {
+                cpp_typed_standard_get_expected_error_weak_pointer_lock_receiver(
+                    expression,
+                    declaration_start,
+                    local_bindings,
+                )
+            })
+            .or_else(|| {
                 cpp_standard_weak_pointer_lock_receiver(
                     expression,
                     declaration_start,
@@ -887,6 +901,20 @@ fn cpp_auto_constructor_binding_type(
     )
     .or_else(|| {
         cpp_expected_weak_pointer_lock_receiver(initializer_text, declaration_start, local_bindings)
+    })
+    .or_else(|| {
+        cpp_typed_standard_get_expected_value_weak_pointer_lock_receiver(
+            initializer_text,
+            declaration_start,
+            local_bindings,
+        )
+    })
+    .or_else(|| {
+        cpp_typed_standard_get_expected_error_weak_pointer_lock_receiver(
+            initializer_text,
+            declaration_start,
+            local_bindings,
+        )
     });
     let address_binding = cpp_address_binding(initializer_text, declaration_start, local_bindings);
     let reference_alias_binding = cpp_auto_reference_alias_binding(
@@ -1546,6 +1574,20 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
     if let Some(binding) =
         cpp_expected_reference_wrapper_get_receiver(expression, byte_offset, local_bindings)
     {
+        return Some(binding);
+    }
+    if let Some(binding) = cpp_typed_standard_get_expected_value_reference_wrapper_receiver(
+        expression,
+        byte_offset,
+        local_bindings,
+    ) {
+        return Some(binding);
+    }
+    if let Some(binding) = cpp_typed_standard_get_expected_error_reference_wrapper_receiver(
+        expression,
+        byte_offset,
+        local_bindings,
+    ) {
         return Some(binding);
     }
     let (binding, _) = cpp_standard_wrapper_get_binding(expression, byte_offset, local_bindings)?;
