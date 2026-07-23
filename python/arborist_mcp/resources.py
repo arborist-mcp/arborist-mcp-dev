@@ -34,7 +34,9 @@ def resources_read(params: dict[str, Any]) -> dict[str, Any]:
             {
                 "uri": TOOL_CATALOG_RESOURCE_URI,
                 "mimeType": TOOL_CATALOG_RESOURCE_MIME_TYPE,
-                "text": json.dumps(build_tool_catalog(), ensure_ascii=False, indent=2),
+                "text": json.dumps(
+                    build_tool_catalog(), ensure_ascii=False, allow_nan=False, indent=2
+                ),
             }
         ]
     }

@@ -487,6 +487,25 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         catalog = gateway_module.json.loads(contents[0]["text"])
         self.assertEqual(catalog, gateway_module.build_tool_catalog())
 
+    def test_resources_read_rejects_nonstandard_catalog_json(self) -> None:
+        with mock.patch(
+            "arborist_mcp.resources.build_tool_catalog",
+            return_value=[{"invalid": float("nan")}],
+        ):
+            response = self.call_gateway(
+                self.make_gateway(),
+                "resources/read",
+                {"uri": gateway_module.TOOL_CATALOG_RESOURCE_URI},
+                request_id=581,
+            )
+
+        self.assert_jsonrpc_error(
+            response,
+            request_id=581,
+            code=-32602,
+            contains="Out of range float values",
+        )
+
     def test_resources_read_rejects_unknown_resource(self) -> None:
         response = self.call_gateway(
             self.make_gateway(),
