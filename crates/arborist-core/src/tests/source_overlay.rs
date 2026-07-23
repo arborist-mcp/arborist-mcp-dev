@@ -1336,6 +1336,35 @@ fn traces_cpp_typed_get_standard_value_calls_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn does_not_trace_invalid_cpp_typed_get_bindings_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("invalid_typed_get_bindings.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) { return value; } }; int missing_auto_caller(std::variant<Value, Counter> current, int value) { auto nested = std::get<std::unique_ptr<Counter>>(current); return nested->adjust(value); } int duplicate_decltype_auto_caller(std::tuple<Counter, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } }\n";
+    for caller in [
+        "api::missing_auto_caller",
+        "api::duplicate_decltype_auto_caller",
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert!(trace.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn traces_cpp_indexed_tuple_get_reference_wrapper_calls_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("indexed_tuple_get_reference_wrapper.cpp");

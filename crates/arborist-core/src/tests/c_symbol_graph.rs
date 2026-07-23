@@ -4464,6 +4464,35 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
 }
 
 #[test]
+fn does_not_resolve_invalid_cpp_typed_get_bindings() {
+    let dir = temporary_dir();
+    let source = dir.join("invalid_typed_get_bindings.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) { return value; } }; int missing_auto_caller(std::variant<Value, Counter> current, int value) { auto nested = std::get<std::unique_ptr<Counter>>(current); return nested->adjust(value); } int duplicate_decltype_auto_caller(std::tuple<Counter, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } }\n",
+    )
+    .unwrap();
+
+    for caller in [
+        "api::missing_auto_caller",
+        "api::duplicate_decltype_auto_caller",
+    ] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert!(trace.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "api::missing_auto_caller",
+        "api::duplicate_decltype_auto_caller",
+    ] {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert!(trace.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn resolves_cpp_direct_indexed_tuple_get_smart_pointer_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("direct_indexed_tuple_get_smart_pointer.cpp");
