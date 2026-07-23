@@ -1520,8 +1520,7 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
     {
         return Some(binding);
     }
-    let binding_name = cpp_standard_wrapper_get_receiver(expression)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    let (binding, _) = cpp_standard_wrapper_get_binding(expression, byte_offset, local_bindings)?;
     (binding.access == CppMemberAccess::Object
         && binding.standard_unwrap == Some(CppStandardUnwrap::ReferenceWrapper))
     .then(|| (binding.type_name.clone(), binding.receiver))
@@ -3130,8 +3129,8 @@ fn cpp_local_member_receiver_from_expression(
     {
         return Some((type_name, receiver));
     }
-    if let Some(binding_name) = cpp_standard_wrapper_get_receiver(expression)
-        && let Some(binding) = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)
+    if let Some((binding, _)) =
+        cpp_standard_wrapper_get_binding(expression, byte_offset, local_bindings)
         && matches!(
             (member_operator, binding.standard_unwrap),
             ("->", Some(CppStandardUnwrap::SmartPointer))
@@ -3628,16 +3627,21 @@ fn cpp_subscript_receiver(expression: &str) -> Option<&str> {
     None
 }
 
-fn cpp_standard_wrapper_get_receiver(expression: &str) -> Option<&str> {
+fn cpp_standard_wrapper_get_binding<'a>(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &'a [CppLocalBinding],
+) -> Option<(&'a CppLocalBinding, CppThisMemberReceiver)> {
     // Accept both nested.get() and nested->get() for local reference_wrapper
     // bindings. Intermediate auto copies of optional<reference_wrapper<T>> peel
     // to ReferenceWrapper, and callers still use the same ->get() form as the
-    // original nested chain.
+    // original nested chain. move/as_const/forward wrappers preserve the target
+    // object's reference semantics because get() always returns T&.
     let receiver = expression
         .strip_suffix(".get()")
         .or_else(|| expression.strip_suffix("->get()"))
         .map(str::trim)?;
-    cpp_local_binding_name_from_expression(receiver)
+    cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)
 }
 
 fn cpp_standard_weak_pointer_lock_receiver(
