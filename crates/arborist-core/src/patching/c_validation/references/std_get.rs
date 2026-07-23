@@ -2,7 +2,8 @@ use super::super::cpp_syntax::{
     cpp_receiver_call_argument, cpp_typed_receiver_call, strip_cpp_outer_parentheses,
 };
 use super::super::cpp_types::{
-    cpp_temporary_type_path, cpp_this_receiver_for_type, cpp_top_level_pointer_pointee,
+    CppThisMemberReceiver, cpp_temporary_type_path, cpp_this_receiver_for_type,
+    cpp_top_level_pointer_pointee,
 };
 use super::super::cpp_wrappers::{
     cpp_standard_contiguous_sequence_element_type, cpp_standard_expected_error_type,
@@ -11,7 +12,8 @@ use super::super::cpp_wrappers::{
     cpp_standard_sequence_element_type, cpp_standard_smart_pointer_target_type,
     cpp_standard_typed_get_element_type, cpp_standard_weak_pointer_target_type,
 };
-use super::{CppLocalBinding, CppMemberAccess, CppThisMemberReceiver, cpp_visible_local_binding};
+use super::cpp_visible_local_binding;
+use super::types::{CppLocalBinding, CppMemberAccess};
 
 // Forward helpers defined later in the parent module.
 use super::{cpp_standard_sequence_at_receiver, cpp_subscript_receiver};

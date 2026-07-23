@@ -29,46 +29,11 @@ use crate::symbol_index_model::{
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CppMemberAccess {
-    Object,
-    Pointer,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CppStandardUnwrap {
-    SmartPointer,
-    WeakPointer,
-    ReferenceWrapper,
-    Optional,
-    Expected,
-}
-
-#[derive(Clone)]
-pub(super) struct CppLocalBinding {
-    pub(super) name: String,
-    pub(super) type_name: String,
-    pub(super) expected_error_type: Option<String>,
-    pub(super) expected_error_receiver: Option<CppThisMemberReceiver>,
-    pub(super) receiver: CppThisMemberReceiver,
-    pub(super) access: CppMemberAccess,
-    pub(super) standard_unwrap: Option<CppStandardUnwrap>,
-    pub(super) declaration_start: usize,
-    pub(super) scope_range: (usize, usize),
-}
-
-type CppBindingType = (
-    String,
-    Option<String>,
-    Option<CppThisMemberReceiver>,
-    CppThisMemberReceiver,
-    CppMemberAccess,
-    Option<CppStandardUnwrap>,
-);
-
 mod std_get;
+mod types;
 
 use std_get::*;
+pub(super) use types::*;
 
 pub(super) fn collect_c_local_definitions(
     node: Node<'_>,
