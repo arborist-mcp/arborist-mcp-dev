@@ -20,18 +20,12 @@ use super::cpp_wrappers::{
     cpp_standard_weak_pointer_target_type,
 };
 use crate::language::{node_text, visit_tree};
-use crate::symbol_index_model::{
-    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
-    CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_CONST_RVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
-};
 
+mod member_call_names;
 mod std_get;
 mod types;
 
+use member_call_names::*;
 use std_get::*;
 pub(super) use types::*;
 
@@ -381,47 +375,6 @@ fn cpp_field_expression_operator<'a>(
     }
     let operator = source[argument.end_byte()..field.start_byte()].trim();
     Ok(matches!(operator, "." | "->").then_some(operator))
-}
-
-fn encode_cpp_this_member_call_name(name: String, receiver: CppThisMemberReceiver) -> String {
-    match receiver {
-        CppThisMemberReceiver::Lvalue => name,
-        CppThisMemberReceiver::ConstLvalue => {
-            format!("{CPP_CONST_LVALUE_THIS_CALL_PREFIX}{name}")
-        }
-        CppThisMemberReceiver::Rvalue => format!("{CPP_RVALUE_THIS_CALL_PREFIX}{name}"),
-        CppThisMemberReceiver::ConstRvalue => {
-            format!("{CPP_CONST_RVALUE_THIS_CALL_PREFIX}{name}")
-        }
-    }
-}
-
-fn encode_cpp_temporary_member_call_name(
-    type_name: String,
-    name: String,
-    receiver: CppThisMemberReceiver,
-) -> String {
-    let prefix = match receiver {
-        CppThisMemberReceiver::Lvalue => return name,
-        CppThisMemberReceiver::ConstLvalue => CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-        CppThisMemberReceiver::Rvalue => CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-        CppThisMemberReceiver::ConstRvalue => CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    };
-    format!("{prefix}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}")
-}
-
-fn encode_cpp_local_member_call_name(
-    type_name: String,
-    name: String,
-    receiver: CppThisMemberReceiver,
-) -> String {
-    let prefix = match receiver {
-        CppThisMemberReceiver::Lvalue => CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-        CppThisMemberReceiver::ConstLvalue => CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-        CppThisMemberReceiver::Rvalue => CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-        CppThisMemberReceiver::ConstRvalue => CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    };
-    format!("{prefix}{type_name}{CPP_TEMPORARY_MEMBER_CALL_SEPARATOR}{type_name}::{name}")
 }
 
 fn cpp_member_call_name(field: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -4094,10 +4047,12 @@ mod tests {
 
     use super::super::cpp_types::cpp_type_is_top_level_const;
     use super::{
+        collect_c_graph_references, collect_cpp_call_arities, cpp_this_receiver_from_expression,
+    };
+    use crate::symbol_index_model::{
         CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
         CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-        CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, collect_c_graph_references, collect_cpp_call_arities,
-        cpp_this_receiver_from_expression,
+        CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
     };
 
     #[test]
