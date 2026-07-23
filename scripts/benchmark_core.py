@@ -337,7 +337,7 @@ def print_results(
             "modules": modules,
             "results": [result.__dict__ for result in results],
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print(json.dumps(payload, ensure_ascii=False, allow_nan=False, indent=2))
     else:
         print_table(results, workspace, modules)
 

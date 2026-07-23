@@ -320,7 +320,7 @@ def main() -> int:
         payload = build_execution_plan(args.profiles, snapshot)
     else:
         payload = snapshot
-    json.dump(payload, sys.stdout, ensure_ascii=False)
+    json.dump(payload, sys.stdout, ensure_ascii=False, allow_nan=False)
     sys.stdout.write("\n")
     return 0
 

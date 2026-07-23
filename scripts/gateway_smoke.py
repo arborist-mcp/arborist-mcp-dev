@@ -35,10 +35,17 @@ def _run_gateway(
     )
 
 
+def _reject_nonstandard_json_constant(name: str) -> Any:
+    raise ValueError(f"non-standard JSON constant: {name}")
+
+
 def _load_json(payload: str, description: str) -> Any:
     try:
-        return json.loads(payload)
-    except json.JSONDecodeError as exc:
+        return json.loads(
+            payload,
+            parse_constant=_reject_nonstandard_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(f"{description} returned invalid JSON: {exc}") from exc
 
 
@@ -65,7 +72,7 @@ def _request_once(
 ) -> dict[str, Any]:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         request_path = Path(handle.name)
-        json.dump(request, handle, ensure_ascii=False)
+        json.dump(request, handle, ensure_ascii=False, allow_nan=False)
         handle.write("\n")
 
     try:
@@ -89,7 +96,7 @@ def _request_stdio(
     completed = _run_gateway(
         python,
         launcher,
-        input_text=json.dumps(request, ensure_ascii=False) + "\n",
+        input_text=json.dumps(request, ensure_ascii=False, allow_nan=False) + "\n",
     )
     response = _load_json(completed.stdout, description)
     request_id = request.get("id")

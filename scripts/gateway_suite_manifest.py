@@ -162,7 +162,7 @@ def main() -> int:
         ]
     else:
         payload = build_manifest_snapshot()
-    json.dump(payload, sys.stdout, ensure_ascii=False)
+    json.dump(payload, sys.stdout, ensure_ascii=False, allow_nan=False)
     sys.stdout.write("\n")
     return 0
 
