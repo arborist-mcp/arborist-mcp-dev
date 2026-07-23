@@ -1710,13 +1710,38 @@ fn cpp_typed_standard_get_receiver(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let (type_name, binding_receiver) =
         cpp_typed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(&type_name, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(&type_name, binding_receiver)?;
     Some((cpp_temporary_type_path(&type_name)?, receiver))
+}
+
+fn cpp_standard_get_element_receiver(
+    element_type: &str,
+    container_receiver: CppThisMemberReceiver,
+) -> Option<CppThisMemberReceiver> {
+    let element_receiver = cpp_this_receiver_for_type(
+        element_type,
+        Some(matches!(
+            container_receiver,
+            CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
+        )),
+    )?;
+    let const_qualified = matches!(
+        container_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    ) || matches!(
+        element_receiver,
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue
+    );
+    let rvalue = matches!(
+        element_receiver,
+        CppThisMemberReceiver::Rvalue | CppThisMemberReceiver::ConstRvalue
+    );
+    Some(match (const_qualified, rvalue) {
+        (false, false) => CppThisMemberReceiver::Lvalue,
+        (true, false) => CppThisMemberReceiver::ConstLvalue,
+        (false, true) => CppThisMemberReceiver::Rvalue,
+        (true, true) => CppThisMemberReceiver::ConstRvalue,
+    })
 }
 
 fn cpp_typed_standard_get_element_binding(
@@ -1726,13 +1751,48 @@ fn cpp_typed_standard_get_element_binding(
 ) -> Option<(String, CppThisMemberReceiver)> {
     let requested_type = cpp_typed_standard_get_type(expression)?;
     let (_, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    let (binding, receiver) =
+        cpp_standard_get_container_binding(argument, byte_offset, local_bindings)?;
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
     let element_type = cpp_standard_typed_get_element_type(&binding.type_name, requested_type)?;
-    Some((element_type.to_string(), binding.receiver))
+    Some((element_type.to_string(), receiver))
+}
+
+fn cpp_standard_get_container_binding<'a>(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &'a [CppLocalBinding],
+) -> Option<(&'a CppLocalBinding, CppThisMemberReceiver)> {
+    let expression = strip_cpp_outer_parentheses(expression.trim());
+    if let Some(binding) = cpp_visible_local_binding(expression, byte_offset, local_bindings) {
+        return Some((binding, binding.receiver));
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::move") {
+        let (binding, receiver) =
+            cpp_standard_get_container_binding(argument, byte_offset, local_bindings)?;
+        let receiver = match receiver {
+            CppThisMemberReceiver::Lvalue | CppThisMemberReceiver::Rvalue => {
+                CppThisMemberReceiver::Rvalue
+            }
+            CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+                CppThisMemberReceiver::ConstRvalue
+            }
+        };
+        return Some((binding, receiver));
+    }
+    if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
+        let (binding, _) =
+            cpp_standard_get_container_binding(argument, byte_offset, local_bindings)?;
+        return Some((binding, CppThisMemberReceiver::ConstLvalue));
+    }
+    if let Some((type_name, argument)) = cpp_typed_receiver_call(expression, "std::forward") {
+        let (binding, _) =
+            cpp_standard_get_container_binding(argument, byte_offset, local_bindings)?;
+        return Some((binding, cpp_this_receiver_for_type(type_name, Some(true))?));
+    }
+    None
 }
 
 fn cpp_typed_standard_get_smart_pointer_receiver(
@@ -1766,12 +1826,7 @@ fn cpp_typed_standard_get_optional_arrow_receiver(
     let (optional_type, binding_receiver) =
         cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
     let target = cpp_standard_optional_target_type(&optional_type)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1798,12 +1853,7 @@ fn cpp_typed_standard_get_expected_arrow_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_target_type(&expected_type)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1831,12 +1881,7 @@ fn cpp_typed_standard_get_optional_value_receiver(
     let (optional_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_optional_target_type(&optional_type)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1849,12 +1894,7 @@ fn cpp_typed_standard_get_expected_value_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_target_type(&expected_type)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -1867,12 +1907,7 @@ fn cpp_typed_standard_get_expected_error_receiver(
     let (expected_type, binding_receiver) =
         cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
     let target = cpp_standard_expected_error_type(&expected_type)?;
-    let receiver = match binding_receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(target, binding_receiver)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
