@@ -74,6 +74,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [ ] Continue splitting large Rust surfaces along existing module boundaries:
   `patching.rs`, `symbols.rs`, `model.rs`, and test modules should remain
   focused facades over submodules.
+- [x] Split `semantic/c` into `identity` (callable overload identity) and
+  `skeleton` (skeleton build, symbol-id anchoring, semantic node lookup)
+  submodules under `semantic/c/`.
 - [x] Split C++ reference validation's typed/indexed `std::get` receiver helpers
   into `patching/c_validation/references/std_get.rs` while keeping the public
   collection APIs stable.
