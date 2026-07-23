@@ -2178,18 +2178,12 @@ fn cpp_indexed_tuple_get_expected_optional_smart_pointer_arrow_receiver(
         let receiver = expression.strip_suffix(".error()")?;
         (receiver.trim(), false)
     };
-    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
+    let (element_type, _) =
+        cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
     let optional_type = if value_target {
-        cpp_standard_expected_target_type(element_type)?
+        cpp_standard_expected_target_type(&element_type)?
     } else {
-        cpp_standard_expected_error_type(element_type)?
+        cpp_standard_expected_error_type(&element_type)?
     };
     let pointer_type = cpp_standard_optional_target_type(optional_type)?;
     let target = cpp_standard_smart_pointer_target_type(pointer_type)?;
@@ -2210,18 +2204,12 @@ fn cpp_indexed_tuple_get_expected_optional_raw_pointer_receiver(
         let receiver = expression.strip_suffix(".error()")?;
         (receiver.trim(), false)
     };
-    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
+    let (element_type, _) =
+        cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
     let optional_type = if value_target {
-        cpp_standard_expected_target_type(element_type)?
+        cpp_standard_expected_target_type(&element_type)?
     } else {
-        cpp_standard_expected_error_type(element_type)?
+        cpp_standard_expected_error_type(&element_type)?
     };
     let pointer_type = cpp_standard_optional_target_type(optional_type)?;
     let pointee_type = pointer_type.split_once('*')?.0.trim();
