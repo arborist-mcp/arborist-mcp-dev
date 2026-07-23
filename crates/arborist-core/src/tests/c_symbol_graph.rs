@@ -4556,6 +4556,53 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
 }
 
 #[test]
+fn preserves_cpp_decltype_auto_typed_get_receiver_categories_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("decltype_auto_typed_get_receiver_categories.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int const_get_caller(const std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } int moved_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return std::move(nested).adjust(value); } int optional_get_caller(const std::variant<Value, std::optional<Counter>> current, int value) { decltype(auto) nested = std::get<std::optional<Counter>>(current); return nested.value().adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::const_get_caller", "api::Counter::adjust(int) const &"),
+        ("api::moved_get_caller", "api::Counter::adjust(int) &&"),
+        (
+            "api::optional_get_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn does_not_resolve_invalid_cpp_typed_get_bindings() {
     let dir = temporary_dir();
     let source = dir.join("invalid_typed_get_bindings.cpp");

@@ -1422,6 +1422,47 @@ fn traces_cpp_typed_get_standard_value_calls_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn preserves_cpp_decltype_auto_typed_get_receiver_categories_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("decltype_auto_typed_get_receiver_categories.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int const_get_caller(const std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } int moved_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return std::move(nested).adjust(value); } int optional_get_caller(const std::variant<Value, std::optional<Counter>> current, int value) { decltype(auto) nested = std::get<std::optional<Counter>>(current); return nested.value().adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::const_get_caller", "api::Counter::adjust(int) const &"),
+        ("api::moved_get_caller", "api::Counter::adjust(int) &&"),
+        (
+            "api::optional_get_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn does_not_trace_invalid_cpp_typed_get_bindings_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("invalid_typed_get_bindings.cpp");

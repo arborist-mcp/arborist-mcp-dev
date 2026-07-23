@@ -738,12 +738,12 @@ fn cpp_decltype_auto_binding_type(
             Some(CppStandardUnwrap::SmartPointer),
         ));
     }
-    // std::get<T>(...) yields a typed object binding only when T identifies one
-    // tuple-like element. value any_cast uses its explicit type directly.
-    if let Some((type_name, _)) =
-        cpp_typed_standard_get_element_binding(expression, declaration_start, local_bindings)
+    // std::get<T>(...) preserves the selected element's reference and value
+    // category under decltype(auto). value any_cast returns by value instead.
+    if let Some((type_name, receiver)) =
+        cpp_typed_standard_get_receiver(expression, declaration_start, local_bindings)
     {
-        return cpp_copied_standard_binding_type(&type_name, "auto");
+        return cpp_reference_alias_binding_type(&type_name, receiver);
     }
     if let Some(type_name) = cpp_any_cast_value_type(expression) {
         return cpp_copied_standard_binding_type(type_name, "auto");
