@@ -91,7 +91,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `patching/c_validation/references/bindings.rs`.
 - [x] Extract C++ member/wrapper receiver resolution into
   `patching/c_validation/references/receivers.rs`, leaving `references/mod.rs`
-  as a thin facade plus in-module regression tests.
+  as a thin facade.
+- [x] Move C++ references regression tests into
+  `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
 - [x] Detect source files added after an index build during health inspection
