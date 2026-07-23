@@ -1775,6 +1775,21 @@ fn cpp_typed_standard_get_optional_arrow_receiver(
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
+fn cpp_typed_standard_get_optional_smart_pointer_arrow_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let (optional_type, _) =
+        cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
+    let pointer_type = cpp_standard_optional_target_type(&optional_type)?;
+    let target = cpp_standard_smart_pointer_target_type(pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
+}
+
 fn cpp_typed_standard_get_expected_arrow_receiver(
     expression: &str,
     byte_offset: usize,
@@ -1790,6 +1805,21 @@ fn cpp_typed_standard_get_expected_arrow_receiver(
         _ => cpp_this_receiver_for_type(target, Some(false))?,
     };
     Some((cpp_temporary_type_path(target)?, receiver))
+}
+
+fn cpp_typed_standard_get_expected_smart_pointer_arrow_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let (expected_type, _) =
+        cpp_typed_standard_get_receiver(expression, byte_offset, local_bindings)?;
+    let pointer_type = cpp_standard_expected_target_type(&expected_type)?;
+    let target = cpp_standard_smart_pointer_target_type(pointer_type)?;
+    Some((
+        cpp_temporary_type_path(target)?,
+        cpp_this_receiver_for_type(target, Some(false))?,
+    ))
 }
 
 fn cpp_typed_standard_get_optional_value_receiver(
@@ -2939,6 +2969,26 @@ fn cpp_local_member_receiver_from_expression(
             byte_offset,
             local_bindings,
         )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_optional_smart_pointer_arrow_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_smart_pointer_arrow_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
     {
         return Some((type_name, receiver));
     }

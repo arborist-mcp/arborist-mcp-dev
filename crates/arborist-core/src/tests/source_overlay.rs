@@ -1296,12 +1296,17 @@ fn traces_cpp_typed_get_standard_value_calls_from_unsaved_source_overlay() {
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int optional_value_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(current).value().adjust(value); } int expected_value_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { return std::get<std::expected<Counter, Value>>(current).value().adjust(value); } int const_expected_error_caller(const std::variant<Value, std::expected<Value, Counter>> current, int value) { return std::get<std::expected<Value, Counter>>(current).error().adjust(value); } int shared_get_caller(std::variant<Value, std::shared_ptr<Counter>> current, int value) { return std::get<std::shared_ptr<Counter>>(current).get()->adjust(value); } int const_shared_get_caller(std::variant<std::shared_ptr<const Counter>, Value> current, int value) { return std::get<std::shared_ptr<const Counter>>(current).get()->adjust(value); } }\n";
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int optional_value_caller(std::variant<Value, std::optional<Counter>> current, int value) { return std::get<std::optional<Counter>>(current).value().adjust(value); } int expected_value_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { return std::get<std::expected<Counter, Value>>(current).value().adjust(value); } int const_expected_error_caller(const std::variant<Value, std::expected<Value, Counter>> current, int value) { return std::get<std::expected<Value, Counter>>(current).error().adjust(value); } int optional_unique_caller(std::variant<Value, std::optional<std::unique_ptr<Counter>>> current, int value) { return std::get<std::optional<std::unique_ptr<Counter>>>(current)->adjust(value); } int expected_const_shared_caller(std::variant<std::expected<std::shared_ptr<const Counter>, Value>, Value> current, int value) { return std::get<std::expected<std::shared_ptr<const Counter>, Value>>(current)->adjust(value); } int shared_get_caller(std::variant<Value, std::shared_ptr<Counter>> current, int value) { return std::get<std::shared_ptr<Counter>>(current).get()->adjust(value); } int const_shared_get_caller(std::variant<std::shared_ptr<const Counter>, Value> current, int value) { return std::get<std::shared_ptr<const Counter>>(current).get()->adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::optional_value_caller", "api::Counter::adjust(int) &"),
         ("api::expected_value_caller", "api::Counter::adjust(int) &"),
         (
             "api::const_expected_error_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        ("api::optional_unique_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::expected_const_shared_caller",
             "api::Counter::adjust(int) const &",
         ),
         ("api::shared_get_caller", "api::Counter::adjust(int) &"),
