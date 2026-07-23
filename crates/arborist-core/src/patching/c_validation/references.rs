@@ -2136,6 +2136,63 @@ fn cpp_typed_standard_get_expected_optional_smart_pointer_get_receiver(
     ))
 }
 
+fn cpp_typed_standard_get_expected_sequence_type(
+    receiver: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let (receiver, value_target) = if let Some(receiver) = receiver.strip_suffix(".value()") {
+        (receiver.trim(), true)
+    } else {
+        let receiver = receiver.strip_suffix(".error()")?;
+        (receiver.trim(), false)
+    };
+    let (expected_type, container_receiver) =
+        cpp_typed_standard_get_receiver(receiver, byte_offset, local_bindings)?;
+    let sequence_type = if value_target {
+        cpp_standard_expected_target_type(&expected_type)?
+    } else {
+        cpp_standard_expected_error_type(&expected_type)?
+    };
+    Some((sequence_type.to_string(), container_receiver))
+}
+
+fn cpp_typed_standard_get_expected_sequence_element_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = cpp_standard_sequence_element_access_receiver(expression)?;
+    let (sequence_type, container_receiver) =
+        cpp_typed_standard_get_expected_sequence_type(receiver, byte_offset, local_bindings)?;
+    let element_type = cpp_standard_sequence_element_type(&sequence_type)?;
+    let receiver = match container_receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(element_type)?, receiver))
+}
+
+fn cpp_typed_standard_get_expected_sequence_data_receiver(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
+    let receiver = expression.strip_suffix(".data()")?.trim();
+    let (sequence_type, container_receiver) =
+        cpp_typed_standard_get_expected_sequence_type(receiver, byte_offset, local_bindings)?;
+    let element_type = cpp_standard_contiguous_sequence_element_type(&sequence_type)?;
+    let receiver = match container_receiver {
+        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
+            CppThisMemberReceiver::ConstLvalue
+        }
+        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
+    };
+    Some((cpp_temporary_type_path(element_type)?, receiver))
+}
+
 fn cpp_typed_standard_get_optional_value_receiver(
     expression: &str,
     byte_offset: usize,
@@ -3296,6 +3353,15 @@ fn cpp_local_member_receiver_from_expression(
         return Some((type_name, receiver));
     }
     if member_operator == "->"
+        && let Some((type_name, receiver)) = cpp_typed_standard_get_expected_sequence_data_receiver(
+            expression,
+            byte_offset,
+            local_bindings,
+        )
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "->"
         && let Some((type_name, receiver)) = cpp_indexed_tuple_get_expected_sequence_data_receiver(
             expression,
             byte_offset,
@@ -3465,6 +3531,16 @@ fn cpp_local_member_receiver_from_expression(
     if member_operator == "."
         && let Some((type_name, receiver)) =
             cpp_indexed_tuple_get_receiver(expression, byte_offset, local_bindings)
+    {
+        return Some((type_name, receiver));
+    }
+    if member_operator == "."
+        && let Some((type_name, receiver)) =
+            cpp_typed_standard_get_expected_sequence_element_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
     {
         return Some((type_name, receiver));
     }
