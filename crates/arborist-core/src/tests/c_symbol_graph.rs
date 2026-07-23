@@ -5941,6 +5941,61 @@ fn resolves_cpp_indexable_sequence_element_member_calls_across_live_and_persiste
 }
 
 #[test]
+fn resolves_cpp_wrapped_sequence_receiver_categories_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("wrapped_sequence_receiver_categories.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int moved_front_caller(std::vector<Counter> current, int value) { return std::move(current).front().adjust(value); } int const_back_caller(std::vector<Counter> current, int value) { return std::as_const(current).back().adjust(value); } int forwarded_subscript_caller(std::array<Counter, 2> current, int value) { return std::forward<std::array<Counter, 2>&&>(current)[0].adjust(value); } int moved_data_caller(std::span<Counter> current, int value) { return std::move(current).data()->adjust(value); } int const_data_caller(std::vector<Counter> current, int value) { return std::as_const(current).data()->adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::moved_front_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_back_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::forwarded_subscript_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        ("api::moved_data_caller", "api::Counter::adjust(int) &"),
+        (
+            "api::const_data_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_contiguous_sequence_data_member_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("contiguous_sequence_data.cpp");

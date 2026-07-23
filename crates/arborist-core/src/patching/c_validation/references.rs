@@ -3558,19 +3558,14 @@ fn cpp_standard_sequence_element_receiver(
         .find_map(|suffix| expression.strip_suffix(suffix))
         .or_else(|| cpp_standard_sequence_at_receiver(expression))?
         .trim();
-    let binding = cpp_visible_local_binding(receiver, byte_offset, local_bindings)?;
+    let (binding, container_receiver) =
+        cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)?;
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
     let element_type = cpp_standard_sequence_element_type(&binding.type_name)?;
     let type_name = cpp_temporary_type_path(element_type)?;
-    let receiver = cpp_this_receiver_for_type(element_type, Some(false))?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => receiver,
-    };
+    let receiver = cpp_standard_get_element_receiver(element_type, container_receiver, false)?;
     Some((type_name, receiver))
 }
 
@@ -3587,17 +3582,13 @@ fn cpp_standard_indexable_sequence_element_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = cpp_subscript_receiver(expression)?;
-    let binding = cpp_visible_local_binding(receiver, byte_offset, local_bindings)?;
+    let (binding, container_receiver) =
+        cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)?;
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
     let element_type = cpp_standard_indexable_sequence_element_type(&binding.type_name)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(element_type, container_receiver, false)?;
     Some((cpp_temporary_type_path(element_type)?, receiver))
 }
 
@@ -3607,17 +3598,13 @@ fn cpp_standard_sequence_data_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".data()")?.trim();
-    let binding = cpp_visible_local_binding(receiver, byte_offset, local_bindings)?;
+    let (binding, container_receiver) =
+        cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)?;
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
     let element_type = cpp_standard_contiguous_sequence_element_type(&binding.type_name)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
-    };
+    let receiver = cpp_standard_get_element_receiver(element_type, container_receiver, false)?;
     Some((cpp_temporary_type_path(element_type)?, receiver))
 }
 
