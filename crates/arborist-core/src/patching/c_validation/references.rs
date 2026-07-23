@@ -679,6 +679,13 @@ fn cpp_decltype_auto_binding_type(
                 )
             })
             .or_else(|| {
+                cpp_typed_standard_get_expected_optional_weak_pointer_lock_receiver(
+                    expression,
+                    declaration_start,
+                    local_bindings,
+                )
+            })
+            .or_else(|| {
                 cpp_standard_weak_pointer_lock_receiver(
                     expression,
                     declaration_start,
@@ -911,6 +918,13 @@ fn cpp_auto_constructor_binding_type(
     })
     .or_else(|| {
         cpp_typed_standard_get_expected_error_weak_pointer_lock_receiver(
+            initializer_text,
+            declaration_start,
+            local_bindings,
+        )
+    })
+    .or_else(|| {
+        cpp_typed_standard_get_expected_optional_weak_pointer_lock_receiver(
             initializer_text,
             declaration_start,
             local_bindings,
@@ -1392,7 +1406,13 @@ fn cpp_auto_expected_error_smart_pointer_binding(
         return cpp_copied_standard_binding_type(&type_name, type_prefix);
     }
     let (type_name, receiver) =
-        cpp_smart_pointer_get_receiver(expression, byte_offset, local_bindings)?;
+        cpp_smart_pointer_get_receiver(expression, byte_offset, local_bindings).or_else(|| {
+            cpp_typed_standard_get_expected_optional_smart_pointer_get_receiver(
+                expression,
+                byte_offset,
+                local_bindings,
+            )
+        })?;
     // .get() yields a pointer; pointee constness is preserved under auto.
     let _ = type_prefix;
     Some((
@@ -1584,6 +1604,13 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
         return Some(binding);
     }
     if let Some(binding) = cpp_typed_standard_get_expected_error_reference_wrapper_receiver(
+        expression,
+        byte_offset,
+        local_bindings,
+    ) {
+        return Some(binding);
+    }
+    if let Some(binding) = cpp_typed_standard_get_expected_optional_reference_wrapper_receiver(
         expression,
         byte_offset,
         local_bindings,

@@ -2045,6 +2045,44 @@ fn traces_cpp_typed_get_expected_wrapper_calls_from_unsaved_source_overlay() {
 }
 
 #[test]
+fn binds_cpp_typed_get_expected_optional_wrappers_from_unsaved_source_overlay() {
+    let dir = temporary_dir();
+    let source_path = dir.join("typed_get_expected_optional_wrapper_bindings.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace api { int caller(int value) { return value; } }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int weak_caller(std::variant<Value, std::expected<std::optional<std::weak_ptr<Counter>>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::optional<std::weak_ptr<Counter>>, Value>>(current).value()->lock(); return nested->adjust(value); } int smart_caller(std::variant<Value, std::expected<Value, std::optional<std::shared_ptr<const Counter>>>> current, int value) { auto pointer = std::get<std::expected<Value, std::optional<std::shared_ptr<const Counter>>>>(current).error()->get(); return pointer->adjust(value); } int reference_caller(std::variant<Value, std::expected<std::optional<std::reference_wrapper<const Counter>>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::optional<std::reference_wrapper<const Counter>>, Value>>(current).value()->get(); return nested.adjust(value); } }\n";
+    for (caller, expected_callee) in [
+        ("api::weak_caller", "api::Counter::adjust(int) &"),
+        ("api::smart_caller", "api::Counter::adjust(int) const &"),
+        ("api::reference_caller", "api::Counter::adjust(int) const &"),
+    ] {
+        let trace = trace_symbol_graph_from_index_with_source(
+            &db_path,
+            &source_path,
+            source,
+            caller,
+            TraceDirection::Both,
+        )
+        .unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn preserves_cpp_decltype_auto_typed_get_receiver_categories_from_unsaved_source_overlay() {
     let dir = temporary_dir();
     let source_path = dir.join("decltype_auto_typed_get_receiver_categories.cpp");

@@ -4663,6 +4663,50 @@ fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queri
 }
 
 #[test]
+fn binds_cpp_typed_get_expected_optional_wrappers_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("typed_get_expected_optional_wrapper_bindings.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int weak_caller(std::variant<Value, std::expected<std::optional<std::weak_ptr<Counter>>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::optional<std::weak_ptr<Counter>>, Value>>(current).value()->lock(); return nested->adjust(value); } int smart_caller(std::variant<Value, std::expected<Value, std::optional<std::shared_ptr<const Counter>>>> current, int value) { auto pointer = std::get<std::expected<Value, std::optional<std::shared_ptr<const Counter>>>>(current).error()->get(); return pointer->adjust(value); } int reference_caller(std::variant<Value, std::expected<std::optional<std::reference_wrapper<const Counter>>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::optional<std::reference_wrapper<const Counter>>, Value>>(current).value()->get(); return nested.adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        ("api::weak_caller", "api::Counter::adjust(int) &"),
+        ("api::smart_caller", "api::Counter::adjust(int) const &"),
+        ("api::reference_caller", "api::Counter::adjust(int) const &"),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn preserves_cpp_decltype_auto_typed_get_receiver_categories_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("decltype_auto_typed_get_receiver_categories.cpp");
