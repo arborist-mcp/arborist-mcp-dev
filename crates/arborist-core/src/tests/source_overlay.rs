@@ -1993,10 +1993,7 @@ fn traces_cpp_typed_get_top_level_cv_spellings_from_unsaved_source_overlay() {
             "api::pointer_const_caller",
             "api::Counter::adjust(int) const &",
         ),
-        (
-            "api::const_pointer_caller",
-            "api::Counter::adjust(int) &",
-        ),
+        ("api::const_pointer_caller", "api::Counter::adjust(int) &"),
     ] {
         let trace = trace_symbol_graph_from_index_with_source(
             &db_path,

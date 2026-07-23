@@ -249,7 +249,10 @@ fn normalized_cpp_single_pointer_type(type_name: &str) -> Option<String> {
 
     let mut normalized = normalized_cpp_non_pointer_type(pointee);
     normalized.push('*');
-    if pointer_suffix.split_whitespace().any(|token| token == "const") {
+    if pointer_suffix
+        .split_whitespace()
+        .any(|token| token == "const")
+    {
         normalized.push_str("#const");
     }
     if pointer_suffix

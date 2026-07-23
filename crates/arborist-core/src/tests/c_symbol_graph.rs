@@ -4603,10 +4603,7 @@ fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queri
             "api::pointer_const_caller",
             "api::Counter::adjust(int) const &",
         ),
-        (
-            "api::const_pointer_caller",
-            "api::Counter::adjust(int) &",
-        ),
+        ("api::const_pointer_caller", "api::Counter::adjust(int) &"),
     ];
     for (caller, expected_callee) in expected_callees {
         let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
