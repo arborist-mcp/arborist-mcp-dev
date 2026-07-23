@@ -1963,21 +1963,26 @@ fn cpp_indexed_tuple_get_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
+    let receiver = cpp_standard_get_element_receiver(&element_type, container_receiver, true)?;
+    Some((cpp_temporary_type_path(&element_type)?, receiver))
+}
+
+fn cpp_indexed_standard_get_element_binding(
+    expression: &str,
+    byte_offset: usize,
+    local_bindings: &[CppLocalBinding],
+) -> Option<(String, CppThisMemberReceiver)> {
     let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
     let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    let (binding, receiver) =
+        cpp_standard_get_container_binding(argument, byte_offset, local_bindings)?;
     if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
         return None;
     }
     let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(element_type, Some(false))?,
-    };
-    Some((cpp_temporary_type_path(element_type)?, receiver))
+    Some((element_type.to_string(), receiver))
 }
 
 fn cpp_indexed_tuple_get_smart_pointer_receiver(
@@ -2026,21 +2031,10 @@ fn cpp_indexed_tuple_get_optional_value_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".value()")?.trim();
-    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_optional_target_type(element_type)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_optional_target_type(&element_type)?;
+    let receiver = cpp_standard_get_element_receiver(target, container_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -2049,21 +2043,10 @@ fn cpp_indexed_tuple_get_optional_arrow_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_optional_target_type(element_type)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
+    let target = cpp_standard_optional_target_type(&element_type)?;
+    let receiver = cpp_standard_get_element_receiver(target, container_receiver, false)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -2094,21 +2077,10 @@ fn cpp_indexed_tuple_get_expected_value_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".value()")?.trim();
-    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_expected_target_type(element_type)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_expected_target_type(&element_type)?;
+    let receiver = cpp_standard_get_element_receiver(target, container_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -2248,21 +2220,10 @@ fn cpp_indexed_tuple_get_expected_arrow_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_expected_target_type(element_type)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
+    let target = cpp_standard_expected_target_type(&element_type)?;
+    let receiver = cpp_standard_get_element_receiver(target, container_receiver, false)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
@@ -2293,21 +2254,10 @@ fn cpp_indexed_tuple_get_expected_error_receiver(
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
     let receiver = expression.strip_suffix(".error()")?.trim();
-    let (index, argument) = cpp_typed_receiver_call(receiver, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_expected_error_type(element_type)?;
-    let receiver = match binding.receiver {
-        CppThisMemberReceiver::ConstLvalue | CppThisMemberReceiver::ConstRvalue => {
-            CppThisMemberReceiver::ConstLvalue
-        }
-        _ => cpp_this_receiver_for_type(target, Some(false))?,
-    };
+    let (element_type, container_receiver) =
+        cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
+    let target = cpp_standard_expected_error_type(&element_type)?;
+    let receiver = cpp_standard_get_element_receiver(target, container_receiver, true)?;
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
