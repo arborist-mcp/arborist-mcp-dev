@@ -16,7 +16,7 @@ DEFAULT_SNAPSHOT_PATH = REPO_ROOT / "docs" / "tool-catalog.json"
 
 
 def _catalog_json() -> str:
-    return json.dumps(build_tool_catalog(), ensure_ascii=False, indent=2) + "\n"
+    return json.dumps(build_tool_catalog(), ensure_ascii=False, allow_nan=False, indent=2) + "\n"
 
 
 def build_parser() -> argparse.ArgumentParser:
