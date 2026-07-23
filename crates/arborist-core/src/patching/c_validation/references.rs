@@ -2059,15 +2059,9 @@ fn cpp_indexed_tuple_get_smart_pointer_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
-    let target = cpp_standard_smart_pointer_target_type(element_type)?;
+    let (element_type, _) =
+        cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
+    let target = cpp_standard_smart_pointer_target_type(&element_type)?;
     Some((
         cpp_temporary_type_path(target)?,
         cpp_this_receiver_for_type(target, Some(false))?,
@@ -2079,14 +2073,8 @@ fn cpp_indexed_tuple_get_raw_pointer_receiver(
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
 ) -> Option<(String, CppThisMemberReceiver)> {
-    let (index, argument) = cpp_typed_receiver_call(expression, "std::get")?;
-    let index = index.parse::<usize>().ok()?;
-    let binding_name = cpp_local_binding_name_from_expression(argument)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let element_type = cpp_standard_indexed_element_type(&binding.type_name, index)?;
+    let (element_type, _) =
+        cpp_indexed_standard_get_element_binding(expression, byte_offset, local_bindings)?;
     let pointee_type = element_type.split_once('*')?.0.trim();
     Some((
         cpp_temporary_type_path(pointee_type)?,
