@@ -105,6 +105,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract C++ member/wrapper receiver resolution into
   `patching/c_validation/references/receivers.rs`, leaving `references/mod.rs`
   as a thin facade.
+- [x] Split `references/receivers` into nested modules: `binding_lookup`
+  (visible/addressable/temporary/this), `sequence` (sequence/subscript
+  element receivers), and `wrappers` (optional/expected/smart-pointer
+  receiver helpers), keeping the main member-receiver dispatcher in
+  `receivers/mod.rs`.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
