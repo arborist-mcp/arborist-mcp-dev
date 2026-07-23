@@ -36,6 +36,9 @@ completed item can land in its own commit unless two changes are inseparable.
 
 - [x] Extract gateway symbol query, patch/validation, and trace route
   handlers into focused mixins without changing public response shapes.
+- [x] Split gateway symbol routes further into read/search/list mixins
+  (`gateway_symbol_read_routes.py`, `gateway_symbol_search_routes.py`,
+  `gateway_symbol_list_routes.py`) with a thin composition facade.
 
 - [x] Make the gateway-suite manifest helper expose the same basic CLI
   ergonomics as the Python-suite manifest helper, including descriptions or
