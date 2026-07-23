@@ -139,6 +139,14 @@ against `U`.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
 for direct `lock()->member()` calls and `auto` bindings. Const qualification on
 the weak pointer wrapper does not change the pointee type.
+Direct `std::get<N>(tuple_like)` calls resolve member calls on supported
+`std::tuple`, `std::pair`, and `std::variant` elements. The analyzer preserves
+the container expression's const and value category through `std::move`,
+`std::as_const`, and `std::forward`, including `.value()` / `.error()` on
+selected `std::optional` and `std::expected` elements; `operator->` continues
+to model the pointed-to object as an lvalue. Type-based `std::get<T>` follows
+the same rules only when `T` identifies exactly one top-level element, avoiding
+false edges for invalid or ambiguous tuple-like calls.
 The supported composition
 `std::optional<std::unique_ptr<T>>` or `std::optional<std::shared_ptr<T>>`
 also resolves `(*current)->member()` and `current.value()->member()` against

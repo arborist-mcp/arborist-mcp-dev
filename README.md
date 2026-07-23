@@ -131,6 +131,14 @@ pointee's lvalue and const receiver behavior.
 `std::weak_ptr<T>::lock()` resolves through the returned shared pointer, both
 for direct `lock()->member()` calls and `auto` bindings; const on the weak
 pointer wrapper does not make `T` const.
+Direct `std::get<N>(tuple_like)` calls resolve member calls on supported
+`std::tuple`, `std::pair`, and `std::variant` elements. The analyzer preserves
+the container expression's const and value category through `std::move`,
+`std::as_const`, and `std::forward`, including `.value()` / `.error()` on
+selected `std::optional` and `std::expected` elements; `operator->` continues
+to model the pointed-to object as an lvalue. Type-based `std::get<T>` follows
+the same rules only when `T` identifies exactly one top-level element, avoiding
+false edges for invalid or ambiguous tuple-like calls.
 Braced local initializers such as `api::Counter counter{value}` and
 `api::Box<int> box{value}` also resolve to constructor overloads by argument
 count. Indexed `using` and `typedef` aliases declared earlier in the same
