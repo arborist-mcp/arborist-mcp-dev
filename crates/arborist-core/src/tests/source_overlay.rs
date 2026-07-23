@@ -2094,7 +2094,7 @@ fn preserves_cpp_decltype_auto_typed_get_receiver_categories_from_unsaved_source
     .unwrap();
     rebuild_symbol_index(&dir, &db_path).unwrap();
 
-    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int const_get_caller(const std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } int rvalue_reference_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return nested.adjust(value); } int moved_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return std::move(nested).adjust(value); } int optional_get_caller(const std::variant<Value, std::optional<Counter>> current, int value) { decltype(auto) nested = std::get<std::optional<Counter>>(current); return nested.value().adjust(value); } int typed_expected_weak_caller(std::variant<Value, std::expected<std::weak_ptr<Counter>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::weak_ptr<Counter>, Value>>(current).value().lock(); return nested->adjust(value); } int typed_expected_const_reference_caller(std::variant<Value, std::expected<Value, std::reference_wrapper<const Counter>>> current, int value) { decltype(auto) nested = std::get<std::expected<Value, std::reference_wrapper<const Counter>>>(current).error().get(); return nested.adjust(value); } }\n";
+    let source = "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } int adjust(int value) && { return value + 2; } }; int const_get_caller(const std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(current); return nested.adjust(value); } int rvalue_reference_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return nested.adjust(value); } int moved_get_caller(std::variant<Value, Counter> current, int value) { decltype(auto) nested = std::get<Counter>(std::move(current)); return std::move(nested).adjust(value); } int optional_get_caller(const std::variant<Value, std::optional<Counter>> current, int value) { decltype(auto) nested = std::get<std::optional<Counter>>(current); return nested.value().adjust(value); } int typed_expected_weak_caller(std::variant<Value, std::expected<std::weak_ptr<Counter>, Value>> current, int value) { decltype(auto) nested = std::get<std::expected<std::weak_ptr<Counter>, Value>>(current).value().lock(); return nested->adjust(value); } int typed_expected_const_reference_caller(std::variant<Value, std::expected<Value, std::reference_wrapper<const Counter>>> current, int value) { decltype(auto) nested = std::get<std::expected<Value, std::reference_wrapper<const Counter>>>(current).error().get(); return nested.adjust(value); } int typed_expected_auto_value_caller(std::variant<Value, std::expected<Counter, Value>> current, int value) { auto nested = std::get<std::expected<Counter, Value>>(current).value(); return nested.adjust(value); } int typed_expected_decltype_auto_error_caller(const std::variant<Value, std::expected<Value, Counter>> current, int value) { decltype(auto) nested = std::get<std::expected<Value, Counter>>(current).error(); return nested.adjust(value); } }\n";
     for (caller, expected_callee) in [
         ("api::const_get_caller", "api::Counter::adjust(int) const &"),
         (
@@ -2112,6 +2112,14 @@ fn preserves_cpp_decltype_auto_typed_get_receiver_categories_from_unsaved_source
         ),
         (
             "api::typed_expected_const_reference_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::typed_expected_auto_value_caller",
+            "api::Counter::adjust(int) &",
+        ),
+        (
+            "api::typed_expected_decltype_auto_error_caller",
             "api::Counter::adjust(int) const &",
         ),
     ] {

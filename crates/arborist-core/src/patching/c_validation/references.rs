@@ -769,6 +769,26 @@ fn cpp_decltype_auto_binding_type(
             cpp_named_reference_alias_receiver(receiver),
         );
     }
+    if let Some((type_name, receiver)) = cpp_typed_standard_get_expected_value_receiver(
+        expression,
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_reference_alias_binding_type(
+            &type_name,
+            cpp_named_reference_alias_receiver(receiver),
+        );
+    }
+    if let Some((type_name, receiver)) = cpp_typed_standard_get_expected_error_receiver(
+        expression,
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_reference_alias_binding_type(
+            &type_name,
+            cpp_named_reference_alias_receiver(receiver),
+        );
+    }
     if let Some(type_name) = cpp_any_cast_value_type(expression) {
         return cpp_copied_standard_binding_type(type_name, "auto");
     }
@@ -964,6 +984,20 @@ fn cpp_auto_constructor_binding_type(
         local_bindings,
     ) {
         return Some(binding_type);
+    }
+    if let Some((type_name, _)) = cpp_typed_standard_get_expected_value_receiver(
+        initializer_text,
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_copied_standard_binding_type(&type_name, type_prefix);
+    }
+    if let Some((type_name, _)) = cpp_typed_standard_get_expected_error_receiver(
+        initializer_text,
+        declaration_start,
+        local_bindings,
+    ) {
+        return cpp_copied_standard_binding_type(&type_name, type_prefix);
     }
     if let Some(binding_type) = cpp_auto_reference_wrapper_get_copy_binding(
         initializer_text,
