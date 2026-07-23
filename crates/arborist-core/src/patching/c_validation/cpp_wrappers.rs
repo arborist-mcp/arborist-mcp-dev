@@ -88,11 +88,11 @@ pub(super) fn cpp_standard_typed_get_element_type<'a>(
     let arguments = ["std::tuple", "std::pair", "std::variant"]
         .into_iter()
         .find_map(|tuple_type| cpp_standard_template_arguments(container_type, tuple_type))?;
-    let requested_type = compact_cpp_type_text(requested_type);
+    let requested_type = normalized_cpp_typed_get_type(requested_type);
     let mut matching_element = None;
     let mut index = 0usize;
     while let Some(element_type) = cpp_nth_template_argument(arguments, index) {
-        if compact_cpp_type_text(element_type) == requested_type {
+        if normalized_cpp_typed_get_type(element_type) == requested_type {
             if matching_element.is_some() {
                 return None;
             }
@@ -203,6 +203,70 @@ fn compact_cpp_type_text(type_name: &str) -> String {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect()
+}
+
+fn normalized_cpp_typed_get_type(type_name: &str) -> String {
+    if type_name.contains('&') || cpp_type_has_top_level_pointer(type_name) {
+        return compact_cpp_type_text(type_name);
+    }
+
+    let mut template_depth = 0usize;
+    let mut normalized = String::with_capacity(type_name.len());
+    let mut const_qualified = false;
+    let mut volatile_qualified = false;
+    let mut characters = type_name.char_indices().peekable();
+    while let Some((index, character)) = characters.next() {
+        if character == '<' {
+            template_depth += 1;
+            normalized.push(character);
+            continue;
+        }
+        if character == '>' {
+            template_depth = template_depth.saturating_sub(1);
+            normalized.push(character);
+            continue;
+        }
+        if template_depth == 0 && (character.is_ascii_alphabetic() || character == '_') {
+            let mut end = index + character.len_utf8();
+            while let Some((next_index, next)) = characters.peek().copied() {
+                if next.is_ascii_alphanumeric() || next == '_' {
+                    end = next_index + next.len_utf8();
+                    characters.next();
+                } else {
+                    break;
+                }
+            }
+            match &type_name[index..end] {
+                "const" => const_qualified = true,
+                "volatile" => volatile_qualified = true,
+                _ => normalized.push_str(&type_name[index..end]),
+            }
+            continue;
+        }
+        if !character.is_whitespace() {
+            normalized.push(character);
+        }
+    }
+    if const_qualified {
+        normalized.push_str("#const");
+    }
+    if volatile_qualified {
+        normalized.push_str("#volatile");
+    }
+    normalized
+}
+
+fn cpp_type_has_top_level_pointer(type_name: &str) -> bool {
+    let mut template_depth = 0usize;
+    for character in type_name.chars() {
+        match character {
+            '<' => template_depth += 1,
+            '>' => template_depth = template_depth.saturating_sub(1),
+            '*' if template_depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn cpp_has_exactly_two_top_level_template_arguments(arguments: &str) -> bool {
@@ -409,6 +473,27 @@ mod tests {
                 "std::shared_ptr<const Counter>"
             ),
             Some("std::shared_ptr< const Counter >")
+        );
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::variant<Value, Counter const>",
+                "const Counter"
+            ),
+            Some("Counter const")
+        );
+        assert_eq!(
+            cpp_standard_typed_get_element_type(
+                "std::tuple<Value, volatile Wrapper<const Counter>>",
+                "Wrapper<const Counter> volatile"
+            ),
+            Some("volatile Wrapper<const Counter>")
+        );
+        assert!(
+            cpp_standard_typed_get_element_type(
+                "std::tuple<Value, const Counter*>",
+                "Counter* const"
+            )
+            .is_none()
         );
         assert!(
             cpp_standard_typed_get_element_type("std::pair<Value, Counter>", "Missing").is_none()

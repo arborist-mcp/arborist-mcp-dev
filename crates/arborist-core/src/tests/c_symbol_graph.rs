@@ -4572,6 +4572,55 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
 }
 
 #[test]
+fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queries() {
+    let dir = temporary_dir();
+    let source = dir.join("typed_get_top_level_cv.cpp");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source,
+        "namespace api { class Value {}; class Counter { public: int adjust(int value) & { return value; } int adjust(int value) const & { return value + 1; } }; int postfix_const_caller(std::variant<Value, Counter const> current, int value) { return std::get<const Counter>(current).adjust(value); } int postfix_volatile_caller(std::variant<Value, volatile Counter> current, int value) { return std::get<Counter volatile>(current).adjust(value); } }\n",
+    )
+    .unwrap();
+
+    let expected_callees = [
+        (
+            "api::postfix_const_caller",
+            "api::Counter::adjust(int) const &",
+        ),
+        (
+            "api::postfix_volatile_caller",
+            "api::Counter::adjust(int) &",
+        ),
+    ];
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (caller, expected_callee) in expected_callees {
+        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        assert_eq!(
+            trace
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![expected_callee],
+            "{caller}",
+        );
+    }
+}
+
+#[test]
 fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queries() {
     let dir = temporary_dir();
     let source = dir.join("typed_get_expected_wrappers.cpp");
