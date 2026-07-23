@@ -39,11 +39,21 @@ def _reject_nonstandard_json_constant(name: str) -> Any:
     raise ValueError(f"non-standard JSON constant: {name}")
 
 
+def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        obj[key] = value
+    return obj
+
+
 def _load_json(payload: str, description: str) -> Any:
     try:
         return json.loads(
             payload,
             parse_constant=_reject_nonstandard_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
         )
     except (json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(f"{description} returned invalid JSON: {exc}") from exc

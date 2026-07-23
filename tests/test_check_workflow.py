@@ -31,6 +31,17 @@ def _load_version_consistency_module():
     return module
 
 
+def _load_gateway_smoke_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "scripts" / "gateway_smoke.py"
+    spec = importlib.util.spec_from_file_location("gateway_smoke", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 
 
@@ -40,6 +51,7 @@ class CheckWorkflowTests(unittest.TestCase):
         cls.repo_root = Path(__file__).resolve().parents[1]
         cls.module = _load_check_profile_module()
         cls.version_module = _load_version_consistency_module()
+        cls.gateway_smoke_module = _load_gateway_smoke_module()
 
     def test_check_profile_snapshot_has_expected_profile_order(self) -> None:
         snapshot = self.module.build_snapshot()
@@ -216,6 +228,19 @@ class CheckWorkflowTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("Gateway smoke checks passed.", completed.stdout)
+
+    def test_gateway_smoke_load_json_rejects_duplicate_keys_and_nonstandard_constants(
+        self,
+    ) -> None:
+        load_json = self.gateway_smoke_module._load_json
+        with self.assertRaisesRegex(RuntimeError, "duplicate JSON object key"):
+            load_json('{"a": 1, "a": 2}', "duplicate key payload")
+        with self.assertRaisesRegex(RuntimeError, "non-standard JSON constant"):
+            load_json('{"a": NaN}', "nonstandard constant payload")
+        self.assertEqual(
+            load_json('{"a": 1, "b": {"c": 2}}', "valid payload"),
+            {"a": 1, "b": {"c": 2}},
+        )
 
     def test_version_consistency_script_passes_for_repo_versions(self) -> None:
         script_path = self.repo_root / "scripts" / "version_consistency.py"
