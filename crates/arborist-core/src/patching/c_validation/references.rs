@@ -3649,8 +3649,7 @@ fn cpp_standard_weak_pointer_lock_receiver(
         .strip_suffix(".lock()")
         .or_else(|| expression.strip_suffix("->lock()"))
         .map(str::trim)?;
-    let binding_name = cpp_local_binding_name_from_expression(receiver)?;
-    let binding = cpp_visible_local_binding(binding_name, byte_offset, local_bindings)?;
+    let (binding, _) = cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)?;
     (binding.access == CppMemberAccess::Object
         && binding.standard_unwrap == Some(CppStandardUnwrap::WeakPointer))
     .then(|| (binding.type_name.clone(), binding.receiver))
