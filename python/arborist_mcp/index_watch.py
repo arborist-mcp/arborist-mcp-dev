@@ -70,10 +70,10 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _config_path(value: str, config_path: Path) -> str:
+def _resolve_path(value: str, base_directory: Path) -> str:
     path = Path(value)
     if not path.is_absolute():
-        path = config_path.parent / path
+        path = base_directory / path
     return str(path.resolve(strict=False))
 
 
@@ -136,7 +136,7 @@ def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
                 raise IndexWatchError(
                     f"invalid watch config: indexes[{index}].{key} must be a non-empty string"
                 )
-            values[key] = _config_path(value, config_path)
+            values[key] = _resolve_path(value, config_path.parent)
 
         target = IndexWatchTarget(values["workspace_root"], values["db_path"])
         workspace_key = os.path.normcase(target.workspace_root)
@@ -502,8 +502,12 @@ def run_cli(
                 )
             targets = load_watch_config(args.config_path)
         else:
+            current_directory = Path.cwd()
             targets = (
-                IndexWatchTarget(str(args.workspace_root), str(args.db_path)),
+                IndexWatchTarget(
+                    _resolve_path(str(args.workspace_root), current_directory),
+                    _resolve_path(str(args.db_path), current_directory),
+                ),
             )
 
         core = core_factory()

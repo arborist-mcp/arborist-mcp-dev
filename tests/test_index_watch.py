@@ -368,6 +368,7 @@ class IndexWatchTests(unittest.TestCase):
         core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
         stdout = io.StringIO()
         stderr = io.StringIO()
+        current_directory = Path.cwd()
 
         result = run_cli(
             [
@@ -384,7 +385,24 @@ class IndexWatchTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(stderr.getvalue(), "")
-        self.assertEqual(json.loads(stdout.getvalue())["status"], "refreshed")
+        event = json.loads(stdout.getvalue())
+        self.assertEqual(event["status"], "refreshed")
+        self.assertEqual(event["db_path"], str(current_directory.joinpath("symbols.db").resolve()))
+        self.assertEqual(
+            core.inspect_calls,
+            [str(current_directory.joinpath("symbols.db").resolve())],
+        )
+        self.assertEqual(
+            core.refresh_calls,
+            [
+                (
+                    str(current_directory.joinpath("workspace").resolve()),
+                    str(current_directory.joinpath("symbols.db").resolve()),
+                    20_000,
+                    None,
+                )
+            ],
+        )
 
     def test_cli_dry_run_emits_planned_action_without_writing(self) -> None:
         core = StubCore(health_payload(ok=False, action="rebuild", reason="missing index"))
