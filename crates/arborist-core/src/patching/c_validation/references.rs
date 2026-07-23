@@ -2556,7 +2556,7 @@ fn cpp_indexed_tuple_get_expected_value_raw_pointer_receiver(
     let (element_type, _) =
         cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
     let value_type = cpp_standard_expected_target_type(&element_type)?;
-    let pointee_type = value_type.split_once('*')?.0.trim();
+    let pointee_type = cpp_top_level_pointer_pointee(value_type)?;
     Some((
         cpp_temporary_type_path(pointee_type)?,
         cpp_this_receiver_for_type(pointee_type, Some(false))?,
@@ -2608,7 +2608,7 @@ fn cpp_indexed_tuple_get_expected_optional_raw_pointer_receiver(
         cpp_standard_expected_error_type(&element_type)?
     };
     let pointer_type = cpp_standard_optional_target_type(optional_type)?;
-    let pointee_type = pointer_type.split_once('*')?.0.trim();
+    let pointee_type = cpp_top_level_pointer_pointee(pointer_type)?;
     Some((
         cpp_temporary_type_path(pointee_type)?,
         cpp_this_receiver_for_type(pointee_type, Some(false))?,
@@ -2697,7 +2697,7 @@ fn cpp_indexed_tuple_get_expected_error_raw_pointer_receiver(
     let (element_type, _) =
         cpp_indexed_standard_get_element_binding(receiver, byte_offset, local_bindings)?;
     let error_type = cpp_standard_expected_error_type(&element_type)?;
-    let pointee_type = error_type.split_once('*')?.0.trim();
+    let pointee_type = cpp_top_level_pointer_pointee(error_type)?;
     Some((
         cpp_temporary_type_path(pointee_type)?,
         cpp_this_receiver_for_type(pointee_type, Some(false))?,
@@ -3182,7 +3182,7 @@ fn cpp_named_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberR
 }
 
 fn cpp_pointer_binding_receiver_for_type(type_name: &str) -> Option<CppThisMemberReceiver> {
-    let pointee_type = type_name.split_once('*')?.0.trim();
+    let pointee_type = cpp_top_level_pointer_pointee(type_name)?;
     cpp_this_receiver_for_type(pointee_type, Some(false))
 }
 
