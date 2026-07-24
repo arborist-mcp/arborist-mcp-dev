@@ -292,6 +292,8 @@ completed item can land in its own commit unless two changes are inseparable.
   parsing into `language/parser.rs`, preserving language facade exports.
 - [x] Extract Python semantic skeleton and symbol lookup helpers into
   `semantic/python.rs`, preserving crate-visible summary helper exports.
+- [x] Extract Tree-sitter query owner resolution into `query/owners.rs`,
+  keeping query execution and validation in the facade.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
