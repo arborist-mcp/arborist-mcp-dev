@@ -27,7 +27,7 @@ completed item can land in its own commit unless two changes are inseparable.
   `.\scripts\test.ps1 -Suite inner-loop`.
 - [x] Add missing regression tests for any reproducible failure found during
   the inner loop. No failures were found in the current run.
-- [ ] Keep `docs/tool-catalog.json` synchronized whenever tool schemas or
+- [x] Keep `docs/tool-catalog.json` synchronized whenever tool schemas or
   result schemas change.
 - [ ] Keep `README.md`, `docs/protocol.md`, and `docs/tools.md` synchronized
   with any protocol-facing change.
