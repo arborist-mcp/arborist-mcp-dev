@@ -309,6 +309,8 @@ completed item can land in its own commit unless two changes are inseparable.
   incremental modules under `symbol_index_workspace/`, retaining the facade API.
 - [x] Extract trace graph expansion into `symbol_trace/graph.rs`, keeping
   timeout handling and neighborhood traversal in focused modules.
+- [x] Extract cross-platform atomic file replacement into `language/io.rs`,
+  keeping language parsing and path helpers independent of platform APIs.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
   instead of rescanning the syntax tree for every capture owner.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
