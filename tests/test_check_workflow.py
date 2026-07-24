@@ -361,6 +361,19 @@ class CheckWorkflowTests(unittest.TestCase):
             workflow,
         )
 
+    def test_wheels_workflow_caches_cargo_builds_per_runner_and_lockfile(self) -> None:
+        workflow = (self.repo_root / ".github" / "workflows" / "wheels.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("actions/cache@v4", workflow)
+        self.assertIn("~/.cargo/registry", workflow)
+        self.assertIn("~/.cargo/git", workflow)
+        self.assertIn("target", workflow)
+        self.assertIn(
+            "key: ${{ runner.os }}-cargo-wheel-${{ hashFiles('**/Cargo.lock') }}",
+            workflow,
+        )
+
     def test_ci_profiles_promote_python_fast_over_gateway_fast(self) -> None:
         snapshot = self.module.build_snapshot()
         self.assertIn("python-fast", snapshot["ci_profiles"])
