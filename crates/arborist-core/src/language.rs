@@ -3,11 +3,12 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use tree_sitter::{Language, Node, Parser, Point, Tree};
+use tree_sitter::{Language, Node, Parser, Tree};
 
-use crate::model::{LanguageId, Position};
+use crate::model::LanguageId;
 
 mod c;
+mod positions;
 
 pub use c::{
     C_FAMILY_HEADER_EXTENSIONS, C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS,
@@ -15,6 +16,7 @@ pub use c::{
     is_c_header_path, resolve_local_c_include,
 };
 pub(crate) use c::{c_include_targets_before, extension_case_candidates};
+pub use positions::{offset_for_position, point_for_offset, position_from};
 
 pub struct ParsedDocument {
     pub language_id: LanguageId,
@@ -291,78 +293,6 @@ pub fn node_text<'a>(node: Node<'_>, source: &'a str) -> Result<&'a str> {
 
 pub fn normalize_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-pub fn position_from(point: Point) -> Position {
-    Position {
-        row: point.row,
-        column: point.column,
-    }
-}
-
-pub fn point_for_offset(source: &str, byte_offset: usize) -> Result<Point> {
-    if byte_offset > source.len() {
-        bail!(
-            "byte offset {} is out of bounds for source of length {}",
-            byte_offset,
-            source.len()
-        );
-    }
-    if !source.is_char_boundary(byte_offset) {
-        bail!(
-            "byte offset {} does not align to a UTF-8 character boundary",
-            byte_offset
-        );
-    }
-
-    let mut row = 0;
-    let mut column = 0;
-    for byte in source.as_bytes().iter().take(byte_offset) {
-        if *byte == b'\n' {
-            row += 1;
-            column = 0;
-        } else {
-            column += 1;
-        }
-    }
-
-    Ok(Point { row, column })
-}
-
-pub fn offset_for_position(source: &str, position: &Position) -> Result<usize> {
-    let mut row = 0;
-    let mut column = 0;
-
-    for (index, byte) in source.as_bytes().iter().enumerate() {
-        if row == position.row && column == position.column {
-            if !source.is_char_boundary(index) {
-                bail!(
-                    "position {}:{} maps to byte offset {} which does not align to a UTF-8 character boundary",
-                    position.row,
-                    position.column,
-                    index
-                );
-            }
-            return Ok(index);
-        }
-
-        if *byte == b'\n' {
-            row += 1;
-            column = 0;
-        } else {
-            column += 1;
-        }
-    }
-
-    if row == position.row && column == position.column {
-        return Ok(source.len());
-    }
-
-    bail!(
-        "position {}:{} is out of bounds for source",
-        position.row,
-        position.column
-    )
 }
 
 pub fn visit_tree(node: Node<'_>, callback: &mut impl FnMut(Node<'_>)) {
