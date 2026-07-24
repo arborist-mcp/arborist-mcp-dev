@@ -317,6 +317,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `symbol_search/filters.rs`, keeping match scoring in the facade.
 - [x] Extract symbol-position node lookup and indexed-candidate selection into
   `symbol_position/selection.rs`, keeping source/semantic dispatch in the facade.
+- [x] Extract C/C++ reverse include-index construction into
+  `include_graph/reverse.rs`, keeping dependent traversal in the facade.
 - [x] Keep workspace-scan facade focused on public limits and walker exports,
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
