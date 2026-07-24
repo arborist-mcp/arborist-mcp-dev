@@ -158,13 +158,17 @@ def _load_ci_profiles(
         raise RuntimeError("check profile manifest 'ci_profiles' must be a non-empty JSON array")
 
     ci_profiles: list[str] = []
+    seen_profiles: set[str] = set()
     for profile_name in raw:
         if not isinstance(profile_name, str) or not profile_name.strip():
             raise RuntimeError("check profile manifest ci_profiles must contain non-empty strings")
         if profile_name not in profiles:
             raise RuntimeError(f"unknown check profile '{profile_name}' listed in ci_profiles")
+        if profile_name in seen_profiles:
+            raise RuntimeError(f"duplicate check profile '{profile_name}' listed in ci_profiles")
         if profiles[profile_name]["entries"]:
             raise RuntimeError(f"CI check profile '{profile_name}' must not be an aggregate profile")
+        seen_profiles.add(profile_name)
         ci_profiles.append(profile_name)
 
     return tuple(ci_profiles)

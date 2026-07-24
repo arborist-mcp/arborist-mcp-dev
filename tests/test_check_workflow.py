@@ -146,6 +146,23 @@ class CheckWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(completed.stdout), self.module.build_github_matrix())
 
+    def test_check_profile_manifest_rejects_duplicate_ci_profiles(self) -> None:
+        profiles = {
+            "rust": {
+                "description": "Rust checks",
+                "entries": (),
+                "handler": "rust",
+            }
+        }
+
+        with self.assertRaisesRegex(
+            RuntimeError, "duplicate check profile 'rust' listed in ci_profiles"
+        ):
+            self.module._load_ci_profiles(
+                {"ci_profiles": ["rust", "rust"]},
+                profiles=profiles,
+            )
+
     def test_check_profile_manifest_cli_emits_deduplicated_execution_plan(self) -> None:
         script_path = self.repo_root / "scripts" / "check_profile_manifest.py"
         completed = subprocess.run(
