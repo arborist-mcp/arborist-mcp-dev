@@ -325,6 +325,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `query/validation.rs`, keeping execution and capture ownership in focused modules.
 - [x] Extract semantic path, depth, and parent-path helpers into
   `semantic/paths.rs`, preserving semantic facade exports.
+- [x] Extract symbol-index migration plan construction into
+  `index_migration/plan.rs`, keeping execution in `execute.rs`.
 - [x] Keep workspace-scan facade focused on public limits and walker exports,
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
