@@ -280,6 +280,8 @@ completed item can land in its own commit unless two changes are inseparable.
   traversal in `include_graph.rs`, keeping workspace refresh APIs stable.
 - [x] Extract byte-offset and row/column conversion helpers into
   `language/positions.rs`, preserving Tree-sitter byte-column semantics.
+- [x] Extract Tree-sitter node traversal, identifier, and containment helpers
+  into `language/tree.rs`, preserving the existing language facade exports.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
