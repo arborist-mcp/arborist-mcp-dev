@@ -1,23 +1,22 @@
 use tree_sitter::Node;
 
-use super::super::cpp_syntax::{
+use super::super::super::cpp_syntax::{
     compact_cpp_expression, cpp_constructor_type_text, cpp_default_initialized_type_path,
     cpp_default_initialized_type_text, cpp_receiver_call_argument, cpp_typed_receiver_call,
     strip_cpp_outer_parentheses,
 };
-use super::super::cpp_types::{
-    CppThisMemberReceiver, cpp_pointer_target_path, cpp_temporary_type_path,
-    cpp_this_receiver_for_type,
+use super::super::super::cpp_types::{
+    CppThisMemberReceiver, cpp_temporary_type_path, cpp_this_receiver_for_type,
 };
-use super::super::cpp_wrappers::{
+use super::super::super::cpp_wrappers::{
     cpp_standard_expected_error_type, cpp_standard_expected_target_type,
     cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
     cpp_standard_smart_pointer_target_type, cpp_standard_weak_pointer_target_type,
 };
-use super::std_get::*;
-use super::type_qualifiers::*;
-use super::types::{CppBindingType, CppLocalBinding, CppMemberAccess, CppStandardUnwrap};
-use super::{
+use super::super::std_get::*;
+use super::super::type_qualifiers::*;
+use super::super::types::{CppBindingType, CppLocalBinding, CppMemberAccess, CppStandardUnwrap};
+use super::super::{
     cpp_addressable_local_binding_name, cpp_addressable_local_object_receiver,
     cpp_expected_error_nested_arrow_member_receiver,
     cpp_expected_error_optional_arrow_member_receiver,
@@ -33,151 +32,10 @@ use super::{
     cpp_strip_expected_error_access, cpp_strip_optional_value_access,
     cpp_temporary_type_from_expression, cpp_visible_local_binding,
 };
-use crate::language::{node_text, visit_tree};
+use super::declared::cpp_declarator_identifier;
+use crate::language::node_text;
 
-pub(in super::super) fn collect_cpp_local_bindings(
-    node: Node<'_>,
-    source: &str,
-) -> Vec<CppLocalBinding> {
-    let mut bindings = Vec::new();
-    let mut callback = |candidate: Node<'_>| match candidate.kind() {
-        "declaration" => {
-            if let Some(binding) = cpp_local_binding(candidate, source, &bindings) {
-                bindings.push(binding);
-            }
-        }
-        "parameter_declaration" | "optional_parameter_declaration" => {
-            if let Some(binding) = cpp_parameter_binding(candidate, source) {
-                bindings.push(binding);
-            }
-        }
-        "for_range_loop" => {
-            if let Some(binding) = cpp_range_for_binding(candidate, source) {
-                bindings.push(binding);
-            }
-        }
-        _ => {}
-    };
-    visit_tree(node, &mut callback);
-    bindings
-}
-
-fn cpp_local_binding(
-    declaration: Node<'_>,
-    source: &str,
-    local_bindings: &[CppLocalBinding],
-) -> Option<CppLocalBinding> {
-    let scope = cpp_local_binding_scope(declaration)?;
-    cpp_object_binding(declaration, source, scope, local_bindings)
-}
-
-fn cpp_parameter_binding(parameter: Node<'_>, source: &str) -> Option<CppLocalBinding> {
-    let scope = cpp_parameter_binding_scope(parameter)?;
-    cpp_object_binding(parameter, source, scope, &[])
-}
-
-fn cpp_range_for_binding(loop_node: Node<'_>, source: &str) -> Option<CppLocalBinding> {
-    let type_node = loop_node.child_by_field_name("type")?;
-    let declarator = loop_node.child_by_field_name("declarator")?;
-    let identifier = cpp_declarator_identifier(declarator)?;
-    let type_prefix = cpp_range_for_type_prefix(loop_node, source)?;
-    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let (
-        type_name,
-        expected_error_type,
-        expected_error_receiver,
-        receiver,
-        access,
-        standard_unwrap,
-    ) = cpp_binding_type(type_node, &type_prefix, type_suffix, source)?;
-
-    Some(CppLocalBinding {
-        name: node_text(identifier, source).ok()?.trim().to_string(),
-        type_name,
-        expected_error_type,
-        expected_error_receiver,
-        receiver,
-        access,
-        standard_unwrap,
-        declaration_start: loop_node.start_byte(),
-        scope_range: (loop_node.start_byte(), loop_node.end_byte()),
-    })
-}
-
-fn cpp_range_for_type_prefix(loop_node: Node<'_>, source: &str) -> Option<String> {
-    let mut cursor = loop_node.walk();
-    let qualifiers = loop_node
-        .named_children(&mut cursor)
-        .filter(|child| child.kind() == "type_qualifier")
-        .map(|child| node_text(child, source).ok().map(str::trim))
-        .collect::<Option<Vec<_>>>()?;
-    qualifiers
-        .iter()
-        .all(|qualifier| matches!(*qualifier, "const" | "volatile"))
-        .then(|| qualifiers.join(" "))
-}
-
-fn cpp_object_binding(
-    declaration: Node<'_>,
-    source: &str,
-    scope: Node<'_>,
-    local_bindings: &[CppLocalBinding],
-) -> Option<CppLocalBinding> {
-    let type_node = declaration.child_by_field_name("type")?;
-    let declarator = cpp_single_declarator(declaration)?;
-    let identifier = cpp_declarator_identifier(declarator)?;
-
-    let type_prefix = source[declaration.start_byte()..type_node.start_byte()].trim();
-    let type_suffix = source[type_node.end_byte()..identifier.start_byte()].trim();
-    let declared_type = node_text(type_node, source).ok()?.trim();
-    let (
-        type_name,
-        expected_error_type,
-        expected_error_receiver,
-        receiver,
-        access,
-        standard_unwrap,
-    ) = if cpp_auto_binding_type_is_supported(declared_type) {
-        let auto_type_prefix = format!(
-            "{type_prefix} {declared_type}{}",
-            if cpp_declarator_suffix_has_const_qualifier(type_suffix) {
-                " const"
-            } else {
-                ""
-            }
-        );
-        cpp_auto_constructor_binding_type(
-            declarator,
-            &auto_type_prefix,
-            declaration.start_byte(),
-            local_bindings,
-            source,
-        )?
-    } else if declared_type == "decltype(auto)" {
-        cpp_decltype_auto_binding_type(
-            declarator,
-            declaration.start_byte(),
-            local_bindings,
-            source,
-        )?
-    } else {
-        cpp_binding_type(type_node, type_prefix, type_suffix, source)?
-    };
-
-    Some(CppLocalBinding {
-        name: node_text(identifier, source).ok()?.trim().to_string(),
-        type_name,
-        expected_error_type,
-        expected_error_receiver,
-        receiver,
-        access,
-        standard_unwrap,
-        declaration_start: declaration.start_byte(),
-        scope_range: (scope.start_byte(), scope.end_byte()),
-    })
-}
-
-fn cpp_decltype_auto_binding_type(
+pub(in super::super) fn cpp_decltype_auto_binding_type(
     declarator: Node<'_>,
     declaration_start: usize,
     local_bindings: &[CppLocalBinding],
@@ -431,7 +289,7 @@ fn cpp_decltype_auto_binding_type(
     None
 }
 
-fn cpp_auto_constructor_binding_type(
+pub(in super::super) fn cpp_auto_constructor_binding_type(
     declarator: Node<'_>,
     type_prefix: &str,
     declaration_start: usize,
@@ -752,7 +610,7 @@ fn cpp_auto_constructor_binding_type(
     ))
 }
 
-pub(in super::super) fn cpp_address_binding(
+pub(in super::super::super) fn cpp_address_binding(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -766,7 +624,7 @@ pub(in super::super) fn cpp_address_binding(
     cpp_addressable_local_object_receiver(argument, byte_offset, local_bindings)
 }
 
-fn cpp_to_address_binding(
+pub(in super::super) fn cpp_to_address_binding(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -786,7 +644,7 @@ fn cpp_to_address_binding(
     None
 }
 
-fn cpp_auto_reference_alias_binding(
+pub(in super::super) fn cpp_auto_reference_alias_binding(
     expression: &str,
     type_prefix: &str,
     type_suffix: &str,
@@ -843,7 +701,7 @@ fn cpp_auto_reference_alias_binding(
     Some((type_name, receiver))
 }
 
-fn cpp_reference_alias_binding_type(
+pub(in super::super) fn cpp_reference_alias_binding_type(
     type_name: &str,
     receiver: CppThisMemberReceiver,
 ) -> Option<CppBindingType> {
@@ -905,7 +763,7 @@ fn cpp_reference_alias_binding_type(
     ))
 }
 
-fn cpp_auto_expected_error_copy_binding(
+pub(in super::super) fn cpp_auto_expected_error_copy_binding(
     expression: &str,
     type_prefix: &str,
     byte_offset: usize,
@@ -946,7 +804,7 @@ fn cpp_auto_expected_error_copy_binding(
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
-fn cpp_auto_standard_value_copy_binding(
+pub(in super::super) fn cpp_auto_standard_value_copy_binding(
     expression: &str,
     type_prefix: &str,
     byte_offset: usize,
@@ -994,7 +852,7 @@ fn cpp_auto_standard_value_copy_binding(
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
-fn cpp_auto_expected_error_smart_pointer_binding(
+pub(in super::super) fn cpp_auto_expected_error_smart_pointer_binding(
     expression: &str,
     type_prefix: &str,
     byte_offset: usize,
@@ -1026,7 +884,7 @@ fn cpp_auto_expected_error_smart_pointer_binding(
     ))
 }
 
-fn cpp_auto_reference_wrapper_get_copy_binding(
+pub(in super::super) fn cpp_auto_reference_wrapper_get_copy_binding(
     expression: &str,
     type_prefix: &str,
     byte_offset: usize,
@@ -1038,7 +896,10 @@ fn cpp_auto_reference_wrapper_get_copy_binding(
     cpp_copied_standard_binding_type(&type_name, type_prefix)
 }
 
-fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Option<CppBindingType> {
+pub(in super::super) fn cpp_copied_standard_binding_type(
+    type_name: &str,
+    type_prefix: &str,
+) -> Option<CppBindingType> {
     let type_name = cpp_strip_leading_cv_qualifiers(type_name);
     let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
     // Prefer concrete wrapper targets first so auto copies of nested wrappers such as
@@ -1131,7 +992,7 @@ fn cpp_copied_standard_binding_type(type_name: &str, type_prefix: &str) -> Optio
     ))
 }
 
-fn cpp_auto_optional_alias_binding(
+pub(in super::super) fn cpp_auto_optional_alias_binding(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -1182,7 +1043,7 @@ fn cpp_auto_optional_alias_binding(
         })
 }
 
-fn cpp_auto_reference_wrapper_get_alias_binding(
+pub(in super::super) fn cpp_auto_reference_wrapper_get_alias_binding(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -1224,7 +1085,7 @@ fn cpp_auto_reference_wrapper_get_alias_binding(
     .then(|| (binding.type_name.clone(), binding.receiver))
 }
 
-pub(in super::super) fn cpp_named_reference_alias_receiver(
+pub(in super::super::super) fn cpp_named_reference_alias_receiver(
     receiver: CppThisMemberReceiver,
 ) -> CppThisMemberReceiver {
     match receiver {
@@ -1237,7 +1098,7 @@ pub(in super::super) fn cpp_named_reference_alias_receiver(
     }
 }
 
-fn cpp_auto_reference_alias_target_binding<'a>(
+pub(in super::super) fn cpp_auto_reference_alias_target_binding<'a>(
     expression: &str,
     byte_offset: usize,
     local_bindings: &'a [CppLocalBinding],
@@ -1310,12 +1171,15 @@ fn cpp_auto_reference_alias_target_binding<'a>(
         .map(|binding| (binding.type_name.clone(), binding, false, false))
 }
 
-fn cpp_auto_reference_alias_is_const(type_prefix: &str, type_suffix: &str) -> bool {
+pub(in super::super) fn cpp_auto_reference_alias_is_const(
+    type_prefix: &str,
+    type_suffix: &str,
+) -> bool {
     type_prefix.split_whitespace().any(|part| part == "const")
         || cpp_declarator_suffix_has_const_qualifier(type_suffix)
 }
 
-fn cpp_declarator_suffix_has_const_qualifier(mut type_suffix: &str) -> bool {
+pub(in super::super) fn cpp_declarator_suffix_has_const_qualifier(mut type_suffix: &str) -> bool {
     loop {
         if type_suffix.strip_prefix("const").is_some() {
             return true;
@@ -1328,7 +1192,7 @@ fn cpp_declarator_suffix_has_const_qualifier(mut type_suffix: &str) -> bool {
     }
 }
 
-fn cpp_auto_constructor_initializer_text<'a>(
+pub(in super::super) fn cpp_auto_constructor_initializer_text<'a>(
     initializer: Node<'_>,
     source: &'a str,
 ) -> Option<&'a str> {
@@ -1339,164 +1203,4 @@ fn cpp_auto_constructor_initializer_text<'a>(
     let mut values = initializer.named_children(&mut cursor);
     let value = values.next()?;
     (values.next().is_none()).then(|| node_text(value, source).ok().map(str::trim))?
-}
-
-fn cpp_binding_type(
-    type_node: Node<'_>,
-    type_prefix: &str,
-    type_suffix: &str,
-    source: &str,
-) -> Option<CppBindingType> {
-    if !cpp_binding_type_prefix_is_supported(type_prefix) {
-        return None;
-    }
-    let compact_type_suffix = compact_cpp_expression(type_suffix);
-    let declared_access = if cpp_pointer_declarator_suffix(&compact_type_suffix) {
-        CppMemberAccess::Pointer
-    } else if cpp_object_declarator_suffix(&compact_type_suffix) {
-        CppMemberAccess::Object
-    } else {
-        return None;
-    };
-    let declared_type = node_text(type_node, source).ok()?.trim();
-    let expected_error_type = cpp_standard_expected_error_type(declared_type).map(str::to_string);
-    let standard_unwrap = cpp_standard_smart_pointer_target_type(declared_type)
-        .map(|target| (target, CppStandardUnwrap::SmartPointer))
-        .or_else(|| {
-            (declared_access == CppMemberAccess::Object)
-                .then(|| cpp_standard_weak_pointer_target_type(declared_type))
-                .flatten()
-                .map(|target| (target, CppStandardUnwrap::WeakPointer))
-        })
-        .or_else(|| {
-            (declared_access == CppMemberAccess::Object)
-                .then(|| cpp_standard_reference_wrapper_target_type(declared_type))
-                .flatten()
-                .map(|target| (target, CppStandardUnwrap::ReferenceWrapper))
-        })
-        .or_else(|| {
-            (declared_access == CppMemberAccess::Object)
-                .then(|| cpp_standard_optional_target_type(declared_type))
-                .flatten()
-                .map(|target| (target, CppStandardUnwrap::Optional))
-        })
-        .or_else(|| {
-            (declared_access == CppMemberAccess::Object)
-                .then(|| cpp_standard_expected_target_type(declared_type))
-                .flatten()
-                .map(|target| (target, CppStandardUnwrap::Expected))
-        });
-    let access =
-        if standard_unwrap.is_some_and(|(_, unwrap)| unwrap == CppStandardUnwrap::SmartPointer) {
-            CppMemberAccess::Pointer
-        } else {
-            declared_access
-        };
-    let type_qualifiers = cpp_binding_type_qualifier_prefix(type_prefix);
-    let expected_error_receiver = expected_error_type.as_ref().and_then(|error_type| {
-        cpp_this_receiver_for_type(&format!("{type_qualifiers} {error_type}"), Some(false))
-    });
-    let type_name = format!("{type_qualifiers} {} {type_suffix}", declared_type);
-    let receiver = match (access, standard_unwrap) {
-        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::ReferenceWrapper))) => {
-            cpp_this_receiver_for_type(target, Some(false))?
-        }
-        (
-            CppMemberAccess::Object,
-            Some((target, CppStandardUnwrap::Optional | CppStandardUnwrap::Expected)),
-        ) => cpp_this_receiver_for_type(&format!("{type_qualifiers} {target}"), Some(false))?,
-        (CppMemberAccess::Object, Some((target, CppStandardUnwrap::WeakPointer))) => {
-            cpp_this_receiver_for_type(target, Some(false))?
-        }
-        (CppMemberAccess::Object, _) => cpp_named_binding_receiver_for_type(&type_name)?,
-        (CppMemberAccess::Pointer, Some((target, _))) => {
-            cpp_this_receiver_for_type(target, Some(false))?
-        }
-        (CppMemberAccess::Pointer, None) => cpp_pointer_binding_receiver_for_type(&type_name)?,
-    };
-    let type_name = match (access, standard_unwrap) {
-        (
-            CppMemberAccess::Object,
-            Some((
-                target,
-                CppStandardUnwrap::ReferenceWrapper
-                | CppStandardUnwrap::Optional
-                | CppStandardUnwrap::Expected
-                | CppStandardUnwrap::WeakPointer,
-            )),
-        ) => cpp_temporary_type_path(target)?,
-        (CppMemberAccess::Object, _) => cpp_temporary_type_path(&type_name)?,
-        (CppMemberAccess::Pointer, Some((target, _))) => cpp_temporary_type_path(target)?,
-        (CppMemberAccess::Pointer, None) => cpp_pointer_target_path(&type_name)?,
-    };
-
-    Some((
-        type_name,
-        expected_error_type,
-        expected_error_receiver,
-        receiver,
-        access,
-        standard_unwrap.map(|(_, unwrap)| unwrap),
-    ))
-}
-
-fn cpp_single_declarator(declaration: Node<'_>) -> Option<Node<'_>> {
-    let mut cursor = declaration.walk();
-    let mut declarators = declaration.children_by_field_name("declarator", &mut cursor);
-    let declarator = declarators.next()?;
-    (declarators.next().is_none()).then_some(declarator)
-}
-
-fn cpp_declarator_identifier(declarator: Node<'_>) -> Option<Node<'_>> {
-    if declarator.kind() == "identifier" {
-        return Some(declarator);
-    }
-    if let Some(nested_declarator) = declarator.child_by_field_name("declarator") {
-        return cpp_declarator_identifier(nested_declarator);
-    }
-    let mut cursor = declarator.walk();
-    let mut identifiers = declarator
-        .named_children(&mut cursor)
-        .filter_map(cpp_declarator_identifier);
-    let identifier = identifiers.next()?;
-    (identifiers.next().is_none()).then_some(identifier)
-}
-
-fn cpp_local_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
-    let mut current = node.parent();
-    while let Some(candidate) = current {
-        if matches!(
-            candidate.kind(),
-            "compound_statement"
-                | "for_statement"
-                | "for_range_loop"
-                | "if_statement"
-                | "switch_statement"
-                | "while_statement"
-        ) {
-            return Some(candidate);
-        }
-        current = candidate.parent();
-    }
-    None
-}
-
-fn cpp_parameter_binding_scope(node: Node<'_>) -> Option<Node<'_>> {
-    let mut current = node.parent();
-    while let Some(candidate) = current {
-        if candidate.kind() == "lambda_expression" {
-            return Some(candidate);
-        }
-        if candidate.kind() == "catch_clause" {
-            return Some(candidate);
-        }
-        if candidate.kind() == "function_definition" {
-            return candidate.child_by_field_name("body");
-        }
-        if matches!(candidate.kind(), "declaration" | "field_declaration") {
-            return None;
-        }
-        current = candidate.parent();
-    }
-    None
 }
