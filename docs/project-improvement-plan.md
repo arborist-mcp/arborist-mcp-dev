@@ -34,6 +34,10 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P1: Small Reliability And Maintainability Fixes
 
+- [x] Reject duplicate entries in the CI profile list so the generated
+  GitHub Actions matrix cannot contain duplicate jobs.
+- [x] Derive the stable fuzz-manifest check directly from `fuzz/Cargo.toml`
+  so newly declared fuzz targets are checked automatically.
 - [x] Extract gateway symbol query, patch/validation, and trace route
   handlers into focused mixins without changing public response shapes.
 - [x] Split gateway symbol routes further into read/search/list mixins
