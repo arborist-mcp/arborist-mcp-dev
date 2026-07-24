@@ -158,8 +158,10 @@ completed item can land in its own commit unless two changes are inseparable.
   `cpp_trace`, and `misc`, with shared temp helpers on the facade.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
-- [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
+- [x] Preserve live-VFS and persisted-index parity by adding paired tests when
   changing read/list/search/trace behavior.
+- [x] Add dirty-VFS vs persisted index `with_source` overlay parity coverage for
+  list, search/read, and trace in `tests/query_parity/overlay_parity.rs`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

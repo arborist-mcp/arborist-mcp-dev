@@ -31,6 +31,7 @@ pub(super) use crate::language::normalize_path;
 
 mod index;
 mod list;
+mod overlay_parity;
 mod patch;
 mod read;
 mod search;
