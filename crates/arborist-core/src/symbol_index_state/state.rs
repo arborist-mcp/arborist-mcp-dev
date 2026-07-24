@@ -14,13 +14,12 @@ use crate::index_schema::{
 use crate::index_store::{
     count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
 };
-use crate::language::{normalize_absolute_path, normalize_path, read_source};
+use crate::language::{normalize_absolute_path, normalize_path};
 use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth, SymbolMeta};
 use crate::symbols::rebuild_symbol_index;
 use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
-use super::fingerprints::source_fingerprint;
-use super::freshness::validate_indexed_file_count;
+use super::freshness::{inspect_symbol_index_freshness, validate_indexed_file_count};
 use super::paths as path_state;
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
@@ -292,47 +291,6 @@ pub fn migrate_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
         rebuild_symbol_index(&workspace_root, &db_path)?;
     }
     inspect_symbol_index(&db_path)
-}
-
-fn inspect_symbol_index_freshness(
-    health: &mut SymbolIndexHealth,
-    file_states: &BTreeMap<String, u64>,
-    deadline: &WorkspaceScanDeadline,
-) -> Result<()> {
-    let mut fresh_files = 0;
-    for (file_path, stored_fingerprint) in file_states {
-        deadline.check("inspecting indexed file freshness")?;
-        let path = Path::new(file_path);
-        if !path.exists() {
-            health.missing_files.push(file_path.clone());
-            health
-                .issues
-                .push(format!("indexed file is missing: {file_path}"));
-            continue;
-        }
-
-        match read_source(path) {
-            Ok(source) => {
-                let current_fingerprint = source_fingerprint(&source);
-                if current_fingerprint == *stored_fingerprint {
-                    fresh_files += 1;
-                } else {
-                    health.stale_files.push(file_path.clone());
-                    health
-                        .issues
-                        .push(format!("indexed file is stale: {file_path}"));
-                }
-            }
-            Err(error) => {
-                health.unreadable_files.push(file_path.clone());
-                health
-                    .issues
-                    .push(format!("failed to read indexed file {file_path}: {error}"));
-            }
-        }
-    }
-    health.fresh_file_count = Some(fresh_files);
-    Ok(())
 }
 
 pub(crate) fn validate_persisted_index_paths(

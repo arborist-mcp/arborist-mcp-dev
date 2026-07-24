@@ -249,6 +249,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `state.rs`.
 - [x] Isolate persisted-index freshness gating and indexed-file count
   invariants in `symbol_index_state/freshness.rs`.
+- [x] Move persisted-index freshness inspection (fresh/stale/missing/unreadable
+  file classification) into the freshness module.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
