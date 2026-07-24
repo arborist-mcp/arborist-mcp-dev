@@ -235,6 +235,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Isolate persisted source fingerprint calculation in
   `symbol_index_state/fingerprints.rs` so freshness policy has a focused
   implementation boundary.
+- [x] Extract persisted-index schema structure checks into
+  `index_schema/validation.rs`, leaving low-level SQLite table helpers in the
+  schema implementation.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

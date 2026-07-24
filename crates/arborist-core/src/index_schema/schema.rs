@@ -119,183 +119,6 @@ pub(crate) fn load_optional_metadata_value(
         .map_err(Into::into)
 }
 
-pub(crate) fn require_symbol_index_tables(connection: &Connection, db_path: &Path) -> Result<()> {
-    for table_name in ["metadata", "symbols", "file_state"] {
-        if !table_exists(connection, table_name)? {
-            return Err(anyhow!(
-                "missing symbol index table `{}` in {}",
-                table_name,
-                db_path.display()
-            ));
-        }
-    }
-    require_table_columns(connection, db_path, "metadata", &["key", "value"])?;
-    require_table_column_types(
-        connection,
-        db_path,
-        "metadata",
-        &[("key", "TEXT"), ("value", "TEXT")],
-    )?;
-    require_table_columns(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            "semantic_path",
-            "file_path",
-            "node_kind",
-            "start_byte",
-            "end_byte",
-            "signature",
-            "dependencies_json",
-            "references_json",
-        ],
-    )?;
-    require_table_column_types(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            ("semantic_path", "TEXT"),
-            ("file_path", "TEXT"),
-            ("node_kind", "TEXT"),
-            ("start_byte", "INTEGER"),
-            ("end_byte", "INTEGER"),
-            ("signature", "TEXT"),
-            ("dependencies_json", "TEXT"),
-            ("references_json", "TEXT"),
-        ],
-    )?;
-    require_table_columns(
-        connection,
-        db_path,
-        "file_state",
-        &["file_path", "fingerprint"],
-    )?;
-    require_table_column_types(
-        connection,
-        db_path,
-        "file_state",
-        &[("file_path", "TEXT"), ("fingerprint", "INTEGER")],
-    )?;
-    Ok(())
-}
-
-pub(crate) fn require_current_symbol_index_schema(
-    connection: &Connection,
-    db_path: &Path,
-) -> Result<()> {
-    require_symbol_index_schema_structure(connection, db_path)?;
-    require_table_primary_key_layout(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            ("symbol_id", 1),
-            ("file_path", 2),
-            ("start_byte", 3),
-            ("end_byte", 4),
-        ],
-    )?;
-    require_symbols_file_path_index(connection, db_path)
-}
-
-pub(crate) fn require_legacy_symbol_index_schema(
-    connection: &Connection,
-    db_path: &Path,
-) -> Result<()> {
-    require_symbol_index_schema_structure_v3(connection, db_path)?;
-    require_table_primary_key_layout(
-        connection,
-        db_path,
-        "symbols",
-        &[("semantic_path", 1), ("file_path", 2)],
-    )
-}
-
-pub(crate) fn require_previous_symbol_index_schema(
-    connection: &Connection,
-    db_path: &Path,
-) -> Result<()> {
-    require_symbol_index_schema_structure_v3(connection, db_path)?;
-    require_table_primary_key_layout(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            ("symbol_id", 1),
-            ("file_path", 2),
-            ("start_byte", 3),
-            ("end_byte", 4),
-        ],
-    )?;
-    require_symbols_file_path_index(connection, db_path)
-}
-
-fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path) -> Result<()> {
-    require_symbol_index_schema_structure_v3(connection, db_path)?;
-    require_table_columns(
-        connection,
-        db_path,
-        "symbols",
-        &["reference_call_arities_json"],
-    )?;
-    require_table_column_types(
-        connection,
-        db_path,
-        "symbols",
-        &[("reference_call_arities_json", "TEXT")],
-    )
-}
-
-fn require_symbol_index_schema_structure_v3(connection: &Connection, db_path: &Path) -> Result<()> {
-    require_table_columns(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            "symbol_id",
-            "semantic_path",
-            "scope_path",
-            "file_path",
-            "node_kind",
-            "start_byte",
-            "end_byte",
-            "signature",
-            "parameters_json",
-            "return_type",
-            "docstring",
-            "dependencies_json",
-            "references_json",
-            "reference_names_json",
-        ],
-    )?;
-    require_table_column_types(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            ("symbol_id", "TEXT"),
-            ("semantic_path", "TEXT"),
-            ("scope_path", "TEXT"),
-            ("file_path", "TEXT"),
-            ("node_kind", "TEXT"),
-            ("start_byte", "INTEGER"),
-            ("end_byte", "INTEGER"),
-            ("signature", "TEXT"),
-            ("parameters_json", "TEXT"),
-            ("return_type", "TEXT"),
-            ("docstring", "TEXT"),
-            ("dependencies_json", "TEXT"),
-            ("references_json", "TEXT"),
-            ("reference_names_json", "TEXT"),
-        ],
-    )?;
-    require_table_primary_key_layout(connection, db_path, "metadata", &[("key", 1)])?;
-    require_table_primary_key_layout(connection, db_path, "file_state", &[("file_path", 1)])?;
-    Ok(())
-}
-
 pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "
@@ -413,7 +236,7 @@ pub(crate) fn load_indexed_files_metadata(connection: &Connection) -> Result<usi
         .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
 }
 
-fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
+pub(super) fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
     connection
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -425,7 +248,7 @@ fn table_exists(connection: &Connection, table_name: &str) -> Result<bool> {
         .map_err(Into::into)
 }
 
-fn require_table_columns(
+pub(super) fn require_table_columns(
     connection: &Connection,
     db_path: &Path,
     table_name: &str,
@@ -445,7 +268,7 @@ fn require_table_columns(
     Ok(())
 }
 
-fn require_table_column_types(
+pub(super) fn require_table_column_types(
     connection: &Connection,
     db_path: &Path,
     table_name: &str,
@@ -471,7 +294,7 @@ fn require_table_column_types(
     Ok(())
 }
 
-fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<String>> {
+pub(super) fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<String>> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
     let mut names = BTreeSet::new();
@@ -481,7 +304,7 @@ fn table_columns(connection: &Connection, table_name: &str) -> Result<BTreeSet<S
     Ok(names)
 }
 
-fn table_column_types(
+pub(super) fn table_column_types(
     connection: &Connection,
     table_name: &str,
 ) -> Result<BTreeMap<String, String>> {
@@ -497,7 +320,7 @@ fn table_column_types(
     Ok(types)
 }
 
-fn require_table_primary_key_layout(
+pub(super) fn require_table_primary_key_layout(
     connection: &Connection,
     db_path: &Path,
     table_name: &str,
@@ -518,7 +341,10 @@ fn require_table_primary_key_layout(
     Ok(())
 }
 
-fn require_symbols_file_path_index(connection: &Connection, db_path: &Path) -> Result<()> {
+pub(super) fn require_symbols_file_path_index(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
     let mut statement = connection.prepare("PRAGMA index_list(symbols)")?;
     let indexes = statement.query_map([], |row| row.get::<_, String>(1))?;
     for index in indexes {
