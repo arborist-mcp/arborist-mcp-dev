@@ -48,7 +48,13 @@ def _decode_object(payload: str, operation: str) -> dict[str, Any]:
     try:
         value = loads_strict(payload)
     except (TypeError, ValueError) as exc:
-        raise IndexWatchError(f"invalid JSON from {operation}: {exc}") from exc
+        detail = str(exc)
+        if detail.startswith("duplicate JSON object key:"):
+            detail = (
+                detail.replace("duplicate JSON object key:", "duplicate object key:", 1)
+                + " (duplicate JSON object key)"
+            )
+        raise IndexWatchError(f"invalid JSON from {operation}: {detail}") from exc
     if not isinstance(value, dict):
         raise IndexWatchError(f"invalid JSON from {operation}: expected object payload")
     return value
