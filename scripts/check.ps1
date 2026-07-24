@@ -218,9 +218,49 @@ function Invoke-GatewaySmokeCheck {
         @((Join-Path $PSScriptRoot "gateway_smoke.py"), "--python", $Python, "--require-core")
 }
 
+function Get-FuzzTargetNames {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $manifestPath = Join-Path $RepoRoot "fuzz\Cargo.toml"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Fuzz manifest not found: $manifestPath"
+    }
+
+    $targets = @()
+    $inBinarySection = $false
+    foreach ($line in Get-Content -LiteralPath $manifestPath) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq "[[bin]]") {
+            $inBinarySection = $true
+            continue
+        }
+        if ($trimmed.StartsWith("[") -and $trimmed -ne "[[bin]]") {
+            $inBinarySection = $false
+            continue
+        }
+        if ($inBinarySection -and $trimmed -match '^name\s*=\s*"([^"]+)"\s*$') {
+            $targets += $Matches[1]
+            $inBinarySection = $false
+        }
+    }
+
+    if ($targets.Count -eq 0) {
+        throw "Fuzz manifest does not declare any [[bin]] targets: $manifestPath"
+    }
+    return $targets
+}
+
 function Invoke-FuzzManifestCheck {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
     Write-Host "Checking stable fuzz manifests..."
-    foreach ($target in @("tree_query", "semantic_skeleton", "patch_preview", "workspace_edit_preview", "symbol_index_inspection", "symbol_index_queries", "source_overlay_queries", "workspace_edit_json")) {
+    foreach ($target in @(Get-FuzzTargetNames $RepoRoot)) {
         Invoke-NativeOrThrow `
             "Checking fuzz target '$target'..." `
             "cargo" `
@@ -264,7 +304,7 @@ function Invoke-CheckProfile {
             return
         }
         "fuzz-manifest" {
-            Invoke-FuzzManifestCheck
+            Invoke-FuzzManifestCheck $RepoRoot
             return
         }
         "suite" {

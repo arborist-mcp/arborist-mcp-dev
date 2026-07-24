@@ -328,18 +328,6 @@ class CheckWorkflowTests(unittest.TestCase):
                 in_bin = False
             elif in_bin and line.startswith("name = "):
                 declared_targets.add(line.split('"')[1])
-        for target in (
-            "tree_query",
-            "semantic_skeleton",
-            "patch_preview",
-            "workspace_edit_preview",
-            "symbol_index_inspection",
-            "symbol_index_queries",
-            "source_overlay_queries",
-            "workspace_edit_json",
-        ):
-            with self.subTest(target=target):
-                self.assertIn(f'"{target}"', check_script)
         self.assertEqual(
             declared_targets,
             {
@@ -352,6 +340,11 @@ class CheckWorkflowTests(unittest.TestCase):
                 "source_overlay_queries",
                 "workspace_edit_json",
             },
+        )
+        self.assertIn('Join-Path $RepoRoot "fuzz\\Cargo.toml"', check_script)
+        self.assertNotIn(
+            'foreach ($target in @("tree_query"',
+            check_script,
         )
 
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
