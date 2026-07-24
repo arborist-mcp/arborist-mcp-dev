@@ -334,6 +334,8 @@ completed item can land in its own commit unless two changes are inseparable.
   understood.
 - [x] Add cross-platform smoke coverage for repo-root gateway startup and
   package-installed gateway startup.
+- [x] Group indexed `std::expected` tuple access regression tests behind a
+  dedicated module boundary for clearer future category-level splits.
 
 ## Suggested Commit Sequence
 
