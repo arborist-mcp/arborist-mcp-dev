@@ -307,6 +307,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `symbol_extractor/c.rs`, leaving `symbol_extractor.rs` as a dispatch facade.
 - [x] Split workspace symbol indexing into live/override and persisted
   incremental modules under `symbol_index_workspace/`, retaining the facade API.
+- [x] Extract trace graph expansion into `symbol_trace/graph.rs`, keeping
+  timeout handling and neighborhood traversal in focused modules.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
   instead of rescanning the syntax tree for every capture owner.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
