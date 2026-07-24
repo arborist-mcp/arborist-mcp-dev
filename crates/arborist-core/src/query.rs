@@ -8,7 +8,9 @@ use crate::language::{
     language_for_id, normalize_absolute_path, normalize_path, parse_document, position_from,
     read_source,
 };
+use crate::model::LanguageId;
 use crate::model::QueryCaptureResult;
+use crate::semantic::c_symbol_nodes;
 
 mod owners;
 
@@ -72,6 +74,10 @@ pub fn execute_tree_query_with_timeout(
     let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
+    let c_symbols = match document.language_id {
+        LanguageId::C | LanguageId::Cpp => Some(c_symbol_nodes(&path, root, source)?),
+        LanguageId::Python => None,
+    };
     let compiled = Query::new(&language, query)
         .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(&path)))?;
 
@@ -105,8 +111,13 @@ pub fn execute_tree_query_with_timeout(
         }
         let capture = query_match.captures[*capture_index];
         let node = capture.node;
-        let (owner_symbol_id, owner_semantic_path, owner_scope_path) =
-            owners::capture_owner(&path, source, root, document.language_id, node)?;
+        let (owner_symbol_id, owner_semantic_path, owner_scope_path) = owners::capture_owner(
+            &path,
+            source,
+            document.language_id,
+            node,
+            c_symbols.as_deref(),
+        )?;
         if Instant::now() >= deadline {
             timed_out = true;
             break;

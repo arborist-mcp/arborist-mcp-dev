@@ -5,20 +5,20 @@ use tree_sitter::Node;
 
 use crate::language::contains_node;
 use crate::model::LanguageId;
-use crate::semantic::{
-    c_semantic_path, c_symbol_id_for_node, c_symbol_nodes, semantic_parent_path, semantic_path,
-};
+use crate::semantic::{c_semantic_path, c_symbol_id_for_node, semantic_parent_path, semantic_path};
 
 pub(super) fn capture_owner(
     path: &Path,
     source: &str,
-    root: Node<'_>,
     language_id: LanguageId,
     node: Node<'_>,
+    c_symbols: Option<&[Node<'_>]>,
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
     match language_id {
         LanguageId::Python => python_capture_owner(source, node),
-        LanguageId::C | LanguageId::Cpp => c_capture_owner(path, source, root, node),
+        LanguageId::C | LanguageId::Cpp => {
+            c_capture_owner(path, source, node, c_symbols.unwrap_or_default())
+        }
     }
 }
 
@@ -61,11 +61,11 @@ fn python_owner_symbol_node(node: Node<'_>) -> Option<Node<'_>> {
 fn c_capture_owner(
     path: &Path,
     source: &str,
-    root: Node<'_>,
     node: Node<'_>,
+    c_symbols: &[Node<'_>],
 ) -> Result<(Option<String>, Option<String>, Option<String>)> {
     let mut owner_node = None;
-    for child in c_symbol_nodes(path, root, source)? {
+    for &child in c_symbols {
         if contains_node(child, node)
             && owner_node.is_none_or(|current: Node<'_>| {
                 child.end_byte() - child.start_byte() < current.end_byte() - current.start_byte()
