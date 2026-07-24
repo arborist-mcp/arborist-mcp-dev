@@ -1,17 +1,17 @@
 mod cpp_callables;
+mod path_groups;
+mod python;
+mod type_alias;
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
 
-use super::c::{
-    CIncludeContext, c_include_context_for_file, c_include_context_for_file_before_with_overrides,
-    c_symbol_family_anchor,
-};
-use crate::language::{detect_language, is_c_header_path, normalize_path};
-use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit, SymbolSummary};
-use crate::patching::{resolve_local_python_imported_symbol, resolve_local_python_module_path};
+use super::c::{CIncludeContext, c_include_context_for_file, c_symbol_family_anchor};
+use crate::language::{detect_language, is_c_header_path};
+use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
+use crate::patching::resolve_local_python_imported_symbol;
 use crate::semantic::cpp_callable_symbol_id;
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
@@ -25,6 +25,12 @@ use crate::symbol_index_model::{
 use cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
+};
+use path_groups::{cpp_qualified_reference_path_groups, cpp_unqualified_call_candidate_groups};
+use python::{python_reference_lookup, python_symbol_matches_module_hint};
+use type_alias::{
+    cpp_constructor_path, cpp_type_alias_member_candidates, cpp_type_alias_target_indexes,
+    is_cpp_constructible_type,
 };
 
 #[derive(Clone, Copy)]
@@ -517,114 +523,7 @@ fn resolve_reference_path(
         .map(|index| raw_symbols[index].symbol_id.clone())
 }
 
-fn cpp_type_alias_member_candidates(
-    reference_name: &str,
-    source_symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
-    semantic_path_index: &BTreeMap<String, Vec<usize>>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Option<Vec<usize>> {
-    let (alias_name, member_name) = reference_name.rsplit_once("::")?;
-    let alias_indexes =
-        cpp_qualified_reference_path_groups(alias_name, source_symbol, raw_symbols, file_overrides)
-            .into_iter()
-            .flat_map(|paths| {
-                symbol_indexes_for_paths_with_template_fallback(&paths, semantic_path_index)
-            })
-            .collect::<Vec<_>>();
-    let member_paths = cpp_type_alias_target_indexes(
-        &alias_indexes,
-        source_symbol,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-    )
-    .into_iter()
-    .map(|index| format!("{}::{member_name}", raw_symbols[index].semantic_path))
-    .collect::<Vec<_>>();
-    let candidates =
-        symbol_indexes_for_paths_with_template_fallback(&member_paths, semantic_path_index);
-    (!candidates.is_empty()).then_some(candidates)
-}
-
-fn cpp_constructor_path(type_path: &str) -> Option<String> {
-    let constructor_name = type_path.rsplit("::").next()?;
-    let constructor_name =
-        cpp_template_base_path(constructor_name).unwrap_or_else(|| constructor_name.to_string());
-    (!constructor_name.is_empty()).then(|| format!("{type_path}::{constructor_name}"))
-}
-
-fn cpp_type_alias_target_indexes(
-    candidates: &[usize],
-    source_symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
-    semantic_path_index: &BTreeMap<String, Vec<usize>>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<usize> {
-    let include_context = c_include_context_for_file_before_with_overrides(
-        &source_symbol.file_path,
-        source_symbol.byte_range.0,
-        file_overrides,
-    )
-    .ok();
-    let mut pending = candidates
-        .iter()
-        .copied()
-        .filter(|index| {
-            cpp_type_alias_is_visible(
-                &raw_symbols[*index],
-                source_symbol,
-                include_context.as_ref(),
-            )
-        })
-        .collect::<VecDeque<_>>();
-    let mut visited_aliases = BTreeSet::new();
-    let mut target_indexes = BTreeSet::new();
-
-    while let Some(alias_index) = pending.pop_front() {
-        if !visited_aliases.insert(alias_index) {
-            continue;
-        }
-        let alias = &raw_symbols[alias_index];
-        let Some(target) = cpp_type_alias_target(alias) else {
-            continue;
-        };
-
-        for path in cpp_lexical_qualified_reference_paths(&target, alias) {
-            for path in cpp_qualified_reference_path_group(path, raw_symbols, alias, file_overrides)
-            {
-                for target_index in
-                    symbol_indexes_for_paths_with_template_fallback(&[path], semantic_path_index)
-                {
-                    let target = &raw_symbols[target_index];
-                    if cpp_is_type_alias(target) {
-                        if cpp_type_alias_is_visible(
-                            target,
-                            source_symbol,
-                            include_context.as_ref(),
-                        ) {
-                            pending.push_back(target_index);
-                        }
-                    } else {
-                        target_indexes.insert(target_index);
-                    }
-                }
-            }
-        }
-    }
-
-    target_indexes.into_iter().collect()
-}
-
-fn is_cpp_constructible_type(symbol: &IndexedSymbol) -> bool {
-    detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
-        && matches!(
-            symbol.node_kind.as_str(),
-            "class_specifier" | "struct_specifier" | "union_specifier"
-        )
-}
-
-fn symbol_indexes_for_paths(
+pub(super) fn symbol_indexes_for_paths(
     paths: &[String],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
 ) -> Vec<usize> {
@@ -634,7 +533,7 @@ fn symbol_indexes_for_paths(
         .collect()
 }
 
-fn symbol_indexes_for_paths_with_template_fallback(
+pub(super) fn symbol_indexes_for_paths_with_template_fallback(
     paths: &[String],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
 ) -> Vec<usize> {
@@ -684,7 +583,7 @@ pub(super) fn cpp_template_base_path(path: &str) -> Option<String> {
         .then_some(base_path)
 }
 
-fn cpp_template_argument_closes(remaining: &[char]) -> bool {
+pub(super) fn cpp_template_argument_closes(remaining: &[char]) -> bool {
     matches!(
         remaining
             .iter()
@@ -692,389 +591,6 @@ fn cpp_template_argument_closes(remaining: &[char]) -> bool {
             .find(|character| !character.is_whitespace()),
         None | Some('>' | ',' | ')' | ']' | '}' | ':' | '.')
     )
-}
-
-fn cpp_qualified_reference_path_groups(
-    reference_name: &str,
-    source_symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<Vec<String>> {
-    cpp_lexical_qualified_reference_paths(reference_name, source_symbol)
-        .into_iter()
-        .map(|reference_path| {
-            cpp_qualified_reference_path_group(
-                reference_path,
-                raw_symbols,
-                source_symbol,
-                file_overrides,
-            )
-        })
-        .collect()
-}
-
-fn cpp_unqualified_call_candidate_groups(
-    reference_name: &str,
-    source_symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<Vec<String>> {
-    let include_context = c_include_context_for_file_before_with_overrides(
-        &source_symbol.file_path,
-        source_symbol.byte_range.0,
-        file_overrides,
-    )
-    .ok();
-    let scopes = source_symbol
-        .scope_path
-        .as_deref()
-        .map(|scope_path| {
-            let components = scope_path.split("::").collect::<Vec<_>>();
-            (1..=components.len())
-                .rev()
-                .map(|length| components[..length].join("::"))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| vec![String::new()]);
-    scopes
-        .into_iter()
-        .map(|length| {
-            let scope = length;
-            let scoped_reference_path = if scope.is_empty() {
-                reference_name.to_string()
-            } else {
-                format!("{scope}::{reference_name}")
-            };
-            let mut paths = if scope.is_empty() {
-                vec![reference_name.to_string()]
-            } else {
-                vec![format!("{scope}::{reference_name}")]
-            };
-            for directive in raw_symbols.iter().filter(|symbol| {
-                symbol.node_kind == "using_declaration"
-                    && if scope.is_empty() {
-                        symbol.scope_path.is_none()
-                    } else {
-                        symbol.scope_path.as_deref() == Some(scope.as_str())
-                    }
-                    && cpp_symbol_is_visible_before(symbol, source_symbol, include_context.as_ref())
-            }) {
-                let Some(target) = cpp_using_namespace_target(directive) else {
-                    if directive.semantic_path != scoped_reference_path {
-                        continue;
-                    }
-                    let Some(target) = cpp_using_declaration_target(directive) else {
-                        continue;
-                    };
-                    paths.extend(
-                        cpp_lexical_qualified_reference_paths(&target, directive)
-                            .into_iter()
-                            .flat_map(|path| {
-                                cpp_qualified_reference_path_group(
-                                    path,
-                                    raw_symbols,
-                                    directive,
-                                    file_overrides,
-                                )
-                            }),
-                    );
-                    continue;
-                };
-                paths.extend(
-                    cpp_lexical_qualified_reference_paths(&target, directive)
-                        .into_iter()
-                        .flat_map(|path| {
-                            cpp_qualified_reference_path_group(
-                                path,
-                                raw_symbols,
-                                directive,
-                                file_overrides,
-                            )
-                        })
-                        .map(|path| format!("{path}::{reference_name}")),
-                );
-            }
-            paths
-        })
-        .collect()
-}
-
-fn cpp_symbol_is_visible_before(
-    symbol: &IndexedSymbol,
-    source_symbol: &IndexedSymbol,
-    include_context: Option<&CIncludeContext>,
-) -> bool {
-    (symbol.file_path == source_symbol.file_path
-        && symbol.byte_range.0 < source_symbol.byte_range.0)
-        || include_context.is_some_and(|context| context.include_paths.contains(&symbol.file_path))
-}
-
-fn cpp_qualified_reference_path_group(
-    reference_path: String,
-    raw_symbols: &[IndexedSymbol],
-    visibility_source: &IndexedSymbol,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<String> {
-    let include_context = c_include_context_for_file_before_with_overrides(
-        &visibility_source.file_path,
-        visibility_source.byte_range.0,
-        file_overrides,
-    )
-    .ok();
-    let mut pending = VecDeque::from([reference_path]);
-    let mut paths = Vec::new();
-    let mut visited = BTreeSet::new();
-
-    while let Some(path) = pending.pop_front() {
-        if !visited.insert(path.clone()) {
-            continue;
-        }
-        paths.push(path.clone());
-        for using_path in cpp_using_declaration_paths(
-            &path,
-            raw_symbols,
-            visibility_source,
-            include_context.as_ref(),
-        )
-        .into_iter()
-        .rev()
-        {
-            pending.push_front(using_path);
-        }
-        for alias_path in cpp_namespace_alias_paths(
-            &path,
-            raw_symbols,
-            visibility_source,
-            include_context.as_ref(),
-        )
-        .into_iter()
-        .rev()
-        {
-            pending.push_front(alias_path);
-        }
-    }
-
-    paths
-}
-
-fn cpp_lexical_qualified_reference_paths(
-    reference_name: &str,
-    source_symbol: &IndexedSymbol,
-) -> Vec<String> {
-    let absolute = reference_name.starts_with("::");
-    let reference_name = reference_name.trim_start_matches("::");
-    if absolute {
-        return vec![reference_name.to_string()];
-    }
-
-    let mut paths = Vec::new();
-    if let Some(scope_path) = &source_symbol.scope_path {
-        let scope_components = scope_path.split("::").collect::<Vec<_>>();
-        for length in (1..=scope_components.len()).rev() {
-            paths.push(format!(
-                "{}::{reference_name}",
-                scope_components[..length].join("::")
-            ));
-        }
-    }
-    paths.push(reference_name.to_string());
-    paths
-}
-
-fn cpp_namespace_alias_paths(
-    reference_path: &str,
-    raw_symbols: &[IndexedSymbol],
-    visibility_source: &IndexedSymbol,
-    include_context: Option<&CIncludeContext>,
-) -> Vec<String> {
-    let components = reference_path.split("::").collect::<Vec<_>>();
-    for length in (1..=components.len()).rev() {
-        let alias_path = components[..length].join("::");
-        let suffix = components[length..].join("::");
-        let Some(alias) = raw_symbols.iter().find(|symbol| {
-            symbol.node_kind == "namespace_alias_definition"
-                && symbol.semantic_path == alias_path
-                && cpp_symbol_is_visible_before(symbol, visibility_source, include_context)
-        }) else {
-            continue;
-        };
-        let Some(target) = cpp_namespace_alias_target(alias) else {
-            continue;
-        };
-
-        return cpp_lexical_qualified_reference_paths(&target, alias)
-            .into_iter()
-            .map(|target_path| {
-                if suffix.is_empty() {
-                    target_path
-                } else {
-                    format!("{target_path}::{suffix}")
-                }
-            })
-            .collect();
-    }
-    Vec::new()
-}
-
-fn cpp_using_declaration_paths(
-    reference_path: &str,
-    raw_symbols: &[IndexedSymbol],
-    visibility_source: &IndexedSymbol,
-    include_context: Option<&CIncludeContext>,
-) -> Vec<String> {
-    raw_symbols
-        .iter()
-        .filter(|symbol| {
-            symbol.node_kind == "using_declaration"
-                && symbol.semantic_path == reference_path
-                && cpp_symbol_is_visible_before(symbol, visibility_source, include_context)
-        })
-        .filter_map(|declaration| {
-            let target = cpp_using_declaration_target(declaration)?;
-            Some(cpp_lexical_qualified_reference_paths(&target, declaration))
-        })
-        .flatten()
-        .collect()
-}
-
-fn cpp_using_declaration_target(declaration: &IndexedSymbol) -> Option<String> {
-    let declaration = declaration.signature.as_deref()?.trim();
-    let target = declaration.strip_prefix("using")?.trim();
-    let target = target.trim_end_matches(';').trim();
-    (target.contains("::") && !target.starts_with("namespace ")).then_some(target.to_string())
-}
-
-fn cpp_using_namespace_target(declaration: &IndexedSymbol) -> Option<String> {
-    let declaration = declaration.signature.as_deref()?.trim();
-    let target = declaration.strip_prefix("using namespace")?.trim();
-    let target = target.trim_end_matches(';').trim();
-    (!target.is_empty()).then_some(target.to_string())
-}
-
-fn cpp_namespace_alias_target(alias: &IndexedSymbol) -> Option<String> {
-    let declaration = alias.signature.as_deref()?;
-    let (_, target) = declaration.split_once('=')?;
-    let target = target.trim().trim_end_matches(';').trim();
-    (!target.is_empty()).then_some(target.to_string())
-}
-
-fn cpp_type_alias_target(alias: &IndexedSymbol) -> Option<String> {
-    let declaration = alias.signature.as_deref()?.trim();
-    let target = match alias.node_kind.as_str() {
-        "alias_declaration" => {
-            let declaration = declaration.strip_prefix("using")?.trim();
-            let (_, target) = declaration.split_once('=')?;
-            let target = target.trim().trim_end_matches(';').trim();
-            Some(target)
-        }
-        "type_definition" => {
-            let declaration = declaration.strip_prefix("typedef")?.trim();
-            let target = declaration.trim_end_matches(';').trim();
-            let target = target.strip_suffix(&alias.base_name)?.trim();
-            Some(target)
-        }
-        _ => None,
-    }?;
-    cpp_constructible_type_alias_target(target)
-}
-
-fn cpp_type_alias_is_visible(
-    alias: &IndexedSymbol,
-    source_symbol: &IndexedSymbol,
-    include_context: Option<&CIncludeContext>,
-) -> bool {
-    cpp_is_type_alias(alias) && cpp_symbol_is_visible_before(alias, source_symbol, include_context)
-}
-
-fn cpp_is_type_alias(symbol: &IndexedSymbol) -> bool {
-    matches!(
-        symbol.node_kind.as_str(),
-        "alias_declaration" | "type_definition"
-    )
-}
-
-fn cpp_constructible_type_alias_target(target: &str) -> Option<String> {
-    let mut target = target.trim();
-    while let Some(stripped) = target
-        .strip_prefix("const ")
-        .or_else(|| target.strip_prefix("volatile "))
-        .or_else(|| target.strip_prefix("typename "))
-        .or_else(|| target.strip_prefix("class "))
-        .or_else(|| target.strip_prefix("struct "))
-    {
-        target = stripped.trim_start();
-    }
-    while let Some(stripped) = target
-        .strip_suffix(" const")
-        .or_else(|| target.strip_suffix(" volatile"))
-    {
-        target = stripped.trim_end();
-    }
-
-    (!target.is_empty() && !cpp_type_alias_target_has_top_level_indirection(target))
-        .then_some(target.to_string())
-}
-
-fn cpp_type_alias_target_has_top_level_indirection(target: &str) -> bool {
-    let characters = target.chars().collect::<Vec<_>>();
-    let mut template_depth = 0usize;
-    let mut parentheses = 0usize;
-    let mut brackets = 0usize;
-    let mut braces = 0usize;
-
-    for (index, character) in characters.iter().copied().enumerate() {
-        match character {
-            '<' if parentheses == 0 && brackets == 0 && braces == 0 => template_depth += 1,
-            '>' if template_depth > 0
-                && parentheses == 0
-                && brackets == 0
-                && braces == 0
-                && cpp_template_argument_closes(&characters[index + 1..]) =>
-            {
-                template_depth -= 1;
-            }
-            '(' => parentheses += 1,
-            ')' => parentheses = parentheses.saturating_sub(1),
-            '[' => brackets += 1,
-            ']' => brackets = brackets.saturating_sub(1),
-            '{' => braces += 1,
-            '}' => braces = braces.saturating_sub(1),
-            '*' | '&'
-                if template_depth == 0 && parentheses == 0 && brackets == 0 && braces == 0 =>
-            {
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-fn python_reference_lookup(reference_name: &str) -> (&str, Option<&str>) {
-    reference_name
-        .rsplit_once('.')
-        .map(|(module_hint, symbol_name)| (symbol_name, Some(module_hint)))
-        .unwrap_or((reference_name, None))
-}
-
-fn python_symbol_matches_module_hint(
-    source_symbol: &IndexedSymbol,
-    symbol: &IndexedSymbol,
-    module_hint: &str,
-    imported_summary: Option<&SymbolSummary>,
-) -> bool {
-    if let Some(imported_summary) = imported_summary {
-        return imported_summary.file_path == symbol.file_path
-            && imported_summary.semantic_path == symbol.semantic_path;
-    }
-
-    let Some(resolved_module_path) =
-        resolve_local_python_module_path(Path::new(&source_symbol.file_path), module_hint)
-    else {
-        return false;
-    };
-
-    normalize_path(&resolved_module_path) == symbol.file_path
 }
 
 fn indexed_symbol_candidate_rank(
