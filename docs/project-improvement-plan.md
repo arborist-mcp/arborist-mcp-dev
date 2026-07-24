@@ -185,6 +185,8 @@ completed item can land in its own commit unless two changes are inseparable.
   and `references` modules while preserving optional/expected wrapper coverage.
 - [x] Split `tests/source_overlay/wrappers/optional` into `aliases`, `nested`,
   and `references` modules while preserving overlay wrapper trace coverage.
+- [x] Split `tests/c_symbol_graph/constructors` into `basic`, `aliases`, and
+  `templates` modules while preserving constructor graph coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
