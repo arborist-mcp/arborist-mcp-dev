@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::{Result, anyhow};
 use rusqlite::Connection;
 
-use super::core::nonempty_string_from_row;
+use super::loading::nonempty_string_from_row;
 
 pub(crate) fn load_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
     let mut statement =
