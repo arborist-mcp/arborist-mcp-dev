@@ -454,6 +454,15 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertTrue(any("README.md" in error for error in errors))
         self.assertTrue(any("docs/tools.md" in error for error in errors))
 
+    def test_tool_catalog_check_accepts_protocol_contract_references(self) -> None:
+        catalog = json.loads(
+            (self.repo_root / "docs" / "tool-catalog.json").read_text(encoding="utf-8")
+        )
+
+        errors = self.tool_catalog_module._documentation_errors(catalog)
+
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

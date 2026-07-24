@@ -56,6 +56,26 @@ def _documentation_errors(catalog: list[dict[str, object]]) -> list[str]:
                     f"{relative_path}: documented {label} count {category_match.group(1)} "
                     f"does not match generated count {expected}"
                 )
+
+    protocol_path = REPO_ROOT / "docs" / "protocol.md"
+    try:
+        protocol = protocol_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"docs/protocol.md: unable to read documentation: {exc}")
+    else:
+        required_fragments = (
+            '"tools/list"',
+            '"tools/call"',
+            '"resources/list"',
+            '"resources/read"',
+            "arborist/*",
+            "python scripts/tool_catalog.py --check",
+        )
+        for fragment in required_fragments:
+            if fragment not in protocol:
+                errors.append(
+                    f"docs/protocol.md: missing protocol/catalog reference {fragment!r}"
+                )
     return errors
 
 

@@ -29,8 +29,9 @@ completed item can land in its own commit unless two changes are inseparable.
   the inner loop. No failures were found in the current run.
 - [x] Keep `docs/tool-catalog.json` synchronized whenever tool schemas or
   result schemas change.
-- [ ] Keep `README.md`, `docs/protocol.md`, and `docs/tools.md` synchronized
-  with any protocol-facing change.
+- [x] Keep `README.md`, `docs/protocol.md`, and `docs/tools.md` synchronized
+  with protocol-facing changes through catalog counts and required protocol
+  reference checks in `scripts/tool_catalog.py --check`.
 
 ### P1: Small Reliability And Maintainability Fixes
 
