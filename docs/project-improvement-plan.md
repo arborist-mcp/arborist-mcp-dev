@@ -128,6 +128,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `tests/source_overlay/wrappers` into nested modules matching the
   c_symbol_graph wrappers layout (`expected`, `optional`, `pointers`,
   `indexed_get`).
+- [x] Split `tests/c_symbol_graph/std_get` and `tests/source_overlay/std_get`
+  into `get_if`, `typed`, and `indexed` submodules.
+- [x] Centralize package strict JSON parsing via `jsonrpc.loads_strict` and
+  reuse it from gateway core payload decoding and index_watch config/core
+  responses.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
