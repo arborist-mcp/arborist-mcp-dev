@@ -115,6 +115,12 @@ completed item can land in its own commit unless two changes are inseparable.
   alias), `type_alias` (alias target chase/constructor paths), and
   `python` (module-hint lookup), keeping core dependency resolution in
   `resolution.rs`.
+- [x] Split `tests/c_symbol_graph/wrappers` into nested modules:
+  `expected`, `optional`, `pointers`, and `indexed_get`.
+- [x] Share strict JSON loads (reject NaN/Infinity and duplicate keys)
+  via `scripts/json_strict.py` for check-profile and gateway smoke scripts.
+- [x] Peel trailing pointer reference declarators (`T* const&`) in
+  `cpp_top_level_pointer_pointee` so pointer-parameter member calls resolve.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
