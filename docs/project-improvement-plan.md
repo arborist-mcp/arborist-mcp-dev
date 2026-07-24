@@ -133,6 +133,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Centralize package strict JSON parsing via `jsonrpc.loads_strict` and
   reuse it from gateway core payload decoding and index_watch config/core
   responses.
+- [x] Split `references/std_get` into nested modules: `core` (container and
+  element helpers), `casts` (pointer/any cast receivers), `typed` (typed
+  `std::get` wrappers), and `indexed` (indexed tuple `std::get` wrappers).
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
