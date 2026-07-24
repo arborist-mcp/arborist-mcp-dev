@@ -203,6 +203,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `functions` modules while preserving overload resolution coverage.
 - [x] Split `tests/trace_semantics/bindings` into `live` and `persisted`
   modules while preserving Python binding trace parity coverage.
+- [x] Split `tests/c_symbol_graph/wrappers/expected` into `member`,
+  `smart_pointers`, and `references` modules while preserving expected-wrapper
+  graph coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
