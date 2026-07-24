@@ -19,9 +19,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        MAX_WORKSPACE_SCAN_TIMEOUT_MS, SKIPPED_WORKSPACE_DIR_NAMES, WorkspaceScanDeadline,
-        WorkspaceScanLimits, collect_source_files_with_limits, should_skip_dir_name,
-        should_skip_index_path, validate_workspace_scan_limits,
+        DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_TIMEOUT_MS, SKIPPED_WORKSPACE_DIR_NAMES,
+        WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files_with_limits,
+        should_skip_dir_name, should_skip_index_path, validate_workspace_scan_limits,
     };
     use std::time::{Duration, Instant};
 
@@ -221,6 +221,14 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn max_file_bytes_builder_preserves_default_limits() {
+        let limits = WorkspaceScanLimits::with_max_file_bytes(128);
+        assert_eq!(limits.max_file_bytes, Some(128));
+        assert_eq!(limits.max_files, DEFAULT_WORKSPACE_MAX_FILES);
+        assert_eq!(limits.timeout_ms, None);
     }
 
     #[test]

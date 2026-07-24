@@ -325,6 +325,8 @@ completed item can land in its own commit unless two changes are inseparable.
   silently allowing later entries to replace earlier ones.
 - [x] Apply case-insensitive duplicate overlay detection on Windows, matching
   the platform filesystem semantics.
+- [x] Add a `WorkspaceScanLimits::with_max_file_bytes` builder while preserving
+  default file-count and timeout limits.
 - [x] Extract Tree-sitter query validation and timeout bounds into
   `query/validation.rs`, keeping execution and capture ownership in focused modules.
 - [x] Extract semantic path, depth, and parent-path helpers into

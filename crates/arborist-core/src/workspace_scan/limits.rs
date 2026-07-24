@@ -38,6 +38,13 @@ impl WorkspaceScanLimits {
             ..Self::default()
         }
     }
+
+    pub fn with_max_file_bytes(max_file_bytes: u64) -> Self {
+        Self {
+            max_file_bytes: Some(max_file_bytes),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
