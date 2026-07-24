@@ -214,6 +214,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `includes` modules while preserving incremental refresh coverage.
 - [x] Split `tests/c_patching/targets` into `c`, `templates`, and `qualified`
   modules while preserving C/C++ patch target coverage.
+- [x] Split `tests/source_overlay/core/cpp_receivers` into `direct`, `sequence`,
+  and `indexed` modules while preserving overlay receiver coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
