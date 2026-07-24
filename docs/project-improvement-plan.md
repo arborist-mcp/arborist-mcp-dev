@@ -323,6 +323,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `source_overlay/validation.rs`, keeping overlay construction in the facade.
 - [x] Reject duplicate source-overlay paths after normalization instead of
   silently allowing later entries to replace earlier ones.
+- [x] Apply case-insensitive duplicate overlay detection on Windows, matching
+  the platform filesystem semantics.
 - [x] Extract Tree-sitter query validation and timeout bounds into
   `query/validation.rs`, keeping execution and capture ownership in focused modules.
 - [x] Extract semantic path, depth, and parent-path helpers into

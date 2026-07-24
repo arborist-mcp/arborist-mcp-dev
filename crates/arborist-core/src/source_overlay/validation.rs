@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -12,6 +12,7 @@ pub(crate) fn normalize_source_overrides_for_workspace(
     workspace_description: &str,
 ) -> Result<BTreeMap<String, String>> {
     let mut normalized_overrides = BTreeMap::new();
+    let mut duplicate_keys = BTreeSet::new();
 
     for (file_path, source) in file_overrides {
         let file_path = language::normalize_absolute_path(Path::new(file_path))?;
@@ -36,15 +37,18 @@ pub(crate) fn normalize_source_overrides_for_workspace(
         }
 
         let normalized_path = language::normalize_path(&file_path);
-        if normalized_overrides
-            .insert(normalized_path.clone(), source.clone())
-            .is_some()
-        {
+        let duplicate_key = if cfg!(windows) {
+            normalized_path.to_ascii_lowercase()
+        } else {
+            normalized_path.clone()
+        };
+        if !duplicate_keys.insert(duplicate_key) {
             bail!(
                 "source overlay contains duplicate file path {}",
                 normalized_path
             );
         }
+        normalized_overrides.insert(normalized_path, source.clone());
     }
 
     Ok(normalized_overrides)
@@ -70,6 +74,22 @@ mod tests {
 
         let error = normalize_source_overrides_for_workspace(&workspace, &overrides, "workspace")
             .expect_err("duplicate normalized overlay paths should be rejected");
+        assert!(error.to_string().contains("duplicate file path"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_duplicate_overlay_paths_that_only_differ_by_case() {
+        let workspace = normalize_absolute_path(&env::current_dir().unwrap()).unwrap();
+        let first = workspace.join("Overlay_Case.py");
+        let second = workspace.join("overlay_case.py");
+        let overrides = BTreeMap::from([
+            (first.to_string_lossy().into_owned(), "a".to_string()),
+            (second.to_string_lossy().into_owned(), "b".to_string()),
+        ]);
+
+        let error = normalize_source_overrides_for_workspace(&workspace, &overrides, "workspace")
+            .expect_err("case-only duplicate overlay paths should be rejected on Windows");
         assert!(error.to_string().contains("duplicate file path"));
     }
 }
