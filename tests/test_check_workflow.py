@@ -31,6 +31,17 @@ def _load_version_consistency_module():
     return module
 
 
+def _load_tool_catalog_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    module_path = repo_root / "scripts" / "tool_catalog.py"
+    spec = importlib.util.spec_from_file_location("tool_catalog", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_gateway_smoke_module():
     repo_root = Path(__file__).resolve().parents[1]
     module_path = repo_root / "scripts" / "gateway_smoke.py"
@@ -51,6 +62,7 @@ class CheckWorkflowTests(unittest.TestCase):
         cls.repo_root = Path(__file__).resolve().parents[1]
         cls.module = _load_check_profile_module()
         cls.version_module = _load_version_consistency_module()
+        cls.tool_catalog_module = _load_tool_catalog_module()
         cls.gateway_smoke_module = _load_gateway_smoke_module()
 
     def test_check_profile_snapshot_has_expected_profile_order(self) -> None:
@@ -429,6 +441,18 @@ class CheckWorkflowTests(unittest.TestCase):
                         document,
                         rf"- {category_labels[category]} tools: {expected_counts[category]}(?:,|\\.)",
                     )
+
+    def test_tool_catalog_check_detects_stale_document_counts(self) -> None:
+        catalog = json.loads(
+            (self.repo_root / "docs" / "tool-catalog.json").read_text(encoding="utf-8")
+        )
+        catalog.append({"metadata": {"category": "read"}})
+
+        errors = self.tool_catalog_module._documentation_errors(catalog)
+
+        self.assertEqual(len(errors), 4)
+        self.assertTrue(any("README.md" in error for error in errors))
+        self.assertTrue(any("docs/tools.md" in error for error in errors))
 
 
 if __name__ == "__main__":
