@@ -232,6 +232,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Move the persisted-index state implementation behind a
   `symbol_index_state/mod.rs` facade while preserving its public inspection and
   migration exports plus crate-internal query helpers.
+- [x] Isolate persisted source fingerprint calculation in
+  `symbol_index_state/fingerprints.rs` so freshness policy has a focused
+  implementation boundary.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
 
 use anyhow::{Result, anyhow, bail};
@@ -33,6 +32,8 @@ use crate::workspace_scan::{
     DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
     collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
 };
+
+use super::fingerprints::source_fingerprint;
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
     inspect_symbol_index_with_timeout(db_path, None)
@@ -398,12 +399,6 @@ pub(crate) fn load_symbol_index_with_overrides(
         materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),
         indexed_files,
     ))
-}
-
-pub(crate) fn source_fingerprint(source: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn inspect_symbol_index_freshness(
