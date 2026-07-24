@@ -254,6 +254,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Move persisted-index migration orchestration into
   `symbol_index_state/migration.rs`, keeping health inspection independent from
   schema upgrade execution.
+- [x] Rename the remaining health-check implementation module to
+  `symbol_index_state/inspection.rs` so module names reflect their actual
+  responsibilities.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

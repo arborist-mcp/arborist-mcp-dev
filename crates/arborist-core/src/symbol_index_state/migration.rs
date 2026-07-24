@@ -14,8 +14,8 @@ use crate::language::normalize_absolute_path;
 use crate::symbols::rebuild_symbol_index;
 
 use super::freshness::validate_indexed_file_count;
+use super::inspection::inspect_symbol_index;
 use super::paths::validate_persisted_index_paths;
-use super::state::inspect_symbol_index;
 
 pub fn migrate_symbol_index(db_path: &Path) -> Result<crate::model::SymbolIndexHealth> {
     let db_path = normalize_absolute_path(db_path)?;
