@@ -6,6 +6,10 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 
 use crate::language::{normalize_absolute_path, normalize_path};
 
+use super::tables::{
+    ensure_symbols_column, ensure_symbols_file_path_index, ensure_symbols_primary_key_layout,
+};
+
 pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
 pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
 pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
@@ -385,59 +389,6 @@ fn table_primary_key_layout(
     Ok(primary_key)
 }
 
-fn ensure_symbols_column(
-    connection: &Connection,
-    columns: &mut BTreeSet<String>,
-    column_name: &str,
-    add_column_sql: &str,
-) -> Result<bool> {
-    if columns.contains(column_name) {
-        return Ok(false);
-    }
-
-    connection.execute(add_column_sql, [])?;
-    columns.insert(column_name.to_string());
-    Ok(true)
-}
-
-fn ensure_symbols_primary_key_layout(connection: &Connection) -> Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(symbols)")?;
-    let columns = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
-    })?;
-
-    let mut symbol_id_pk = 0;
-    let mut file_path_pk = 0;
-    let mut start_byte_pk = 0;
-    let mut end_byte_pk = 0;
-    for column in columns {
-        let (name, pk_order) = column?;
-        match name.as_str() {
-            "symbol_id" => symbol_id_pk = pk_order,
-            "file_path" => file_path_pk = pk_order,
-            "start_byte" => start_byte_pk = pk_order,
-            "end_byte" => end_byte_pk = pk_order,
-            _ => {}
-        }
-    }
-
-    if symbol_id_pk == 1 && file_path_pk == 2 && start_byte_pk == 3 && end_byte_pk == 4 {
-        return Ok(());
-    }
-
-    Err(anyhow!(
-        "symbol index symbols table has incompatible primary key layout; migrate or rebuild the index"
-    ))
-}
-
-fn ensure_symbols_file_path_index(connection: &Connection) -> Result<()> {
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path)",
-        [],
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -445,7 +396,8 @@ mod tests {
 
     use rusqlite::Connection;
 
-    use super::{ensure_symbols_column, require_table_primary_key_layout, table_columns};
+    use super::super::tables::ensure_symbols_column;
+    use super::{require_table_primary_key_layout, table_columns};
 
     #[test]
     fn current_schema_validation_rejects_incompatible_primary_keys() {

@@ -238,6 +238,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract persisted-index schema structure checks into
   `index_schema/validation.rs`, leaving low-level SQLite table helpers in the
   schema implementation.
+- [x] Isolate persisted-index table creation, column upgrades, primary-key
+  checks, and file-path index maintenance in `index_schema/tables.rs`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
