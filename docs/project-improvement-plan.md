@@ -177,6 +177,8 @@ completed item can land in its own commit unless two changes are inseparable.
   modules while preserving C/C++ patching regression coverage.
 - [x] Split `model/tests/symbols` into `core`, `context`, and `discovery`
   modules while preserving public model validation coverage.
+- [x] Split `tests/source_overlay/std_get/indexed` into `direct`, `expected`,
+  and `sequence` modules while preserving indexed overlay trace coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
