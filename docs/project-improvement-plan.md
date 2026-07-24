@@ -162,6 +162,10 @@ completed item can land in its own commit unless two changes are inseparable.
   changing read/list/search/trace behavior.
 - [x] Add dirty-VFS vs persisted index `with_source` overlay parity coverage for
   list, search/read, and trace in `tests/query_parity/overlay_parity.rs`.
+- [x] Expand dirty-VFS vs index `with_source` parity to read/list context,
+  neighborhood context, and search context paths.
+- [x] Split `tests/trace_semantics` into nested modules: `core`,
+  `bindings`, `class_scope`, `match_case`, and `imports_calls`.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
