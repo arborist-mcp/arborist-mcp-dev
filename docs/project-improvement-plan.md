@@ -162,6 +162,9 @@ completed item can land in its own commit unless two changes are inseparable.
   changing read/list/search/trace behavior.
 - [x] Add dirty-VFS vs persisted index `with_source` overlay parity coverage for
   list, search/read, and trace in `tests/query_parity/overlay_parity.rs`.
+- [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
+  `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
+  `std_receivers`, and `aliases`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
