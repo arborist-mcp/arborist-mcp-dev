@@ -221,6 +221,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `std_receivers`, and `aliases`.
 - [x] Split `tests/source_overlay/core` into nested modules: `query_ops`,
   `cpp_receivers`, `aliases`, `multi_overlay`, and `guards`.
+- [x] Move the persisted-index schema surface behind an
+  `index_schema/mod.rs` facade and focused `schema.rs` implementation module
+  without changing crate-visible APIs.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
