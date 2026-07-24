@@ -323,6 +323,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `source_overlay/validation.rs`, keeping overlay construction in the facade.
 - [x] Extract Tree-sitter query validation and timeout bounds into
   `query/validation.rs`, keeping execution and capture ownership in focused modules.
+- [x] Extract semantic path, depth, and parent-path helpers into
+  `semantic/paths.rs`, preserving semantic facade exports.
 - [x] Keep workspace-scan facade focused on public limits and walker exports,
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
