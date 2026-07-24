@@ -338,6 +338,8 @@ completed item can land in its own commit unless two changes are inseparable.
   dedicated module boundary for clearer future category-level splits.
 - [x] Group direct indexed tuple access regression tests behind a dedicated
   module boundary for clearer receiver-focused maintenance.
+- [x] Group indexed sequence tuple access regression tests behind a dedicated
+  module boundary for clearer sequence-specific maintenance.
 
 ## Suggested Commit Sequence
 
