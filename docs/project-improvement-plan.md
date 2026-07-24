@@ -143,6 +143,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `references/bindings/auto` into nested modules: `constructor`
   (decltype(auto)/auto constructor binding), `alias` (address/reference-alias
   helpers), and `copy` (standard-wrapper copy/alias helpers internal to auto).
+- [x] Split `model/tests` into nested modules: `position`, `index`,
+  `symbols`, `patch`, `trace`, and `misc` for public model validation coverage.
+- [x] Split `tests/persisted_index` into nested modules: `rebuild_refresh`,
+  `trace`, `inspect`, and `migration`.
 - [x] Split `tests/query_parity` into nested modules: `index`, `list`, `patch`,
   `read`, `search`, and `trace`.
 - [x] Split `vfs/tests` into nested modules: `lifecycle`, `edits`, `patch`,
