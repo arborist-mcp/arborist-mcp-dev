@@ -140,6 +140,9 @@ completed item can land in its own commit unless two changes are inseparable.
   lock and `std::ref`/`std::cref` factory receivers) and `nested`
   (optional/expected/smart-pointer unwrap receivers), with a thin re-export
   facade in `wrappers/mod.rs`.
+- [x] Split `references/bindings/auto` into nested modules: `constructor`
+  (decltype(auto)/auto constructor binding), `alias` (address/reference-alias
+  helpers), and `copy` (standard-wrapper copy/alias helpers internal to auto).
 - [x] Split `tests/query_parity` into nested modules: `index`, `list`, `patch`,
   `read`, `search`, and `trace`.
 - [x] Split `vfs/tests` into nested modules: `lifecycle`, `edits`, `patch`,
