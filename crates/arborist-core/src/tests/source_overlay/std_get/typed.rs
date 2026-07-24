@@ -363,4 +363,3 @@ fn does_not_trace_invalid_cpp_typed_get_bindings_from_unsaved_source_overlay() {
         assert!(trace.callees.is_empty(), "{caller}");
     }
 }
-

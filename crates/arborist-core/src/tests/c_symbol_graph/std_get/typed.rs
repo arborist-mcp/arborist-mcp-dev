@@ -393,4 +393,3 @@ fn does_not_resolve_invalid_cpp_typed_get_bindings() {
         assert!(trace.callees.is_empty(), "{caller}");
     }
 }
-

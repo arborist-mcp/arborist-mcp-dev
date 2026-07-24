@@ -149,4 +149,3 @@ fn resolves_cpp_get_if_pointer_bindings_across_live_and_persisted_queries() {
         );
     }
 }
-

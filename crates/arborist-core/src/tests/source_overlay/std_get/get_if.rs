@@ -136,4 +136,3 @@ fn traces_cpp_get_if_pointer_bindings_from_unsaved_source_overlay() {
         );
     }
 }
-

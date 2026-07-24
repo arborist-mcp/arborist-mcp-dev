@@ -1307,4 +1307,3 @@ fn resolves_cpp_indexed_tuple_get_expected_smart_pointer_arrow_calls_across_live
         );
     }
 }
-
