@@ -290,6 +290,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `language/paths.rs`, preserving cross-platform facade exports.
 - [x] Extract Tree-sitter parser construction, language detection, and document
   parsing into `language/parser.rs`, preserving language facade exports.
+- [x] Extract Python semantic skeleton and symbol lookup helpers into
+  `semantic/python.rs`, preserving crate-visible summary helper exports.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
