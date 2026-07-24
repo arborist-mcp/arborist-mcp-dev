@@ -301,6 +301,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `api_patch_validation/replay.rs`, preserving validation exports.
 - [x] Extract persisted-index schema migration execution into
   `index_migration/execute.rs`, keeping migration-plan helpers in the facade.
+- [x] Extract Python symbol-index extraction into
+  `symbol_extractor/python.rs`, preserving the shared indexing facade.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
   instead of rescanning the syntax tree for every capture owner.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
