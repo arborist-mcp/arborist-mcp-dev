@@ -136,6 +136,14 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `references/std_get` into nested modules: `core` (container and
   element helpers), `casts` (pointer/any cast receivers), `typed` (typed
   `std::get` wrappers), and `indexed` (indexed tuple `std::get` wrappers).
+- [x] Split `receivers/wrappers` into nested modules: `reference` (weak-pointer
+  lock and `std::ref`/`std::cref` factory receivers) and `nested`
+  (optional/expected/smart-pointer unwrap receivers), with a thin re-export
+  facade in `wrappers/mod.rs`.
+- [x] Split `tests/query_parity` into nested modules: `index`, `list`, `patch`,
+  `read`, `search`, and `trace`.
+- [x] Split `vfs/tests` into nested modules: `lifecycle`, `edits`, `patch`,
+  `cpp_trace`, and `misc`, with shared temp helpers on the facade.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
