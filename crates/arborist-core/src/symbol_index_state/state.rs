@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Result, anyhow, bail};
-use rusqlite::Connection;
+use anyhow::{Result, anyhow};
 
 use crate::index_migration;
 use crate::index_schema::{
@@ -15,8 +13,7 @@ use crate::index_store::{
     count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
 };
 use crate::language::{normalize_absolute_path, normalize_path};
-use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth, SymbolMeta};
-use crate::symbols::rebuild_symbol_index;
+use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth};
 use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
 use super::freshness::{inspect_symbol_index_freshness, validate_indexed_file_count};
@@ -255,48 +252,4 @@ pub fn inspect_symbol_index_with_timeout(
     }
     health.validate_public_output()?;
     Ok(health)
-}
-
-pub fn migrate_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
-    let db_path = normalize_absolute_path(db_path)?;
-    if !db_path.exists() {
-        bail!("symbol index {} does not exist", db_path.display());
-    }
-
-    let mut connection = Connection::open(&db_path)?;
-    let workspace_root = if load_optional_metadata_value(&connection, "schema_version")?
-        .as_deref()
-        .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
-    {
-        require_symbol_index_tables(&connection, &db_path)?;
-        if load_optional_metadata_value(&connection, "schema_version")?.as_deref()
-            == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION)
-        {
-            require_previous_symbol_index_schema(&connection, &db_path)?;
-        } else {
-            require_legacy_symbol_index_schema(&connection, &db_path)?;
-        }
-        let workspace_root = load_symbol_index_workspace_root(&connection, &db_path)?;
-        let file_states = load_file_states(&connection)?;
-        let (symbols, indexed_files) = load_resolved_symbols(&connection)?;
-        validate_indexed_file_count(indexed_files, file_states.len())?;
-        validate_persisted_index_paths(&workspace_root, &file_states, &symbols)?;
-        Some(workspace_root)
-    } else {
-        None
-    };
-    index_migration::migrate_symbol_index(&mut connection, &db_path)?;
-    drop(connection);
-    if let Some(workspace_root) = workspace_root {
-        rebuild_symbol_index(&workspace_root, &db_path)?;
-    }
-    inspect_symbol_index(&db_path)
-}
-
-pub(crate) fn validate_persisted_index_paths(
-    workspace_root: &Path,
-    file_states: &BTreeMap<String, u64>,
-    symbols: &[SymbolMeta],
-) -> Result<()> {
-    path_state::validate_persisted_index_paths(workspace_root, file_states, symbols)
 }

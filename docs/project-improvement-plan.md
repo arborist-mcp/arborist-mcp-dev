@@ -251,6 +251,9 @@ completed item can land in its own commit unless two changes are inseparable.
   invariants in `symbol_index_state/freshness.rs`.
 - [x] Move persisted-index freshness inspection (fresh/stale/missing/unreadable
   file classification) into the freshness module.
+- [x] Move persisted-index migration orchestration into
+  `symbol_index_state/migration.rs`, keeping health inspection independent from
+  schema upgrade execution.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
