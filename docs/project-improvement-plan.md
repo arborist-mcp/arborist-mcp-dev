@@ -290,6 +290,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `language/paths.rs`, preserving cross-platform facade exports.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
+- [x] Move workspace traversal, skip-directory policy, and source collection
+  into `workspace_scan/walker.rs`, keeping `workspace_scan.rs` as a facade.
 - [x] Enforce `max_file_bytes` against symlink targets during workspace scans,
   with cross-platform symlink regression coverage where supported.
 - [x] Reuse resolved symlink target metadata during workspace scans to avoid
