@@ -313,6 +313,8 @@ completed item can land in its own commit unless two changes are inseparable.
   keeping language parsing and path helpers independent of platform APIs.
 - [x] Extract symbol-summary candidate selection and origin ranking into
   `symbol_summary/selection.rs`, keeping summary assembly in the facade.
+- [x] Extract symbol-search filter normalization and matching into
+  `symbol_search/filters.rs`, keeping match scoring in the facade.
 - [x] Keep workspace-scan facade focused on public limits and walker exports,
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
