@@ -294,6 +294,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `semantic/python.rs`, preserving crate-visible summary helper exports.
 - [x] Extract Tree-sitter query owner resolution into `query/owners.rs`,
   keeping query execution and validation in the facade.
+- [x] Extract symbol-trace neighborhood traversal into
+  `symbol_trace/neighborhood.rs`, preserving timeout and result validation.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
