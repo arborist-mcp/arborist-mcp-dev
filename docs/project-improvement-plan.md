@@ -121,6 +121,13 @@ completed item can land in its own commit unless two changes are inseparable.
   via `scripts/json_strict.py` for check-profile and gateway smoke scripts.
 - [x] Peel trailing pointer reference declarators (`T* const&`) in
   `cpp_top_level_pointer_pointee` so pointer-parameter member calls resolve.
+- [x] Split `references/bindings` into nested modules: `auto` (decltype/auto
+  constructor and alias bindings) and `declared` (explicit type binding
+  construction plus declarator helpers), keeping collection entrypoints in
+  `bindings/mod.rs`.
+- [x] Split `tests/source_overlay/wrappers` into nested modules matching the
+  c_symbol_graph wrappers layout (`expected`, `optional`, `pointers`,
+  `indexed_get`).
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
