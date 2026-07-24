@@ -1,16 +1,15 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
-use tree_sitter::Node;
-
 use crate::language::{normalize_path, offset_for_position, parse_document, read_source};
 use crate::model::{LanguageId, Position, SymbolMeta};
 use crate::semantic::{
     ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, python_display_byte_range,
     semantic_path,
 };
-use crate::symbol_index_model::symbol_kind_rank;
+use anyhow::{Result, anyhow};
+
+mod selection;
 
 pub(crate) fn resolve_symbol_at_position<'a>(
     resolved_symbols: &'a [SymbolMeta],
@@ -25,8 +24,8 @@ pub(crate) fn resolve_symbol_at_position<'a>(
     };
     let document = parse_document(file_path, &source)?;
     let byte_offset = offset_for_position(&source, position)?;
-    let node =
-        node_at_byte_offset(document.tree.root_node(), &source, byte_offset).ok_or_else(|| {
+    let node = selection::node_at_byte_offset(document.tree.root_node(), &source, byte_offset)
+        .ok_or_else(|| {
             anyhow!(
                 "position {}:{} does not resolve to a syntax node in {}",
                 position.row,
@@ -62,7 +61,7 @@ pub(crate) fn resolve_symbol_at_position<'a>(
         }
     };
 
-    choose_symbol_at_location(
+    selection::choose_symbol_at_location(
         resolved_symbols,
         &normalized_file_path,
         &symbol_id,
@@ -77,49 +76,4 @@ pub(crate) fn resolve_symbol_at_position<'a>(
             normalized_file_path
         )
     })
-}
-
-fn node_at_byte_offset<'tree>(
-    root: Node<'tree>,
-    source: &str,
-    byte_offset: usize,
-) -> Option<Node<'tree>> {
-    let (start, end) = if source.is_empty() {
-        (0, 0)
-    } else if byte_offset < source.len() {
-        (byte_offset, byte_offset + 1)
-    } else {
-        (byte_offset.saturating_sub(1), byte_offset)
-    };
-
-    root.named_descendant_for_byte_range(start, end)
-        .or_else(|| root.descendant_for_byte_range(start, end))
-        .or_else(|| root.named_descendant_for_byte_range(start, start))
-        .or_else(|| root.descendant_for_byte_range(start, start))
-}
-
-fn choose_symbol_at_location<'a>(
-    resolved_symbols: &'a [SymbolMeta],
-    file_path: &str,
-    symbol_id: &str,
-    semantic_path: &str,
-    byte_range: (usize, usize),
-) -> Option<&'a SymbolMeta> {
-    resolved_symbols
-        .iter()
-        .filter(|symbol| {
-            symbol.file_path == file_path
-                && symbol.byte_range == byte_range
-                && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
-        })
-        .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
-        .or_else(|| {
-            resolved_symbols
-                .iter()
-                .filter(|symbol| {
-                    symbol.file_path == file_path
-                        && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
-                })
-                .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
-        })
 }
