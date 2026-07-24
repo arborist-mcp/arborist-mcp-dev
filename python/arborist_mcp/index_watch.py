@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, TextIO
 
+from .jsonrpc import loads_strict
 from .tool_specs import (
     MAX_WORKSPACE_SCAN_FILE_BYTES,
     MAX_WORKSPACE_SCAN_FILES,
@@ -43,31 +44,14 @@ class IndexWatchTarget:
     db_path: str
 
 
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"non-standard JSON constant: {value}")
-
-
 def _decode_object(payload: str, operation: str) -> dict[str, Any]:
     try:
-        value = json.loads(
-            payload,
-            parse_constant=_reject_constant,
-            object_pairs_hook=_reject_duplicate_keys,
-        )
+        value = loads_strict(payload)
     except (TypeError, ValueError) as exc:
         raise IndexWatchError(f"invalid JSON from {operation}: {exc}") from exc
     if not isinstance(value, dict):
         raise IndexWatchError(f"invalid JSON from {operation}: expected object payload")
     return value
-
-
-def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate object key: {key}")
-        result[key] = value
-    return result
 
 
 def _resolve_path(value: str, base_directory: Path) -> str:

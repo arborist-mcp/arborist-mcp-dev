@@ -20,10 +20,9 @@ from .gateway_trace_routes import GatewayTraceRoutes
 from .gateway_vfs_routes import GatewayVfsRoutes
 from .jsonrpc import (
     error_response,
-    _reject_duplicate_object_keys,
-    _reject_nonstandard_json_constant,
     is_notification_request,
     is_valid_request_id,
+    loads_strict,
     parse_request_json,
     print_response as _print_response,
     serialize_response as _serialize_response,
@@ -271,11 +270,7 @@ class ArboristGateway(
     @staticmethod
     def _decode_core_payload(payload: str) -> Any:
         try:
-            return json.loads(
-                payload,
-                parse_constant=_reject_nonstandard_json_constant,
-                object_pairs_hook=_reject_duplicate_object_keys,
-            )
+            return loads_strict(payload)
         except (json.JSONDecodeError, ValueError) as exc:
             raise JsonRpcError(-32000, f"invalid JSON from arborist core: {exc}") from exc
 

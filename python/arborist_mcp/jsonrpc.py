@@ -52,13 +52,18 @@ def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any
     return obj
 
 
+def loads_strict(payload: str) -> Any:
+    """Parse JSON while rejecting NaN/Infinity constants and duplicate object keys."""
+    return json.loads(
+        payload,
+        parse_constant=_reject_nonstandard_json_constant,
+        object_pairs_hook=_reject_duplicate_object_keys,
+    )
+
+
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
     try:
-        return json.loads(
-            raw_request,
-            parse_constant=_reject_nonstandard_json_constant,
-            object_pairs_hook=_reject_duplicate_object_keys,
-        ), None
+        return loads_strict(raw_request), None
     except (json.JSONDecodeError, ValueError) as exc:
         return None, error_response(None, -32700, f"invalid JSON: {exc}")
 
