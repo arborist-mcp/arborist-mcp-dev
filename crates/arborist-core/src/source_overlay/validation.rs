@@ -35,8 +35,41 @@ pub(crate) fn normalize_source_overrides_for_workspace(
             );
         }
 
-        normalized_overrides.insert(language::normalize_path(&file_path), source.clone());
+        let normalized_path = language::normalize_path(&file_path);
+        if normalized_overrides
+            .insert(normalized_path.clone(), source.clone())
+            .is_some()
+        {
+            bail!(
+                "source overlay contains duplicate file path {}",
+                normalized_path
+            );
+        }
     }
 
     Ok(normalized_overrides)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::env;
+
+    use super::normalize_source_overrides_for_workspace;
+    use crate::language::normalize_absolute_path;
+
+    #[test]
+    fn rejects_duplicate_normalized_overlay_paths() {
+        let workspace = normalize_absolute_path(&env::current_dir().unwrap()).unwrap();
+        let first = workspace.join("overlay_duplicate.py");
+        let second = workspace.join(".").join("overlay_duplicate.py");
+        let overrides = BTreeMap::from([
+            (first.to_string_lossy().into_owned(), "a".to_string()),
+            (second.to_string_lossy().into_owned(), "b".to_string()),
+        ]);
+
+        let error = normalize_source_overrides_for_workspace(&workspace, &overrides, "workspace")
+            .expect_err("duplicate normalized overlay paths should be rejected");
+        assert!(error.to_string().contains("duplicate file path"));
+    }
 }
