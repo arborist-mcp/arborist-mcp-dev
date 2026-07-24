@@ -181,6 +181,8 @@ completed item can land in its own commit unless two changes are inseparable.
   and `sequence` modules while preserving indexed overlay trace coverage.
 - [x] Split `tests/c_symbol_graph/std_get/indexed` into `direct`, `expected`,
   and `sequence` modules while preserving live/persisted indexed graph coverage.
+- [x] Split `tests/c_symbol_graph/wrappers/optional` into `aliases`, `nested`,
+  and `references` modules while preserving optional/expected wrapper coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
