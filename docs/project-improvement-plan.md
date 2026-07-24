@@ -247,6 +247,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract persisted-index loading and source-overlay refresh composition
   into `symbol_index_state/loading.rs`, leaving health orchestration in
   `state.rs`.
+- [x] Isolate persisted-index freshness gating and indexed-file count
+  invariants in `symbol_index_state/freshness.rs`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

@@ -20,8 +20,8 @@ use crate::symbol_dependency::{
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
 
+use super::freshness::{ensure_symbol_index_fresh, validate_indexed_file_count};
 use super::paths::{validate_persisted_index_paths, validate_persisted_index_paths_with_overrides};
-use super::state::{ensure_symbol_index_fresh, validate_indexed_file_count};
 
 pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
     if !db_path.exists() {

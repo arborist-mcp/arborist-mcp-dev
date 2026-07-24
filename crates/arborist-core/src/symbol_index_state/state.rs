@@ -20,6 +20,7 @@ use crate::symbols::rebuild_symbol_index;
 use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
 use super::fingerprints::source_fingerprint;
+use super::freshness::validate_indexed_file_count;
 use super::paths as path_state;
 
 pub fn inspect_symbol_index(db_path: &Path) -> Result<SymbolIndexHealth> {
@@ -334,52 +335,10 @@ fn inspect_symbol_index_freshness(
     Ok(())
 }
 
-pub(super) fn ensure_symbol_index_fresh(
-    db_path: &Path,
-    workspace_root: &Path,
-    file_states: &BTreeMap<String, u64>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<()> {
-    let mut issues = symbol_index_freshness_issues(file_states, file_overrides);
-    issues.extend(
-        path_state::unindexed_workspace_files(workspace_root, file_states, file_overrides, None)?
-            .into_iter()
-            .map(|file_path| format!("workspace source file is not indexed: {file_path}")),
-    );
-    if issues.is_empty() {
-        return Ok(());
-    }
-
-    bail!(
-        "symbol index {} is stale; refresh_symbol_index_for_file or rebuild_symbol_index before querying: {}",
-        db_path.display(),
-        issues.join("; ")
-    );
-}
-
-pub(super) fn validate_indexed_file_count(
-    indexed_files: usize,
-    file_state_entries: usize,
-) -> Result<()> {
-    if indexed_files != file_state_entries {
-        bail!(
-            "indexed_files metadata {indexed_files} does not match file_state entries {file_state_entries}"
-        );
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_persisted_index_paths(
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
 ) -> Result<()> {
     path_state::validate_persisted_index_paths(workspace_root, file_states, symbols)
-}
-
-fn symbol_index_freshness_issues(
-    file_states: &BTreeMap<String, u64>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<String> {
-    path_state::symbol_index_freshness_issues(file_states, file_overrides)
 }
