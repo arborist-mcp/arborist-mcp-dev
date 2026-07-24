@@ -179,24 +179,6 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
     Ok(())
 }
 
-pub(crate) fn load_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
-    let mut statement =
-        connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            nonempty_string_from_row(row, 0, "file_state.file_path")?,
-            row.get::<_, i64>(1)? as u64,
-        ))
-    })?;
-
-    let mut states = BTreeMap::new();
-    for row in rows {
-        let (file_path, fingerprint) = row?;
-        states.insert(file_path, fingerprint);
-    }
-    Ok(states)
-}
-
 pub(crate) fn load_indexed_symbols_grouped_by_file(
     connection: &Connection,
 ) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
@@ -323,12 +305,6 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
     Ok((symbols, indexed_files))
 }
 
-pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
-    let sql = format!("SELECT COUNT(*) FROM {table_name}");
-    let count = connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?;
-    usize::try_from(count).map_err(|error| anyhow!("invalid row count in `{table_name}`: {error}"))
-}
-
 pub(crate) fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
     if symbol.byte_range.0 > symbol.byte_range.1 {
         return Err(anyhow!(
@@ -348,7 +324,7 @@ pub(crate) fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
     ))
 }
 
-pub(crate) fn nonempty_string_from_row(
+pub(super) fn nonempty_string_from_row(
     row: &Row<'_>,
     column: usize,
     column_name: &str,
