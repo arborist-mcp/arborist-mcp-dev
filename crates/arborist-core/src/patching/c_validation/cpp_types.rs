@@ -65,9 +65,15 @@ pub(super) fn cpp_pointer_target_path(type_name: &str) -> Option<String> {
 }
 
 /// Peel one top-level pointer declarator, allowing trailing cv on the pointer
-/// itself (`T* const`, `const T*`, `T const*`). Multi-level top-level pointers
-/// and non-cv trailing tokens fail closed.
+/// itself (`T* const`, `const T*`, `T const*`) and trailing reference
+/// declarators on the pointer (`T* &`, `T* const&`). Multi-level top-level
+/// pointers and other non-cv trailing tokens fail closed.
 pub(super) fn cpp_top_level_pointer_pointee(type_name: &str) -> Option<&str> {
+    // Drop trailing &/&& so pointer-to-reference forms peel like bare pointers.
+    let type_name = type_name
+        .trim_end()
+        .trim_end_matches(|character: char| character == '&' || character.is_whitespace())
+        .trim_end();
     let mut template_depth = 0usize;
     let mut pointer_index = None;
     for (index, character) in type_name.char_indices() {
@@ -185,9 +191,20 @@ mod tests {
             Some("Counter const")
         );
         assert!(cpp_top_level_pointer_pointee("Counter**").is_none());
-        assert!(cpp_top_level_pointer_pointee("Counter* const &").is_none());
+        assert_eq!(
+            cpp_top_level_pointer_pointee("Counter* const &"),
+            Some("Counter")
+        );
+        assert_eq!(
+            cpp_top_level_pointer_pointee("Counter* const&"),
+            Some("Counter")
+        );
         assert_eq!(
             cpp_pointer_target_path("Counter* const"),
+            Some("Counter".to_string())
+        );
+        assert_eq!(
+            cpp_pointer_target_path("Counter* const &"),
             Some("Counter".to_string())
         );
         assert_eq!(
