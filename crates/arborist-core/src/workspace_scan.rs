@@ -222,9 +222,7 @@ fn walk_workspace(
     }
 
     if detect_language(path).is_ok() {
-        if let Some(max_file_bytes) = limits.max_file_bytes {
-            validate_source_file_metadata(path, &metadata, max_file_bytes)?;
-        }
+        validate_source_file_size(path, limits)?;
         if files.len() >= limits.max_files {
             bail!(
                 "workspace scan file limit exceeded at {}: max_files={}",
@@ -416,6 +414,35 @@ mod tests {
     }
 
     #[test]
+    fn collect_source_files_applies_size_limits_to_symlinked_sources() {
+        let root = temporary_dir();
+        let workspace = root.join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let target = workspace.join("target.py");
+        let link = workspace.join("linked.py");
+        fs::write(&target, "def target():\n    return 'too much'\n").unwrap();
+
+        if !try_symlink_file(&target, &link) {
+            let _ = fs::remove_dir_all(root);
+            return;
+        }
+
+        let error = collect_source_files_with_limits(
+            &workspace,
+            WorkspaceScanLimits {
+                max_files: 10,
+                max_file_bytes: Some(8),
+                timeout_ms: None,
+            },
+        )
+        .expect_err("symlinked source files must honor max_file_bytes");
+
+        assert!(error.to_string().contains("source file too large"));
+        assert!(error.to_string().contains("max_file_bytes=8"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn validates_workspace_scan_timeout_bounds() {
         assert!(
             validate_workspace_scan_limits(WorkspaceScanLimits {
@@ -474,5 +501,15 @@ mod tests {
     #[cfg(windows)]
     fn try_symlink_dir(target: &Path, link: &Path) -> bool {
         std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    #[cfg(unix)]
+    fn try_symlink_file(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn try_symlink_file(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_file(target, link).is_ok()
     }
 }

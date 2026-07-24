@@ -282,6 +282,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `language/positions.rs`, preserving Tree-sitter byte-column semantics.
 - [x] Extract Tree-sitter node traversal, identifier, and containment helpers
   into `language/tree.rs`, preserving the existing language facade exports.
+- [x] Enforce `max_file_bytes` against symlink targets during workspace scans,
+  with cross-platform symlink regression coverage where supported.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
