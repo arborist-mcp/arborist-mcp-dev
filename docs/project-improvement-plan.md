@@ -165,6 +165,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
+- [x] Split `tests/source_overlay/core` into nested modules: `query_ops`,
+  `cpp_receivers`, `aliases`, `multi_overlay`, and `guards`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
