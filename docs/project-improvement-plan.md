@@ -265,6 +265,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `index_store/metadata.rs`.
 - [x] Extract persisted symbol loading and row-decoding helpers into
   `index_store/loading.rs`, leaving `core.rs` focused on writes and refreshes.
+- [x] Move persisted-index incremental refresh writes into
+  `index_store/refresh.rs`, keeping the store facade APIs stable.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
