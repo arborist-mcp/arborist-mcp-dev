@@ -312,6 +312,48 @@ class CheckWorkflowTests(unittest.TestCase):
         self.assertIn("cargo fmt --check", workflow)
         self.assertIn("cargo clippy --locked --all-targets -- -D warnings", workflow)
 
+    def test_fuzz_manifest_check_covers_every_declared_target(self) -> None:
+        check_script = (self.repo_root / "scripts" / "check.ps1").read_text(
+            encoding="utf-8"
+        )
+        fuzz_manifest = (self.repo_root / "fuzz" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+        declared_targets: set[str] = set()
+        in_bin = False
+        for line in fuzz_manifest.splitlines():
+            if line.strip() == "[[bin]]":
+                in_bin = True
+            elif line.startswith("[") and line.strip() != "[[bin]]":
+                in_bin = False
+            elif in_bin and line.startswith("name = "):
+                declared_targets.add(line.split('"')[1])
+        for target in (
+            "tree_query",
+            "semantic_skeleton",
+            "patch_preview",
+            "workspace_edit_preview",
+            "symbol_index_inspection",
+            "symbol_index_queries",
+            "source_overlay_queries",
+            "workspace_edit_json",
+        ):
+            with self.subTest(target=target):
+                self.assertIn(f'"{target}"', check_script)
+        self.assertEqual(
+            declared_targets,
+            {
+                "tree_query",
+                "semantic_skeleton",
+                "patch_preview",
+                "workspace_edit_preview",
+                "symbol_index_inspection",
+                "symbol_index_queries",
+                "source_overlay_queries",
+                "workspace_edit_json",
+            },
+        )
+
     def test_check_workflow_uses_shared_matrix_helper(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "check.yml").read_text(
             encoding="utf-8"
