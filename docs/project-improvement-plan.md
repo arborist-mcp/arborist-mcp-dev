@@ -296,6 +296,8 @@ completed item can land in its own commit unless two changes are inseparable.
   keeping query execution and validation in the facade.
 - [x] Extract symbol-trace neighborhood traversal into
   `symbol_trace/neighborhood.rs`, preserving timeout and result validation.
+- [x] Extract patch-trace replay validation and evidence matching into
+  `api_patch_validation/replay.rs`, preserving validation exports.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
