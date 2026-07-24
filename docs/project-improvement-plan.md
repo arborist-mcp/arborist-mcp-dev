@@ -259,6 +259,8 @@ completed item can land in its own commit unless two changes are inseparable.
   responsibilities.
 - [x] Move the persisted-index store behind an `index_store/mod.rs` facade and
   `core.rs` implementation without changing crate-internal persistence APIs.
+- [x] Extract persisted graph-edge consistency validation into
+  `index_store/validation.rs`.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
