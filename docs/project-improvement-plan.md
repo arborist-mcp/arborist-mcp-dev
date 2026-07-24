@@ -288,6 +288,8 @@ completed item can land in its own commit unless two changes are inseparable.
   into `language/tree.rs`, preserving the existing language facade exports.
 - [x] Extract path normalization and workspace-boundary helpers into
   `language/paths.rs`, preserving cross-platform facade exports.
+- [x] Extract Tree-sitter parser construction, language detection, and document
+  parsing into `language/parser.rs`, preserving language facade exports.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
