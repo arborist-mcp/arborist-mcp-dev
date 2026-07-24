@@ -6,6 +6,8 @@ use anyhow::Result;
 use crate::language::{detect_language, normalize_path};
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
+#[cfg(test)]
+use crate::workspace_scan::WorkspaceScanLimits;
 
 mod reverse;
 
