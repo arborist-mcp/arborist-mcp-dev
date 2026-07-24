@@ -110,6 +110,11 @@ completed item can land in its own commit unless two changes are inseparable.
   element receivers), and `wrappers` (optional/expected/smart-pointer
   receiver helpers), keeping the main member-receiver dispatcher in
   `receivers/mod.rs`.
+- [x] Split `symbol_dependency/resolution` helpers into nested modules:
+  `path_groups` (qualified/unqualified path expansion, using/namespace
+  alias), `type_alias` (alias target chase/constructor paths), and
+  `python` (module-hint lookup), keeping core dependency resolution in
+  `resolution.rs`.
 - [x] Move C++ references regression tests into
   `patching/c_validation/references/tests.rs`.
 - [ ] Preserve live-VFS and persisted-index parity by adding paired tests when
