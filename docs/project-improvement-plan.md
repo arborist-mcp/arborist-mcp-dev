@@ -336,6 +336,8 @@ completed item can land in its own commit unless two changes are inseparable.
   package-installed gateway startup.
 - [x] Group indexed `std::expected` tuple access regression tests behind a
   dedicated module boundary for clearer future category-level splits.
+- [x] Group direct indexed tuple access regression tests behind a dedicated
+  module boundary for clearer receiver-focused maintenance.
 
 ## Suggested Commit Sequence
 
