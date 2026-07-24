@@ -311,6 +311,8 @@ completed item can land in its own commit unless two changes are inseparable.
   timeout handling and neighborhood traversal in focused modules.
 - [x] Extract cross-platform atomic file replacement into `language/io.rs`,
   keeping language parsing and path helpers independent of platform APIs.
+- [x] Move source reading and atomic-write orchestration into `language/io.rs`,
+  leaving `language.rs` as a focused facade over language helpers and I/O.
 - [x] Extract symbol-summary candidate selection and origin ranking into
   `symbol_summary/selection.rs`, keeping summary assembly in the facade.
 - [x] Extract symbol-search filter normalization and matching into
