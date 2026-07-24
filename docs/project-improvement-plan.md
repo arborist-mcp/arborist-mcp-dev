@@ -193,6 +193,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `outcomes` modules while preserving persisted-index diagnostics coverage.
 - [x] Split `tests/query_parity/read` into `basic`, `context`, `discovery`,
   and `neighborhood` modules while preserving live/index parity coverage.
+- [x] Split `tests/query_parity/search` into `basic`, `context`, `discovery`,
+  and `neighborhood` modules while preserving search parity coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
