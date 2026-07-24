@@ -166,6 +166,9 @@ completed item can land in its own commit unless two changes are inseparable.
   neighborhood context, and search context paths.
 - [x] Split `tests/trace_semantics` into nested modules: `core`,
   `bindings`, `class_scope`, `match_case`, and `imports_calls`.
+- [x] Split `vfs/tests/cpp_trace` into nested modules: `edits`,
+  `constructors`, `this_receivers`, `local_params`, `aliases`,
+  `headers`, and `guards`.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
