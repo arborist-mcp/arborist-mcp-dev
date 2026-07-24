@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
+import re
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,44 @@ DEFAULT_SNAPSHOT_PATH = REPO_ROOT / "docs" / "tool-catalog.json"
 
 def _catalog_json() -> str:
     return json.dumps(build_tool_catalog(), ensure_ascii=False, allow_nan=False, indent=2) + "\n"
+
+
+def _documentation_errors(catalog: list[dict[str, object]]) -> list[str]:
+    counts = Counter(
+        tool.get("metadata", {}).get("category")
+        for tool in catalog
+        if isinstance(tool.get("metadata"), dict)
+    )
+    labels = {"read": "Read", "write": "Write", "vfs": "VFS", "index": "Index", "trace": "Trace"}
+    errors: list[str] = []
+    for relative_path in ("README.md", "docs/tools.md"):
+        path = REPO_ROOT / relative_path
+        try:
+            document = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{relative_path}: unable to read documentation: {exc}")
+            continue
+
+        total_match = re.search(r"returns\s+(\d+)\s+tools:", document)
+        if total_match is None:
+            errors.append(f"{relative_path}: missing generated tool count")
+        elif int(total_match.group(1)) != len(catalog):
+            errors.append(
+                f"{relative_path}: documented tool count {total_match.group(1)} "
+                f"does not match generated count {len(catalog)}"
+            )
+
+        for category, label in labels.items():
+            category_match = re.search(rf"- {label} tools:\s+(\d+)", document)
+            expected = counts.get(category, 0)
+            if category_match is None:
+                errors.append(f"{relative_path}: missing {label} tool count")
+            elif int(category_match.group(1)) != expected:
+                errors.append(
+                    f"{relative_path}: documented {label} count {category_match.group(1)} "
+                    f"does not match generated count {expected}"
+                )
+    return errors
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,6 +104,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"regenerate it with: {Path(__file__).name} --output {snapshot_path}",
                 file=sys.stderr,
             )
+            return 1
+        documentation_errors = _documentation_errors(build_tool_catalog())
+        if documentation_errors:
+            print("tool documentation is out of date:", file=sys.stderr)
+            for error in documentation_errors:
+                print(f"- {error}", file=sys.stderr)
             return 1
         return 0
 

@@ -38,6 +38,8 @@ completed item can land in its own commit unless two changes are inseparable.
   GitHub Actions matrix cannot contain duplicate jobs.
 - [x] Derive the stable fuzz-manifest check directly from `fuzz/Cargo.toml`
   so newly declared fuzz targets are checked automatically.
+- [x] Make `scripts/tool_catalog.py --check` fail when README or the tool guide
+  document stale total/category counts.
 - [x] Cache Cargo registries and release build output in the cross-platform
   wheel workflow using OS- and lockfile-specific keys.
 - [x] Extract gateway symbol query, patch/validation, and trace route
