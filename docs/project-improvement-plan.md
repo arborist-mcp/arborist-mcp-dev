@@ -149,6 +149,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `trace`, `inspect`, and `migration`.
 - [x] Split `patching/python_bindings` into nested modules: `types`,
   `path`, `summary`, `imports`, `targets`, `scope`, and `local`.
+- [x] Split `tests/patch_bindings` into nested modules: `core`,
+  `scope_bindings`, `match_case`, `expr_bindings`, `class_closure`,
+  `imports`, `replacement`, and `io_bypass`.
 - [x] Split `tests/query_parity` into nested modules: `index`, `list`, `patch`,
   `read`, `search`, and `trace`.
 - [x] Split `vfs/tests` into nested modules: `lifecycle`, `edits`, `patch`,
