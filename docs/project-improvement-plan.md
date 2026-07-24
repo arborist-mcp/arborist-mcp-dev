@@ -173,6 +173,8 @@ completed item can land in its own commit unless two changes are inseparable.
   modules while preserving the existing patch-validation regression coverage.
 - [x] Split `tests/index_refresh` into focused `dependencies` and `validation`
   modules while preserving refresh and persisted-state regression coverage.
+- [x] Split `tests/c_patching` into focused `targets` and `validation`
+  modules while preserving C/C++ patching regression coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
