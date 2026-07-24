@@ -227,6 +227,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract persisted-index schema migration logic into
   `index_schema/migration.rs`, keeping validation and table-definition helpers
   in the schema module.
+- [x] Cache Cargo registries and build output per runner OS in the check
+  workflow to reduce repeated compilation across superseding pushes.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
