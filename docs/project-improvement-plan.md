@@ -206,6 +206,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `tests/c_symbol_graph/wrappers/expected` into `member`,
   `smart_pointers`, and `references` modules while preserving expected-wrapper
   graph coverage.
+- [x] Split `tests/c_symbol_graph/templates` into `declarations`, `calls`, and
+  `cross_file` modules while preserving template graph coverage.
 - [x] Split `tests/c_symbol_graph/core` into nested modules: `expansion`,
   `graph_links`, `type_defs`, `this_receivers`, `local_bindings`,
   `std_receivers`, and `aliases`.
