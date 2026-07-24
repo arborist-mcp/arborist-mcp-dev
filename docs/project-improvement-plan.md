@@ -273,6 +273,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `index_store/refresh.rs`, keeping the store facade APIs stable.
 - [x] Move SARIF patch-diagnostic export helpers into
   `api_patch_validation/sarif.rs`, keeping the public export stable.
+- [x] Move patch-result and trace-result integrity validators into
+  `api_patch_validation/result_validation.rs`, keeping crate-visible validators
+  stable.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so
