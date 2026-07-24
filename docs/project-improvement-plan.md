@@ -288,6 +288,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `language/paths.rs`, preserving cross-platform facade exports.
 - [x] Enforce `max_file_bytes` against symlink targets during workspace scans,
   with cross-platform symlink regression coverage where supported.
+- [x] Reuse resolved symlink target metadata during workspace scans to avoid
+  duplicate filesystem metadata calls.
 - [x] Detect source files added after an index build during health inspection
   and persisted queries so incomplete indexes do not silently appear healthy.
 - [x] Cross-check indexed-file metadata against persisted file-state rows so

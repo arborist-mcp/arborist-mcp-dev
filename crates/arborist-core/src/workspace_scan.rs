@@ -185,19 +185,15 @@ fn walk_workspace(
     deadline.check("workspace traversal")?;
     let symlink_metadata = fs::symlink_metadata(path)
         .with_context(|| format!("failed to inspect workspace path {}", path.display()))?;
-    let metadata = if path == workspace_root && symlink_metadata.file_type().is_symlink() {
+    let is_symlink = symlink_metadata.file_type().is_symlink();
+    let metadata = if is_symlink {
         fs::metadata(path)
             .with_context(|| format!("failed to inspect workspace path {}", path.display()))?
     } else {
         symlink_metadata
     };
 
-    if path != workspace_root
-        && metadata.file_type().is_symlink()
-        && fs::metadata(path)
-            .map(|metadata| metadata.is_dir())
-            .unwrap_or(false)
-    {
+    if path != workspace_root && is_symlink && metadata.is_dir() {
         return Ok(());
     }
 
