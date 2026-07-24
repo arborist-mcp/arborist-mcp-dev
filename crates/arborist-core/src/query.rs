@@ -13,6 +13,7 @@ use crate::model::QueryCaptureResult;
 use crate::semantic::c_symbol_nodes;
 
 mod owners;
+mod validation;
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
 pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
@@ -68,9 +69,9 @@ pub fn execute_tree_query_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<Vec<QueryCaptureResult>> {
     let path = normalize_absolute_path(path)?;
-    validate_tree_query(query)?;
-    validate_max_captures(max_captures)?;
-    let timeout_micros = validate_timeout(timeout_ms)?;
+    validation::validate_tree_query(query)?;
+    validation::validate_max_captures(max_captures)?;
+    let timeout_micros = validation::validate_timeout(timeout_ms)?;
     let document = parse_document(&path, source)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
@@ -159,45 +160,9 @@ pub fn execute_tree_query_with_timeout(
     Ok(captures)
 }
 
-fn validate_tree_query(query: &str) -> Result<()> {
-    if query.trim().is_empty() {
-        bail!("invalid Tree-sitter query: query must not be blank");
-    }
-    if query.len() > DEFAULT_TREE_QUERY_MAX_BYTES {
-        bail!(
-            "invalid Tree-sitter query: query exceeds max query bytes ({})",
-            DEFAULT_TREE_QUERY_MAX_BYTES
-        );
-    }
-
-    Ok(())
-}
-
-fn validate_max_captures(max_captures: usize) -> Result<()> {
-    if max_captures == 0 {
-        bail!("invalid Tree-sitter query max_captures: value must be greater than zero");
-    }
-
-    Ok(())
-}
-
-fn validate_timeout(timeout_ms: Option<u64>) -> Result<u64> {
-    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_TREE_QUERY_TIMEOUT_MICROS / 1_000);
-    if timeout_ms == 0 {
-        bail!("invalid Tree-sitter query timeout_ms: value must be greater than zero");
-    }
-    if timeout_ms > MAX_TREE_QUERY_TIMEOUT_MS {
-        bail!(
-            "invalid Tree-sitter query timeout_ms: value must not exceed {}",
-            MAX_TREE_QUERY_TIMEOUT_MS
-        );
-    }
-    Ok(timeout_ms.saturating_mul(1_000))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{MAX_TREE_QUERY_TIMEOUT_MS, validate_timeout};
+    use super::{MAX_TREE_QUERY_TIMEOUT_MS, validation::validate_timeout};
 
     #[test]
     fn validates_tree_query_timeout_bounds() {

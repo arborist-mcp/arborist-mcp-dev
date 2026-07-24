@@ -321,6 +321,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `include_graph/reverse.rs`, keeping dependent traversal in the facade.
 - [x] Extract source-overlay workspace validation into
   `source_overlay/validation.rs`, keeping overlay construction in the facade.
+- [x] Extract Tree-sitter query validation and timeout bounds into
+  `query/validation.rs`, keeping execution and capture ownership in focused modules.
 - [x] Keep workspace-scan facade focused on public limits and walker exports,
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
