@@ -147,6 +147,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `symbols`, `patch`, `trace`, and `misc` for public model validation coverage.
 - [x] Split `tests/persisted_index` into nested modules: `rebuild_refresh`,
   `trace`, `inspect`, and `migration`.
+- [x] Split `patching/python_bindings` into nested modules: `types`,
+  `path`, `summary`, `imports`, `targets`, `scope`, and `local`.
 - [x] Split `tests/query_parity` into nested modules: `index`, `list`, `patch`,
   `read`, `search`, and `trace`.
 - [x] Split `vfs/tests` into nested modules: `lifecycle`, `edits`, `patch`,
