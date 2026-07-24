@@ -305,6 +305,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `symbol_extractor/python.rs`, preserving the shared indexing facade.
 - [x] Extract C/C++ symbol-index extraction into
   `symbol_extractor/c.rs`, leaving `symbol_extractor.rs` as a dispatch facade.
+- [x] Split workspace symbol indexing into live/override and persisted
+  incremental modules under `symbol_index_workspace/`, retaining the facade API.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
   instead of rescanning the syntax tree for every capture owner.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
