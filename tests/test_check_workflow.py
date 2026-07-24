@@ -380,6 +380,43 @@ class CheckWorkflowTests(unittest.TestCase):
                 self.assertIn(f".\\scripts\\check.ps1 -Profile {profile_name}", readme)
         self.assertIn(".\\scripts\\check.ps1 -Profile full,python-native -ShowPlan", readme)
 
+    def test_tool_counts_in_user_docs_match_generated_catalog(self) -> None:
+        catalog = json.loads(
+            (self.repo_root / "docs" / "tool-catalog.json").read_text(encoding="utf-8")
+        )
+        category_counts: dict[str, int] = {}
+        for tool in catalog:
+            category = tool["metadata"]["category"]
+            category_counts[category] = category_counts.get(category, 0) + 1
+
+        expected_counts = {
+            "total": len(catalog),
+            "read": category_counts["read"],
+            "write": category_counts["write"],
+            "vfs": category_counts["vfs"],
+            "index": category_counts["index"],
+            "trace": category_counts["trace"],
+        }
+        category_labels = {
+            "read": "Read",
+            "write": "Write",
+            "vfs": "VFS",
+            "index": "Index",
+            "trace": "Trace",
+        }
+        for relative_path in ("README.md", "docs/tools.md"):
+            document = (self.repo_root / relative_path).read_text(encoding="utf-8")
+            with self.subTest(document=relative_path):
+                self.assertRegex(
+                    document,
+                    rf"(?:currently returns|returns) {expected_counts['total']} tools:",
+                )
+                for category in ("read", "write", "vfs", "index", "trace"):
+                    self.assertRegex(
+                        document,
+                        rf"- {category_labels[category]} tools: {expected_counts[category]}(?:,|\\.)",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
