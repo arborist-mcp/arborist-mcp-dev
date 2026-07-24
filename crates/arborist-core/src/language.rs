@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{Language, Parser, Tree};
@@ -8,6 +8,7 @@ use tree_sitter::{Language, Parser, Tree};
 use crate::model::LanguageId;
 
 mod c;
+mod paths;
 mod positions;
 mod tree;
 
@@ -17,6 +18,8 @@ pub use c::{
     is_c_header_path, resolve_local_c_include,
 };
 pub(crate) use c::{c_include_targets_before, extension_case_candidates};
+pub(crate) use paths::{ensure_path_inside_workspace, path_is_inside_workspace};
+pub use paths::{normalize_absolute_path, normalize_path};
 pub use positions::{offset_for_position, point_for_offset, position_from};
 pub use tree::*;
 
@@ -153,81 +156,6 @@ fn replace_file_atomically(temp_path: &Path, path: &Path) -> std::io::Result<()>
     fs::rename(temp_path, path)
 }
 
-pub fn normalize_absolute_path(path: &Path) -> Result<PathBuf> {
-    if path.as_os_str().is_empty() {
-        bail!("invalid path: path must not be empty");
-    }
-
-    let absolute_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-
-    let mut normalized = PathBuf::new();
-    for component in absolute_path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    Ok(normalized)
-}
-
-pub(crate) fn ensure_path_inside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
-    if path_is_inside_workspace(workspace_root, path)? {
-        return Ok(());
-    }
-
-    reject_path_outside_workspace(workspace_root, path)
-}
-
-pub(crate) fn path_is_inside_workspace(workspace_root: &Path, path: &Path) -> Result<bool> {
-    if !path.starts_with(workspace_root) {
-        return Ok(false);
-    }
-
-    let canonical_workspace = canonicalize_with_existing_ancestor(workspace_root)?;
-    let canonical_path = canonicalize_with_existing_ancestor(path)?;
-    Ok(canonical_path.starts_with(&canonical_workspace))
-}
-
-fn reject_path_outside_workspace(workspace_root: &Path, path: &Path) -> Result<()> {
-    bail!(
-        "file {} is outside workspace {}",
-        path.display(),
-        workspace_root.display()
-    );
-}
-
-fn canonicalize_with_existing_ancestor(path: &Path) -> Result<PathBuf> {
-    let normalized = normalize_absolute_path(path)?;
-    let mut missing_components = Vec::new();
-    let mut probe = normalized.as_path();
-
-    while !probe.exists() {
-        let Some(file_name) = probe.file_name() else {
-            return Ok(normalized);
-        };
-        missing_components.push(file_name.to_os_string());
-        let Some(parent) = probe.parent() else {
-            return Ok(normalized);
-        };
-        probe = parent;
-    }
-
-    let mut canonical = fs::canonicalize(probe)?;
-    for component in missing_components.iter().rev() {
-        canonical.push(component);
-    }
-    normalize_absolute_path(&canonical)
-}
-
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;
@@ -287,10 +215,6 @@ pub fn language_for_id(language_id: LanguageId) -> Language {
         LanguageId::C => tree_sitter_c::LANGUAGE.into(),
         LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
     }
-}
-
-pub fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]
