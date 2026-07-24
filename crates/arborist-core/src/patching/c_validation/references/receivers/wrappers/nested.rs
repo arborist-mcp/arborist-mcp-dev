@@ -1,20 +1,22 @@
-use super::super::super::cpp_syntax::{
+use super::super::super::super::cpp_syntax::{
     cpp_receiver_call_argument, cpp_typed_receiver_call, strip_cpp_outer_parentheses,
 };
-use super::super::super::cpp_types::{
+use super::super::super::super::cpp_types::{
     CppThisMemberReceiver, cpp_temporary_type_path, cpp_this_receiver_for_type,
 };
-use super::super::super::cpp_wrappers::{
+use super::super::super::super::cpp_wrappers::{
     cpp_standard_expected_error_type, cpp_standard_expected_target_type,
     cpp_standard_optional_target_type, cpp_standard_reference_wrapper_target_type,
     cpp_standard_smart_pointer_target_type, cpp_standard_weak_pointer_target_type,
 };
-use super::super::std_get::*;
-use super::super::type_qualifiers::*;
-use super::super::types::{CppLocalBinding, CppMemberAccess, CppStandardUnwrap};
-use super::binding_lookup::{cpp_local_binding_name_from_expression, cpp_visible_local_binding};
+use super::super::super::std_get::*;
+use super::super::super::type_qualifiers::*;
+use super::super::super::types::{CppLocalBinding, CppStandardUnwrap};
+use super::super::binding_lookup::{
+    cpp_local_binding_name_from_expression, cpp_visible_local_binding,
+};
 
-pub(in super::super) fn cpp_standard_wrapper_get_binding<'a>(
+pub(in super::super::super) fn cpp_standard_wrapper_get_binding<'a>(
     expression: &str,
     byte_offset: usize,
     local_bindings: &'a [CppLocalBinding],
@@ -31,22 +33,7 @@ pub(in super::super) fn cpp_standard_wrapper_get_binding<'a>(
     cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)
 }
 
-pub(in super::super) fn cpp_standard_weak_pointer_lock_receiver(
-    expression: &str,
-    byte_offset: usize,
-    local_bindings: &[CppLocalBinding],
-) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression
-        .strip_suffix(".lock()")
-        .or_else(|| expression.strip_suffix("->lock()"))
-        .map(str::trim)?;
-    let (binding, _) = cpp_standard_get_container_binding(receiver, byte_offset, local_bindings)?;
-    (binding.access == CppMemberAccess::Object
-        && binding.standard_unwrap == Some(CppStandardUnwrap::WeakPointer))
-    .then(|| (binding.type_name.clone(), binding.receiver))
-}
-
-pub(in super::super) fn cpp_expected_weak_pointer_lock_receiver(
+pub(in super::super::super) fn cpp_expected_weak_pointer_lock_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -94,62 +81,7 @@ pub(in super::super) fn cpp_expected_weak_pointer_lock_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_standard_reference_factory_get_receiver(
-    expression: &str,
-    byte_offset: usize,
-    local_bindings: &[CppLocalBinding],
-) -> Option<(String, CppThisMemberReceiver)> {
-    let receiver = expression.strip_suffix(".get()")?.trim();
-    cpp_standard_reference_factory_binding(receiver, byte_offset, local_bindings)
-}
-
-pub(in super::super) fn cpp_standard_reference_factory_binding(
-    expression: &str,
-    byte_offset: usize,
-    local_bindings: &[CppLocalBinding],
-) -> Option<(String, CppThisMemberReceiver)> {
-    let expression = strip_cpp_outer_parentheses(expression.trim());
-    for (factory, force_const) in [("std::ref", false), ("std::cref", true)] {
-        let Some(argument) = cpp_receiver_call_argument(expression, factory) else {
-            continue;
-        };
-        let (type_name, receiver) =
-            cpp_reference_factory_argument_receiver(argument, byte_offset, local_bindings)?;
-        let receiver = if force_const {
-            CppThisMemberReceiver::ConstLvalue
-        } else {
-            receiver
-        };
-        return Some((type_name, receiver));
-    }
-    None
-}
-
-pub(in super::super) fn cpp_reference_factory_argument_receiver(
-    expression: &str,
-    byte_offset: usize,
-    local_bindings: &[CppLocalBinding],
-) -> Option<(String, CppThisMemberReceiver)> {
-    let expression = strip_cpp_outer_parentheses(expression.trim());
-    let (expression, force_const) =
-        if let Some(argument) = cpp_receiver_call_argument(expression, "std::as_const") {
-            (strip_cpp_outer_parentheses(argument.trim()), true)
-        } else {
-            (expression, false)
-        };
-    let binding = cpp_visible_local_binding(expression, byte_offset, local_bindings)?;
-    if binding.access != CppMemberAccess::Object || binding.standard_unwrap.is_some() {
-        return None;
-    }
-    let receiver = if force_const {
-        CppThisMemberReceiver::ConstLvalue
-    } else {
-        binding.receiver
-    };
-    Some((binding.type_name.clone(), receiver))
-}
-
-pub(in super::super) fn cpp_standard_optional_value_member_receiver(
+pub(in super::super::super) fn cpp_standard_optional_value_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -177,7 +109,7 @@ pub(in super::super) fn cpp_standard_optional_value_member_receiver(
     cpp_standard_value_member_receiver(&type_name, receiver, true).or(Some((type_name, receiver)))
 }
 
-pub(in super::super) fn cpp_strip_optional_value_access(expression: &str) -> Option<&str> {
+pub(in super::super::super) fn cpp_strip_optional_value_access(expression: &str) -> Option<&str> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     let receiver = expression
         .strip_suffix(".value()")
@@ -191,7 +123,7 @@ pub(in super::super) fn cpp_strip_optional_value_access(expression: &str) -> Opt
     Some(receiver)
 }
 
-pub(in super::super) fn cpp_standard_expected_error_member_receiver(
+pub(in super::super::super) fn cpp_standard_expected_error_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -212,7 +144,7 @@ pub(in super::super) fn cpp_standard_expected_error_member_receiver(
     Some((cpp_temporary_type_path(&type_name)?, receiver))
 }
 
-pub(in super::super) fn cpp_strip_expected_error_access(expression: &str) -> Option<&str> {
+pub(in super::super::super) fn cpp_strip_expected_error_access(expression: &str) -> Option<&str> {
     let expression = strip_cpp_outer_parentheses(expression.trim());
     // Reject "*expr.error()" where unary * applies to the error access.
     // "(*expr).error()" keeps parentheses and remains valid.
@@ -225,7 +157,7 @@ pub(in super::super) fn cpp_strip_expected_error_access(expression: &str) -> Opt
         .map(str::trim)
 }
 
-pub(in super::super) fn cpp_standard_optional_dereference_receiver(
+pub(in super::super::super) fn cpp_standard_optional_dereference_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -234,7 +166,7 @@ pub(in super::super) fn cpp_standard_optional_dereference_receiver(
     cpp_optional_local_binding_receiver(receiver, byte_offset, local_bindings)
 }
 
-pub(in super::super) fn cpp_standard_optional_arrow_member_receiver(
+pub(in super::super::super) fn cpp_standard_optional_arrow_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -263,7 +195,7 @@ pub(in super::super) fn cpp_standard_optional_arrow_member_receiver(
     Some((type_name, receiver))
 }
 
-pub(in super::super) fn cpp_optional_smart_pointer_arrow_member_receiver(
+pub(in super::super::super) fn cpp_optional_smart_pointer_arrow_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -277,7 +209,7 @@ pub(in super::super) fn cpp_optional_smart_pointer_arrow_member_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_expected_error_smart_pointer_arrow_member_receiver(
+pub(in super::super::super) fn cpp_expected_error_smart_pointer_arrow_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -292,7 +224,7 @@ pub(in super::super) fn cpp_expected_error_smart_pointer_arrow_member_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_smart_pointer_get_receiver(
+pub(in super::super::super) fn cpp_smart_pointer_get_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -317,7 +249,7 @@ pub(in super::super) fn cpp_smart_pointer_get_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_smart_pointer_dereference_receiver(
+pub(in super::super::super) fn cpp_smart_pointer_dereference_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -337,7 +269,7 @@ pub(in super::super) fn cpp_smart_pointer_dereference_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_smart_pointer_wrapper_type(
+pub(in super::super::super) fn cpp_smart_pointer_wrapper_type(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -404,7 +336,7 @@ pub(in super::super) fn cpp_smart_pointer_wrapper_type(
     None
 }
 
-pub(in super::super) fn cpp_expected_error_nested_arrow_member_receiver(
+pub(in super::super::super) fn cpp_expected_error_nested_arrow_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -458,7 +390,7 @@ pub(in super::super) fn cpp_expected_error_nested_arrow_member_receiver(
     Some((type_name, receiver))
 }
 
-pub(in super::super) fn cpp_expected_error_optional_arrow_member_receiver(
+pub(in super::super::super) fn cpp_expected_error_optional_arrow_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -499,7 +431,7 @@ pub(in super::super) fn cpp_expected_error_optional_arrow_member_receiver(
     Some((type_name, receiver))
 }
 
-pub(in super::super) fn cpp_expected_reference_wrapper_get_receiver(
+pub(in super::super::super) fn cpp_expected_reference_wrapper_get_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -547,7 +479,7 @@ pub(in super::super) fn cpp_expected_reference_wrapper_get_receiver(
     ))
 }
 
-pub(in super::super) fn cpp_optional_wrapper_type_from_expression(
+pub(in super::super::super) fn cpp_optional_wrapper_type_from_expression(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -573,7 +505,7 @@ pub(in super::super) fn cpp_optional_wrapper_type_from_expression(
         })
 }
 
-pub(in super::super) fn cpp_expected_error_optional_value_member_receiver(
+pub(in super::super::super) fn cpp_expected_error_optional_value_member_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -620,7 +552,7 @@ pub(in super::super) fn cpp_expected_error_optional_value_member_receiver(
     Some((type_name, receiver))
 }
 
-pub(in super::super) fn cpp_expected_error_optional_dereference_receiver(
+pub(in super::super::super) fn cpp_expected_error_optional_dereference_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -640,7 +572,7 @@ pub(in super::super) fn cpp_expected_error_optional_dereference_receiver(
     Some((type_name, receiver))
 }
 
-pub(in super::super) fn cpp_standard_value_member_receiver(
+pub(in super::super::super) fn cpp_standard_value_member_receiver(
     type_name: &str,
     wrapper_receiver: CppThisMemberReceiver,
     preserves_value_category: bool,
@@ -669,7 +601,7 @@ pub(in super::super) fn cpp_standard_value_member_receiver(
     Some((cpp_temporary_type_path(target)?, receiver))
 }
 
-pub(in super::super) fn cpp_optional_local_binding_receiver(
+pub(in super::super::super) fn cpp_optional_local_binding_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -729,7 +661,7 @@ pub(in super::super) fn cpp_optional_local_binding_receiver(
     None
 }
 
-pub(in super::super) fn cpp_expected_error_type_from_wrapper(
+pub(in super::super::super) fn cpp_expected_error_type_from_wrapper(
     type_name: &str,
     wrapper_receiver: CppThisMemberReceiver,
 ) -> Option<(String, CppThisMemberReceiver)> {
@@ -753,7 +685,7 @@ pub(in super::super) fn cpp_expected_error_type_from_wrapper(
     }
 }
 
-pub(in super::super) fn cpp_expected_local_binding_error_receiver(
+pub(in super::super::super) fn cpp_expected_local_binding_error_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -854,7 +786,7 @@ pub(in super::super) fn cpp_expected_local_binding_error_receiver(
     None
 }
 
-pub(in super::super) fn cpp_optional_wrapper_only_receiver(
+pub(in super::super::super) fn cpp_optional_wrapper_only_receiver(
     expression: &str,
     byte_offset: usize,
     local_bindings: &[CppLocalBinding],
@@ -923,7 +855,7 @@ pub(in super::super) fn cpp_optional_wrapper_only_receiver(
     None
 }
 
-pub(in super::super) fn cpp_expected_error_receiver(
+pub(in super::super::super) fn cpp_expected_error_receiver(
     error_type: &str,
     expected_receiver: CppThisMemberReceiver,
 ) -> Option<CppThisMemberReceiver> {
