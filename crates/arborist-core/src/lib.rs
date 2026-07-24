@@ -1,6 +1,7 @@
 mod api;
 mod api_patch_validation;
 mod api_source_query;
+mod include_graph;
 mod index_migration;
 mod index_schema;
 mod index_store;
