@@ -85,9 +85,10 @@ completed item can land in its own commit unless two changes are inseparable.
 
 ### P2: Core Architecture Improvements
 
-- [ ] Continue splitting large Rust surfaces along existing module boundaries:
-  `patching.rs`, `symbols.rs`, `model.rs`, and test modules should remain
-  focused facades over submodules.
+- [x] Continue splitting large Rust surfaces along existing module boundaries:
+  `patching.rs`, `symbols.rs`, `model.rs`, and test modules now remain focused
+  facades over dedicated submodules; continue extending the same boundary discipline
+  as new core responsibilities are added.
 - [x] Split `tests/c_symbol_graph` into thematic submodules (`core`,
   `constructors`, `templates`, `methods`, `namespaces`, `overloads`,
   `wrappers`, `std_get`) under `tests/c_symbol_graph/`.
