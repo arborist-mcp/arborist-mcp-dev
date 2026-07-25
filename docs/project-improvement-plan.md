@@ -369,6 +369,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `vfs/indexes.rs`, keeping file editing and lifecycle operations focused.
 - [x] Isolate VFS virtual-file status aggregation in `vfs/status.rs` and add
   regression coverage for checked index metadata ordering.
+- [x] Isolate VFS virtual-file status aggregation in `vfs/status.rs` and add
+  regression coverage for checked index metadata ordering.
 - [x] Enforce `max_file_bytes` against symlink targets during workspace scans,
   with cross-platform symlink regression coverage where supported.
 - [x] Reuse resolved symlink target metadata during workspace scans to avoid
