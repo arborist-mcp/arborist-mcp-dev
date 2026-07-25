@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, btree_map::Entry};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -62,14 +62,9 @@ pub(super) fn validate_persisted_symbol_paths(
         if path.exists()
             && !file_overrides.is_some_and(|overrides| overrides.contains_key(&symbol.file_path))
         {
-            let source = if let Some(source) = sources_by_path.get(&symbol.file_path) {
-                source
-            } else {
-                let source = read_source(path)?;
-                sources_by_path.insert(symbol.file_path.clone(), source);
-                sources_by_path
-                    .get(&symbol.file_path)
-                    .expect("inserted persisted source must be available")
+            let source = match sources_by_path.entry(symbol.file_path.clone()) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(read_source(path)?),
             };
             if source
                 .get(symbol.byte_range.0..symbol.byte_range.1)
