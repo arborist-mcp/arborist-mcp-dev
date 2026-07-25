@@ -352,6 +352,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Isolate symbol candidate ranking and scope matching in
   `symbol_dependency/resolution/ranking.rs`, keeping dependency resolution
   exports stable.
+- [x] Isolate C/C++/Python symbol ID assignment in
+  `symbol_dependency/resolution/symbol_ids.rs`, keeping the public assignment
+  entrypoint stable.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
