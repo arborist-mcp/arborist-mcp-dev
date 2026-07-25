@@ -1,4 +1,5 @@
 mod cpp_callables;
+mod indexes;
 mod path_groups;
 mod python;
 mod type_alias;
@@ -26,6 +27,7 @@ use cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
 };
+pub(super) use indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
 use path_groups::{cpp_qualified_reference_path_groups, cpp_unqualified_call_candidate_groups};
 use python::{python_reference_lookup, python_symbol_matches_module_hint};
 use type_alias::{
@@ -140,43 +142,6 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
             })
         })
         .collect()
-}
-
-pub(super) fn build_name_index(raw_symbols: &[IndexedSymbol]) -> BTreeMap<String, Vec<usize>> {
-    let mut name_index = BTreeMap::new();
-    for (index, symbol) in raw_symbols.iter().enumerate() {
-        name_index
-            .entry(symbol.base_name.clone())
-            .or_insert_with(Vec::new)
-            .push(index);
-    }
-    name_index
-}
-
-pub(super) fn build_semantic_path_index(
-    raw_symbols: &[IndexedSymbol],
-) -> BTreeMap<String, Vec<usize>> {
-    let mut semantic_path_index = BTreeMap::new();
-    for (index, symbol) in raw_symbols.iter().enumerate() {
-        semantic_path_index
-            .entry(symbol.semantic_path.clone())
-            .or_insert_with(Vec::new)
-            .push(index);
-    }
-    semantic_path_index
-}
-
-pub(super) fn raw_symbol_indexes_by_id(
-    raw_symbols: &[IndexedSymbol],
-) -> BTreeMap<String, Vec<usize>> {
-    let mut indexes = BTreeMap::new();
-    for (index, symbol) in raw_symbols.iter().enumerate() {
-        indexes
-            .entry(symbol.symbol_id.clone())
-            .or_insert_with(Vec::new)
-            .push(index);
-    }
-    indexes
 }
 
 pub(super) fn resolve_dependencies_for_symbol(
