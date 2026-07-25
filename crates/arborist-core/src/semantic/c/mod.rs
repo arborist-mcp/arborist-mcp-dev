@@ -9,10 +9,12 @@ use crate::language::{
 
 mod identity;
 mod skeleton;
+mod symbols;
 
 pub(crate) use identity::cpp_callable_symbol_id;
 pub use skeleton::c_symbol_id_for_node;
 pub(crate) use skeleton::{build_c_skeleton, find_c_semantic_node};
+pub(crate) use symbols::c_symbol_nodes;
 
 pub fn c_function_header(node: Node<'_>, source: &str) -> Result<String> {
     let display_node = c_function_display_node(node);
@@ -341,35 +343,6 @@ fn c_qualified_name_in_scope(scope_path: &str, name: &str) -> String {
     } else {
         format!("{scope_path}::{name}")
     }
-}
-
-pub(crate) fn c_symbol_nodes<'tree>(
-    path: &Path,
-    root: Node<'tree>,
-    source: &str,
-) -> Result<Vec<Node<'tree>>> {
-    let mut symbols = Vec::new();
-    collect_c_scope_symbols(root, &mut symbols);
-    if !symbols
-        .iter()
-        .any(|node| node.kind() == "using_declaration")
-    {
-        return Ok(symbols);
-    }
-
-    let mut deduplicated = Vec::new();
-    for node in symbols {
-        if node.kind() != "using_declaration" {
-            deduplicated.push(node);
-            continue;
-        }
-        if c_semantic_path(path, node, source)?.is_none() {
-            continue;
-        }
-        deduplicated.push(node);
-    }
-
-    Ok(deduplicated)
 }
 
 fn collect_c_scope_symbols<'tree>(scope: Node<'tree>, symbols: &mut Vec<Node<'tree>>) {

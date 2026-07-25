@@ -341,6 +341,8 @@ completed item can land in its own commit unless two changes are inseparable.
   with scan tests isolated from traversal and limit implementations.
 - [x] Reuse the C/C++ symbol-node collection across Tree-sitter query captures
   instead of rescanning the syntax tree for every capture owner.
+- [x] Isolate the C/C++ symbol-node collection entrypoint in
+  `semantic/c/symbols.rs`, keeping the semantic facade exports stable.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
