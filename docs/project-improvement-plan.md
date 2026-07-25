@@ -365,6 +365,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
   into `workspace_scan/walker.rs`, keeping `workspace_scan.rs` as a facade.
+- [x] Isolate VFS symbol-index registration, refresh, and status metadata in
+  `vfs/indexes.rs`, keeping file editing and lifecycle operations focused.
 - [x] Enforce `max_file_bytes` against symlink targets during workspace scans,
   with cross-platform symlink regression coverage where supported.
 - [x] Reuse resolved symlink target metadata during workspace scans to avoid

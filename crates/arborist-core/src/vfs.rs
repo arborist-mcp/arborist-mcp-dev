@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 mod buffer;
+mod indexes;
 mod patch_context;
 mod queries;
 mod state;
