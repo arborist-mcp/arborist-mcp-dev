@@ -2,67 +2,63 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::{SourceQueryRoot, with_source_query_context};
+use super::super::{SourceQueryRoot, with_source_query_context};
 use crate::model::*;
 
-mod read;
-mod search;
-mod trace;
-
-pub use read::*;
-pub use search::*;
-pub use trace::*;
-
-pub fn list_symbols_with_source_filtered(
+pub fn search_symbols_with_source_filtered(
     workspace_root: &Path,
     path: &Path,
     source: &str,
+    query: &str,
     limit: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-) -> Result<SymbolListResult> {
+) -> Result<SymbolSearchResult> {
     with_source_query_context(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| context.list_symbols(limit, file_path_contains, node_kind),
+        |context| context.search_symbols(query, limit, file_path_contains, node_kind),
     )
 }
 
-pub fn list_symbols_context_with_source_filtered(
+pub fn search_symbols_context_with_source_filtered(
     workspace_root: &Path,
     path: &Path,
     source: &str,
+    query: &str,
     limit: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-) -> Result<SymbolListContextResult> {
+) -> Result<SymbolSearchContextResult> {
     with_source_query_context(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| context.list_symbols_context(limit, file_path_contains, node_kind),
+        |context| context.search_symbols_context(query, limit, file_path_contains, node_kind),
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn list_symbols_neighborhood_context_with_source_filtered(
+pub fn search_symbols_neighborhood_context_with_source_filtered(
     workspace_root: &Path,
     path: &Path,
     source: &str,
+    query: &str,
     limit: usize,
     direction: TraceDirection,
     max_depth: usize,
     max_nodes: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-) -> Result<SymbolListNeighborhoodContextResult> {
+) -> Result<SymbolSearchNeighborhoodContextResult> {
     with_source_query_context(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         |context| {
-            context.list_symbols_neighborhood_context(
+            context.search_symbols_neighborhood_context(
+                query,
                 limit,
                 direction,
                 max_depth,
@@ -75,23 +71,25 @@ pub fn list_symbols_neighborhood_context_with_source_filtered(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn list_symbols_discovery_context_with_source_filtered(
+pub fn search_symbols_discovery_context_with_source_filtered(
     workspace_root: &Path,
     path: &Path,
     source: &str,
+    query: &str,
     limit: usize,
     direction: TraceDirection,
     max_depth: usize,
     max_nodes: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-) -> Result<SymbolListDiscoveryContextResult> {
+) -> Result<SymbolSearchDiscoveryContextResult> {
     with_source_query_context(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         |context| {
-            context.list_symbols_discovery_context(
+            context.search_symbols_discovery_context(
+                query,
                 limit,
                 direction,
                 max_depth,
