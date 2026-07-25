@@ -12,6 +12,36 @@ use crate::semantic::c_symbol_nodes;
 
 use super::{DEFAULT_TREE_QUERY_MATCH_LIMIT, owners, validation};
 
+fn ensure_within_deadline(path: &Path, timeout_micros: u64, deadline: Instant) -> Result<()> {
+    if Instant::now() >= deadline {
+        bail!(
+            "Tree-sitter query timed out for {} after {} microseconds",
+            normalize_path(path),
+            timeout_micros
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::ensure_within_deadline;
+
+    #[test]
+    fn deadline_helper_reports_expiration() {
+        let error = ensure_within_deadline(
+            std::path::Path::new("sample.py"),
+            1,
+            Instant::now() - Duration::from_micros(1),
+        )
+        .expect_err("expired query deadlines should fail before execution");
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(error.to_string().contains("sample.py"));
+    }
+}
 pub(super) fn execute_tree_query_with_timeout(
     path: &Path,
     source: &str,
@@ -19,24 +49,27 @@ pub(super) fn execute_tree_query_with_timeout(
     max_captures: usize,
     timeout_ms: Option<u64>,
 ) -> Result<Vec<QueryCaptureResult>> {
-    let path = normalize_absolute_path(path)?;
     validation::validate_tree_query(query)?;
     validation::validate_max_captures(max_captures)?;
     let timeout_micros = validation::validate_timeout(timeout_ms)?;
+    let deadline = Instant::now() + Duration::from_micros(timeout_micros);
+    let path = normalize_absolute_path(path)?;
+    ensure_within_deadline(&path, timeout_micros, deadline)?;
     let document = parse_document(&path, source)?;
+    ensure_within_deadline(&path, timeout_micros, deadline)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
     let c_symbols = match document.language_id {
         LanguageId::C | LanguageId::Cpp => Some(c_symbol_nodes(&path, root, source)?),
         LanguageId::Python => None,
     };
+    ensure_within_deadline(&path, timeout_micros, deadline)?;
     let compiled = Query::new(&language, query)
         .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(&path)))?;
 
     let mut cursor = QueryCursor::new();
     cursor.set_match_limit(DEFAULT_TREE_QUERY_MATCH_LIMIT);
     let mut captures = Vec::new();
-    let deadline = Instant::now() + Duration::from_micros(timeout_micros);
     let mut timed_out = false;
     let mut progress_callback = |_: &tree_sitter::QueryCursorState| -> bool {
         if Instant::now() >= deadline {
