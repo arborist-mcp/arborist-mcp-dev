@@ -331,6 +331,8 @@ completed item can land in its own commit unless two changes are inseparable.
   default file-count and timeout limits.
 - [x] Extract Tree-sitter query validation and timeout bounds into
   `query/validation.rs`, keeping execution and capture ownership in focused modules.
+- [x] Extract Tree-sitter query execution, timeout enforcement, and capture
+  assembly into `query/execution.rs`, keeping the public query API as a facade.
 - [x] Extract semantic path, depth, and parent-path helpers into
   `semantic/paths.rs`, preserving semantic facade exports.
 - [x] Extract symbol-index migration plan construction into
