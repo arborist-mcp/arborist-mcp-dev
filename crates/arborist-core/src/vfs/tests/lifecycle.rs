@@ -173,6 +173,27 @@ fn closes_virtual_file_without_persisting_changes() {
 }
 
 #[test]
+fn registered_symbol_indexes_are_sorted_and_checked() {
+    let workspace = temp_workspace();
+    let first = workspace.join("z-workspace");
+    let second = workspace.join("a-workspace");
+    fs::create_dir_all(&first).unwrap();
+    fs::create_dir_all(&second).unwrap();
+    fs::write(first.join("one.py"), "def one():\n    return 1\n").unwrap();
+    fs::write(second.join("two.py"), "def two():\n    return 2\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.register_symbol_index(&first, &first.join("symbols.db"))
+        .unwrap();
+    vfs.register_symbol_index(&second, &second.join("symbols.db"))
+        .unwrap();
+
+    let indexes = vfs.registered_symbol_indexes_checked().unwrap();
+    assert_eq!(indexes.len(), 2);
+    assert!(indexes[0].workspace_root < indexes[1].workspace_root);
+}
+
+#[test]
 fn commits_refresh_registered_symbol_index() {
     let workspace = temp_workspace();
     let helper_path = workspace.join("helper.py");

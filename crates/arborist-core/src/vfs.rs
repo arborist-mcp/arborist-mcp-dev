@@ -6,6 +6,7 @@ mod indexes;
 mod patch_context;
 mod queries;
 mod state;
+mod status;
 
 use self::state::VirtualFileEntry;
 

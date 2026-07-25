@@ -13,9 +13,7 @@ use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
     parser_for_language, path_is_inside_workspace, point_for_offset, write_source_atomic,
 };
-use crate::model::{
-    PatchValidationReport, PositionEdit, VirtualEditResult, VirtualFileSnapshot, VirtualFileStatus,
-};
+use crate::model::{PatchValidationReport, PositionEdit, VirtualEditResult, VirtualFileSnapshot};
 use crate::patching::{collect_syntax_errors, splice_source};
 use crate::symbols::refresh_symbol_index_for_file;
 use crate::workspace_scan::should_skip_index_path;
@@ -235,39 +233,6 @@ impl VirtualFileSystem {
         };
         self.entries.remove(&snapshot.file);
         Ok(snapshot)
-    }
-
-    pub fn virtual_file_statuses(&mut self, dirty_only: bool) -> Result<Vec<VirtualFileStatus>> {
-        let loaded_files: Vec<_> = self.entries.keys().cloned().collect();
-        for normalized in &loaded_files {
-            self.refresh_if_clean(normalized)?;
-        }
-
-        let mut statuses: Vec<_> = self
-            .entries
-            .iter()
-            .filter_map(|(file, entry)| {
-                if dirty_only && !entry.dirty {
-                    return None;
-                }
-
-                Some(VirtualFileStatus {
-                    file: file.clone(),
-                    dirty: entry.dirty,
-                    version: entry.version,
-                    syntax_error_count: collect_syntax_errors(
-                        entry.tree.root_node(),
-                        &entry.source,
-                    )
-                    .len(),
-                })
-            })
-            .collect();
-        statuses.sort_by(|left, right| left.file.cmp(&right.file));
-        for (index, status) in statuses.iter().enumerate() {
-            status.validate_public_output(index)?;
-        }
-        Ok(statuses)
     }
 
     pub(super) fn ensure_loaded(
