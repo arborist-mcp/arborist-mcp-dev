@@ -2,6 +2,7 @@ mod cpp_callables;
 mod indexes;
 mod path_groups;
 mod python;
+mod template_paths;
 mod type_alias;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +31,10 @@ use cpp_callables::{
 pub(super) use indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
 use path_groups::{cpp_qualified_reference_path_groups, cpp_unqualified_call_candidate_groups};
 use python::{python_reference_lookup, python_symbol_matches_module_hint};
+pub(super) use template_paths::{
+    cpp_template_argument_closes, cpp_template_base_path, symbol_indexes_for_paths,
+    symbol_indexes_for_paths_with_template_fallback,
+};
 use type_alias::{
     cpp_constructor_path, cpp_type_alias_member_candidates, cpp_type_alias_target_indexes,
     is_cpp_constructible_type,
@@ -488,76 +493,6 @@ fn resolve_reference_path(
         .map(|index| raw_symbols[index].symbol_id.clone())
 }
 
-pub(super) fn symbol_indexes_for_paths(
-    paths: &[String],
-    semantic_path_index: &BTreeMap<String, Vec<usize>>,
-) -> Vec<usize> {
-    paths
-        .iter()
-        .flat_map(|path| semantic_path_index.get(path).into_iter().flatten().copied())
-        .collect()
-}
-
-pub(super) fn symbol_indexes_for_paths_with_template_fallback(
-    paths: &[String],
-    semantic_path_index: &BTreeMap<String, Vec<usize>>,
-) -> Vec<usize> {
-    let candidates = symbol_indexes_for_paths(paths, semantic_path_index);
-    if !candidates.is_empty() {
-        return candidates;
-    }
-
-    let template_base_paths = paths
-        .iter()
-        .filter_map(|path| cpp_template_base_path(path))
-        .collect::<Vec<_>>();
-    symbol_indexes_for_paths(&template_base_paths, semantic_path_index)
-}
-
-pub(super) fn cpp_template_base_path(path: &str) -> Option<String> {
-    let mut depth = 0usize;
-    let mut parentheses = 0usize;
-    let mut brackets = 0usize;
-    let mut braces = 0usize;
-    let mut base_path = String::with_capacity(path.len());
-    let characters = path.chars().collect::<Vec<_>>();
-
-    for (index, character) in characters.iter().copied().enumerate() {
-        match character {
-            '<' if parentheses == 0 && brackets == 0 && braces == 0 => depth += 1,
-            '>' if depth > 0
-                && parentheses == 0
-                && brackets == 0
-                && braces == 0
-                && cpp_template_argument_closes(&characters[index + 1..]) =>
-            {
-                depth -= 1;
-            }
-            '(' => parentheses += 1,
-            ')' => parentheses = parentheses.saturating_sub(1),
-            '[' => brackets += 1,
-            ']' => brackets = brackets.saturating_sub(1),
-            '{' => braces += 1,
-            '}' => braces = braces.saturating_sub(1),
-            _ if depth == 0 => base_path.push(character),
-            _ => {}
-        }
-    }
-
-    (depth == 0 && parentheses == 0 && brackets == 0 && braces == 0 && base_path != path)
-        .then_some(base_path)
-}
-
-pub(super) fn cpp_template_argument_closes(remaining: &[char]) -> bool {
-    matches!(
-        remaining
-            .iter()
-            .copied()
-            .find(|character| !character.is_whitespace()),
-        None | Some('>' | ',' | ')' | ']' | '}' | ':' | '.')
-    )
-}
-
 fn indexed_symbol_candidate_rank(
     symbol: &IndexedSymbol,
     source_symbol: &IndexedSymbol,
@@ -597,21 +532,4 @@ fn source_symbol_scope_matches(source_symbol: &IndexedSymbol, candidate: &Indexe
     detect_language(Path::new(&source_symbol.file_path)).ok() == Some(LanguageId::Cpp)
         && source_symbol.scope_path.is_some()
         && source_symbol.scope_path == candidate.scope_path
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cpp_template_base_path_preserves_nested_non_type_arguments() {
-        assert_eq!(
-            cpp_template_base_path("api::Box<detail::Tag>").as_deref(),
-            Some("api::Box")
-        );
-        assert_eq!(
-            cpp_template_base_path("api::Box<(1 > 0)>").as_deref(),
-            Some("api::Box")
-        );
-    }
 }

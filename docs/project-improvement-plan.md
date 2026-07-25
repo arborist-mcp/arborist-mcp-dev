@@ -346,6 +346,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Isolate persisted symbol dependency index construction in
   `symbol_dependency/resolution/indexes.rs`, keeping refresh-facing exports
   stable.
+- [x] Isolate template-path candidate expansion and fallback parsing in
+  `symbol_dependency/resolution/template_paths.rs`, keeping dependency
+  resolution exports stable.
 - [x] Extract workspace scan limits, deadlines, and source-size validation into
   `workspace_scan/limits.rs`, preserving public scan configuration exports.
 - [x] Move workspace traversal, skip-directory policy, and source collection
