@@ -255,6 +255,7 @@ TOOL_PARAM_SPECS = {
         ),
         optional=True,
         string_max_length=BYPASS_REASON_MAX_LENGTH,
+        string_max_bytes=BYPASS_REASON_MAX_LENGTH,
     ),
     "calls": ToolParamSpec(
         {

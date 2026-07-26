@@ -886,6 +886,13 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         with self.assertRaisesRegex(Exception, "max byte length"):
             gateway._require_string({"query": query}, "query")
 
+    def test_rejects_multibyte_bypass_reason_over_byte_limit(self) -> None:
+        gateway = self.make_gateway()
+        reason = "é" * (gateway_module.BYPASS_REASON_MAX_LENGTH // 2 + 1)
+
+        with self.assertRaisesRegex(Exception, "max byte length"):
+            gateway._optional_string({"bypass_reason": reason}, "bypass_reason")
+
     def test_rejects_multibyte_nested_text_over_byte_limit(self) -> None:
         text = "é" * (gateway_module.TEXT_PARAM_MAX_LENGTH // 2 + 1)
         edit = {
