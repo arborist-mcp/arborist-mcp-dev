@@ -1374,6 +1374,19 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertIn("failed to read request file", stderr.getvalue())
         self.assertIn("dummy.json", stderr.getvalue())
 
+    def test_once_oversized_request_file_reports_cli_error_without_reading(self) -> None:
+        stderr = io.StringIO()
+        stat_result = mock.Mock(st_size=gateway_module.MAX_REQUEST_BYTES + 1)
+
+        with mock.patch("pathlib.Path.stat", return_value=stat_result):
+            with mock.patch("pathlib.Path.read_text") as mock_read_text:
+                with mock.patch("sys.stderr", stderr):
+                    exit_code = gateway_module.main(["--once", "dummy.json"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("request file exceeds maximum size", stderr.getvalue())
+        mock_read_text.assert_not_called()
+
     def test_dump_tool_catalog_prints_generated_catalog(self) -> None:
         with mock.patch("builtins.print") as mock_print:
             exit_code = gateway_module.main(["--dump-tool-catalog"])

@@ -6,6 +6,38 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from .tool_specs import MAX_REQUEST_BYTES
+
+
+def _read_request_file(path: Path) -> str:
+    try:
+        file_size = path.stat().st_size
+    except OSError:
+        file_size = None
+    if file_size is not None and file_size > MAX_REQUEST_BYTES:
+        raise ValueError(
+            f"request file exceeds maximum size of {MAX_REQUEST_BYTES} bytes"
+        )
+
+    try:
+        with path.open("rb") as request_file:
+            raw_request_bytes = request_file.read(MAX_REQUEST_BYTES + 1)
+    except FileNotFoundError:
+        # Keep the normal Path.read_text error surface for missing files and
+        # compatibility with callers that provide a virtual Path implementation.
+        raw_request = path.read_text(encoding="utf-8")
+        if len(raw_request.encode("utf-8")) > MAX_REQUEST_BYTES:
+            raise ValueError(
+                f"request file exceeds maximum size of {MAX_REQUEST_BYTES} bytes"
+            )
+        return raw_request
+
+    if len(raw_request_bytes) > MAX_REQUEST_BYTES:
+        raise ValueError(
+            f"request file exceeds maximum size of {MAX_REQUEST_BYTES} bytes"
+        )
+    return raw_request_bytes.decode("utf-8")
+
 
 def build_parser(version: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -81,8 +113,8 @@ def main(
 
     if args.once:
         try:
-            raw_request = args.once.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
+            raw_request = _read_request_file(args.once)
+        except (OSError, UnicodeError, ValueError) as exc:
             print(
                 f"error: failed to read request file {args.once}: {exc}",
                 file=sys.stderr,
