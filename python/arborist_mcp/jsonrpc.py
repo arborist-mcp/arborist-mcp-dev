@@ -104,7 +104,7 @@ def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | N
 def serialize_response(response: dict[str, Any], indent: int | None = None) -> str:
     try:
         return json.dumps(response, ensure_ascii=False, allow_nan=False, indent=indent)
-    except (TypeError, ValueError) as exc:
+    except (RecursionError, TypeError, ValueError) as exc:
         fallback = error_response(
             response.get("id"),
             -32000,
