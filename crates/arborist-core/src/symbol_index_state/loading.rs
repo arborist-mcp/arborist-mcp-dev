@@ -19,9 +19,7 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
-use crate::workspace_scan::{
-    DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
-};
+use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline, WorkspaceScanLimits};
 
 use super::freshness::{ensure_symbol_index_fresh, validate_indexed_file_count};
 use super::paths::{validate_persisted_index_paths, validate_persisted_index_paths_with_overrides};
@@ -202,9 +200,9 @@ fn load_symbol_index_with_overrides_internal(
 
 fn validate_indexed_overlay_file_count(persisted_files: usize, added_files: usize) -> Result<()> {
     let indexed_files = persisted_files.saturating_add(added_files);
-    if indexed_files > DEFAULT_WORKSPACE_MAX_FILES && added_files > 0 {
+    if indexed_files > MAX_WORKSPACE_SCAN_FILES && added_files > 0 {
         bail!(
-            "workspace scan exceeded max_files while adding indexed source overlays: max_files={DEFAULT_WORKSPACE_MAX_FILES}"
+            "workspace scan exceeded max_files while adding indexed source overlays: max_files={MAX_WORKSPACE_SCAN_FILES}"
         );
     }
     Ok(())
@@ -215,13 +213,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{load_symbol_index_internal, validate_indexed_overlay_file_count};
-    use crate::workspace_scan::{DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline};
+    use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline};
 
     #[test]
     fn indexed_overlays_respect_workspace_file_limit() {
-        validate_indexed_overlay_file_count(DEFAULT_WORKSPACE_MAX_FILES - 1, 1)
+        validate_indexed_overlay_file_count(MAX_WORKSPACE_SCAN_FILES - 1, 1)
             .expect("an overlay that reaches the limit should be accepted");
-        let error = validate_indexed_overlay_file_count(DEFAULT_WORKSPACE_MAX_FILES, 1)
+        let error = validate_indexed_overlay_file_count(MAX_WORKSPACE_SCAN_FILES, 1)
             .expect_err("an added overlay beyond the limit should be rejected");
         assert!(error.to_string().contains("max_files"));
     }
