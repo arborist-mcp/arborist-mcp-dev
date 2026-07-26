@@ -212,8 +212,10 @@ fn validate_indexed_overlay_file_count(persisted_files: usize, added_files: usiz
 
 #[cfg(test)]
 mod tests {
-    use super::validate_indexed_overlay_file_count;
-    use crate::workspace_scan::DEFAULT_WORKSPACE_MAX_FILES;
+    use std::time::{Duration, Instant};
+
+    use super::{load_symbol_index_internal, validate_indexed_overlay_file_count};
+    use crate::workspace_scan::{DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline};
 
     #[test]
     fn indexed_overlays_respect_workspace_file_limit() {
@@ -222,5 +224,24 @@ mod tests {
         let error = validate_indexed_overlay_file_count(DEFAULT_WORKSPACE_MAX_FILES, 1)
             .expect_err("an added overlay beyond the limit should be rejected");
         assert!(error.to_string().contains("max_files"));
+    }
+
+    #[test]
+    fn timed_index_loading_rejects_expired_deadline_before_opening_database() {
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = load_symbol_index_internal(
+            std::path::Path::new("missing-symbol-index.db"),
+            Some(&deadline),
+        )
+        .expect_err("expired index loading should fail before database access");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
     }
 }
