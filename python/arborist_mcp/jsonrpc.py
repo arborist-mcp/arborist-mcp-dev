@@ -18,7 +18,14 @@ def is_notification_request(request: Any) -> bool:
 
 
 def is_valid_request_id(request_id: Any) -> bool:
-    if request_id is None or isinstance(request_id, str):
+    if request_id is None:
+        return True
+
+    if isinstance(request_id, str):
+        try:
+            request_id.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
         return True
 
     if isinstance(request_id, bool):
