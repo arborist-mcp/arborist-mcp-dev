@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .tool_result_schemas import JsonRpcError
+from .tool_specs import MAX_WORKSPACE_EDIT_PREVIEW_FILES
 
 
 class GatewayPatchValidationRoutes:
@@ -35,6 +36,12 @@ class GatewayPatchValidationRoutes:
         files = params.get("files")
         if not isinstance(files, list):
             raise JsonRpcError(-32602, "missing required array param: files")
+        if len(files) > MAX_WORKSPACE_EDIT_PREVIEW_FILES:
+            raise JsonRpcError(
+                -32602,
+                "invalid params: files must contain at most "
+                f"{MAX_WORKSPACE_EDIT_PREVIEW_FILES} entries",
+            )
         for index, file in enumerate(files):
             if not isinstance(file, dict):
                 continue

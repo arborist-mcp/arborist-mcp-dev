@@ -2,8 +2,8 @@ use std::fs;
 
 use super::support::temporary_dir;
 use crate::{
-    MAX_POSITION_EDITS, Position, PositionEdit, WorkspacePositionEdits,
-    preview_workspace_position_edits,
+    MAX_POSITION_EDITS, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit,
+    WorkspacePositionEdits, preview_workspace_position_edits,
 };
 
 #[test]
@@ -144,6 +144,33 @@ fn rejects_too_many_position_edits_before_reading_source() {
 
     assert!(error.to_string().contains("workspace_edits[0].edits"));
     assert!(error.to_string().contains(&MAX_POSITION_EDITS.to_string()));
+    assert!(!missing.exists());
+}
+
+#[test]
+fn rejects_too_many_workspace_preview_files_before_reading_source() {
+    let dir = temporary_dir();
+    let missing = dir.join("missing.py");
+    let request = WorkspacePositionEdits {
+        file_path: missing.display().to_string(),
+        source: None,
+        edits: Vec::new(),
+    };
+
+    let error =
+        preview_workspace_position_edits(&vec![request; MAX_WORKSPACE_EDIT_PREVIEW_FILES + 1])
+            .expect_err("too many workspace preview files should be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("workspace edit preview accepts at most")
+    );
+    assert!(
+        error
+            .to_string()
+            .contains(&MAX_WORKSPACE_EDIT_PREVIEW_FILES.to_string())
+    );
     assert!(!missing.exists());
 }
 

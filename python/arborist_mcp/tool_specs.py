@@ -121,6 +121,7 @@ TEXT_PARAM_MAX_LENGTH = 4 * 1024 * 1024
 BYPASS_REASON_MAX_LENGTH = 4 * 1024
 MAX_BATCH_CALLS = 32
 MAX_POSITION_EDITS = 10_000
+MAX_WORKSPACE_EDIT_PREVIEW_FILES = 32
 MAX_GRAPH_DEPTH = 64
 MAX_GRAPH_NODES = 10_000
 MAX_SYMBOL_LIMIT = 10_000
@@ -298,6 +299,7 @@ TOOL_PARAM_SPECS = {
             "type": "array",
             "description": "Files with ordered position edits to preview without writing to disk.",
             "minItems": 1,
+            "maxItems": MAX_WORKSPACE_EDIT_PREVIEW_FILES,
             "items": {
                 "type": "object",
                 "properties": {

@@ -6,8 +6,8 @@ use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document, read_source,
 };
 use crate::model::{
-    PatchValidationReport, WorkspaceEditPreviewFile, WorkspaceEditPreviewResult,
-    WorkspacePositionEdits,
+    MAX_WORKSPACE_EDIT_PREVIEW_FILES, PatchValidationReport, WorkspaceEditPreviewFile,
+    WorkspaceEditPreviewResult, WorkspacePositionEdits,
 };
 use crate::patching::{collect_syntax_errors, splice_source, unified_diff};
 
@@ -16,6 +16,9 @@ pub fn preview_workspace_position_edits(
 ) -> Result<WorkspaceEditPreviewResult> {
     if requests.is_empty() {
         bail!("workspace edit preview requires at least one file");
+    }
+    if requests.len() > MAX_WORKSPACE_EDIT_PREVIEW_FILES {
+        bail!("workspace edit preview accepts at most {MAX_WORKSPACE_EDIT_PREVIEW_FILES} files");
     }
 
     let mut seen_paths = BTreeSet::new();

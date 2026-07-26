@@ -755,6 +755,27 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             gateway=gateway,
         )
 
+    def test_rejects_too_many_workspace_preview_files_before_core_call(self) -> None:
+        class StubCore:
+            def preview_workspace_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        self.assert_invalid_params(
+            "arborist/preview_workspace_position_edits",
+            {
+                "files": [
+                    {"file_path": f"sample-{index}.py", "edits": []}
+                    for index in range(gateway_module.MAX_WORKSPACE_EDIT_PREVIEW_FILES + 1)
+                ]
+            },
+            request_id=13,
+            contains="files must contain at most",
+            gateway=gateway,
+        )
+
     def test_rejects_non_finite_edits_as_invalid_params(self) -> None:
         gateway = self.make_gateway()
 

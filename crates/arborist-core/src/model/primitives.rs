@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{ensure_nonblank, ensure_nonblank_strings, point_is_after};
 
 pub const MAX_POSITION_EDITS: usize = 10_000;
+pub const MAX_WORKSPACE_EDIT_PREVIEW_FILES: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {

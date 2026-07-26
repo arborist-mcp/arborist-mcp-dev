@@ -278,7 +278,7 @@ disk. They return:
 - `unified_diff`: a compact unified diff from original source to preview source.
 - `changed`: whether the preview changes source text.
 
-`preview_workspace_position_edits` extends previewing to a batch of files. It
+`preview_workspace_position_edits` extends previewing to a batch of up to 32 files. It
 accepts sequential `PositionEdit` values per file and returns each updated
 source, unified diff, and syntax diagnostics without writing any file. The
 entire request fails when any position is invalid, so callers never receive a
