@@ -5,6 +5,8 @@ from typing import Any, Callable, TypeVar
 
 T = TypeVar("T")
 
+MAX_JSON_DEPTH = 64
+
 
 def reject_nonstandard_json_constant(name: str) -> Any:
     raise ValueError(f"non-standard JSON constant: {name}")
@@ -21,11 +23,32 @@ def reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]
 
 def loads(payload: str) -> Any:
     """Parse JSON while rejecting NaN/Infinity constants and duplicate object keys."""
-    return json.loads(
-        payload,
-        parse_constant=reject_nonstandard_json_constant,
-        object_pairs_hook=reject_duplicate_object_keys,
-    )
+    try:
+        value = json.loads(
+            payload,
+            parse_constant=reject_nonstandard_json_constant,
+            object_pairs_hook=reject_duplicate_object_keys,
+        )
+    except RecursionError as exc:
+        raise ValueError(
+            f"JSON exceeds maximum nesting depth of {MAX_JSON_DEPTH}"
+        ) from exc
+
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if not isinstance(current, (list, dict)):
+            continue
+        if depth >= MAX_JSON_DEPTH:
+            raise ValueError(
+                f"JSON exceeds maximum nesting depth of {MAX_JSON_DEPTH}"
+            )
+        child_depth = depth + 1
+        if isinstance(current, list):
+            pending.extend((item, child_depth) for item in current)
+        else:
+            pending.extend((item, child_depth) for item in current.values())
+    return value
 
 
 def load_text(

@@ -8,6 +8,8 @@ import subprocess
 import sys
 import unittest
 
+from scripts import json_strict
+
 
 def _load_check_profile_module():
     repo_root = Path(__file__).resolve().parents[1]
@@ -270,6 +272,14 @@ class CheckWorkflowTests(unittest.TestCase):
             load_json('{"a": 1, "b": {"c": 2}}', "valid payload"),
             {"a": 1, "b": {"c": 2}},
         )
+
+    def test_shared_strict_json_rejects_excessive_nesting(self) -> None:
+        payload = "0"
+        for _ in range(json_strict.MAX_JSON_DEPTH + 1):
+            payload = f"[{payload}]"
+
+        with self.assertRaisesRegex(ValueError, "maximum nesting depth"):
+            json_strict.loads(payload)
 
     def test_version_consistency_script_passes_for_repo_versions(self) -> None:
         script_path = self.repo_root / "scripts" / "version_consistency.py"
