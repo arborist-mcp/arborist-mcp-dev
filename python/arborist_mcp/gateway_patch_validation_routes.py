@@ -44,9 +44,25 @@ class GatewayPatchValidationRoutes:
             )
         for index, file in enumerate(files):
             if not isinstance(file, dict):
-                continue
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid workspace preview file at index {index}: expected object",
+                )
+            extra_keys = set(file) - {"file_path", "source", "edits"}
+            if extra_keys:
+                key = sorted(extra_keys)[0]
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid workspace preview file field: files[{index}].{key}",
+                )
+            self._require_string(file, "file_path")
             source = file.get("source")
-            if isinstance(source, str):
+            if "source" in file:
+                if not isinstance(source, str):
+                    raise JsonRpcError(
+                        -32602,
+                        f"invalid string param: files[{index}].source",
+                    )
                 self._validate_string_length(
                     source,
                     f"files[{index}].source",
@@ -54,14 +70,18 @@ class GatewayPatchValidationRoutes:
                     TEXT_PARAM_MAX_LENGTH,
                 )
             edits = file.get("edits")
-            if isinstance(edits, list):
-                try:
-                    self._validate_position_edits(edits)
-                except JsonRpcError as error:
-                    raise JsonRpcError(
-                        error.code,
-                        f"invalid files[{index}].edits: {error}",
-                    ) from error
+            if not isinstance(edits, list):
+                raise JsonRpcError(
+                    -32602,
+                    f"missing required list param: files[{index}].edits",
+                )
+            try:
+                self._validate_position_edits(edits)
+            except JsonRpcError as error:
+                raise JsonRpcError(
+                    error.code,
+                    f"invalid files[{index}].edits: {error}",
+                ) from error
         files_json = self._encode_json_param(files, "files")
         payload = self._require_core().preview_workspace_position_edits_json(files_json)
         return self._decode_core_object(payload)

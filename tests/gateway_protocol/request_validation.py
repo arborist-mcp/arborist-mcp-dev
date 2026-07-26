@@ -830,6 +830,33 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             gateway=gateway,
         )
 
+    def test_rejects_malformed_workspace_preview_file_before_core_call(self) -> None:
+        class StubCore:
+            def preview_workspace_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+        malformed_files = (
+            [None],
+            [{"file_path": "sample.py"}],
+            [{"file_path": "sample.py", "edits": [], "unexpected": True}],
+        )
+        expected_messages = (
+            "expected object",
+            "files[0].edits",
+            "files[0].unexpected",
+        )
+        for files, message in zip(malformed_files, expected_messages):
+            with self.subTest(files=files):
+                self.assert_invalid_params(
+                    "arborist/preview_workspace_position_edits",
+                    {"files": files},
+                    request_id=15,
+                    contains=message,
+                    gateway=gateway,
+                )
+
     def test_rejects_multibyte_source_over_byte_limit(self) -> None:
         gateway = self.make_gateway()
         source = "é" * (gateway_module.TEXT_PARAM_MAX_LENGTH // 2 + 1)
