@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::language::{normalize_absolute_path, normalize_path, parse_document, read_source};
+use crate::language::{
+    normalize_absolute_path, normalize_path, parse_document, parse_document_with_timeout,
+    read_source,
+};
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
@@ -164,7 +167,11 @@ fn build_workspace_index_with_deadline(
             None => read_source(path)?,
         };
         deadline.check("parsing workspace files")?;
-        let document = parse_document(path, &source)?;
+        let document = parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing workspace files")?,
+        )?;
         symbols.extend(index_symbols_from_document(path, &source, &document)?);
     }
 

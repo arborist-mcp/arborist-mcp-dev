@@ -80,6 +80,23 @@ impl WorkspaceScanDeadline {
         }
         Ok(())
     }
+
+    pub(crate) fn remaining_timeout_micros(&self, phase: &str) -> Result<u64> {
+        let Some(deadline) = self.deadline else {
+            return Ok(0);
+        };
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            bail!(
+                "workspace scan timeout exceeded during {phase}: timeout_ms={}",
+                self.timeout_ms.unwrap_or_default(),
+            );
+        }
+        Ok(remaining
+            .as_micros()
+            .saturating_add(999)
+            .min(u128::from(u64::MAX)) as u64)
+    }
 }
 
 pub(crate) fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Result<()> {
