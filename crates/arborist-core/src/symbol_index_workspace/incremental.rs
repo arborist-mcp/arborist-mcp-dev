@@ -34,9 +34,12 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     let indexed_files = indexed_paths.len();
     let connection = Connection::open(db_path)?;
     ensure_symbol_tables(&connection)?;
+    deadline.check("preparing incremental symbol index")?;
 
     let persisted_states = load_file_states(&connection)?;
+    deadline.check("loading incremental file states")?;
     let persisted_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
+    deadline.check("loading incremental symbols")?;
 
     let mut raw_symbols = Vec::new();
     let mut file_states = Vec::new();

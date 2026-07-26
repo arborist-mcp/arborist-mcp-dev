@@ -54,13 +54,28 @@ fn load_symbol_index_internal(
     let connection = open_symbol_index_read_only(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
     let indexed_files = load_indexed_files_metadata(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file metadata")?;
+    }
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
     load_indexed_symbols_grouped_by_file(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed symbols")?;
+    }
     let file_states = load_file_states(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file states")?;
+    }
     let resolved_symbols = load_resolved_symbols(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading resolved symbols")?;
+    }
     validate_indexed_file_count(indexed_files, file_states.len())?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed workspace root")?;
+    }
     validate_persisted_index_paths(&workspace_root, &file_states, &resolved_symbols.0)?;
     ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
     if let Some(deadline) = deadline {
@@ -106,6 +121,9 @@ fn load_symbol_index_with_overrides_internal(
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed workspace root")?;
+    }
     let file_overrides = normalize_source_overrides_for_workspace(
         &workspace_root,
         file_overrides,
@@ -113,9 +131,18 @@ fn load_symbol_index_with_overrides_internal(
     )?;
 
     let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed symbols")?;
+    }
     let original_grouped_symbols = grouped_symbols.clone();
     let persisted_file_states = load_file_states(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file states")?;
+    }
     let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading resolved symbols")?;
+    }
     validate_indexed_file_count(persisted_indexed_files, persisted_file_states.len())?;
     validate_persisted_index_paths_with_overrides(
         &workspace_root,
