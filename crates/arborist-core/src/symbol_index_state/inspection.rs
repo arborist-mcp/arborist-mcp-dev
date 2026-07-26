@@ -241,9 +241,7 @@ pub fn inspect_symbol_index_with_timeout(
                     }
                     health.unindexed_files = unindexed_files;
                 }
-                Err(error) => health.issues.push(format!(
-                    "failed to scan indexed workspace for unindexed files: {error}"
-                )),
+                Err(error) => record_unindexed_workspace_scan_error(&mut health, &deadline, error)?,
             }
         }
     }
@@ -263,4 +261,68 @@ pub fn inspect_symbol_index_with_timeout(
     }
     health.validate_public_output()?;
     Ok(health)
+}
+
+fn record_unindexed_workspace_scan_error(
+    health: &mut SymbolIndexHealth,
+    deadline: &WorkspaceScanDeadline,
+    error: anyhow::Error,
+) -> Result<()> {
+    deadline.check("scanning indexed workspace for unindexed files")?;
+    health.issues.push(format!(
+        "failed to scan indexed workspace for unindexed files: {error}"
+    ));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use anyhow::anyhow;
+
+    use super::record_unindexed_workspace_scan_error;
+    use crate::model::SymbolIndexHealth;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[test]
+    fn unindexed_scan_timeout_is_not_downgraded_to_a_health_issue() {
+        let mut health = SymbolIndexHealth {
+            response_schema_version: "4".to_owned(),
+            db_path: "C:\\workspace\\symbols.db".to_owned(),
+            exists: true,
+            ok: false,
+            schema_version: None,
+            expected_schema_version: "4".to_owned(),
+            migration: crate::index_migration::pending_inspection(),
+            workspace_root: None,
+            indexed_files: None,
+            indexed_symbols: None,
+            file_state_entries: None,
+            fresh_file_count: None,
+            stale_files: Vec::new(),
+            missing_files: Vec::new(),
+            unreadable_files: Vec::new(),
+            unindexed_files: Vec::new(),
+            issues: Vec::new(),
+        };
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = record_unindexed_workspace_scan_error(
+            &mut health,
+            &deadline,
+            anyhow!("workspace scan timeout exceeded"),
+        )
+        .expect_err("expired unindexed scans should fail closed");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+        assert!(health.issues.is_empty());
+    }
 }
