@@ -249,17 +249,24 @@ pub(crate) fn string_list_from_json_column(
     column_name: &str,
 ) -> rusqlite::Result<Vec<String>> {
     let values: Vec<String> = json_from_column(json, column)?;
-    let mut seen = BTreeSet::new();
-    if values
-        .iter()
-        .any(|value| value.trim().is_empty() || !seen.insert(value.clone()))
-    {
+    if values.iter().any(|value| value.trim().is_empty()) {
         return Err(rusqlite::Error::FromSqlConversionFailure(
             column,
             Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("empty or duplicate {column_name} entry"),
+                format!("empty {column_name} entry"),
+            )),
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    if values.iter().any(|value| !seen.insert(value.clone())) {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("duplicate {column_name} entry"),
             )),
         ));
     }
