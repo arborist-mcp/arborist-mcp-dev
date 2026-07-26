@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 import statistics
 import sys
@@ -117,8 +118,10 @@ def parse_max_median_threshold(value: str) -> MedianThreshold:
         raise argparse.ArgumentTypeError(
             f"threshold for {workflow!r} must be a number"
         ) from exc
-    if limit <= 0:
-        raise argparse.ArgumentTypeError("threshold milliseconds must be greater than zero")
+    if not math.isfinite(limit) or limit <= 0:
+        raise argparse.ArgumentTypeError(
+            "threshold milliseconds must be a finite number greater than zero"
+        )
 
     return MedianThreshold(workflow=workflow, max_median_ms=limit)
 

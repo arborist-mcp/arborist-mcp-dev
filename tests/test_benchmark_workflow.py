@@ -42,6 +42,12 @@ class BenchmarkWorkflowTests(unittest.TestCase):
             self.module.parse_max_median_threshold("trace_symbol_graph=0")
         self.assertIn("greater than zero", str(context.exception))
 
+    def test_parse_max_median_threshold_rejects_non_finite_limit(self) -> None:
+        for value in ("nan", "inf", "-inf"):
+            with self.assertRaises(Exception) as context:
+                self.module.parse_max_median_threshold(f"trace_symbol_graph={value}")
+            self.assertIn("finite number", str(context.exception))
+
     def test_evaluate_thresholds_reports_unknown_workflow(self) -> None:
         results = [
             self.module.BenchmarkResult(
