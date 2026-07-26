@@ -11,7 +11,7 @@ use crate::index_schema::{
 use crate::index_store::{
     load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
 };
-use crate::language::{normalize_path, parse_document};
+use crate::language::{normalize_path, parse_document, parse_document_with_timeout};
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
@@ -19,6 +19,7 @@ use crate::symbol_dependency::{
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
+use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
 use super::freshness::{ensure_symbol_index_fresh, validate_indexed_file_count};
 use super::paths::{validate_persisted_index_paths, validate_persisted_index_paths_with_overrides};
@@ -47,6 +48,30 @@ pub(crate) fn load_symbol_index_with_overrides(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
+    load_symbol_index_with_overrides_internal(db_path, file_overrides, None)
+}
+
+pub(crate) fn load_symbol_index_with_overrides_with_timeout(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    timeout_ms: Option<u64>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    let limits = WorkspaceScanLimits {
+        timeout_ms,
+        ..WorkspaceScanLimits::default()
+    };
+    let deadline = WorkspaceScanDeadline::new(limits)?;
+    load_symbol_index_with_overrides_internal(db_path, file_overrides, Some(&deadline))
+}
+
+fn load_symbol_index_with_overrides_internal(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed symbol overrides")?;
+    }
     if !db_path.exists() {
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
@@ -83,9 +108,19 @@ pub(crate) fn load_symbol_index_with_overrides(
     let mut added_file_paths = BTreeSet::new();
 
     for (override_path, override_source) in &file_overrides {
+        if let Some(deadline) = deadline {
+            deadline.check("parsing indexed symbol overrides")?;
+        }
         let override_path = Path::new(override_path);
 
-        let document = parse_document(override_path, override_source)?;
+        let document = match deadline {
+            Some(deadline) => parse_document_with_timeout(
+                override_path,
+                override_source,
+                deadline.remaining_timeout_micros("parsing indexed symbol overrides")?,
+            )?,
+            None => parse_document(override_path, override_source)?,
+        };
         let symbols = index_symbols_from_document(override_path, override_source, &document)?;
         let normalized_path = normalize_path(override_path);
         if !persisted_file_states.contains_key(&normalized_path) {
@@ -99,6 +134,9 @@ pub(crate) fn load_symbol_index_with_overrides(
         .into_values()
         .flat_map(|symbols| symbols.into_iter())
         .collect::<Vec<_>>();
+    if let Some(deadline) = deadline {
+        deadline.check("assigning indexed override symbols")?;
+    }
     assign_symbol_ids(&mut raw_symbols)?;
 
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);

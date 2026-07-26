@@ -10,7 +10,9 @@ use anyhow::Result;
 
 use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
 use crate::model::SymbolMeta;
-use crate::symbol_index_state::load_symbol_index_with_overrides;
+use crate::symbol_index_state::{
+    load_symbol_index_with_overrides, load_symbol_index_with_overrides_with_timeout,
+};
 use crate::symbol_index_workspace::{
     resolve_workspace_symbols_with_overrides, resolve_workspace_symbols_with_overrides_with_timeout,
 };
@@ -21,6 +23,15 @@ pub(super) fn load_normalized_symbol_index_with_overrides(
 ) -> Result<(Vec<SymbolMeta>, usize)> {
     let db_path = normalize_absolute_path(db_path)?;
     load_symbol_index_with_overrides(&db_path, file_overrides)
+}
+
+pub(super) fn load_normalized_symbol_index_with_overrides_with_timeout(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    timeout_ms: Option<u64>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    let db_path = normalize_absolute_path(db_path)?;
+    load_symbol_index_with_overrides_with_timeout(&db_path, file_overrides, timeout_ms)
 }
 
 pub(super) fn load_workspace_symbols_with_overrides_at_path(
