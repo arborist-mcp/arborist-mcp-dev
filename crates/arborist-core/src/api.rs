@@ -5,7 +5,7 @@ use anyhow::{Result, bail};
 pub use crate::api_patch_validation::*;
 pub use crate::api_source_query::*;
 use crate::language::read_source;
-use crate::model::SemanticSkeleton;
+use crate::model::{MAX_SEMANTIC_EXPAND_NODES, SemanticSkeleton};
 use crate::{language, semantic};
 
 pub fn get_semantic_skeleton_from_path(
@@ -14,6 +14,7 @@ pub fn get_semantic_skeleton_from_path(
     expand_nodes: &[String],
 ) -> Result<SemanticSkeleton> {
     let path = language::normalize_absolute_path(path)?;
+    validate_expand_nodes(expand_nodes)?;
     let source = read_source(&path)?;
     get_semantic_skeleton(&path, &source, depth_limit, expand_nodes)
 }
@@ -38,6 +39,9 @@ pub fn get_semantic_skeleton(
 }
 
 fn validate_expand_nodes(expand_nodes: &[String]) -> Result<()> {
+    if expand_nodes.len() > MAX_SEMANTIC_EXPAND_NODES {
+        bail!("invalid expand_nodes: expected at most {MAX_SEMANTIC_EXPAND_NODES} selectors");
+    }
     if let Some(index) = expand_nodes
         .iter()
         .position(|selector| selector.trim().is_empty())

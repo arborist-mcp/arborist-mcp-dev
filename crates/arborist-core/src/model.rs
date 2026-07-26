@@ -13,8 +13,9 @@ pub use patch_validation::{
     ValidationBindingDecision, ValidationIssue,
 };
 pub use primitives::{
-    LanguageId, MAX_POSITION_EDITS, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit,
-    QueryCaptureResult, SemanticSkeleton, SemanticSkeletonSymbol, TraceDirection,
+    LanguageId, MAX_POSITION_EDITS, MAX_SEMANTIC_EXPAND_NODES, MAX_WORKSPACE_EDIT_PREVIEW_FILES,
+    Position, PositionEdit, QueryCaptureResult, SemanticSkeleton, SemanticSkeletonSymbol,
+    TraceDirection,
 };
 pub use query_results::{
     RegisteredSymbolIndex, SymbolContextResult, SymbolIndexHealth, SymbolIndexMigrationPlan,

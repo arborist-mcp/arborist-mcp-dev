@@ -288,6 +288,12 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             gateway_module.MAX_POSITION_EDITS,
         )
         self.assertEqual(
+            by_name["arborist/get_semantic_skeleton"]["inputSchema"]["properties"][
+                "expand_nodes"
+            ]["maxItems"],
+            gateway_module.MAX_SEMANTIC_EXPAND_NODES,
+        )
+        self.assertEqual(
             by_name["arborist/preview_workspace_position_edits"]["inputSchema"]["properties"][
                 "files"
             ]["maxItems"],

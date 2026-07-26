@@ -271,3 +271,22 @@ fn rejects_blank_expand_selectors() {
 
     assert!(error.to_string().contains("expand_nodes"));
 }
+
+#[test]
+fn rejects_too_many_expand_selectors_before_parsing_source() {
+    let selectors = vec!["top_level".to_string(); crate::MAX_SEMANTIC_EXPAND_NODES + 1];
+    let error = get_semantic_skeleton(
+        Path::new("sample.py"),
+        "this is not valid Python",
+        1,
+        &selectors,
+    )
+    .expect_err("too many expand selectors should be rejected");
+
+    assert!(error.to_string().contains("expand_nodes"));
+    assert!(
+        error
+            .to_string()
+            .contains(&crate::MAX_SEMANTIC_EXPAND_NODES.to_string())
+    );
+}

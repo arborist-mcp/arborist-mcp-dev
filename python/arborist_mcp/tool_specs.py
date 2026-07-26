@@ -121,6 +121,7 @@ TEXT_PARAM_MAX_LENGTH = 4 * 1024 * 1024
 BYPASS_REASON_MAX_LENGTH = 4 * 1024
 MAX_BATCH_CALLS = 32
 MAX_POSITION_EDITS = 10_000
+MAX_SEMANTIC_EXPAND_NODES = 10_000
 MAX_WORKSPACE_EDIT_PREVIEW_FILES = 32
 MAX_GRAPH_DEPTH = 64
 MAX_GRAPH_NODES = 10_000
@@ -322,6 +323,7 @@ TOOL_PARAM_SPECS = {
             "type": "array",
             "description": "Semantic selectors to expand in the returned skeleton.",
             "items": _schema("string", "Semantic selector."),
+            "maxItems": MAX_SEMANTIC_EXPAND_NODES,
         },
         optional=True,
     ),

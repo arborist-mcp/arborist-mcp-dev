@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from arborist_mcp.tool_specs import MAX_SEMANTIC_EXPAND_NODES
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
 
 SUITE_NAME = "gateway-execution"
@@ -556,6 +557,28 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                 self.assert_jsonrpc_error(
                     response, request_id=36, code=-32602, contains="expand_nodes"
                 )
+
+    def test_rejects_too_many_expand_node_selectors_before_core_call(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        response = self.call_gateway(
+            self.make_gateway(StubCore()),
+            "arborist/get_semantic_skeleton",
+            {
+                "file_path": "sample.py",
+                "expand_nodes": [
+                    "top_level"
+                    for _ in range(MAX_SEMANTIC_EXPAND_NODES + 1)
+                ],
+            },
+            request_id=37,
+        )
+
+        self.assert_jsonrpc_error(
+            response, request_id=37, code=-32602, contains="expand_nodes"
+        )
 
     def test_passes_valid_position_edits_to_core(self) -> None:
         class StubCore:

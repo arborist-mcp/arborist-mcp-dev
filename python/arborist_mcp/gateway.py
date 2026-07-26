@@ -42,6 +42,7 @@ from .tool_specs import (
     MAX_GRAPH_DEPTH,
     MAX_GRAPH_NODES,
     MAX_POSITION_EDITS,
+    MAX_SEMANTIC_EXPAND_NODES,
     MAX_WORKSPACE_EDIT_PREVIEW_FILES,
     MAX_SYMBOL_LIMIT,
     MAX_WORKSPACE_SCAN_FILE_BYTES,
@@ -249,7 +250,11 @@ class ArboristGateway(
         file_path = self._require_string(params, "file_path")
         depth_limit = self._optional_int(params, "depth_limit", default=2)
         source = self._optional_string(params, "source", allow_empty=True)
-        expand_nodes = self._optional_string_list(params, "expand_nodes")
+        expand_nodes = self._optional_string_list(
+            params,
+            "expand_nodes",
+            max_items=MAX_SEMANTIC_EXPAND_NODES,
+        )
         payload = self._require_core().get_semantic_skeleton_json(
             file_path,
             source,
