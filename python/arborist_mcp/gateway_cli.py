@@ -71,7 +71,10 @@ def run_stdio(
 ) -> int:
     gateway: Any | None = None
 
-    for raw_line in sys.stdin:
+    while True:
+        raw_line = _read_stdio_line()
+        if raw_line is None:
+            break
         line = raw_line.strip()
         if not line:
             continue
@@ -87,6 +90,27 @@ def run_stdio(
                 return 0
 
     return 0
+
+
+def _read_stdio_line() -> str | None:
+    # Text streams impose character rather than byte limits. This cap bounds
+    # memory even for four-byte UTF-8 characters; parse_request still enforces
+    # the protocol's byte limit below.
+    read_limit = MAX_REQUEST_BYTES + 2
+    raw_line = sys.stdin.readline(read_limit)
+    if raw_line == "":
+        return None
+
+    if len(raw_line) == read_limit and not raw_line.endswith("\n"):
+        _discard_stdio_line_remainder()
+    return raw_line
+
+
+def _discard_stdio_line_remainder() -> None:
+    while True:
+        remainder = sys.stdin.readline(MAX_REQUEST_BYTES + 2)
+        if remainder == "" or remainder.endswith("\n"):
+            return
 
 
 def main(

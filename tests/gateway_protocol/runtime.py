@@ -1213,6 +1213,40 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32700)
         self.assertIn("invalid JSON", response["error"]["message"])
 
+    def test_stdio_bounds_and_discards_an_oversized_line(self) -> None:
+        class StubGateway:
+            def __init__(self) -> None:
+                self.requests: list[object] = []
+
+            def handle_request(self, request: object) -> dict[str, object]:
+                self.requests.append(request)
+                return {"jsonrpc": "2.0", "id": 9, "result": {"ok": True}}
+
+        fake_gateway = StubGateway()
+        stdin = io.StringIO(
+            "x" * (gateway_module.MAX_REQUEST_BYTES + 64)
+            + '\n{"jsonrpc":"2.0","id":9,"method":"initialize","params":{}}\n'
+        )
+        stdout = io.StringIO()
+
+        with mock.patch.object(gateway_module, "ArboristGateway", return_value=fake_gateway):
+            with mock.patch("sys.stdin", stdin), mock.patch("sys.stdout", stdout):
+                exit_code = gateway_module.run_stdio()
+
+        self.assertEqual(exit_code, 0)
+        responses = [
+            gateway_module.json.loads(line)
+            for line in stdout.getvalue().splitlines()
+        ]
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(responses[0]["error"]["code"], -32600)
+        self.assertIn("request exceeds maximum size", responses[0]["error"]["message"])
+        self.assertEqual(responses[1]["result"], {"ok": True})
+        self.assertEqual(
+            fake_gateway.requests,
+            [{"jsonrpc": "2.0", "id": 9, "method": "initialize", "params": {}}],
+        )
+
     def test_stdio_duplicate_json_key_emits_parse_error_response(self) -> None:
         stdin = io.StringIO(
             '{"jsonrpc":"2.0","id":1,"id":2,"method":"initialize","params":{}}\n'
