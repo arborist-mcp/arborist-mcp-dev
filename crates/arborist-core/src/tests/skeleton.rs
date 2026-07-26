@@ -273,6 +273,24 @@ fn rejects_blank_expand_selectors() {
 }
 
 #[test]
+fn rejects_excessive_skeleton_depth_before_parsing_source() {
+    let error = get_semantic_skeleton(
+        Path::new("sample.py"),
+        "this is not valid Python",
+        crate::MAX_SEMANTIC_SKELETON_DEPTH + 1,
+        &[],
+    )
+    .expect_err("excessive skeleton depth should be rejected");
+
+    assert!(error.to_string().contains("depth_limit"));
+    assert!(
+        error
+            .to_string()
+            .contains(&crate::MAX_SEMANTIC_SKELETON_DEPTH.to_string())
+    );
+}
+
+#[test]
 fn rejects_too_many_expand_selectors_before_parsing_source() {
     let selectors = vec!["top_level".to_string(); crate::MAX_SEMANTIC_EXPAND_NODES + 1];
     let error = get_semantic_skeleton(
