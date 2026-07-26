@@ -41,6 +41,24 @@ pub(crate) fn load_file_states_with_deadline(
     Ok(states)
 }
 
+pub(crate) fn load_legacy_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
+    let mut statement =
+        connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            nonempty_string_from_row(row, 0, "file_state.file_path")?,
+            row.get::<_, i64>(1)?,
+        ))
+    })?;
+
+    let mut states = BTreeMap::new();
+    for row in rows {
+        let (file_path, fingerprint) = row?;
+        states.insert(file_path, fingerprint as u64);
+    }
+    Ok(states)
+}
+
 pub(crate) fn persisted_fingerprint(fingerprint: u64) -> Result<i64> {
     i64::try_from(fingerprint)
         .map_err(|error| anyhow!("fingerprint cannot be persisted as SQLite INTEGER: {error}"))
@@ -60,7 +78,7 @@ mod tests {
 
     use crate::workspace_scan::WorkspaceScanDeadline;
 
-    use super::{load_file_states, load_file_states_with_deadline};
+    use super::{load_file_states, load_file_states_with_deadline, load_legacy_file_states};
 
     #[test]
     fn load_file_states_rejects_negative_fingerprints() {
@@ -120,5 +138,24 @@ mod tests {
                 .to_string()
                 .contains("workspace scan timeout exceeded")
         );
+    }
+
+    #[test]
+    fn load_legacy_file_states_restores_signed_u64_fingerprints() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE file_state (
+                    file_path TEXT PRIMARY KEY NOT NULL,
+                    fingerprint INTEGER NOT NULL
+                );
+                INSERT INTO file_state(file_path, fingerprint)
+                VALUES ('/workspace/helper.py', -1);",
+            )
+            .unwrap();
+
+        let states = load_legacy_file_states(&connection).unwrap();
+
+        assert_eq!(states["/workspace/helper.py"], u64::MAX);
     }
 }

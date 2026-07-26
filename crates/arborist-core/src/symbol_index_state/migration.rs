@@ -9,7 +9,7 @@ use crate::index_schema::{
     load_symbol_index_workspace_root, require_legacy_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
-use crate::index_store::{load_file_states, load_resolved_symbols};
+use crate::index_store::{load_legacy_file_states, load_resolved_symbols};
 use crate::language::normalize_absolute_path;
 use crate::symbols::rebuild_symbol_index;
 
@@ -37,7 +37,7 @@ pub fn migrate_symbol_index(db_path: &Path) -> Result<crate::model::SymbolIndexH
             require_legacy_symbol_index_schema(&connection, &db_path)?;
         }
         let workspace_root = load_symbol_index_workspace_root(&connection, &db_path)?;
-        let file_states = load_file_states(&connection)?;
+        let file_states = load_legacy_file_states(&connection)?;
         let (symbols, indexed_files) = load_resolved_symbols(&connection)?;
         validate_indexed_file_count(indexed_files, file_states.len())?;
         validate_persisted_index_paths(&workspace_root, &file_states, &symbols)?;
