@@ -90,6 +90,7 @@ pub fn inspect_symbol_index_with_timeout(
                 error
             )
         })?;
+    deadline.check("loading schema metadata")?;
     if health.schema_version.is_none() {
         health.issues.push(format!(
             "missing schema_version metadata in symbol index {}",
@@ -149,11 +150,13 @@ pub fn inspect_symbol_index_with_timeout(
             None
         }
     };
+    deadline.check("loading indexed workspace root")?;
 
     match load_indexed_files_metadata(&connection) {
         Ok(indexed_files) => health.indexed_files = Some(indexed_files),
         Err(error) => health.issues.push(error.to_string()),
     }
+    deadline.check("loading indexed file metadata")?;
 
     match count_table_rows(&connection, "symbols") {
         Ok(count) => health.indexed_symbols = Some(count),
@@ -161,12 +164,14 @@ pub fn inspect_symbol_index_with_timeout(
             .issues
             .push(format!("failed to count persisted symbols: {error}")),
     }
+    deadline.check("counting persisted symbols")?;
     match count_table_rows(&connection, "file_state") {
         Ok(count) => health.file_state_entries = Some(count),
         Err(error) => health
             .issues
             .push(format!("failed to count persisted file states: {error}")),
     }
+    deadline.check("counting persisted file states")?;
 
     let file_states = match load_file_states(&connection) {
         Ok(file_states) => Some(file_states),
@@ -177,6 +182,7 @@ pub fn inspect_symbol_index_with_timeout(
             None
         }
     };
+    deadline.check("loading persisted file states")?;
     let resolved_symbols = match load_resolved_symbols(&connection) {
         Ok((symbols, _)) => Some(symbols),
         Err(error) => {
@@ -186,12 +192,13 @@ pub fn inspect_symbol_index_with_timeout(
             None
         }
     };
+    deadline.check("loading persisted symbols")?;
     if let Err(error) = load_indexed_symbols_grouped_by_file(&connection) {
         health
             .issues
             .push(format!("failed to inspect persisted raw symbols: {error}"));
     }
-    deadline.check("loading persisted index state")?;
+    deadline.check("loading persisted raw symbols")?;
 
     if let (Some(workspace_root), Some(file_states)) =
         (workspace_root.as_deref(), file_states.as_ref())
