@@ -14,8 +14,8 @@ completed item can land in its own commit unless two changes are inseparable.
   PyO3 root facade remains a thin registration surface over domain bindings.
 - The remaining strategic gaps are deeper Rust module splits, fuller C++
   language-aware resolution, property testing beyond the existing fuzz targets,
-  and cancellation that can interrupt individual native parse or query
-  operations.
+  and broader cancellation coverage for native symbol/trace operations beyond
+  Tree-sitter parse and query execution.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -296,6 +296,8 @@ completed item can land in its own commit unless two changes are inseparable.
   `semantic/python.rs`, preserving crate-visible summary helper exports.
 - [x] Extract Tree-sitter query owner resolution into `query/owners.rs`,
   keeping query execution and validation in the facade.
+- [x] Apply cooperative deadlines to Tree-sitter parsing and query execution,
+  using parser and cursor progress callbacks so native work can be interrupted.
 - [x] Extract symbol-trace neighborhood traversal into
   `symbol_trace/neighborhood.rs`, preserving timeout and result validation.
 - [x] Extract patch-trace replay validation and evidence matching into
