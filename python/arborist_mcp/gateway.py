@@ -39,6 +39,7 @@ from .tool_manifest import (
 from .tool_specs import (
     MAX_JSON_ARG_BYTES,
     MAX_JSON_ARG_DEPTH,
+    MAX_REQUEST_BYTES,
     BYPASS_REASON_MAX_LENGTH,
     MAX_BATCH_CALLS,
     MAX_GRAPH_DEPTH,

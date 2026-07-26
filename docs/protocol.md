@@ -116,6 +116,7 @@ Current protocol-boundary checks include:
 - Nulls for defaulted string parameters.
 - Negative numeric parameters.
 - Non-standard response JSON.
+- JSON-RPC request documents larger than 128 MiB of UTF-8 text.
 
 Programmatic gateway calls that pass nested JSON parameters to Rust also require
 strict JSON-derived values, including string object keys, lists rather than

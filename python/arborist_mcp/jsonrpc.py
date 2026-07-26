@@ -4,6 +4,8 @@ import json
 import sys
 from typing import Any
 
+from .tool_specs import MAX_REQUEST_BYTES
+
 
 def is_notification_request(request: Any) -> bool:
     return (
@@ -62,6 +64,12 @@ def loads_strict(payload: str) -> Any:
 
 
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:
+    if len(raw_request.encode("utf-8")) > MAX_REQUEST_BYTES:
+        return None, error_response(
+            None,
+            -32600,
+            f"request exceeds maximum size of {MAX_REQUEST_BYTES} bytes",
+        )
     try:
         return loads_strict(raw_request), None
     except (json.JSONDecodeError, ValueError) as exc:
