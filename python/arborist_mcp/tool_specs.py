@@ -488,7 +488,9 @@ TOOL_PARAM_SPECS = {
             "string",
             "Tree-sitter query or symbol search text.",
             max_length=TREE_QUERY_MAX_LENGTH,
-        )
+        ),
+        string_max_length=TREE_QUERY_MAX_LENGTH,
+        string_max_bytes=TREE_QUERY_MAX_LENGTH,
     ),
     "semantic_path": ToolParamSpec(_schema("string", "Stable Arborist semantic selector.")),
     "source": ToolParamSpec(

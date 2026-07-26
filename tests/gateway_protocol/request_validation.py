@@ -879,6 +879,13 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         with self.assertRaisesRegex(Exception, "max byte length"):
             gateway._optional_string({"source": source}, "source", allow_empty=True)
 
+    def test_rejects_multibyte_query_over_byte_limit(self) -> None:
+        gateway = self.make_gateway()
+        query = "é" * (gateway_module.TREE_QUERY_MAX_LENGTH // 2 + 1)
+
+        with self.assertRaisesRegex(Exception, "max byte length"):
+            gateway._require_string({"query": query}, "query")
+
     def test_rejects_multibyte_nested_text_over_byte_limit(self) -> None:
         text = "é" * (gateway_module.TEXT_PARAM_MAX_LENGTH // 2 + 1)
         edit = {
