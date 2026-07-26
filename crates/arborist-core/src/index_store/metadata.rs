@@ -32,6 +32,9 @@ pub(crate) fn load_file_states_with_deadline(
         let fingerprint = u64::from_ne_bytes(fingerprint.to_ne_bytes());
         states.insert(file_path, fingerprint);
     }
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file states")?;
+    }
     Ok(states)
 }
 

@@ -117,6 +117,9 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
             .or_insert_with(Vec::new)
             .push(symbol);
     }
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed symbol rows")?;
+    }
     Ok(grouped)
 }
 
@@ -170,6 +173,9 @@ pub(crate) fn load_resolved_symbols_with_deadline(
         symbols.push(row?);
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("loading resolved symbol rows")?;
+    }
     Ok((symbols, indexed_files))
 }
 
