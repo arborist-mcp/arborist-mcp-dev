@@ -120,6 +120,7 @@ TREE_QUERY_MAX_CAPTURES = 100_000
 TEXT_PARAM_MAX_LENGTH = 4 * 1024 * 1024
 BYPASS_REASON_MAX_LENGTH = 4 * 1024
 MAX_BATCH_CALLS = 32
+MAX_POSITION_EDITS = 10_000
 MAX_GRAPH_DEPTH = 64
 MAX_GRAPH_NODES = 10_000
 MAX_SYMBOL_LIMIT = 10_000
@@ -289,6 +290,7 @@ TOOL_PARAM_SPECS = {
             "type": "array",
             "description": "Ordered LSP-style position edits to apply to an open virtual file.",
             "items": POSITION_EDIT_SCHEMA,
+            "maxItems": MAX_POSITION_EDITS,
         }
     ),
     "files": ToolParamSpec(
@@ -305,6 +307,7 @@ TOOL_PARAM_SPECS = {
                         "type": "array",
                         "description": "Ordered LSP-style position edits.",
                         "items": POSITION_EDIT_SCHEMA,
+                        "maxItems": MAX_POSITION_EDITS,
                     },
                 },
                 "required": ["file_path", "edits"],

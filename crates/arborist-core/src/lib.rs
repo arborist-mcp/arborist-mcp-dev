@@ -30,7 +30,7 @@ mod workspace_edit_preview;
 mod workspace_scan;
 
 pub use model::{
-    DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId,
+    DiscoveryContextPatchResult, GraphBackedPatchResult, LanguageId, MAX_POSITION_EDITS,
     NeighborhoodContextPatchResult, PatchAstNodeResult, PatchPreviewResult,
     PatchTraceValidationResult, PatchValidationReport, Position, PositionEdit, QueryCaptureResult,
     RegisteredSymbolIndex, SemanticSkeleton, SemanticSkeletonSymbol, SymbolContextResult,

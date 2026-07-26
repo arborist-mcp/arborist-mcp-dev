@@ -703,6 +703,58 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("edits", response["error"]["message"])
 
+    def test_rejects_too_many_position_edits_before_core_call(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        edit = {
+            "start": {"row": 0, "column": 0},
+            "end": {"row": 0, "column": 0},
+            "new_text": "",
+        }
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        self.assert_invalid_params(
+            "arborist/did_change",
+            {
+                "file_path": "sample.py",
+                "edits": [edit] * (gateway_module.MAX_POSITION_EDITS + 1),
+            },
+            request_id=11,
+            contains="position edits",
+            gateway=gateway,
+        )
+
+    def test_rejects_too_many_preview_position_edits_before_core_call(self) -> None:
+        class StubCore:
+            def preview_workspace_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        edit = {
+            "start": {"row": 0, "column": 0},
+            "end": {"row": 0, "column": 0},
+            "new_text": "",
+        }
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+
+        self.assert_invalid_params(
+            "arborist/preview_workspace_position_edits",
+            {
+                "files": [
+                    {
+                        "file_path": "sample.py",
+                        "edits": [edit] * (gateway_module.MAX_POSITION_EDITS + 1),
+                    }
+                ]
+            },
+            request_id=12,
+            contains="files[0].edits",
+            gateway=gateway,
+        )
+
     def test_rejects_non_finite_edits_as_invalid_params(self) -> None:
         gateway = self.make_gateway()
 

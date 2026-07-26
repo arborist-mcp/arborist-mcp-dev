@@ -9,6 +9,7 @@ use super::state::{
     VirtualFileEntry, normalized_virtual_path, read_virtual_disk_source, snapshot_from_entry,
     validate_edit_range,
 };
+use crate::MAX_POSITION_EDITS;
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
     parser_for_language, path_is_inside_workspace, point_for_offset, write_source_atomic,
@@ -109,6 +110,12 @@ impl VirtualFileSystem {
         path: &Path,
         edits: &[PositionEdit],
     ) -> Result<VirtualEditResult> {
+        if edits.len() > MAX_POSITION_EDITS {
+            return Err(anyhow!(
+                "invalid position edits: expected at most {} entries",
+                MAX_POSITION_EDITS
+            ));
+        }
         if edits.is_empty() {
             let (path, normalized) = normalized_virtual_path(path)?;
             self.ensure_loaded(&path, None)?;

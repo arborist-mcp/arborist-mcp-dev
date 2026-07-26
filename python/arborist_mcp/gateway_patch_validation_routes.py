@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .tool_result_schemas import JsonRpcError
+
 
 class GatewayPatchValidationRoutes:
     def _replay_patch_evidence_against_trace(
@@ -33,6 +35,18 @@ class GatewayPatchValidationRoutes:
         files = params.get("files")
         if not isinstance(files, list):
             raise JsonRpcError(-32602, "missing required array param: files")
+        for index, file in enumerate(files):
+            if not isinstance(file, dict):
+                continue
+            edits = file.get("edits")
+            if isinstance(edits, list):
+                try:
+                    self._validate_position_edits(edits)
+                except JsonRpcError as error:
+                    raise JsonRpcError(
+                        error.code,
+                        f"invalid files[{index}].edits: {error}",
+                    ) from error
         files_json = self._encode_json_param(files, "files")
         payload = self._require_core().preview_workspace_position_edits_json(files_json)
         return self._decode_core_object(payload)

@@ -6,7 +6,7 @@ from typing import Any
 
 from .mcp_validation import reject_unexpected_params
 from .tool_result_schemas import JsonRpcError
-from .tool_specs import TEXT_PARAM_MAX_LENGTH, TOOL_PARAM_SPECS
+from .tool_specs import MAX_POSITION_EDITS, TEXT_PARAM_MAX_LENGTH, TOOL_PARAM_SPECS
 
 
 class GatewayParameterValidation:
@@ -141,6 +141,11 @@ class GatewayParameterValidation:
 
     @staticmethod
     def _validate_position_edits(edits: list[Any]) -> None:
+        if len(edits) > MAX_POSITION_EDITS:
+            raise JsonRpcError(
+                -32602,
+                f"invalid position edits: expected at most {MAX_POSITION_EDITS} entries",
+            )
         for index, edit in enumerate(edits):
             if not isinstance(edit, dict):
                 raise JsonRpcError(-32602, f"invalid position edit at index {index}")

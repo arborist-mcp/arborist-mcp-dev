@@ -13,7 +13,7 @@ pub use patch_validation::{
     ValidationBindingDecision, ValidationIssue,
 };
 pub use primitives::{
-    LanguageId, Position, PositionEdit, QueryCaptureResult, SemanticSkeleton,
+    LanguageId, MAX_POSITION_EDITS, Position, PositionEdit, QueryCaptureResult, SemanticSkeleton,
     SemanticSkeletonSymbol, TraceDirection,
 };
 pub use query_results::{

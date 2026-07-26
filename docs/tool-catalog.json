@@ -38930,7 +38930,8 @@
               "new_text"
             ],
             "additionalProperties": false
-          }
+          },
+          "maxItems": 10000
         }
       },
       "required": [
@@ -54512,7 +54513,8 @@
                     "new_text"
                   ],
                   "additionalProperties": false
-                }
+                },
+                "maxItems": 10000
               }
             },
             "required": [

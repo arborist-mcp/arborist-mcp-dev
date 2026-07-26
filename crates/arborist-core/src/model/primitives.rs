@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{ensure_nonblank, ensure_nonblank_strings, point_is_after};
 
+pub const MAX_POSITION_EDITS: usize = 10_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {
     Python,

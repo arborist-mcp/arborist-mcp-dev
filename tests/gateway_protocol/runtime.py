@@ -283,6 +283,16 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             ]["new_text"]["maxLength"],
             gateway_module.TEXT_PARAM_MAX_LENGTH,
         )
+        self.assertEqual(
+            by_name["arborist/did_change"]["inputSchema"]["properties"]["edits"]["maxItems"],
+            gateway_module.MAX_POSITION_EDITS,
+        )
+        self.assertEqual(
+            by_name["arborist/preview_workspace_position_edits"]["inputSchema"]["properties"][
+                "files"
+            ]["items"]["properties"]["edits"]["maxItems"],
+            gateway_module.MAX_POSITION_EDITS,
+        )
         inspect_index = by_name["arborist/inspect_symbol_index"]
         self.assertTrue(inspect_index["annotations"]["readOnlyHint"])
         self.assertFalse(inspect_index["metadata"]["mutatesState"])
