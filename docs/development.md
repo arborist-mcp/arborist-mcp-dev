@@ -248,6 +248,7 @@ The manifest parser rejects unknown fields, duplicate JSON keys, empty target
 lists, duplicate workspace roots, and duplicate database paths. Targets are
 inspected in deterministic workspace order, and any unsupported or foreign
 index fails closed without rewriting it.
+The manifest is capped at 4 MiB and 256 configured targets.
 
 The command emits one JSON object per initial, migrated, or refreshed state. It
 migrates supported v1-v3 schemas transactionally, then exits fail-closed for

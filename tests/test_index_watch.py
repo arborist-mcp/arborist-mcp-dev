@@ -556,6 +556,32 @@ class IndexWatchTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run_cli(["--db-path", "symbols.db", "--timeout-ms", "300001"])
 
+    def test_load_watch_config_rejects_too_many_targets(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "indexes": [
+                            {"workspace_root": f"workspace-{index}", "db_path": f"{index}.db"}
+                            for index in range(257)
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(IndexWatchError, "at most 256 entries"):
+                load_watch_config(config_path)
+
+    def test_load_watch_config_rejects_oversized_file(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            config_path = Path(temporary_directory).joinpath("watch.json")
+            config_path.write_bytes(b" " * (4 * 1024 * 1024 + 1))
+
+            with self.assertRaisesRegex(IndexWatchError, "maximum size"):
+                load_watch_config(config_path)
+
     def test_cli_rejects_conflicting_check_mode_flags(self) -> None:
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):

@@ -11,6 +11,8 @@ from typing import Any, Callable, Protocol, TextIO
 
 from .jsonrpc import loads_strict
 from .tool_specs import (
+    MAX_INDEX_WATCH_CONFIG_BYTES,
+    MAX_INDEX_WATCH_TARGETS,
     MAX_WORKSPACE_SCAN_FILE_BYTES,
     MAX_WORKSPACE_SCAN_FILES,
     MAX_WORKSPACE_SCAN_TIMEOUT_MS,
@@ -78,7 +80,13 @@ def _target_sort_key(target: IndexWatchTarget) -> tuple[str, str, str, str]:
 
 def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
     try:
+        if config_path.stat().st_size > MAX_INDEX_WATCH_CONFIG_BYTES:
+            raise IndexWatchError(
+                f"watch config exceeds maximum size of {MAX_INDEX_WATCH_CONFIG_BYTES} bytes"
+            )
         payload = config_path.read_text(encoding="utf-8")
+    except IndexWatchError:
+        raise
     except (OSError, UnicodeError) as exc:
         raise IndexWatchError(
             f"failed to read watch config {config_path}: {exc}"
@@ -98,6 +106,11 @@ def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
     if not isinstance(raw_indexes, list) or not raw_indexes:
         raise IndexWatchError(
             "invalid watch config: `indexes` must be a non-empty list"
+        )
+    if len(raw_indexes) > MAX_INDEX_WATCH_TARGETS:
+        raise IndexWatchError(
+            "invalid watch config: `indexes` must contain at most "
+            f"{MAX_INDEX_WATCH_TARGETS} entries"
         )
 
     targets: list[IndexWatchTarget] = []
