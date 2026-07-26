@@ -2,8 +2,8 @@ use std::fs;
 
 use super::support::temporary_dir;
 use crate::{
-    MAX_POSITION_EDITS, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit,
-    WorkspacePositionEdits, preview_workspace_position_edits,
+    MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position,
+    PositionEdit, WorkspacePositionEdits, preview_workspace_position_edits,
 };
 
 #[test]
@@ -144,6 +144,30 @@ fn rejects_too_many_position_edits_before_reading_source() {
 
     assert!(error.to_string().contains("workspace_edits[0].edits"));
     assert!(error.to_string().contains(&MAX_POSITION_EDITS.to_string()));
+    assert!(!missing.exists());
+}
+
+#[test]
+fn rejects_position_edit_text_budget_before_reading_source() {
+    let dir = temporary_dir();
+    let missing = dir.join("missing.py");
+    let error = preview_workspace_position_edits(&[WorkspacePositionEdits {
+        file_path: missing.display().to_string(),
+        source: None,
+        edits: vec![PositionEdit {
+            start: Position { row: 0, column: 0 },
+            end: Position { row: 0, column: 0 },
+            new_text: "x".repeat(MAX_POSITION_EDIT_TEXT_BYTES + 1),
+        }],
+    }])
+    .expect_err("replacement text beyond the batch budget should be rejected");
+
+    assert!(error.to_string().contains("workspace_edits[0].edits"));
+    assert!(
+        error
+            .to_string()
+            .contains(&MAX_POSITION_EDIT_TEXT_BYTES.to_string())
+    );
     assert!(!missing.exists());
 }
 

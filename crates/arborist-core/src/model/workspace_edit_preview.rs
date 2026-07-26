@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use super::{MAX_POSITION_EDITS, PatchValidationReport, PositionEdit, ensure_nonblank};
+use super::{PatchValidationReport, PositionEdit, ensure_nonblank, validate_position_edit_batch};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -36,11 +36,7 @@ impl WorkspacePositionEdits {
             &self.file_path,
             &format!("workspace_edits[{index}].file_path"),
         )?;
-        if self.edits.len() > MAX_POSITION_EDITS {
-            bail!(
-                "invalid workspace_edits[{index}].edits: expected at most {MAX_POSITION_EDITS} entries"
-            );
-        }
+        validate_position_edit_batch(&self.edits, &format!("workspace_edits[{index}].edits"))?;
         Ok(())
     }
 }

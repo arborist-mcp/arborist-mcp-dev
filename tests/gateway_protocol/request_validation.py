@@ -727,6 +727,37 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             gateway=gateway,
         )
 
+    def test_rejects_position_edit_text_budget_before_core_call(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+        edit = {
+            "start": {"row": 0, "column": 0},
+            "end": {"row": 0, "column": 0},
+            "new_text": "x" * gateway_module.TEXT_PARAM_MAX_LENGTH,
+        }
+
+        self.assert_invalid_params(
+            "arborist/did_change",
+            {
+                "file_path": "sample.py",
+                "edits": [
+                    edit
+                    for _ in range(
+                        gateway_module.MAX_POSITION_EDIT_TEXT_BYTES
+                        // gateway_module.TEXT_PARAM_MAX_LENGTH
+                        + 1
+                    )
+                ],
+            },
+            request_id=12,
+            contains="replacement text exceeds",
+            gateway=gateway,
+        )
+
     def test_rejects_too_many_preview_position_edits_before_core_call(self) -> None:
         class StubCore:
             def preview_workspace_position_edits_json(self, *args: object) -> str:

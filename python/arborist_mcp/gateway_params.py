@@ -6,7 +6,12 @@ from typing import Any
 
 from .mcp_validation import reject_unexpected_params
 from .tool_result_schemas import JsonRpcError
-from .tool_specs import MAX_POSITION_EDITS, TEXT_PARAM_MAX_LENGTH, TOOL_PARAM_SPECS
+from .tool_specs import (
+    MAX_POSITION_EDITS,
+    MAX_POSITION_EDIT_TEXT_BYTES,
+    TEXT_PARAM_MAX_LENGTH,
+    TOOL_PARAM_SPECS,
+)
 
 
 class GatewayParameterValidation:
@@ -156,6 +161,7 @@ class GatewayParameterValidation:
                 -32602,
                 f"invalid position edits: expected at most {MAX_POSITION_EDITS} entries",
             )
+        replacement_bytes = 0
         for index, edit in enumerate(edits):
             if not isinstance(edit, dict):
                 raise JsonRpcError(-32602, f"invalid position edit at index {index}")
@@ -182,6 +188,13 @@ class GatewayParameterValidation:
                 f"edits[{index}].new_text",
                 TEXT_PARAM_MAX_LENGTH,
             )
+            replacement_bytes += len(edit["new_text"].encode("utf-8"))
+            if replacement_bytes > MAX_POSITION_EDIT_TEXT_BYTES:
+                raise JsonRpcError(
+                    -32602,
+                    "invalid position edits: replacement text exceeds "
+                    f"{MAX_POSITION_EDIT_TEXT_BYTES} bytes",
+                )
 
     @staticmethod
     def _position_tuple(value: dict[str, Any]) -> tuple[int, int]:

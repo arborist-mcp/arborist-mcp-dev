@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::{ensure_nonblank, ensure_nonblank_strings, point_is_after};
 
 pub const MAX_POSITION_EDITS: usize = 10_000;
+pub const MAX_POSITION_EDIT_TEXT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SEMANTIC_EXPAND_NODES: usize = 10_000;
 pub const MAX_WORKSPACE_EDIT_PREVIEW_FILES: usize = 32;
 
@@ -27,6 +28,21 @@ pub struct PositionEdit {
     pub start: Position,
     pub end: Position,
     pub new_text: String,
+}
+
+pub(crate) fn validate_position_edit_batch(edits: &[PositionEdit], field: &str) -> Result<()> {
+    if edits.len() > MAX_POSITION_EDITS {
+        bail!("invalid {field}: expected at most {MAX_POSITION_EDITS} entries");
+    }
+    let replacement_bytes = edits.iter().try_fold(0usize, |total, edit| {
+        total
+            .checked_add(edit.new_text.len())
+            .ok_or_else(|| anyhow::anyhow!("invalid {field}: replacement text is too large"))
+    })?;
+    if replacement_bytes > MAX_POSITION_EDIT_TEXT_BYTES {
+        bail!("invalid {field}: replacement text exceeds {MAX_POSITION_EDIT_TEXT_BYTES} bytes");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
