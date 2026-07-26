@@ -8,7 +8,8 @@ use rusqlite::Connection;
 
 use crate::index_schema::ensure_symbol_tables;
 use crate::index_store::{
-    SymbolRefreshPersistence, persist_symbol_index, persist_symbol_refresh, persisted_byte_range,
+    SymbolRefreshPersistence, load_file_states, persist_symbol_index, persist_symbol_refresh,
+    persisted_byte_range,
 };
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
@@ -102,6 +103,35 @@ fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
     .expect_err("duplicate raw symbol rows should be rejected");
 
     assert!(error.to_string().contains("duplicate raw symbol row"));
+}
+
+#[test]
+fn persist_symbol_index_round_trips_full_u64_fingerprint() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    let raw_symbol = valid_indexed_symbol(&normalized_file);
+    let symbol = valid_symbol_meta(&normalized_file);
+    let file_states = vec![PersistedFileState {
+        file_path: normalized_file.clone(),
+        fingerprint: u64::MAX,
+    }];
+
+    persist_symbol_index(
+        &db_path,
+        &workspace,
+        &[raw_symbol],
+        &[symbol],
+        &file_states,
+        1,
+    )
+    .expect("full-range fingerprints should persist");
+
+    let connection = Connection::open(&db_path).unwrap();
+    let loaded = load_file_states(&connection).unwrap();
+    assert_eq!(loaded[&normalized_file], u64::MAX);
 }
 
 #[test]
@@ -210,6 +240,35 @@ fn invalid_symbol_meta(file_path: &str) -> SymbolMeta {
         file_path: file_path.to_string(),
         node_kind: "function_definition".to_string(),
         byte_range: (8, 4),
+        ..Default::default()
+    }
+}
+
+fn valid_indexed_symbol(file_path: &str) -> IndexedSymbol {
+    IndexedSymbol {
+        symbol_id: "helper".to_string(),
+        semantic_path: "helper".to_string(),
+        base_name: "helper".to_string(),
+        scope_path: None,
+        file_path: file_path.to_string(),
+        node_kind: "function_definition".to_string(),
+        byte_range: (0, 4),
+        signature: None,
+        parameters: Vec::new(),
+        return_type: None,
+        docstring: None,
+        references_by_name: BTreeSet::new(),
+        call_arities_by_name: BTreeMap::new(),
+    }
+}
+
+fn valid_symbol_meta(file_path: &str) -> SymbolMeta {
+    SymbolMeta {
+        symbol_id: "helper".to_string(),
+        semantic_path: "helper".to_string(),
+        file_path: file_path.to_string(),
+        node_kind: "function_definition".to_string(),
+        byte_range: (0, 4),
         ..Default::default()
     }
 }
