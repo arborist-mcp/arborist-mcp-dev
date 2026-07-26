@@ -70,7 +70,7 @@ pub use query::{
 pub use symbol_index_state::{
     inspect_symbol_index, inspect_symbol_index_with_timeout, migrate_symbol_index,
 };
-pub use symbol_query::SymbolQueryContext;
+pub use symbol_query::{MAX_SYMBOL_LIMIT, SymbolQueryContext};
 pub use symbol_trace::{MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS};
 pub use symbols::{
     list_symbols, list_symbols_context, list_symbols_context_filtered,

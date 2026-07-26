@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 use crate::language::normalize_absolute_path;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
@@ -12,10 +12,31 @@ mod read;
 mod search;
 mod trace;
 
+pub const MAX_SYMBOL_LIMIT: usize = 10_000;
+
+pub(crate) fn validate_symbol_limit(limit: usize) -> Result<()> {
+    if limit > MAX_SYMBOL_LIMIT {
+        return Err(anyhow!("symbol limit must not exceed {}", MAX_SYMBOL_LIMIT));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 enum SymbolQueryBackend {
     Workspace(PathBuf),
     Index(PathBuf),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_SYMBOL_LIMIT, validate_symbol_limit};
+
+    #[test]
+    fn validates_symbol_limit_bounds() {
+        assert!(validate_symbol_limit(0).is_ok());
+        assert!(validate_symbol_limit(MAX_SYMBOL_LIMIT).is_ok());
+        assert!(validate_symbol_limit(MAX_SYMBOL_LIMIT + 1).is_err());
+    }
 }
 
 #[derive(Debug, Clone)]

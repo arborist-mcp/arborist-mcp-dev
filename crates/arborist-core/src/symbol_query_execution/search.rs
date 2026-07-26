@@ -8,6 +8,7 @@ use crate::model::{
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
 };
 use crate::symbol_map::resolved_symbol_map;
+use crate::symbol_query::validate_symbol_limit;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
@@ -22,6 +23,7 @@ pub(crate) fn search_from_symbols(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
+    validate_symbol_limit(limit)?;
     let query = query.trim();
     if query.is_empty() {
         return Err(anyhow!("query must not be blank"));

@@ -8,6 +8,7 @@ use crate::model::{
     SymbolListResult, SymbolMeta, TraceDirection,
 };
 use crate::symbol_map::resolved_symbol_map;
+use crate::symbol_query::validate_symbol_limit;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{normalize_optional_search_filter, symbol_matches_search_filters};
 use crate::symbol_summary::symbol_summary_from_meta;
@@ -19,6 +20,7 @@ pub(crate) fn list_from_symbols(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
+    validate_symbol_limit(limit)?;
     let file_path_contains =
         normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
     let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
