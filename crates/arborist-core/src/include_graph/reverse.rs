@@ -5,7 +5,8 @@ use anyhow::Result;
 
 use crate::language::{
     c_include_targets, c_local_include_targets, detect_language, normalize_absolute_path,
-    normalize_path, parse_document, path_is_inside_workspace, read_source, resolve_local_c_include,
+    normalize_path, parse_document_with_timeout, path_is_inside_workspace, read_source,
+    resolve_local_c_include,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::{
@@ -26,7 +27,12 @@ pub(super) fn reverse_local_c_include_index(
         }
 
         let source = read_source(&path)?;
-        let document = parse_document(&path, &source)?;
+        let document = parse_document_with_timeout(
+            &path,
+            &source,
+            deadline.remaining_timeout_micros("parsing C include files")?,
+        )?;
+        deadline.check("extracting C include targets")?;
         let local_include_targets = c_local_include_targets(document.tree.root_node(), &source)?
             .into_iter()
             .collect::<BTreeSet<_>>();
