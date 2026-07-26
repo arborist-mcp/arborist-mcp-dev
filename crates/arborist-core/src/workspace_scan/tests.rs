@@ -95,30 +95,6 @@ fn collect_source_files_skips_ignored_dirs_before_file_limit() {
 }
 
 #[test]
-fn collect_source_files_includes_cpp_module_extensions() {
-    let workspace = temporary_dir();
-    for extension in ["ixx", "cppm", "mpp", "mxx", "cxxm"] {
-        fs::write(
-            workspace.join(format!("module.{extension}")),
-            "export module arborist;\nexport int value() { return 1; }\n",
-        )
-        .unwrap();
-    }
-
-    let files =
-        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(5))
-            .unwrap();
-
-    assert_eq!(
-        files,
-        ["cppm", "cxxm", "ixx", "mpp", "mxx"]
-            .into_iter()
-            .map(|extension| workspace.join(format!("module.{extension}")))
-            .collect::<Vec<_>>()
-    );
-}
-
-#[test]
 fn collect_source_files_skips_symlink_directory_escape() {
     let root = temporary_dir();
     let workspace = root.join("workspace");

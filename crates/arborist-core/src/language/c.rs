@@ -9,9 +9,7 @@ use super::{node_text, normalize_absolute_path};
 pub const C_HEADER_EXTENSIONS: &[&str] = &["h"];
 pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
 pub const CPP_HEADER_EXTENSIONS: &[&str] = &["hpp", "hh", "hxx", "h++"];
-pub const CPP_SOURCE_EXTENSIONS: &[&str] = &[
-    "cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl", "ixx", "cppm", "mpp", "mxx", "cxxm",
-];
+pub const CPP_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl"];
 
 const CPP_COMPANION_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++"];
 
