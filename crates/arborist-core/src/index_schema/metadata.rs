@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
 
 use crate::language::{normalize_absolute_path, normalize_path};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 use super::schema::SYMBOL_INDEX_SCHEMA_VERSION;
 
@@ -137,6 +138,16 @@ pub(crate) fn validate_symbol_index_workspace(
 }
 
 pub(crate) fn load_indexed_files_metadata(connection: &Connection) -> Result<usize> {
+    load_indexed_files_metadata_with_deadline(connection, None)
+}
+
+pub(crate) fn load_indexed_files_metadata_with_deadline(
+    connection: &Connection,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<usize> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file metadata")?;
+    }
     let Some(value) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = 'indexed_files'",
@@ -148,7 +159,40 @@ pub(crate) fn load_indexed_files_metadata(connection: &Connection) -> Result<usi
         return Err(anyhow!("missing indexed_files metadata"));
     };
 
-    value
+    let indexed_files = value
         .parse::<usize>()
-        .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))
+        .map_err(|error| anyhow!("invalid indexed_files metadata `{value}`: {error}"))?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file metadata")?;
+    }
+    Ok(indexed_files)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use rusqlite::Connection;
+
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    use super::load_indexed_files_metadata_with_deadline;
+
+    #[test]
+    fn load_indexed_files_metadata_checks_deadline_before_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))
+            .expect_err("expired deadline should stop before metadata loading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
 }
