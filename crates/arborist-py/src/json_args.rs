@@ -1,11 +1,12 @@
 use pyo3::PyResult;
 use pyo3::exceptions::PyValueError;
-use serde::de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use std::fmt;
 
 pub(crate) const MAX_JSON_ARG_BYTES: usize = 128 * 1024 * 1024;
+pub(crate) const MAX_JSON_ARG_DEPTH: usize = 64;
 
 pub(crate) fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
     if json.len() > MAX_JSON_ARG_BYTES {
@@ -25,11 +26,33 @@ impl<'de> Deserialize<'de> for DuplicateCheckedJson {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(DuplicateCheckedJsonVisitor)
+        deserializer.deserialize_any(DuplicateCheckedJsonVisitor { depth: 0 })
     }
 }
 
-struct DuplicateCheckedJsonVisitor;
+struct DuplicateCheckedJsonVisitor {
+    depth: usize,
+}
+
+struct DuplicateCheckedJsonSeed {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for DuplicateCheckedJsonSeed {
+    type Value = DuplicateCheckedJson;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        if self.depth > MAX_JSON_ARG_DEPTH {
+            return Err(de::Error::custom(format!(
+                "JSON argument exceeds maximum nesting depth of {MAX_JSON_ARG_DEPTH}"
+            )));
+        }
+        deserializer.deserialize_any(DuplicateCheckedJsonVisitor { depth: self.depth })
+    }
+}
 
 impl<'de> Visitor<'de> for DuplicateCheckedJsonVisitor {
     type Value = DuplicateCheckedJson;
@@ -85,7 +108,10 @@ impl<'de> Visitor<'de> for DuplicateCheckedJsonVisitor {
     where
         D: Deserializer<'de>,
     {
-        DuplicateCheckedJson::deserialize(deserializer)
+        DuplicateCheckedJsonSeed {
+            depth: self.depth.saturating_add(1),
+        }
+        .deserialize(deserializer)
     }
 
     fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
@@ -93,7 +119,10 @@ impl<'de> Visitor<'de> for DuplicateCheckedJsonVisitor {
         A: SeqAccess<'de>,
     {
         let mut values = Vec::with_capacity(access.size_hint().unwrap_or(0));
-        while let Some(value) = access.next_element::<DuplicateCheckedJson>()? {
+        let child_depth = self.depth.saturating_add(1);
+        while let Some(value) =
+            access.next_element_seed(DuplicateCheckedJsonSeed { depth: child_depth })?
+        {
             values.push(value.0);
         }
         Ok(DuplicateCheckedJson(serde_json::Value::Array(values)))
@@ -104,13 +133,14 @@ impl<'de> Visitor<'de> for DuplicateCheckedJsonVisitor {
         A: MapAccess<'de>,
     {
         let mut values = serde_json::Map::new();
+        let child_depth = self.depth.saturating_add(1);
         while let Some(key) = access.next_key::<String>()? {
             if values.contains_key(&key) {
                 return Err(de::Error::custom(format!(
                     "duplicate JSON object key `{key}`"
                 )));
             }
-            let value = access.next_value::<DuplicateCheckedJson>()?;
+            let value = access.next_value_seed(DuplicateCheckedJsonSeed { depth: child_depth })?;
             values.insert(key, value.0);
         }
         Ok(DuplicateCheckedJson(serde_json::Value::Object(values)))

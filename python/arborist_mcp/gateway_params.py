@@ -8,6 +8,7 @@ from .mcp_validation import reject_unexpected_params
 from .tool_result_schemas import JsonRpcError
 from .tool_specs import (
     MAX_JSON_ARG_BYTES,
+    MAX_JSON_ARG_DEPTH,
     MAX_POSITION_EDITS,
     MAX_POSITION_EDIT_TEXT_BYTES,
     TEXT_PARAM_MAX_LENGTH,
@@ -246,7 +247,7 @@ class GatewayParameterValidation:
         return encoded
 
     @staticmethod
-    def _validate_json_param(value: Any, path: str) -> None:
+    def _validate_json_param(value: Any, path: str, depth: int = 0) -> None:
         if value is None or isinstance(value, (bool, str)):
             return
         if isinstance(value, int) and not isinstance(value, bool):
@@ -256,13 +257,27 @@ class GatewayParameterValidation:
                 return
             raise JsonRpcError(-32602, f"invalid finite number param: {path}")
         if isinstance(value, list):
+            if depth >= MAX_JSON_ARG_DEPTH:
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid JSON-compatible param: {path} exceeds maximum nesting depth {MAX_JSON_ARG_DEPTH}",
+                )
             for index, item in enumerate(value):
-                GatewayParameterValidation._validate_json_param(item, f"{path}[{index}]")
+                GatewayParameterValidation._validate_json_param(
+                    item, f"{path}[{index}]", depth + 1
+                )
             return
         if isinstance(value, dict):
+            if depth >= MAX_JSON_ARG_DEPTH:
+                raise JsonRpcError(
+                    -32602,
+                    f"invalid JSON-compatible param: {path} exceeds maximum nesting depth {MAX_JSON_ARG_DEPTH}",
+                )
             for item_key, item_value in value.items():
                 if not isinstance(item_key, str):
                     raise JsonRpcError(-32602, f"invalid string object key param: {path}")
-                GatewayParameterValidation._validate_json_param(item_value, f"{path}.{item_key}")
+                GatewayParameterValidation._validate_json_param(
+                    item_value, f"{path}.{item_key}", depth + 1
+                )
             return
         raise JsonRpcError(-32602, f"invalid JSON-compatible param: {path}")

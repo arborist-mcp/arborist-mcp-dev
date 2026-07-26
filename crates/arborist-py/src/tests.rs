@@ -1,5 +1,5 @@
 use super::{ArboristCore, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg};
-use crate::json_args::MAX_JSON_ARG_BYTES;
+use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
 use arborist_core::PositionEdit;
 use serde_json::Value;
 use std::sync::Once;
@@ -60,6 +60,17 @@ fn parse_json_arg_rejects_oversized_payloads() {
     let error = parse_json_arg::<PositionEdit>(&payload)
         .expect_err("oversized JSON payload should be rejected");
     assert!(error.to_string().contains("exceeds maximum size"));
+}
+
+#[test]
+fn parse_json_arg_rejects_excessive_nesting() {
+    let mut payload = "[".repeat(MAX_JSON_ARG_DEPTH + 1);
+    payload.push('0');
+    payload.push_str(&"]".repeat(MAX_JSON_ARG_DEPTH + 1));
+
+    let error = parse_json_arg::<Value>(&payload)
+        .expect_err("excessively nested JSON payload should be rejected");
+    assert!(error.to_string().contains("maximum nesting depth"));
 }
 
 #[test]
