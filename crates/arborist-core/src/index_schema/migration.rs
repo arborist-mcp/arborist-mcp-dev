@@ -63,7 +63,7 @@ fn migrate_cpp_callable_symbol_ids(transaction: &Transaction<'_>) -> Result<()> 
     let mut statement = transaction.prepare(
         "SELECT rowid, semantic_path, file_path, node_kind, signature, parameters_json FROM symbols",
     )?;
-    let rows = statement.query_map([], |row| {
+    let mut rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
@@ -73,10 +73,10 @@ fn migrate_cpp_callable_symbol_ids(transaction: &Transaction<'_>) -> Result<()> 
             row.get::<_, String>(5)?,
         ))
     })?;
-    let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-    drop(statement);
+    let mut update = transaction.prepare("UPDATE symbols SET symbol_id = ?1 WHERE rowid = ?2")?;
 
-    for (rowid, semantic_path, file_path, node_kind, signature, parameters_json) in rows {
+    for row in &mut rows {
+        let (rowid, semantic_path, file_path, node_kind, signature, parameters_json) = row?;
         if detect_language(Path::new(&file_path)).ok() != Some(LanguageId::Cpp)
             || !matches!(
                 node_kind.as_str(),
@@ -93,10 +93,7 @@ fn migrate_cpp_callable_symbol_ids(transaction: &Transaction<'_>) -> Result<()> 
                 )
             })?;
         let symbol_id = cpp_callable_symbol_id(&semantic_path, &parameters, signature.as_deref());
-        transaction.execute(
-            "UPDATE symbols SET symbol_id = ?1 WHERE rowid = ?2",
-            (&symbol_id, rowid),
-        )?;
+        update.execute((&symbol_id, rowid))?;
     }
 
     Ok(())
