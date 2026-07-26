@@ -15,9 +15,9 @@ class ToolParamSpec(NamedTuple):
     optional: bool = False
     default: Any = None
     string_max_length: int | None = None
-    string_max_bytes: int | None = None
     int_max_value: int | None = None
     source_anchored_optional_tools: frozenset[str] = frozenset()
+    string_max_bytes: int | None = None
 
 
 TOOL_SPECS = (
