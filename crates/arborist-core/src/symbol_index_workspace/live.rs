@@ -11,6 +11,7 @@ use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
     assign_symbol_ids, resolve_symbol_dependencies, resolve_symbol_dependencies_with_overrides,
+    resolve_symbol_dependencies_with_overrides_with_deadline,
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::IndexedSymbol;
@@ -55,8 +56,8 @@ pub(crate) fn resolve_workspace_symbols_with_timeout(
     let indexed_paths = collect_source_files_with_deadline(workspace_root, limits, &deadline)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index_with_deadline(&indexed_paths, None, limits, &deadline)?;
-    deadline.check("resolving workspace symbols")?;
-    let resolved_symbols = resolve_symbol_dependencies(&raw_symbols);
+    let resolved_symbols =
+        resolve_symbol_dependencies_with_overrides_with_deadline(&raw_symbols, None, &deadline)?;
     Ok((resolved_symbols, indexed_files))
 }
 
@@ -104,9 +105,11 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
         limits,
         &deadline,
     )?;
-    deadline.check("resolving workspace symbols")?;
-    let resolved_symbols =
-        resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(&file_overrides));
+    let resolved_symbols = resolve_symbol_dependencies_with_overrides_with_deadline(
+        &raw_symbols,
+        Some(&file_overrides),
+        &deadline,
+    )?;
     Ok((resolved_symbols, indexed_files))
 }
 

@@ -24,6 +24,7 @@ use crate::symbol_index_model::{
     CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, IndexedSymbol,
 };
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 use cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
@@ -141,6 +142,71 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
             })
         })
         .collect()
+}
+
+pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<Vec<SymbolMeta>> {
+    let name_index = build_name_index(raw_symbols);
+    let semantic_path_index = build_semantic_path_index(raw_symbols);
+    let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
+    let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for (symbol_id, indexes) in &symbol_indexes {
+        deadline.check("resolving symbol dependencies")?;
+        let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
+        for index in indexes {
+            dependencies.extend(resolve_dependencies_for_symbol(
+                &raw_symbols[*index],
+                raw_symbols,
+                &name_index,
+                &semantic_path_index,
+                file_overrides,
+            ));
+            deadline.check("resolving symbol dependencies")?;
+        }
+    }
+
+    let mut reference_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (caller, callees) in &dependency_map {
+        deadline.check("building symbol references")?;
+        for callee in callees {
+            reference_map
+                .entry(callee.clone())
+                .or_default()
+                .insert(caller.clone());
+        }
+    }
+
+    let mut resolved_symbols = Vec::with_capacity(raw_symbols.len());
+    for symbol in raw_symbols {
+        deadline.check("materializing resolved symbols")?;
+        resolved_symbols.push(SymbolMeta::new(SymbolMetaInit {
+            symbol_id: symbol.symbol_id.clone(),
+            semantic_path: symbol.semantic_path.clone(),
+            scope_path: symbol.scope_path.clone(),
+            file_path: symbol.file_path.clone(),
+            node_kind: symbol.node_kind.clone(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: symbol.byte_range,
+            signature: symbol.signature.clone(),
+            parameters: symbol.parameters.clone(),
+            return_type: symbol.return_type.clone(),
+            docstring: symbol.docstring.clone(),
+            dependencies: dependency_map
+                .get(&symbol.symbol_id)
+                .map(|dependencies| dependencies.iter().cloned().collect())
+                .unwrap_or_default(),
+            references: reference_map
+                .get(&symbol.symbol_id)
+                .map(|references| references.iter().cloned().collect())
+                .unwrap_or_default(),
+        }));
+    }
+
+    Ok(resolved_symbols)
 }
 
 pub(super) fn resolve_dependencies_for_symbol(
