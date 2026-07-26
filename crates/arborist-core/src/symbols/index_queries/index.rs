@@ -14,7 +14,7 @@ use crate::index_store::{
 };
 use crate::language::{
     detect_language, ensure_path_inside_workspace, normalize_absolute_path, normalize_path,
-    parse_document, read_source,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::SymbolIndexStats;
 use crate::symbol_dependency::{
@@ -170,7 +170,12 @@ pub fn refresh_symbol_index_for_file_with_limits(
         if refresh_path.exists() && !skip_refresh_path {
             validate_source_file_size(refresh_path, limits)?;
             let source = read_source(refresh_path)?;
-            let document = parse_document(refresh_path, &source)?;
+            let document = parse_document_with_timeout(
+                refresh_path,
+                &source,
+                deadline.remaining_timeout_micros("parsing refreshed files")?,
+            )?;
+            deadline.check("extracting refreshed symbols")?;
             let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
 
             file_states.insert(normalized_refresh_path.clone(), source_fingerprint(&source));

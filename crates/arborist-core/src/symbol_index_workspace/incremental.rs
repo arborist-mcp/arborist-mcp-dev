@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use crate::index_schema::ensure_symbol_tables;
 use crate::index_store::{load_file_states, load_indexed_symbols_grouped_by_file};
-use crate::language::{normalize_path, parse_document, read_source};
+use crate::language::{normalize_path, parse_document_with_timeout, read_source};
 use crate::symbol_dependency::{assign_symbol_ids, resolve_symbol_dependencies};
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
@@ -65,7 +65,11 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
             continue;
         }
 
-        let document = parse_document(&path, &source)?;
+        let document = parse_document_with_timeout(
+            &path,
+            &source,
+            deadline.remaining_timeout_micros("parsing workspace files")?,
+        )?;
         raw_symbols.extend(index_symbols_from_document(&path, &source, &document)?);
         rebuilt_files += 1;
     }
