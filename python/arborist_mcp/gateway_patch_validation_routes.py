@@ -51,6 +51,7 @@ class GatewayPatchValidationRoutes:
                     source,
                     f"files[{index}].source",
                     TEXT_PARAM_MAX_LENGTH,
+                    TEXT_PARAM_MAX_LENGTH,
                 )
             edits = file.get("edits")
             if isinstance(edits, list):

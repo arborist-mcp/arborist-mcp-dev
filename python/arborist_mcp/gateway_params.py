@@ -205,6 +205,7 @@ class GatewayParameterValidation:
                 edit["new_text"],
                 f"edits[{index}].new_text",
                 TEXT_PARAM_MAX_LENGTH,
+                TEXT_PARAM_MAX_LENGTH,
             )
             replacement_bytes += len(edit["new_text"].encode("utf-8"))
             if replacement_bytes > MAX_POSITION_EDIT_TEXT_BYTES:
