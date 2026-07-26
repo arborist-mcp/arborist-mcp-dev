@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import math
 import os
 import sys
 import time
@@ -406,8 +407,10 @@ def _bounded_positive_int(value: str, maximum: int) -> int:
 
 def _positive_float(value: str) -> float:
     parsed = float(value)
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("value must be greater than zero")
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            "value must be a finite number greater than zero"
+        )
     return parsed
 
 

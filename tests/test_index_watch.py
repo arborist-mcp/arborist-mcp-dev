@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from contextlib import redirect_stderr
 import io
 import json
@@ -8,6 +9,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from arborist_mcp.index_watch import (
+    _positive_float,
     IndexWatchError,
     IndexWatchTarget,
     check_watch_targets,
@@ -66,6 +68,11 @@ class StubCore:
 
 
 class IndexWatchTests(unittest.TestCase):
+    def test_positive_float_rejects_non_finite_values(self) -> None:
+        for value in ("nan", "inf", "-inf", "0"):
+            with self.assertRaisesRegex(argparse.ArgumentTypeError, "finite number"):
+                _positive_float(value)
+
     def test_reconcile_leaves_healthy_index_unchanged(self) -> None:
         core = StubCore(health_payload(ok=True, action="none"))
 
