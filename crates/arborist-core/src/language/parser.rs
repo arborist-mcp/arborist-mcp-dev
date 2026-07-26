@@ -1,7 +1,8 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use tree_sitter::{Language, Parser, Tree};
+use tree_sitter::{Language, ParseOptions, Parser, Tree};
 
 use crate::language::MAX_SOURCE_FILE_BYTES;
 use crate::language::{
@@ -30,12 +31,18 @@ pub fn parse_document_with_timeout(
     validate_source_length(path, source.len())?;
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;
-    if timeout_micros > 0 {
-        #[allow(deprecated)]
-        parser.set_timeout_micros(timeout_micros);
+    let tree = if timeout_micros > 0 {
+        let deadline = Instant::now() + Duration::from_micros(timeout_micros);
+        let mut progress_callback = |_: &tree_sitter::ParseState| Instant::now() >= deadline;
+        let parse_options = ParseOptions::new().progress_callback(&mut progress_callback);
+        let mut read_source = |byte_offset: usize, _position: tree_sitter::Point| {
+            source.as_bytes().get(byte_offset..).unwrap_or_default()
+        };
+        parser.parse_with_options(&mut read_source, None, Some(parse_options))
+    } else {
+        parser.parse(source, None)
     }
-
-    let tree = parser.parse(source, None).ok_or_else(|| {
+    .ok_or_else(|| {
         if timeout_micros > 0 {
             anyhow!(
                 "parsing {} timed out after {} microseconds",
