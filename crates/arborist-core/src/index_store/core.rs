@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, params};
 
+use super::metadata::persisted_fingerprint;
 use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
@@ -62,7 +63,10 @@ pub(crate) fn persist_symbol_index(
             tx.prepare("INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)")?;
 
         for file_state in file_states {
-            statement.execute(params![file_state.file_path, file_state.fingerprint as i64])?;
+            statement.execute(params![
+                file_state.file_path,
+                persisted_fingerprint(file_state.fingerprint)?
+            ])?;
         }
     }
     tx.commit()?;

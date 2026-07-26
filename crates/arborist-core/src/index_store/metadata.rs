@@ -30,6 +30,11 @@ pub(crate) fn load_file_states(connection: &Connection) -> Result<BTreeMap<Strin
     Ok(states)
 }
 
+pub(crate) fn persisted_fingerprint(fingerprint: u64) -> Result<i64> {
+    i64::try_from(fingerprint)
+        .map_err(|error| anyhow!("fingerprint cannot be persisted as SQLite INTEGER: {error}"))
+}
+
 pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
     let sql = format!("SELECT COUNT(*) FROM {table_name}");
     let count = connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?;
@@ -60,5 +65,17 @@ mod tests {
             .expect_err("negative persisted fingerprints should be rejected");
 
         assert!(error.to_string().contains("invalid fingerprint"));
+    }
+
+    #[test]
+    fn persisted_fingerprint_rejects_values_outside_sqlite_integer_range() {
+        let error = super::persisted_fingerprint(i64::MAX as u64 + 1)
+            .expect_err("out-of-range fingerprints should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be persisted as SQLite INTEGER")
+        );
     }
 }

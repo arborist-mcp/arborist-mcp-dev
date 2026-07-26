@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use rusqlite::{Connection, params};
 
 use super::core::{persisted_byte_range, raw_symbol_row_map, reference_names, symbol_row_key};
+use super::metadata::persisted_fingerprint;
 use crate::index_schema::{ensure_symbol_tables, persist_symbol_index_metadata};
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::IndexedSymbol;
@@ -106,7 +107,7 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
         if let Some(fingerprint) = context.file_states.get(changed_file_path) {
             tx.execute(
                 "INSERT INTO file_state (file_path, fingerprint) VALUES (?1, ?2)",
-                params![changed_file_path, *fingerprint as i64],
+                params![changed_file_path, persisted_fingerprint(*fingerprint)?],
             )?;
         }
     }
