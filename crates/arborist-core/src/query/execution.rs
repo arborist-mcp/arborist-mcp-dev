@@ -5,7 +5,8 @@ use anyhow::{Context, Result, bail};
 use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::language::{
-    language_for_id, normalize_absolute_path, normalize_path, parse_document, position_from,
+    language_for_id, normalize_absolute_path, normalize_path, parse_document_with_timeout,
+    position_from,
 };
 use crate::model::{LanguageId, QueryCaptureResult};
 use crate::semantic::c_symbol_nodes;
@@ -36,7 +37,18 @@ pub(super) fn execute_tree_query_with_timeout(
     let deadline = Instant::now() + Duration::from_micros(timeout_micros);
     let path = normalize_absolute_path(path)?;
     ensure_within_deadline(&path, timeout_micros, deadline)?;
-    let document = parse_document(&path, source)?;
+    let remaining_parse_micros = deadline
+        .saturating_duration_since(Instant::now())
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
+    if remaining_parse_micros == 0 {
+        bail!(
+            "Tree-sitter query timed out for {} after {} microseconds",
+            normalize_path(&path),
+            timeout_micros
+        );
+    }
+    let document = parse_document_with_timeout(&path, source, remaining_parse_micros)?;
     ensure_within_deadline(&path, timeout_micros, deadline)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
@@ -130,7 +142,7 @@ pub(super) fn execute_tree_query_with_timeout(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::ensure_within_deadline;
+    use super::{ensure_within_deadline, execute_tree_query_with_timeout};
 
     #[test]
     fn deadline_helper_reports_expiration() {
@@ -143,5 +155,20 @@ mod tests {
 
         assert!(error.to_string().contains("timed out"));
         assert!(error.to_string().contains("sample.py"));
+    }
+
+    #[test]
+    fn parser_timeout_interrupts_large_source_before_query_execution() {
+        let source = "(".repeat(1_000_000);
+        let error = execute_tree_query_with_timeout(
+            std::path::Path::new("sample.py"),
+            &source,
+            "(identifier) @id",
+            10,
+            Some(1),
+        )
+        .expect_err("parser timeout should interrupt oversized work");
+
+        assert!(error.to_string().contains("timed out"));
     }
 }

@@ -19,13 +19,33 @@ pub fn supported_languages() -> Vec<&'static str> {
 }
 
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
+    parse_document_with_timeout(path, source, 0)
+}
+
+pub fn parse_document_with_timeout(
+    path: &Path,
+    source: &str,
+    timeout_micros: u64,
+) -> Result<ParsedDocument> {
     validate_source_length(path, source.len())?;
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;
+    if timeout_micros > 0 {
+        #[allow(deprecated)]
+        parser.set_timeout_micros(timeout_micros);
+    }
 
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| anyhow!("failed to parse {}", path.display()))?;
+    let tree = parser.parse(source, None).ok_or_else(|| {
+        if timeout_micros > 0 {
+            anyhow!(
+                "parsing {} timed out after {} microseconds",
+                path.display(),
+                timeout_micros
+            )
+        } else {
+            anyhow!("failed to parse {}", path.display())
+        }
+    })?;
 
     Ok(ParsedDocument { language_id, tree })
 }

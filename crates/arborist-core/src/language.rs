@@ -12,8 +12,8 @@ pub use c::{
 };
 pub(crate) use c::{c_include_targets_before, extension_case_candidates};
 pub use parser::{
-    ParsedDocument, detect_language, language_for_id, parse_document, parser_for_language,
-    supported_languages,
+    ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,
+    parser_for_language, supported_languages,
 };
 pub(crate) use parser::{validate_source_length, validate_source_size};
 pub(crate) use paths::{ensure_path_inside_workspace, path_is_inside_workspace};
