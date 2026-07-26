@@ -31,7 +31,12 @@ class GatewayParameterValidation:
         effective_max_length = max_length or (
             param_spec.string_max_length if param_spec is not None else None
         )
-        GatewayParameterValidation._validate_string_length(value, key, effective_max_length)
+        effective_max_bytes = (
+            param_spec.string_max_bytes if param_spec is not None else None
+        )
+        GatewayParameterValidation._validate_string_length(
+            value, key, effective_max_length, effective_max_bytes
+        )
         return value
 
     @staticmethod
@@ -67,7 +72,12 @@ class GatewayParameterValidation:
         effective_max_length = max_length or (
             param_spec.string_max_length if param_spec is not None else None
         )
-        GatewayParameterValidation._validate_string_length(value, key, effective_max_length)
+        effective_max_bytes = (
+            param_spec.string_max_bytes if param_spec is not None else None
+        )
+        GatewayParameterValidation._validate_string_length(
+            value, key, effective_max_length, effective_max_bytes
+        )
         return value
 
     @staticmethod
@@ -75,11 +85,17 @@ class GatewayParameterValidation:
         value: str,
         key: str,
         max_length: int | None,
+        max_bytes: int | None = None,
     ) -> None:
         if max_length is not None and len(value) > max_length:
             raise JsonRpcError(
                 -32602,
                 f"invalid string param: {key} exceeds max length {max_length}",
+            )
+        if max_bytes is not None and len(value.encode("utf-8")) > max_bytes:
+            raise JsonRpcError(
+                -32602,
+                f"invalid string param: {key} exceeds max byte length {max_bytes}",
             )
 
     @staticmethod

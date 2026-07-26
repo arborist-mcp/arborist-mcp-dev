@@ -15,6 +15,7 @@ class ToolParamSpec(NamedTuple):
     optional: bool = False
     default: Any = None
     string_max_length: int | None = None
+    string_max_bytes: int | None = None
     int_max_value: int | None = None
     source_anchored_optional_tools: frozenset[str] = frozenset()
 
@@ -448,6 +449,7 @@ TOOL_PARAM_SPECS = {
             max_length=TEXT_PARAM_MAX_LENGTH,
         ),
         string_max_length=TEXT_PARAM_MAX_LENGTH,
+        string_max_bytes=TEXT_PARAM_MAX_LENGTH,
     ),
     "new_text": ToolParamSpec(
         _schema(
@@ -457,6 +459,7 @@ TOOL_PARAM_SPECS = {
             max_length=TEXT_PARAM_MAX_LENGTH,
         ),
         string_max_length=TEXT_PARAM_MAX_LENGTH,
+        string_max_bytes=TEXT_PARAM_MAX_LENGTH,
     ),
     "node_kind": ToolParamSpec(
         _schema("string", "Optional Tree-sitter node-kind filter."),
@@ -497,6 +500,7 @@ TOOL_PARAM_SPECS = {
         ),
         optional=True,
         string_max_length=TEXT_PARAM_MAX_LENGTH,
+        string_max_bytes=TEXT_PARAM_MAX_LENGTH,
     ),
     "start_byte": ToolParamSpec(
         _schema("integer", "Inclusive start byte for a buffer edit.", minimum=0)
