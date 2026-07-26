@@ -1,7 +1,8 @@
 use super::{
-    DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_TIMEOUT_MS, SKIPPED_WORKSPACE_DIR_NAMES,
-    WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files_with_limits,
-    should_skip_dir_name, should_skip_index_path, validate_workspace_scan_limits,
+    DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_FILE_BYTES, MAX_WORKSPACE_SCAN_FILES,
+    MAX_WORKSPACE_SCAN_TIMEOUT_MS, SKIPPED_WORKSPACE_DIR_NAMES, WorkspaceScanDeadline,
+    WorkspaceScanLimits, collect_source_files_with_limits, should_skip_dir_name,
+    should_skip_index_path, validate_workspace_scan_limits,
 };
 
 use std::fs;
@@ -199,6 +200,24 @@ fn validates_workspace_scan_timeout_bounds() {
     assert!(
         validate_workspace_scan_limits(WorkspaceScanLimits {
             timeout_ms: Some(MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1),
+            ..WorkspaceScanLimits::default()
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn validates_workspace_scan_file_and_count_bounds() {
+    assert!(
+        validate_workspace_scan_limits(WorkspaceScanLimits {
+            max_files: MAX_WORKSPACE_SCAN_FILES + 1,
+            ..WorkspaceScanLimits::default()
+        })
+        .is_err()
+    );
+    assert!(
+        validate_workspace_scan_limits(WorkspaceScanLimits {
+            max_file_bytes: Some(MAX_WORKSPACE_SCAN_FILE_BYTES + 1),
             ..WorkspaceScanLimits::default()
         })
         .is_err()

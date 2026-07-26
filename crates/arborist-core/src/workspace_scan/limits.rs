@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 
 pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
+pub const MAX_WORKSPACE_SCAN_FILES: usize = 200_000;
+pub const MAX_WORKSPACE_SCAN_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_WORKSPACE_SCAN_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy)]
@@ -82,8 +84,23 @@ pub(crate) fn validate_workspace_scan_limits(limits: WorkspaceScanLimits) -> Res
     if limits.max_files == 0 {
         bail!("invalid workspace scan max_files: value must be greater than zero");
     }
+    if limits.max_files > MAX_WORKSPACE_SCAN_FILES {
+        bail!(
+            "invalid workspace scan max_files: value must not exceed {}",
+            MAX_WORKSPACE_SCAN_FILES,
+        );
+    }
     if limits.max_file_bytes == Some(0) {
         bail!("invalid workspace scan max_file_bytes: value must be greater than zero");
+    }
+    if limits
+        .max_file_bytes
+        .is_some_and(|max_file_bytes| max_file_bytes > MAX_WORKSPACE_SCAN_FILE_BYTES)
+    {
+        bail!(
+            "invalid workspace scan max_file_bytes: value must not exceed {}",
+            MAX_WORKSPACE_SCAN_FILE_BYTES,
+        );
     }
     if limits.timeout_ms == Some(0) {
         bail!("invalid workspace scan timeout_ms: value must be greater than zero");

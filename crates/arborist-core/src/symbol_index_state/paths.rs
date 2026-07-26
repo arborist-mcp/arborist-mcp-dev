@@ -9,8 +9,9 @@ use crate::language::{
 };
 use crate::model::SymbolMeta;
 use crate::workspace_scan::{
-    DEFAULT_WORKSPACE_MAX_FILES, WorkspaceScanDeadline, WorkspaceScanLimits,
-    collect_source_files_with_deadline, collect_source_files_with_limits, should_skip_index_path,
+    DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline,
+    WorkspaceScanLimits, collect_source_files_with_deadline, collect_source_files_with_limits,
+    should_skip_index_path,
 };
 
 use super::fingerprints::source_fingerprint;
@@ -117,7 +118,8 @@ pub(crate) fn unindexed_workspace_files(
 ) -> Result<Vec<String>> {
     let max_files = file_states
         .len()
-        .saturating_add(DEFAULT_WORKSPACE_MAX_FILES);
+        .saturating_add(DEFAULT_WORKSPACE_MAX_FILES)
+        .min(MAX_WORKSPACE_SCAN_FILES);
     let limits = WorkspaceScanLimits::with_max_files(max_files);
     let paths = match deadline {
         Some(deadline) => collect_source_files_with_deadline(workspace_root, limits, deadline)?,

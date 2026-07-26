@@ -112,7 +112,8 @@ pub use symbols::{
 pub use vfs::VirtualFileSystem;
 pub use workspace_edit_preview::preview_workspace_position_edits;
 pub use workspace_scan::{
-    DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_TIMEOUT_MS, WorkspaceScanLimits,
+    DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_FILE_BYTES, MAX_WORKSPACE_SCAN_FILES,
+    MAX_WORKSPACE_SCAN_TIMEOUT_MS, WorkspaceScanLimits,
 };
 
 #[cfg(test)]
