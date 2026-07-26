@@ -57,8 +57,9 @@ pub(crate) use api::{
 pub use api_patch_validation::export_patch_diagnostics_sarif;
 pub use language::{read_source, supported_languages};
 pub use patching::{
-    patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
-    patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
+    MAX_BYPASS_REASON_BYTES, MAX_PATCH_REPLACEMENT_BYTES, patch_ast_node,
+    patch_ast_node_at_position, patch_ast_node_at_position_from_path, patch_ast_node_from_path,
+    preview_patch_ast_node, preview_patch_ast_node_at_position,
     preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
 };
 pub use query::{

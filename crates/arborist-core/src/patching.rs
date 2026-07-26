@@ -40,9 +40,18 @@ pub use api::{
 
 use anyhow::{Result, bail};
 
+pub const MAX_PATCH_REPLACEMENT_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_BYPASS_REASON_BYTES: usize = 4 * 1024;
+
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {
     if bypass_reason.is_some_and(|reason| reason.trim().is_empty()) {
         bail!("invalid bypass_reason: reason must not be blank");
+    }
+    if bypass_reason.is_some_and(|reason| reason.len() > MAX_BYPASS_REASON_BYTES) {
+        bail!(
+            "invalid bypass_reason: reason exceeds max bytes ({})",
+            MAX_BYPASS_REASON_BYTES
+        );
     }
     Ok(())
 }
@@ -51,5 +60,34 @@ pub(crate) fn validate_patch_replacement(new_code: &str) -> Result<()> {
     if new_code.trim().is_empty() {
         bail!("invalid new_code: replacement must not be blank");
     }
+    if new_code.len() > MAX_PATCH_REPLACEMENT_BYTES {
+        bail!(
+            "invalid new_code: replacement exceeds max bytes ({})",
+            MAX_PATCH_REPLACEMENT_BYTES
+        );
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_BYPASS_REASON_BYTES, MAX_PATCH_REPLACEMENT_BYTES, validate_bypass_reason,
+        validate_patch_replacement,
+    };
+
+    #[test]
+    fn validates_patch_replacement_size() {
+        assert!(validate_patch_replacement("return 1").is_ok());
+        assert!(validate_patch_replacement(&"x".repeat(MAX_PATCH_REPLACEMENT_BYTES)).is_ok());
+        assert!(validate_patch_replacement(&"x".repeat(MAX_PATCH_REPLACEMENT_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn validates_bypass_reason_size() {
+        assert!(validate_bypass_reason(None).is_ok());
+        assert!(validate_bypass_reason(Some("reason")).is_ok());
+        assert!(validate_bypass_reason(Some(&"x".repeat(MAX_BYPASS_REASON_BYTES))).is_ok());
+        assert!(validate_bypass_reason(Some(&"x".repeat(MAX_BYPASS_REASON_BYTES + 1))).is_err());
+    }
 }
