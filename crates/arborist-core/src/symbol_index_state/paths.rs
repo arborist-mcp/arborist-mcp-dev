@@ -138,9 +138,13 @@ pub(crate) fn unindexed_workspace_files(
 pub(crate) fn symbol_index_freshness_issues(
     file_states: &BTreeMap<String, u64>,
     file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<String> {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<String>> {
     let mut issues = Vec::new();
     for (file_path, stored_fingerprint) in file_states {
+        if let Some(deadline) = deadline {
+            deadline.check("checking indexed file freshness")?;
+        }
         if file_overrides.is_some_and(|overrides| overrides.contains_key(file_path)) {
             continue;
         }
@@ -163,5 +167,5 @@ pub(crate) fn symbol_index_freshness_issues(
             }
         }
     }
-    issues
+    Ok(issues)
 }

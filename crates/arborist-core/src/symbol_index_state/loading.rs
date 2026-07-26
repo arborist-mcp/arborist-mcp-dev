@@ -21,7 +21,7 @@ use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline, WorkspaceScanLimits};
 
-use super::freshness::{ensure_symbol_index_fresh, validate_indexed_file_count};
+use super::freshness::{ensure_symbol_index_fresh_with_deadline, validate_indexed_file_count};
 use super::paths::{validate_persisted_index_paths, validate_persisted_index_paths_with_overrides};
 
 pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
@@ -77,7 +77,13 @@ fn load_symbol_index_internal(
         deadline.check("loading indexed workspace root")?;
     }
     validate_persisted_index_paths(&workspace_root, &file_states, &resolved_symbols.0)?;
-    ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
+    ensure_symbol_index_fresh_with_deadline(
+        db_path,
+        &workspace_root,
+        &file_states,
+        None,
+        deadline,
+    )?;
     if let Some(deadline) = deadline {
         deadline.check("validating indexed symbol freshness")?;
     }
@@ -150,11 +156,12 @@ fn load_symbol_index_with_overrides_internal(
         &resolved_symbols,
         Some(&file_overrides),
     )?;
-    ensure_symbol_index_fresh(
+    ensure_symbol_index_fresh_with_deadline(
         db_path,
         &workspace_root,
         &persisted_file_states,
         Some(&file_overrides),
+        deadline,
     )?;
     let mut changed_file_paths = BTreeSet::new();
     let mut added_file_paths = BTreeSet::new();

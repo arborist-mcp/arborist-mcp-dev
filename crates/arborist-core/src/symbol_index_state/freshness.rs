@@ -51,15 +51,16 @@ pub(crate) fn inspect_symbol_index_freshness(
     Ok(())
 }
 
-pub(crate) fn ensure_symbol_index_fresh(
+pub(crate) fn ensure_symbol_index_fresh_with_deadline(
     db_path: &Path,
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
-    let mut issues = symbol_index_freshness_issues(file_states, file_overrides);
+    let mut issues = symbol_index_freshness_issues(file_states, file_overrides, deadline)?;
     issues.extend(
-        unindexed_workspace_files(workspace_root, file_states, file_overrides, None)?
+        unindexed_workspace_files(workspace_root, file_states, file_overrides, deadline)?
             .into_iter()
             .map(|file_path| format!("workspace source file is not indexed: {file_path}")),
     );
