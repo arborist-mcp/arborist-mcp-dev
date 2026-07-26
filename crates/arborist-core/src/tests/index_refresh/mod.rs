@@ -8,8 +8,8 @@ use super::support::{
 };
 use crate::language::normalize_path;
 use crate::{
-    TraceDirection, rebuild_symbol_index, refresh_symbol_index_for_file,
-    trace_symbol_graph_from_index,
+    TraceDirection, WorkspaceScanLimits, rebuild_symbol_index, refresh_symbol_index_for_file,
+    refresh_symbol_index_for_file_with_limits, trace_symbol_graph_from_index,
 };
 mod dependencies;
 mod validation;

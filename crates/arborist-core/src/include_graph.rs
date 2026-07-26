@@ -5,15 +5,14 @@ use anyhow::Result;
 
 use crate::language::{detect_language, normalize_path};
 use crate::model::LanguageId;
-use crate::workspace_scan::WorkspaceScanDeadline;
-#[cfg(test)]
-use crate::workspace_scan::WorkspaceScanLimits;
+use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
 mod reverse;
 
 pub(crate) fn expanded_refresh_file_paths(
     workspace_root: &Path,
     file_path: &Path,
+    limits: WorkspaceScanLimits,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<Vec<PathBuf>> {
     let mut refresh_paths = BTreeSet::new();
@@ -23,6 +22,7 @@ pub(crate) fn expanded_refresh_file_paths(
         refresh_paths.extend(transitive_c_include_dependents_with_deadline(
             workspace_root,
             file_path,
+            limits,
             deadline,
         )?);
     }
@@ -36,15 +36,21 @@ pub(crate) fn transitive_c_include_dependents(
     target_path: &Path,
 ) -> Result<BTreeSet<PathBuf>> {
     let deadline = WorkspaceScanDeadline::new(WorkspaceScanLimits::default())?;
-    transitive_c_include_dependents_with_deadline(workspace_root, target_path, &deadline)
+    transitive_c_include_dependents_with_deadline(
+        workspace_root,
+        target_path,
+        WorkspaceScanLimits::default(),
+        &deadline,
+    )
 }
 
 fn transitive_c_include_dependents_with_deadline(
     workspace_root: &Path,
     target_path: &Path,
+    limits: WorkspaceScanLimits,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<BTreeSet<PathBuf>> {
-    let reverse_index = reverse::reverse_local_c_include_index(workspace_root, deadline)?;
+    let reverse_index = reverse::reverse_local_c_include_index(workspace_root, limits, deadline)?;
     let normalized_target = normalize_path(target_path);
     let mut queue = vec![normalized_target.clone()];
     let mut visited = BTreeSet::from([normalized_target]);

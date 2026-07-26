@@ -144,7 +144,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
         vec![file_path.clone()]
     } else {
-        expanded_refresh_file_paths(&workspace_root, &file_path, &deadline)?
+        expanded_refresh_file_paths(&workspace_root, &file_path, limits, &deadline)?
     };
 
     let mut file_states = load_file_states(&connection)?;

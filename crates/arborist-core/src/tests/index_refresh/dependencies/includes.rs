@@ -377,3 +377,36 @@ fn refreshes_index_when_symbol_file_is_deleted() {
     assert!(updated_trace.callees.is_empty());
     assert!(trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Both).is_err());
 }
+
+#[test]
+fn refresh_c_include_scan_enforces_file_size_limit() {
+    let dir = temporary_dir();
+    let header = dir.join("helper.h");
+    let source = dir.join("helper.c");
+    let caller = dir.join("caller.c");
+    let db_path = dir.join("symbols.db");
+    let oversized = dir.join("oversized.c");
+
+    fs::write(&header, "int helper(int value);\n").unwrap();
+    fs::write(
+        &source,
+        "#include \"helper.h\"\n\nint helper(int value) { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "#include \"helper.h\"\n\nint caller(int value) { return helper(value); }\n",
+    )
+    .unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    fs::write(&oversized, format!("{}\n", "x".repeat(256))).unwrap();
+    let error = refresh_symbol_index_for_file_with_limits(
+        &dir,
+        &db_path,
+        &header,
+        WorkspaceScanLimits::with_max_file_bytes(128),
+    )
+    .expect_err("include reverse scan should enforce max_file_bytes");
+    assert!(error.to_string().contains("source file too large"));
+}

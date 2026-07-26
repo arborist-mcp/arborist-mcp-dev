@@ -14,15 +14,12 @@ use crate::workspace_scan::{
 
 pub(super) fn reverse_local_c_include_index(
     workspace_root: &Path,
+    limits: WorkspaceScanLimits,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<BTreeMap<String, BTreeSet<PathBuf>>> {
     let mut reverse_index = BTreeMap::new();
 
-    for path in collect_source_files_with_deadline(
-        workspace_root,
-        WorkspaceScanLimits::default(),
-        deadline,
-    )? {
+    for path in collect_source_files_with_deadline(workspace_root, limits, deadline)? {
         deadline.check("building C include reverse index")?;
         if !matches!(detect_language(&path), Ok(LanguageId::C | LanguageId::Cpp)) {
             continue;
