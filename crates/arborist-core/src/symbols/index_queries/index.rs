@@ -13,8 +13,8 @@ use crate::index_store::{
     load_resolved_symbols, persist_symbol_index, persist_symbol_refresh,
 };
 use crate::language::{
-    ensure_path_inside_workspace, normalize_absolute_path, normalize_path, parse_document,
-    read_source,
+    detect_language, ensure_path_inside_workspace, normalize_absolute_path, normalize_path,
+    parse_document, read_source,
 };
 use crate::model::SymbolIndexStats;
 use crate::symbol_dependency::{
@@ -126,6 +126,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let file_path = normalize_absolute_path(file_path)?;
 
     ensure_path_inside_workspace(&workspace_root, &file_path)?;
+    detect_language(&file_path)?;
 
     if !db_path.exists() {
         return rebuild_symbol_index_with_deadline(&workspace_root, &db_path, limits, &deadline);

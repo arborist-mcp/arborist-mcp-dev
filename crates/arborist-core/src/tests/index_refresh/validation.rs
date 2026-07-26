@@ -55,6 +55,22 @@ fn rejects_refresh_path_outside_workspace_before_missing_index_rebuild() {
 }
 
 #[test]
+fn rejects_unsupported_refresh_path_before_missing_index_rebuild() {
+    let dir = temporary_dir();
+    let workspace = dir.join("workspace");
+    let unsupported = workspace.join("notes.txt");
+    let missing_db_path = workspace.join("missing-symbols.db");
+
+    fs::create_dir_all(&workspace).unwrap();
+    fs::write(&unsupported, "not source code\n").unwrap();
+
+    let error = refresh_symbol_index_for_file(&workspace, &missing_db_path, &unsupported)
+        .expect_err("unsupported refresh paths must reject before rebuilding a missing index");
+    assert!(error.to_string().contains("unsupported file extension"));
+    assert!(!missing_db_path.exists());
+}
+
+#[test]
 fn rejects_refresh_with_symbol_index_from_different_workspace() {
     let dir = temporary_dir();
     let workspace_a = dir.join("workspace-a");
