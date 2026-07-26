@@ -80,11 +80,13 @@ def _target_sort_key(target: IndexWatchTarget) -> tuple[str, str, str, str]:
 
 def load_watch_config(config_path: Path) -> tuple[IndexWatchTarget, ...]:
     try:
-        if config_path.stat().st_size > MAX_INDEX_WATCH_CONFIG_BYTES:
+        with config_path.open("rb") as handle:
+            raw_payload = handle.read(MAX_INDEX_WATCH_CONFIG_BYTES + 1)
+        if len(raw_payload) > MAX_INDEX_WATCH_CONFIG_BYTES:
             raise IndexWatchError(
                 f"watch config exceeds maximum size of {MAX_INDEX_WATCH_CONFIG_BYTES} bytes"
             )
-        payload = config_path.read_text(encoding="utf-8")
+        payload = raw_payload.decode("utf-8")
     except IndexWatchError:
         raise
     except (OSError, UnicodeError) as exc:
