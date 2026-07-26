@@ -125,7 +125,8 @@ trace-gated validation, and position edits reject duplicate JSON object keys
 before model deserialization. Nested JSON parameters are capped at 128 MiB of
 UTF-8 text and 64 levels of container nesting at the protocol boundary.
 File-backed source reads are capped at 64 MiB before parsing; inline gateway
-source parameters remain capped at 4 MiB.
+source parameters remain capped at 4 MiB, and direct core source overlays are
+capped at 64 MiB before parsing.
 
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during

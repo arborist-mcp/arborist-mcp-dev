@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{Language, Parser, Tree};
 
+use crate::language::MAX_SOURCE_FILE_BYTES;
 use crate::language::{
     C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS, CPP_SOURCE_EXTENSIONS,
 };
@@ -18,6 +19,14 @@ pub fn supported_languages() -> Vec<&'static str> {
 }
 
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
+    if source.len() as u64 > MAX_SOURCE_FILE_BYTES {
+        bail!(
+            "source text too large for {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            source.len(),
+            MAX_SOURCE_FILE_BYTES,
+        );
+    }
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;
 

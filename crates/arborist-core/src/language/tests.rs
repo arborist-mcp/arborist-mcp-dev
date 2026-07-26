@@ -199,3 +199,12 @@ fn read_source_rejects_oversized_files_before_loading_contents() {
     assert!(error.to_string().contains("source file too large"));
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn parse_document_rejects_oversized_source_overlays() {
+    let source = "x".repeat((MAX_SOURCE_FILE_BYTES + 1) as usize);
+    let error = parse_document(Path::new("source.py"), &source)
+        .err()
+        .expect("oversized source overlays should be rejected");
+    assert!(error.to_string().contains("source text too large"));
+}
