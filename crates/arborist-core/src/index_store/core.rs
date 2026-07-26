@@ -23,7 +23,7 @@ pub(crate) fn persist_symbol_index(
     persist_symbol_index_metadata(&tx, workspace_root, indexed_files)?;
     tx.execute("DELETE FROM symbols", [])?;
     tx.execute("DELETE FROM file_state", [])?;
-    let raw_symbol_rows = raw_symbol_row_map(raw_symbols);
+    let raw_symbol_rows = raw_symbol_row_map(raw_symbols)?;
     {
         let mut statement = tx.prepare(
             "INSERT INTO symbols (
@@ -90,22 +90,26 @@ pub(crate) fn persisted_byte_range(symbol: &SymbolMeta) -> Result<(i64, i64)> {
 
 pub(super) fn raw_symbol_row_map(
     symbols: &[IndexedSymbol],
-) -> BTreeMap<(String, String, usize, usize), IndexedSymbol> {
-    symbols
-        .iter()
-        .cloned()
-        .map(|symbol| {
-            (
-                (
-                    symbol.semantic_path.clone(),
-                    symbol.file_path.clone(),
-                    symbol.byte_range.0,
-                    symbol.byte_range.1,
-                ),
-                symbol,
-            )
-        })
-        .collect()
+) -> Result<BTreeMap<(String, String, usize, usize), IndexedSymbol>> {
+    let mut rows = BTreeMap::new();
+    for symbol in symbols {
+        let key = (
+            symbol.semantic_path.clone(),
+            symbol.file_path.clone(),
+            symbol.byte_range.0,
+            symbol.byte_range.1,
+        );
+        if rows.insert(key, symbol.clone()).is_some() {
+            return Err(anyhow!(
+                "duplicate raw symbol row for {} in {} at {}..{}",
+                symbol.semantic_path,
+                symbol.file_path,
+                symbol.byte_range.0,
+                symbol.byte_range.1
+            ));
+        }
+    }
+    Ok(rows)
 }
 
 pub(super) fn reference_names(symbol: &IndexedSymbol) -> Vec<String> {

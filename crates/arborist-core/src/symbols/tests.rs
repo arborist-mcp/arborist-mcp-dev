@@ -61,6 +61,50 @@ fn persist_symbol_index_rolls_back_metadata_on_row_failure() {
 }
 
 #[test]
+fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    let raw_symbol = IndexedSymbol {
+        symbol_id: "helper".to_string(),
+        semantic_path: "helper".to_string(),
+        base_name: "helper".to_string(),
+        scope_path: None,
+        file_path: normalized_file.clone(),
+        node_kind: "function_definition".to_string(),
+        byte_range: (0, 4),
+        signature: None,
+        parameters: Vec::new(),
+        return_type: None,
+        docstring: None,
+        references_by_name: BTreeSet::new(),
+        call_arities_by_name: BTreeMap::new(),
+    };
+    let symbol = SymbolMeta {
+        symbol_id: "helper".to_string(),
+        semantic_path: "helper".to_string(),
+        file_path: normalized_file,
+        node_kind: "function_definition".to_string(),
+        byte_range: (0, 4),
+        ..Default::default()
+    };
+
+    let error = persist_symbol_index(
+        &db_path,
+        &workspace,
+        &[raw_symbol.clone(), raw_symbol],
+        &[symbol],
+        &[],
+        1,
+    )
+    .expect_err("duplicate raw symbol rows should be rejected");
+
+    assert!(error.to_string().contains("duplicate raw symbol row"));
+}
+
+#[test]
 fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

@@ -25,7 +25,7 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
     let connection = Connection::open(context.db_path)?;
     ensure_symbol_tables(&connection)?;
 
-    let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols);
+    let raw_symbol_rows = raw_symbol_row_map(context.raw_symbols)?;
     let changed_symbols: Vec<_> = context
         .symbols
         .iter()
