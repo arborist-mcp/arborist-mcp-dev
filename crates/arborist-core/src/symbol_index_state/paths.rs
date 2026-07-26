@@ -30,28 +30,58 @@ pub(crate) fn validate_persisted_index_paths_with_overrides(
     symbols: &[SymbolMeta],
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<()> {
-    validate_persisted_file_state_paths(workspace_root, file_states)?;
-    validate_persisted_symbol_paths(workspace_root, file_states, symbols, file_overrides)
+    validate_persisted_index_paths_with_overrides_and_deadline(
+        workspace_root,
+        file_states,
+        symbols,
+        file_overrides,
+        None,
+    )
 }
 
-pub(super) fn validate_persisted_file_state_paths(
+pub(crate) fn validate_persisted_index_paths_with_overrides_and_deadline(
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
+    symbols: &[SymbolMeta],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<()> {
+    validate_persisted_file_state_paths_with_deadline(workspace_root, file_states, deadline)?;
+    validate_persisted_symbol_paths_with_deadline(
+        workspace_root,
+        file_states,
+        symbols,
+        file_overrides,
+        deadline,
+    )
+}
+
+pub(super) fn validate_persisted_file_state_paths_with_deadline(
+    workspace_root: &Path,
+    file_states: &BTreeMap<String, u64>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     for file_path in file_states.keys() {
+        if let Some(deadline) = deadline {
+            deadline.check("validating persisted file paths")?;
+        }
         validate_persisted_source_path(workspace_root, file_path, "file_state.file_path")?;
     }
     Ok(())
 }
 
-pub(super) fn validate_persisted_symbol_paths(
+pub(super) fn validate_persisted_symbol_paths_with_deadline(
     workspace_root: &Path,
     file_states: &BTreeMap<String, u64>,
     symbols: &[SymbolMeta],
     file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut sources_by_path = BTreeMap::new();
     for symbol in symbols {
+        if let Some(deadline) = deadline {
+            deadline.check("validating persisted symbol paths")?;
+        }
         validate_persisted_source_path(workspace_root, &symbol.file_path, "symbols.file_path")?;
         if !file_states.contains_key(&symbol.file_path) {
             bail!(

@@ -203,20 +203,24 @@ pub fn inspect_symbol_index_with_timeout(
     if let (Some(workspace_root), Some(file_states)) =
         (workspace_root.as_deref(), file_states.as_ref())
     {
-        let paths_valid =
-            match path_state::validate_persisted_file_state_paths(workspace_root, file_states) {
-                Ok(()) => true,
-                Err(error) => {
-                    health.issues.push(error.to_string());
-                    false
-                }
-            };
+        let paths_valid = match path_state::validate_persisted_file_state_paths_with_deadline(
+            workspace_root,
+            file_states,
+            Some(&deadline),
+        ) {
+            Ok(()) => true,
+            Err(error) => {
+                health.issues.push(error.to_string());
+                false
+            }
+        };
         if let Some(resolved_symbols) = resolved_symbols.as_deref()
-            && let Err(error) = path_state::validate_persisted_symbol_paths(
+            && let Err(error) = path_state::validate_persisted_symbol_paths_with_deadline(
                 workspace_root,
                 file_states,
                 resolved_symbols,
                 None,
+                Some(&deadline),
             )
         {
             health.issues.push(error.to_string());
