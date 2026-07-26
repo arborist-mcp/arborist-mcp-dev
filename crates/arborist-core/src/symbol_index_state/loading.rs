@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::{Result, anyhow, bail};
 
 use crate::index_schema::{
-    load_indexed_files_metadata, load_symbol_index_workspace_root, open_symbol_index_read_only,
-    require_current_symbol_index_schema, require_symbol_index_tables,
+    load_indexed_files_metadata_with_deadline, load_symbol_index_workspace_root,
+    open_symbol_index_read_only, require_current_symbol_index_schema, require_symbol_index_tables,
     validate_symbol_index_schema_version,
 };
 use crate::index_store::{
@@ -55,10 +55,7 @@ fn load_symbol_index_internal(
 
     let connection = open_symbol_index_read_only(db_path)?;
     require_symbol_index_tables(&connection, db_path)?;
-    let indexed_files = load_indexed_files_metadata(&connection)?;
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed file metadata")?;
-    }
+    let indexed_files = load_indexed_files_metadata_with_deadline(&connection, deadline)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
     match deadline {

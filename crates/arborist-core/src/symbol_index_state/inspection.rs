@@ -4,8 +4,9 @@ use anyhow::{Result, anyhow};
 
 use crate::index_migration;
 use crate::index_schema::{
-    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
-    load_optional_metadata_value, load_symbol_index_workspace_root, open_symbol_index_read_only,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
+    load_indexed_files_metadata_with_deadline, load_optional_metadata_value,
+    load_symbol_index_workspace_root, open_symbol_index_read_only,
     require_current_symbol_index_schema, require_legacy_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
@@ -153,11 +154,10 @@ pub fn inspect_symbol_index_with_timeout(
     };
     deadline.check("loading indexed workspace root")?;
 
-    match load_indexed_files_metadata(&connection) {
+    match load_indexed_files_metadata_with_deadline(&connection, Some(&deadline)) {
         Ok(indexed_files) => health.indexed_files = Some(indexed_files),
         Err(error) => health.issues.push(error.to_string()),
     }
-    deadline.check("loading indexed file metadata")?;
 
     match count_table_rows(&connection, "symbols") {
         Ok(count) => health.indexed_symbols = Some(count),

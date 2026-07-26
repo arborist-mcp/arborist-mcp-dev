@@ -5,8 +5,9 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::index_schema::{
-    load_indexed_files_metadata, require_current_symbol_index_schema, require_symbol_index_tables,
-    validate_symbol_index_schema_version, validate_symbol_index_workspace,
+    load_indexed_files_metadata_with_deadline, require_current_symbol_index_schema,
+    require_symbol_index_tables, validate_symbol_index_schema_version,
+    validate_symbol_index_workspace,
 };
 use crate::index_store::{
     SymbolRefreshPersistence, load_file_states_with_deadline,
@@ -69,8 +70,7 @@ fn rebuild_symbol_index_with_deadline(
         let connection = Connection::open(&db_path)?;
         require_symbol_index_tables(&connection, &db_path)?;
         validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
-        load_indexed_files_metadata(&connection)?;
-        deadline.check("loading existing symbol index metadata")?;
+        load_indexed_files_metadata_with_deadline(&connection, Some(deadline))?;
         validate_symbol_index_schema_version(&connection, &db_path)?;
         require_current_symbol_index_schema(&connection, &db_path)?;
     }
@@ -137,8 +137,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     let connection = Connection::open(&db_path)?;
     require_symbol_index_tables(&connection, &db_path)?;
     validate_symbol_index_workspace(&connection, &workspace_root, &db_path)?;
-    load_indexed_files_metadata(&connection)?;
-    deadline.check("loading existing symbol index metadata")?;
+    load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))?;
     validate_symbol_index_schema_version(&connection, &db_path)?;
     require_current_symbol_index_schema(&connection, &db_path)?;
 
