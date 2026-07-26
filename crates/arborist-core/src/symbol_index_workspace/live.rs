@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::language::{
     normalize_absolute_path, normalize_path, parse_document, parse_document_with_timeout,
@@ -16,7 +16,8 @@ use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files,
-    collect_source_files_with_deadline, validate_source_file_size,
+    collect_source_files_with_deadline, collect_source_files_with_limits,
+    validate_source_file_size,
 };
 
 pub(crate) fn load_live_workspace_symbols(
@@ -66,21 +67,9 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
     let workspace_root = normalize_absolute_path(workspace_root)?;
     let file_overrides =
         normalize_source_overrides_for_workspace(&workspace_root, file_overrides, "workspace")?;
-    let mut indexed_paths = collect_source_files(&workspace_root)?;
-    let mut known_paths: BTreeSet<String> = indexed_paths
-        .iter()
-        .map(|path| normalize_path(path))
-        .collect();
-
-    for override_path in file_overrides.keys() {
-        let override_path = Path::new(override_path).to_path_buf();
-        let normalized_path = normalize_path(&override_path);
-        if known_paths.insert(normalized_path) {
-            indexed_paths.push(override_path);
-        }
-    }
-
-    indexed_paths.sort();
+    let limits = WorkspaceScanLimits::default();
+    let mut indexed_paths = collect_source_files_with_limits(&workspace_root, limits)?;
+    append_override_paths(&mut indexed_paths, &file_overrides, limits.max_files)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index(&indexed_paths, Some(&file_overrides))?;
     let resolved_symbols =
@@ -102,21 +91,12 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     };
     let deadline = WorkspaceScanDeadline::new(limits)?;
     let mut indexed_paths = collect_source_files_with_deadline(&workspace_root, limits, &deadline)?;
-    let mut known_paths: BTreeSet<String> = indexed_paths
-        .iter()
-        .map(|path| normalize_path(path))
-        .collect();
-
-    for override_path in file_overrides.keys() {
-        deadline.check("adding workspace overrides")?;
-        let override_path = Path::new(override_path).to_path_buf();
-        let normalized_path = normalize_path(&override_path);
-        if known_paths.insert(normalized_path) {
-            indexed_paths.push(override_path);
-        }
-    }
-
-    indexed_paths.sort();
+    append_override_paths_with_deadline(
+        &mut indexed_paths,
+        &file_overrides,
+        limits.max_files,
+        &deadline,
+    )?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index_with_deadline(
         &indexed_paths,
@@ -128,6 +108,62 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     let resolved_symbols =
         resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(&file_overrides));
     Ok((resolved_symbols, indexed_files))
+}
+
+fn append_override_paths(
+    indexed_paths: &mut Vec<PathBuf>,
+    file_overrides: &BTreeMap<String, String>,
+    max_files: usize,
+) -> Result<()> {
+    let mut known_paths: BTreeSet<String> = indexed_paths
+        .iter()
+        .map(|path| normalize_path(path))
+        .collect();
+
+    for override_path in file_overrides.keys() {
+        let override_path = Path::new(override_path).to_path_buf();
+        let normalized_path = normalize_path(&override_path);
+        if known_paths.insert(normalized_path) {
+            if indexed_paths.len() >= max_files {
+                bail!(
+                    "workspace scan exceeded max_files while adding source overlays: max_files={max_files}"
+                );
+            }
+            indexed_paths.push(override_path);
+        }
+    }
+
+    indexed_paths.sort();
+    Ok(())
+}
+
+fn append_override_paths_with_deadline(
+    indexed_paths: &mut Vec<PathBuf>,
+    file_overrides: &BTreeMap<String, String>,
+    max_files: usize,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<()> {
+    let mut known_paths: BTreeSet<String> = indexed_paths
+        .iter()
+        .map(|path| normalize_path(path))
+        .collect();
+
+    for override_path in file_overrides.keys() {
+        deadline.check("adding workspace overrides")?;
+        let override_path = Path::new(override_path).to_path_buf();
+        let normalized_path = normalize_path(&override_path);
+        if known_paths.insert(normalized_path) {
+            if indexed_paths.len() >= max_files {
+                bail!(
+                    "workspace scan exceeded max_files while adding source overlays: max_files={max_files}"
+                );
+            }
+            indexed_paths.push(override_path);
+        }
+    }
+
+    indexed_paths.sort();
+    Ok(())
 }
 
 fn build_workspace_index(
@@ -178,4 +214,36 @@ fn build_workspace_index_with_deadline(
     deadline.check("assigning symbol identities")?;
     assign_symbol_ids(&mut symbols)?;
     Ok(symbols)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use super::append_override_paths;
+
+    #[test]
+    fn override_paths_respect_workspace_file_limit() {
+        let mut indexed_paths = vec![PathBuf::from("existing.py")];
+        let overrides = BTreeMap::from([
+            ("one.py".to_string(), String::new()),
+            ("two.py".to_string(), String::new()),
+        ]);
+
+        let error = append_override_paths(&mut indexed_paths, &overrides, 2)
+            .expect_err("source overlays must not bypass the workspace file limit");
+        assert!(error.to_string().contains("max_files=2"));
+        assert_eq!(indexed_paths.len(), 2);
+    }
+
+    #[test]
+    fn override_paths_do_not_count_existing_files_twice() {
+        let mut indexed_paths = vec![PathBuf::from("existing.py")];
+        let overrides = BTreeMap::from([("existing.py".to_string(), String::new())]);
+
+        append_override_paths(&mut indexed_paths, &overrides, 1)
+            .expect("an override for an indexed file should not consume another slot");
+        assert_eq!(indexed_paths.len(), 1);
+    }
 }
