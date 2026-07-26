@@ -128,7 +128,13 @@ pub(crate) fn load_resolved_symbols_with_deadline(
     connection: &Connection,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<(Vec<SymbolMeta>, usize)> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file metadata")?;
+    }
     let indexed_files = load_indexed_files_metadata(connection)?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed file metadata")?;
+    }
 
     let mut statement = connection.prepare(
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
@@ -377,7 +383,16 @@ fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{call_arities_from_json_column, string_list_from_json_column};
+    use std::time::{Duration, Instant};
+
+    use rusqlite::Connection;
+
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    use super::{
+        call_arities_from_json_column, load_resolved_symbols_with_deadline,
+        string_list_from_json_column,
+    };
 
     #[test]
     fn string_list_from_json_column_rejects_duplicate_entries() {
@@ -393,5 +408,23 @@ mod tests {
             .expect_err("duplicate persisted map keys should be rejected");
 
         assert!(error.to_string().contains("duplicate object key"));
+    }
+
+    #[test]
+    fn load_resolved_symbols_checks_deadline_before_metadata_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = load_resolved_symbols_with_deadline(&connection, Some(&deadline))
+            .expect_err("expired deadline should stop before metadata loading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
     }
 }
