@@ -4,7 +4,7 @@ import json
 import sys
 from typing import Any
 
-from .tool_specs import MAX_REQUEST_BYTES
+from .tool_specs import MAX_JSON_ARG_DEPTH, MAX_REQUEST_BYTES
 
 
 def is_notification_request(request: Any) -> bool:
@@ -56,11 +56,36 @@ def _reject_duplicate_object_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any
 
 def loads_strict(payload: str) -> Any:
     """Parse JSON while rejecting NaN/Infinity constants and duplicate object keys."""
-    return json.loads(
-        payload,
-        parse_constant=_reject_nonstandard_json_constant,
-        object_pairs_hook=_reject_duplicate_object_keys,
-    )
+    try:
+        value = json.loads(
+            payload,
+            parse_constant=_reject_nonstandard_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
+        )
+    except RecursionError as exc:
+        raise ValueError(
+            f"JSON exceeds maximum nesting depth of {MAX_JSON_ARG_DEPTH}"
+        ) from exc
+
+    _validate_json_depth(value)
+    return value
+
+
+def _validate_json_depth(value: Any) -> None:
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if not isinstance(current, (list, dict)):
+            continue
+        if depth >= MAX_JSON_ARG_DEPTH:
+            raise ValueError(
+                f"JSON exceeds maximum nesting depth of {MAX_JSON_ARG_DEPTH}"
+            )
+        child_depth = depth + 1
+        if isinstance(current, list):
+            pending.extend((item, child_depth) for item in current)
+        else:
+            pending.extend((item, child_depth) for item in current.values())
 
 
 def parse_request_json(raw_request: str) -> tuple[Any | None, dict[str, Any] | None]:

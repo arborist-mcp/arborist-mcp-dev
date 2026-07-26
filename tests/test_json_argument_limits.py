@@ -24,3 +24,15 @@ class JsonArgumentLimitTests(unittest.TestCase):
         assert response is not None
         self.assertEqual(response["error"]["code"], -32600)
         self.assertIn("maximum size", response["error"]["message"])
+
+    def test_rejects_excessive_json_rpc_nesting(self) -> None:
+        payload = "0"
+        for _ in range(MAX_JSON_ARG_DEPTH + 1):
+            payload = f"[{payload}]"
+
+        request, response = parse_request_json(payload)
+
+        self.assertIsNone(request)
+        assert response is not None
+        self.assertEqual(response["error"]["code"], -32700)
+        self.assertIn("maximum nesting depth", response["error"]["message"])
