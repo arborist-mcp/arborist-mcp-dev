@@ -29,39 +29,18 @@ pub(crate) fn load_file_states_with_deadline(
             deadline.check("loading indexed file states")?;
         }
         let (file_path, fingerprint) = row?;
-        let fingerprint = u64::try_from(fingerprint).map_err(|error| {
-            anyhow!(
-                "invalid fingerprint for file_state.file_path {}: {}",
-                file_path,
-                error
-            )
-        })?;
+        let fingerprint = u64::from_ne_bytes(fingerprint.to_ne_bytes());
         states.insert(file_path, fingerprint);
     }
     Ok(states)
 }
 
 pub(crate) fn load_legacy_file_states(connection: &Connection) -> Result<BTreeMap<String, u64>> {
-    let mut statement =
-        connection.prepare("SELECT file_path, fingerprint FROM file_state ORDER BY file_path")?;
-    let rows = statement.query_map([], |row| {
-        Ok((
-            nonempty_string_from_row(row, 0, "file_state.file_path")?,
-            row.get::<_, i64>(1)?,
-        ))
-    })?;
-
-    let mut states = BTreeMap::new();
-    for row in rows {
-        let (file_path, fingerprint) = row?;
-        states.insert(file_path, fingerprint as u64);
-    }
-    Ok(states)
+    load_file_states(connection)
 }
 
 pub(crate) fn persisted_fingerprint(fingerprint: u64) -> Result<i64> {
-    i64::try_from(fingerprint)
-        .map_err(|error| anyhow!("fingerprint cannot be persisted as SQLite INTEGER: {error}"))
+    Ok(i64::from_ne_bytes(fingerprint.to_ne_bytes()))
 }
 
 pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
@@ -81,7 +60,7 @@ mod tests {
     use super::{load_file_states, load_file_states_with_deadline, load_legacy_file_states};
 
     #[test]
-    fn load_file_states_rejects_negative_fingerprints() {
+    fn load_file_states_restores_signed_fingerprints() {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
@@ -94,22 +73,15 @@ mod tests {
             )
             .unwrap();
 
-        let error = load_file_states(&connection)
-            .expect_err("negative persisted fingerprints should be rejected");
-
-        assert!(error.to_string().contains("invalid fingerprint"));
+        let states = load_file_states(&connection).unwrap();
+        assert_eq!(states["/workspace/helper.py"], u64::MAX);
     }
 
     #[test]
-    fn persisted_fingerprint_rejects_values_outside_sqlite_integer_range() {
-        let error = super::persisted_fingerprint(i64::MAX as u64 + 1)
-            .expect_err("out-of-range fingerprints should be rejected");
-
-        assert!(
-            error
-                .to_string()
-                .contains("cannot be persisted as SQLite INTEGER")
-        );
+    fn persisted_fingerprint_round_trips_full_u64_range() {
+        let fingerprint = u64::MAX;
+        let stored = super::persisted_fingerprint(fingerprint).unwrap();
+        assert_eq!(u64::from_ne_bytes(stored.to_ne_bytes()), fingerprint);
     }
 
     #[test]
