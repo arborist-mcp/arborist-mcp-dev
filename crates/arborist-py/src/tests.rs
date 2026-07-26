@@ -1,4 +1,5 @@
 use super::{ArboristCore, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg};
+use crate::json_args::MAX_JSON_ARG_BYTES;
 use arborist_core::PositionEdit;
 use serde_json::Value;
 use std::sync::Once;
@@ -51,6 +52,14 @@ fn parse_json_arg_accepts_valid_payloads() {
 
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].new_text, "x");
+}
+
+#[test]
+fn parse_json_arg_rejects_oversized_payloads() {
+    let payload = format!("{{\"file_path\":\"{}\"}}", "x".repeat(MAX_JSON_ARG_BYTES));
+    let error = parse_json_arg::<PositionEdit>(&payload)
+        .expect_err("oversized JSON payload should be rejected");
+    assert!(error.to_string().contains("exceeds maximum size"));
 }
 
 #[test]

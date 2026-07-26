@@ -7,6 +7,7 @@ from typing import Any
 from .mcp_validation import reject_unexpected_params
 from .tool_result_schemas import JsonRpcError
 from .tool_specs import (
+    MAX_JSON_ARG_BYTES,
     MAX_POSITION_EDITS,
     MAX_POSITION_EDIT_TEXT_BYTES,
     TEXT_PARAM_MAX_LENGTH,
@@ -237,9 +238,12 @@ class GatewayParameterValidation:
     def _encode_json_param(value: Any, key: str) -> str:
         GatewayParameterValidation._validate_json_param(value, key)
         try:
-            return json.dumps(value, ensure_ascii=False, allow_nan=False)
+            encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key}") from exc
+        if len(encoded.encode("utf-8")) > MAX_JSON_ARG_BYTES:
+            raise JsonRpcError(-32602, f"invalid JSON-compatible param: {key} exceeds maximum size {MAX_JSON_ARG_BYTES} bytes")
+        return encoded
 
     @staticmethod
     def _validate_json_param(value: Any, path: str) -> None:

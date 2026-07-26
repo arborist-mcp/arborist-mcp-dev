@@ -5,7 +5,14 @@ use serde::{Deserialize, Deserializer};
 
 use std::fmt;
 
+pub(crate) const MAX_JSON_ARG_BYTES: usize = 128 * 1024 * 1024;
+
 pub(crate) fn parse_json_arg<T: DeserializeOwned>(json: &str) -> PyResult<T> {
+    if json.len() > MAX_JSON_ARG_BYTES {
+        return Err(PyValueError::new_err(format!(
+            "JSON argument exceeds maximum size of {MAX_JSON_ARG_BYTES} bytes"
+        )));
+    }
     let checked = serde_json::from_str::<DuplicateCheckedJson>(json)
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     serde_json::from_value(checked.0).map_err(|error| PyValueError::new_err(error.to_string()))
