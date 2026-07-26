@@ -9,7 +9,9 @@ use crate::index_schema::{
     validate_symbol_index_schema_version,
 };
 use crate::index_store::{
-    load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
+    load_file_states, load_file_states_with_deadline, load_indexed_symbols_grouped_by_file,
+    load_indexed_symbols_grouped_by_file_with_deadline, load_resolved_symbols,
+    load_resolved_symbols_with_deadline,
 };
 use crate::language::{normalize_path, parse_document, parse_document_with_timeout};
 use crate::model::SymbolMeta;
@@ -59,15 +61,26 @@ fn load_symbol_index_internal(
     }
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
-    load_indexed_symbols_grouped_by_file(&connection)?;
+    match deadline {
+        Some(deadline) => {
+            load_indexed_symbols_grouped_by_file_with_deadline(&connection, deadline)?
+        }
+        None => load_indexed_symbols_grouped_by_file(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading indexed symbols")?;
     }
-    let file_states = load_file_states(&connection)?;
+    let file_states = match deadline {
+        Some(deadline) => load_file_states_with_deadline(&connection, Some(deadline))?,
+        None => load_file_states(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading indexed file states")?;
     }
-    let resolved_symbols = load_resolved_symbols(&connection)?;
+    let resolved_symbols = match deadline {
+        Some(deadline) => load_resolved_symbols_with_deadline(&connection, Some(deadline))?,
+        None => load_resolved_symbols(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading resolved symbols")?;
     }
@@ -142,16 +155,27 @@ fn load_symbol_index_with_overrides_internal(
         "indexed workspace",
     )?;
 
-    let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
+    let mut grouped_symbols = match deadline {
+        Some(deadline) => {
+            load_indexed_symbols_grouped_by_file_with_deadline(&connection, deadline)?
+        }
+        None => load_indexed_symbols_grouped_by_file(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading indexed symbols")?;
     }
     let original_grouped_symbols = grouped_symbols.clone();
-    let persisted_file_states = load_file_states(&connection)?;
+    let persisted_file_states = match deadline {
+        Some(deadline) => load_file_states_with_deadline(&connection, Some(deadline))?,
+        None => load_file_states(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading indexed file states")?;
     }
-    let (resolved_symbols, persisted_indexed_files) = load_resolved_symbols(&connection)?;
+    let (resolved_symbols, persisted_indexed_files) = match deadline {
+        Some(deadline) => load_resolved_symbols_with_deadline(&connection, Some(deadline))?,
+        None => load_resolved_symbols(&connection)?,
+    };
     if let Some(deadline) = deadline {
         deadline.check("loading resolved symbols")?;
     }

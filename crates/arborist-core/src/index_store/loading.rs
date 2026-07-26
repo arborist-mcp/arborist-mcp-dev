@@ -8,6 +8,7 @@ use crate::index_schema::load_indexed_files_metadata;
 use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::semantic::semantic_parent_path;
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn load_indexed_symbols_grouped_by_file(
     connection: &Connection,
@@ -19,6 +20,21 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
                 reference_call_arities_json
          FROM symbols
          ORDER BY file_path, semantic_path",
+    )
+}
+
+pub(crate) fn load_indexed_symbols_grouped_by_file_with_deadline(
+    connection: &Connection,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
+    load_indexed_symbols_grouped_by_file_with_query_and_deadline(
+        connection,
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, reference_names_json,
+                reference_call_arities_json
+         FROM symbols
+         ORDER BY file_path, semantic_path",
+        Some(deadline),
     )
 }
 
@@ -38,6 +54,14 @@ pub(crate) fn validate_legacy_indexed_symbols(connection: &Connection) -> Result
 fn load_indexed_symbols_grouped_by_file_with_query(
     connection: &Connection,
     query: &str,
+) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
+    load_indexed_symbols_grouped_by_file_with_query_and_deadline(connection, query, None)
+}
+
+fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
+    connection: &Connection,
+    query: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
     let mut statement = connection.prepare(query)?;
     let rows = statement.query_map([], |row| {
@@ -83,6 +107,9 @@ fn load_indexed_symbols_grouped_by_file_with_query(
 
     let mut grouped = BTreeMap::new();
     for row in rows {
+        if let Some(deadline) = deadline {
+            deadline.check("loading indexed symbol rows")?;
+        }
         let symbol = row?;
         grouped
             .entry(symbol.file_path.clone())
@@ -93,6 +120,13 @@ fn load_indexed_symbols_grouped_by_file_with_query(
 }
 
 pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<SymbolMeta>, usize)> {
+    load_resolved_symbols_with_deadline(connection, None)
+}
+
+pub(crate) fn load_resolved_symbols_with_deadline(
+    connection: &Connection,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
     let indexed_files = load_indexed_files_metadata(connection)?;
 
     let mut statement = connection.prepare(
@@ -129,6 +163,9 @@ pub(crate) fn load_resolved_symbols(connection: &Connection) -> Result<(Vec<Symb
 
     let mut symbols = Vec::new();
     for row in rows {
+        if let Some(deadline) = deadline {
+            deadline.check("loading resolved symbol rows")?;
+        }
         symbols.push(row?);
     }
 
