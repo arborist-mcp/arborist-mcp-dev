@@ -186,7 +186,7 @@ fn load_symbol_index_with_overrides_internal(
     if let Some(deadline) = deadline {
         deadline.check("resolving indexed override symbols")?;
     }
-    let indexed_files = persisted_indexed_files + added_file_paths.len();
+    let indexed_files = persisted_indexed_files.saturating_add(added_file_paths.len());
     validate_indexed_overlay_file_count(persisted_indexed_files, added_file_paths.len())?;
 
     if let Some(deadline) = deadline {
@@ -222,6 +222,13 @@ mod tests {
         let error = validate_indexed_overlay_file_count(MAX_WORKSPACE_SCAN_FILES, 1)
             .expect_err("an added overlay beyond the limit should be rejected");
         assert!(error.to_string().contains("max_files"));
+    }
+
+    #[test]
+    fn indexed_overlay_count_saturates_corrupt_metadata() {
+        validate_indexed_overlay_file_count(usize::MAX, 1)
+            .expect_err("corrupt oversized metadata must fail closed");
+        assert_eq!(usize::MAX.saturating_add(1), usize::MAX);
     }
 
     #[test]
