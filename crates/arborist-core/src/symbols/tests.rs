@@ -135,6 +135,47 @@ fn persist_symbol_index_round_trips_full_u64_fingerprint() {
 }
 
 #[test]
+fn persist_symbol_refresh_round_trips_full_u64_fingerprint() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    let workspace = dir.join("workspace");
+    let file_path = workspace.join("helper.py");
+    let normalized_file = file_path.to_string_lossy().replace('\\', "/");
+    let raw_symbol = valid_indexed_symbol(&normalized_file);
+    let symbol = valid_symbol_meta(&normalized_file);
+
+    persist_symbol_index(
+        &db_path,
+        &workspace,
+        std::slice::from_ref(&raw_symbol),
+        std::slice::from_ref(&symbol),
+        &[PersistedFileState {
+            file_path: normalized_file.clone(),
+            fingerprint: 1,
+        }],
+        1,
+    )
+    .expect("initial index should persist");
+
+    persist_symbol_refresh(SymbolRefreshPersistence {
+        db_path: &db_path,
+        workspace_root: &workspace,
+        raw_symbols: &[raw_symbol],
+        symbols: std::slice::from_ref(&symbol),
+        resolved_symbols_by_id: &BTreeMap::from([("helper".to_string(), symbol.clone())]),
+        file_states: &BTreeMap::from([(normalized_file.clone(), u64::MAX)]),
+        changed_file_paths: &BTreeSet::from([normalized_file.clone()]),
+        impacted_paths: &BTreeSet::new(),
+        indexed_files: 1,
+    })
+    .expect("full-range refresh fingerprints should persist");
+
+    let connection = Connection::open(&db_path).unwrap();
+    let loaded = load_file_states(&connection).unwrap();
+    assert_eq!(loaded[&normalized_file], u64::MAX);
+}
+
+#[test]
 fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
