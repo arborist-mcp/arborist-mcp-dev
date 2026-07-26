@@ -13,6 +13,7 @@ pub(crate) fn source_override_for_path(
     path: &Path,
     source: &str,
 ) -> Result<(PathBuf, BTreeMap<String, String>)> {
+    language::validate_source_size(path, source)?;
     let path = language::normalize_absolute_path(path)?;
     let mut overrides = BTreeMap::new();
     overrides.insert(language::normalize_path(&path), source.to_string());
@@ -25,7 +26,9 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
+    use crate::language::{
+        MAX_SOURCE_FILE_BYTES, ensure_path_inside_workspace, normalize_absolute_path,
+    };
 
     #[test]
     fn ensure_path_inside_workspace_accepts_regular_workspace_child() {
@@ -88,6 +91,14 @@ mod tests {
             .expect_err("missing files under symlinked parents should resolve the parent first");
         assert!(error.to_string().contains("outside workspace"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_override_rejects_oversized_source_before_storing_it() {
+        let source = "x".repeat((MAX_SOURCE_FILE_BYTES + 1) as usize);
+        let error = super::source_override_for_path(Path::new("source.py"), &source)
+            .expect_err("oversized source overlays should be rejected");
+        assert!(error.to_string().contains("source text too large"));
     }
 
     fn temporary_dir(label: &str) -> std::path::PathBuf {
