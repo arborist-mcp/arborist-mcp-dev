@@ -298,6 +298,8 @@ completed item can land in its own commit unless two changes are inseparable.
   keeping query execution and validation in the facade.
 - [x] Apply cooperative deadlines to Tree-sitter parsing and query execution,
   using parser and cursor progress callbacks so native work can be interrupted.
+- [x] Extend cooperative deadlines through live, override, persisted-index,
+  include-scan, and symbol-dependency loading used by trace and index paths.
 - [x] Extract symbol-trace neighborhood traversal into
   `symbol_trace/neighborhood.rs`, preserving timeout and result validation.
 - [x] Extract patch-trace replay validation and evidence matching into

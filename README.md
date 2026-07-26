@@ -409,5 +409,5 @@ Remaining larger work includes:
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond overload-aware callable identities to
   fuller language-aware overload resolution and remaining grammar coverage.
-- Adding fuzz/property tests and cancellation that can interrupt individual
-  native parse or query operations.
+- Adding broader fuzz/property coverage and cancellation for remaining native
+  symbol-resolution operations.
