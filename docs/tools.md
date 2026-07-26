@@ -25,7 +25,7 @@ is based on case-insensitive file extensions:
 - Python: `.py`, `.pyi`
 - C grammar: `.c`, `.h`
 - C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.tpp`, `.tcc`, `.ipp`, `.inl`,
-  `.hpp`, `.hh`, `.hxx`, `.h++`
+  `.ixx`, `.cppm`, `.mpp`, `.mxx`, `.cxxm`, `.hpp`, `.hh`, `.hxx`, `.h++`
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

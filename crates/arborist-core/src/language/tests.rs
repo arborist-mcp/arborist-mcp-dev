@@ -23,6 +23,11 @@ fn detect_language_accepts_uppercase_extensions() {
         ("TCC", LanguageId::Cpp),
         ("IPP", LanguageId::Cpp),
         ("INL", LanguageId::Cpp),
+        ("IXX", LanguageId::Cpp),
+        ("CPPM", LanguageId::Cpp),
+        ("MPP", LanguageId::Cpp),
+        ("MXX", LanguageId::Cpp),
+        ("CXXM", LanguageId::Cpp),
         ("HPP", LanguageId::Cpp),
         ("HH", LanguageId::Cpp),
         ("HXX", LanguageId::Cpp),
@@ -61,7 +66,9 @@ fn c_header_detection_accepts_uppercase_extensions() {
 #[test]
 fn parse_document_uses_cpp_grammar_for_cpp_extensions() {
     let source = "class Counter { public: int value() const { return 1; } };";
-    for extension in ["hpp", "tpp", "tcc", "ipp", "inl"] {
+    for extension in [
+        "hpp", "tpp", "tcc", "ipp", "inl", "ixx", "cppm", "mpp", "mxx", "cxxm",
+    ] {
         let document = parse_document(Path::new(&format!("counter.{extension}")), source).unwrap();
 
         assert_eq!(document.language_id, LanguageId::Cpp);
