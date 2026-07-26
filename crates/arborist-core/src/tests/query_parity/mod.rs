@@ -20,7 +20,7 @@ pub(super) use super::{
     search_symbols_discovery_context_from_index, search_symbols_filtered,
     search_symbols_from_index, search_symbols_from_index_filtered,
     search_symbols_neighborhood_context, search_symbols_neighborhood_context_from_index,
-    trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
+    trace_symbol_graph, trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
     trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
     trace_symbol_neighborhood, trace_symbol_neighborhood_at_position,
     trace_symbol_neighborhood_at_position_from_index, trace_symbol_neighborhood_from_index,
