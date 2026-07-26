@@ -9,8 +9,9 @@ use crate::index_schema::{
     validate_symbol_index_schema_version, validate_symbol_index_workspace,
 };
 use crate::index_store::{
-    SymbolRefreshPersistence, load_file_states, load_indexed_symbols_grouped_by_file,
-    load_resolved_symbols, persist_symbol_index, persist_symbol_refresh,
+    SymbolRefreshPersistence, load_file_states_with_deadline,
+    load_indexed_symbols_grouped_by_file_with_deadline, load_resolved_symbols_with_deadline,
+    persist_symbol_index, persist_symbol_refresh,
 };
 use crate::language::{
     detect_language, ensure_path_inside_workspace, normalize_absolute_path, normalize_path,
@@ -141,10 +142,11 @@ pub fn refresh_symbol_index_for_file_with_limits(
     validate_symbol_index_schema_version(&connection, &db_path)?;
     require_current_symbol_index_schema(&connection, &db_path)?;
 
-    let old_resolved_symbols = load_resolved_symbols(&connection)?.0;
+    let old_resolved_symbols = load_resolved_symbols_with_deadline(&connection, Some(&deadline))?.0;
     deadline.check("loading existing resolved symbols")?;
     let old_resolved_map = resolved_symbol_map(&old_resolved_symbols);
-    let mut grouped_symbols = load_indexed_symbols_grouped_by_file(&connection)?;
+    let mut grouped_symbols =
+        load_indexed_symbols_grouped_by_file_with_deadline(&connection, &deadline)?;
     deadline.check("loading existing indexed symbols")?;
     let refresh_paths = if should_skip_index_path(&workspace_root, &file_path) {
         vec![file_path.clone()]
@@ -152,7 +154,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         expanded_refresh_file_paths(&workspace_root, &file_path, limits, &deadline)?
     };
 
-    let mut file_states = load_file_states(&connection)?;
+    let mut file_states = load_file_states_with_deadline(&connection, Some(&deadline))?;
     deadline.check("loading existing indexed file states")?;
     validate_persisted_index_paths(&workspace_root, &file_states, &old_resolved_symbols)?;
     let mut old_changed_symbols = Vec::new();

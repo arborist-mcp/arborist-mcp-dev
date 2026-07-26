@@ -10,7 +10,8 @@ use crate::index_schema::{
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
-    count_table_rows, load_file_states, load_indexed_symbols_grouped_by_file, load_resolved_symbols,
+    count_table_rows, load_file_states_with_deadline,
+    load_indexed_symbols_grouped_by_file_with_deadline, load_resolved_symbols_with_deadline,
 };
 use crate::language::{normalize_absolute_path, normalize_path};
 use crate::model::{SYMBOL_INDEX_HEALTH_RESPONSE_SCHEMA_VERSION, SymbolIndexHealth};
@@ -173,7 +174,7 @@ pub fn inspect_symbol_index_with_timeout(
     }
     deadline.check("counting persisted file states")?;
 
-    let file_states = match load_file_states(&connection) {
+    let file_states = match load_file_states_with_deadline(&connection, Some(&deadline)) {
         Ok(file_states) => Some(file_states),
         Err(error) => {
             health
@@ -183,7 +184,7 @@ pub fn inspect_symbol_index_with_timeout(
         }
     };
     deadline.check("loading persisted file states")?;
-    let resolved_symbols = match load_resolved_symbols(&connection) {
+    let resolved_symbols = match load_resolved_symbols_with_deadline(&connection, Some(&deadline)) {
         Ok((symbols, _)) => Some(symbols),
         Err(error) => {
             health
@@ -193,7 +194,7 @@ pub fn inspect_symbol_index_with_timeout(
         }
     };
     deadline.check("loading persisted symbols")?;
-    if let Err(error) = load_indexed_symbols_grouped_by_file(&connection) {
+    if let Err(error) = load_indexed_symbols_grouped_by_file_with_deadline(&connection, &deadline) {
         health
             .issues
             .push(format!("failed to inspect persisted raw symbols: {error}"));
