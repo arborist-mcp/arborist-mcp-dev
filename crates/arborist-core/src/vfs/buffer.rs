@@ -14,7 +14,7 @@ use crate::language::{
     parser_for_language, path_is_inside_workspace, point_for_offset, write_source_atomic,
 };
 use crate::model::{PatchValidationReport, PositionEdit, VirtualEditResult, VirtualFileSnapshot};
-use crate::patching::{collect_syntax_errors, splice_source};
+use crate::patching::{MAX_PATCH_REPLACEMENT_BYTES, collect_syntax_errors, splice_source};
 use crate::symbols::refresh_symbol_index_for_file;
 use crate::workspace_scan::should_skip_index_path;
 
@@ -46,6 +46,12 @@ impl VirtualFileSystem {
         old_end_byte: usize,
         new_text: &str,
     ) -> Result<VirtualEditResult> {
+        if new_text.len() > MAX_PATCH_REPLACEMENT_BYTES {
+            return Err(anyhow!(
+                "invalid new_text: edit exceeds max bytes ({})",
+                MAX_PATCH_REPLACEMENT_BYTES
+            ));
+        }
         let (path, normalized) = normalized_virtual_path(path)?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;

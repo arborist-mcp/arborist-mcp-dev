@@ -1,5 +1,25 @@
 use super::*;
 
+use crate::MAX_PATCH_REPLACEMENT_BYTES;
+
+#[test]
+fn rejects_oversized_virtual_edit_without_dirtying_buffer() {
+    let file = temp_file("def value() -> int:\n    return 1\n");
+    let mut vfs = VirtualFileSystem::new();
+    let initial = vfs.read_file(&file).unwrap();
+
+    let error = vfs
+        .apply_edit(&file, 0, 0, &"x".repeat(MAX_PATCH_REPLACEMENT_BYTES + 1))
+        .expect_err("oversized virtual edits should be rejected");
+
+    assert!(error.to_string().contains("new_text"));
+    assert!(error.to_string().contains("max bytes"));
+    let snapshot = vfs.read_file(&file).unwrap();
+    assert_eq!(snapshot.source, initial.source);
+    assert_eq!(snapshot.version, initial.version);
+    assert_eq!(snapshot.dirty, initial.dirty);
+}
+
 #[test]
 fn applies_incremental_edit_and_commits() {
     let file = temp_file("def value() -> int:\n    return 1\n");
