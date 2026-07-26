@@ -10,6 +10,7 @@ mod owners;
 mod validation;
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;
+pub const MAX_TREE_QUERY_CAPTURES: usize = 100_000;
 pub const DEFAULT_TREE_QUERY_MAX_BYTES: usize = 64 * 1024;
 pub const DEFAULT_TREE_QUERY_TIMEOUT_MICROS: u64 = 500_000;
 pub const MAX_TREE_QUERY_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
@@ -67,7 +68,10 @@ pub fn execute_tree_query_with_timeout(
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_TREE_QUERY_TIMEOUT_MS, validation::validate_timeout};
+    use super::{
+        MAX_TREE_QUERY_CAPTURES, MAX_TREE_QUERY_TIMEOUT_MS,
+        validation::{validate_max_captures, validate_timeout},
+    };
 
     #[test]
     fn validates_tree_query_timeout_bounds() {
@@ -75,5 +79,12 @@ mod tests {
         assert!(validate_timeout(Some(MAX_TREE_QUERY_TIMEOUT_MS + 1)).is_err());
         assert_eq!(validate_timeout(None).unwrap(), 500_000);
         assert_eq!(validate_timeout(Some(2)).unwrap(), 2_000);
+    }
+
+    #[test]
+    fn validates_tree_query_capture_bounds() {
+        assert!(validate_max_captures(0).is_err());
+        assert!(validate_max_captures(MAX_TREE_QUERY_CAPTURES + 1).is_err());
+        assert!(validate_max_captures(MAX_TREE_QUERY_CAPTURES).is_ok());
     }
 }

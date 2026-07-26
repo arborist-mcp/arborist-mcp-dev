@@ -1,7 +1,8 @@
 use anyhow::{Result, bail};
 
 use super::{
-    DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_TIMEOUT_MICROS, MAX_TREE_QUERY_TIMEOUT_MS,
+    DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_TIMEOUT_MICROS, MAX_TREE_QUERY_CAPTURES,
+    MAX_TREE_QUERY_TIMEOUT_MS,
 };
 
 pub(super) fn validate_tree_query(query: &str) -> Result<()> {
@@ -21,6 +22,12 @@ pub(super) fn validate_tree_query(query: &str) -> Result<()> {
 pub(super) fn validate_max_captures(max_captures: usize) -> Result<()> {
     if max_captures == 0 {
         bail!("invalid Tree-sitter query max_captures: value must be greater than zero");
+    }
+    if max_captures > MAX_TREE_QUERY_CAPTURES {
+        bail!(
+            "invalid Tree-sitter query max_captures: value must not exceed {}",
+            MAX_TREE_QUERY_CAPTURES
+        );
     }
 
     Ok(())

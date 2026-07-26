@@ -62,10 +62,10 @@ pub use patching::{
     preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
 };
 pub use query::{
-    DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_MAX_CAPTURES, MAX_TREE_QUERY_TIMEOUT_MS,
-    execute_tree_query, execute_tree_query_from_path, execute_tree_query_from_path_with_limit,
-    execute_tree_query_from_path_with_timeout, execute_tree_query_with_limit,
-    execute_tree_query_with_timeout,
+    DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_MAX_CAPTURES, MAX_TREE_QUERY_CAPTURES,
+    MAX_TREE_QUERY_TIMEOUT_MS, execute_tree_query, execute_tree_query_from_path,
+    execute_tree_query_from_path_with_limit, execute_tree_query_from_path_with_timeout,
+    execute_tree_query_with_limit, execute_tree_query_with_timeout,
 };
 pub use symbol_index_state::{
     inspect_symbol_index, inspect_symbol_index_with_timeout, migrate_symbol_index,
