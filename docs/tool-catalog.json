@@ -31630,7 +31630,8 @@
           "type": "integer",
           "description": "Maximum semantic skeleton expansion depth.",
           "default": 2,
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 64
         },
         "source": {
           "type": "string",

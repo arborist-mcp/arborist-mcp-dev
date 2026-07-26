@@ -123,6 +123,7 @@ MAX_BATCH_CALLS = 32
 MAX_POSITION_EDITS = 10_000
 MAX_POSITION_EDIT_TEXT_BYTES = 64 * 1024 * 1024
 MAX_SEMANTIC_EXPAND_NODES = 10_000
+MAX_SEMANTIC_SKELETON_DEPTH = 64
 MAX_WORKSPACE_EDIT_PREVIEW_FILES = 32
 MAX_GRAPH_DEPTH = 64
 MAX_GRAPH_NODES = 10_000
@@ -265,9 +266,11 @@ TOOL_PARAM_SPECS = {
             "Maximum semantic skeleton expansion depth.",
             default=2,
             minimum=0,
+            maximum=MAX_SEMANTIC_SKELETON_DEPTH,
         ),
         optional=True,
         default=2,
+        int_max_value=MAX_SEMANTIC_SKELETON_DEPTH,
     ),
     "direction": ToolParamSpec(
         _schema(
