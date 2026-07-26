@@ -236,6 +236,20 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual([event["status"] for event in events], ["healthy"])
         self.assertNotIn("workspace_root", events[0])
 
+    def test_run_watch_targets_rejects_non_finite_interval(self) -> None:
+        core = StubCore(health_payload(ok=True, action="none"))
+
+        with self.assertRaisesRegex(IndexWatchError, "finite number"):
+            run_watch_targets(
+                core,
+                targets=(IndexWatchTarget("workspace", "symbols.db"),),
+                interval_seconds=float("nan"),
+                max_files=20,
+                max_file_bytes=None,
+                once=True,
+            )
+        self.assertEqual(core.inspect_calls, [])
+
     def test_run_watch_targets_emits_deterministic_workspace_order(self) -> None:
         core = StubCore(health_payload(ok=True, action="none"))
         events: list[dict[str, object]] = []

@@ -330,6 +330,10 @@ def run_watch_targets(
     ),
     include_workspace_root: bool = True,
 ) -> None:
+    if not math.isfinite(interval_seconds) or interval_seconds <= 0:
+        raise IndexWatchError(
+            "index watch interval_seconds must be a finite number greater than zero"
+        )
     ordered_targets = _ordered_watch_targets(targets)
     first_cycle = True
     while True:
