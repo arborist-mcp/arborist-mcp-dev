@@ -46,10 +46,22 @@ pub(crate) fn persisted_fingerprint(fingerprint: u64) -> Result<i64> {
     Ok(i64::from_ne_bytes(fingerprint.to_ne_bytes()))
 }
 
-pub(crate) fn count_table_rows(connection: &Connection, table_name: &str) -> Result<usize> {
+pub(crate) fn count_table_rows_with_deadline(
+    connection: &Connection,
+    table_name: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<usize> {
+    if let Some(deadline) = deadline {
+        deadline.check("counting persisted rows")?;
+    }
     let sql = format!("SELECT COUNT(*) FROM {table_name}");
     let count = connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?;
-    usize::try_from(count).map_err(|error| anyhow!("invalid row count in `{table_name}`: {error}"))
+    let count = usize::try_from(count)
+        .map_err(|error| anyhow!("invalid row count in `{table_name}`: {error}"))?;
+    if let Some(deadline) = deadline {
+        deadline.check("counting persisted rows")?;
+    }
+    Ok(count)
 }
 
 #[cfg(test)]

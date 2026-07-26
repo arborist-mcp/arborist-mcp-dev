@@ -5,13 +5,13 @@ use anyhow::{Result, anyhow};
 use crate::index_migration;
 use crate::index_schema::{
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
-    load_indexed_files_metadata_with_deadline, load_optional_metadata_value,
+    load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
     load_symbol_index_workspace_root, open_symbol_index_read_only,
     require_current_symbol_index_schema, require_legacy_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
-    count_table_rows, load_file_states_with_deadline,
+    count_table_rows_with_deadline, load_file_states_with_deadline,
     load_indexed_symbols_grouped_by_file_with_deadline, load_resolved_symbols_with_deadline,
 };
 use crate::language::{normalize_absolute_path, normalize_path};
@@ -85,13 +85,14 @@ pub fn inspect_symbol_index_with_timeout(
     }
 
     health.schema_version =
-        load_optional_metadata_value(&connection, "schema_version").map_err(|error| {
-            anyhow!(
-                "failed to inspect schema_version metadata in {}: {}",
-                db_path.display(),
-                error
-            )
-        })?;
+        load_optional_metadata_value_with_deadline(&connection, "schema_version", Some(&deadline))
+            .map_err(|error| {
+                anyhow!(
+                    "failed to inspect schema_version metadata in {}: {}",
+                    db_path.display(),
+                    error
+                )
+            })?;
     deadline.check("loading schema metadata")?;
     if health.schema_version.is_none() {
         health.issues.push(format!(
@@ -159,14 +160,14 @@ pub fn inspect_symbol_index_with_timeout(
         Err(error) => health.issues.push(error.to_string()),
     }
 
-    match count_table_rows(&connection, "symbols") {
+    match count_table_rows_with_deadline(&connection, "symbols", Some(&deadline)) {
         Ok(count) => health.indexed_symbols = Some(count),
         Err(error) => health
             .issues
             .push(format!("failed to count persisted symbols: {error}")),
     }
     deadline.check("counting persisted symbols")?;
-    match count_table_rows(&connection, "file_state") {
+    match count_table_rows_with_deadline(&connection, "file_state", Some(&deadline)) {
         Ok(count) => health.file_state_entries = Some(count),
         Err(error) => health
             .issues

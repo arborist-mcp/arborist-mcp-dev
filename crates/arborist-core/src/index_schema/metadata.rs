@@ -108,12 +108,26 @@ pub(crate) fn load_optional_metadata_value(
     connection: &Connection,
     key: &str,
 ) -> Result<Option<String>> {
-    connection
+    load_optional_metadata_value_with_deadline(connection, key, None)
+}
+
+pub(crate) fn load_optional_metadata_value_with_deadline(
+    connection: &Connection,
+    key: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading index metadata")?;
+    }
+    let value = connection
         .query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
             row.get::<_, String>(0)
         })
-        .optional()
-        .map_err(Into::into)
+        .optional()?;
+    if let Some(deadline) = deadline {
+        deadline.check("loading index metadata")?;
+    }
+    Ok(value)
 }
 
 pub(crate) fn validate_symbol_index_workspace(
