@@ -19,14 +19,7 @@ pub fn supported_languages() -> Vec<&'static str> {
 }
 
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
-    if source.len() as u64 > MAX_SOURCE_FILE_BYTES {
-        bail!(
-            "source text too large for {}: size_bytes={} max_file_bytes={}",
-            path.display(),
-            source.len(),
-            MAX_SOURCE_FILE_BYTES,
-        );
-    }
+    validate_source_length(path, source.len())?;
     let language_id = detect_language(path)?;
     let mut parser = parser_for_language(language_id)?;
 
@@ -35,6 +28,22 @@ pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
         .ok_or_else(|| anyhow!("failed to parse {}", path.display()))?;
 
     Ok(ParsedDocument { language_id, tree })
+}
+
+pub(crate) fn validate_source_size(path: &Path, source: &str) -> Result<()> {
+    validate_source_length(path, source.len())
+}
+
+pub(crate) fn validate_source_length(path: &Path, size: usize) -> Result<()> {
+    if size as u64 > MAX_SOURCE_FILE_BYTES {
+        bail!(
+            "source text too large for {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            size,
+            MAX_SOURCE_FILE_BYTES,
+        );
+    }
+    Ok(())
 }
 
 pub fn parser_for_language(language_id: LanguageId) -> Result<Parser> {

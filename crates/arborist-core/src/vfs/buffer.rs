@@ -11,7 +11,8 @@ use super::state::{
 };
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
-    parser_for_language, path_is_inside_workspace, point_for_offset, write_source_atomic,
+    parser_for_language, path_is_inside_workspace, point_for_offset, validate_source_length,
+    write_source_atomic,
 };
 use crate::model::validate_position_edit_batch;
 use crate::model::{PatchValidationReport, PositionEdit, VirtualEditResult, VirtualFileSnapshot};
@@ -63,6 +64,13 @@ impl VirtualFileSystem {
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
         validate_edit_range(&entry.source, start_byte, old_end_byte)?;
+        let result_len = entry
+            .source
+            .len()
+            .checked_sub(old_end_byte - start_byte)
+            .and_then(|length| length.checked_add(new_text.len()))
+            .ok_or_else(|| anyhow!("updated source size overflowed"))?;
+        validate_source_length(&path, result_len)?;
         let updated_source = splice_source(&entry.source, start_byte..old_end_byte, new_text);
 
         let edit = InputEdit {

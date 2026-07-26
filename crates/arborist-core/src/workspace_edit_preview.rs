@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document, read_source,
+    validate_source_length, validate_source_size,
 };
 use crate::model::{
     MAX_WORKSPACE_EDIT_PREVIEW_FILES, PatchValidationReport, WorkspaceEditPreviewFile,
@@ -35,6 +36,7 @@ pub fn preview_workspace_position_edits(
             Some(source) => source.clone(),
             None => read_source(&path)?,
         };
+        validate_source_size(&path, &original_source)?;
         let mut updated_source = original_source.clone();
         for (edit_index, edit) in request.edits.iter().enumerate() {
             let start = offset_for_position(&updated_source, &edit.start)
@@ -44,6 +46,12 @@ pub fn preview_workspace_position_edits(
             if start > end {
                 bail!("failed to apply position edit at index {edit_index}: start is after end");
             }
+            let result_len = updated_source
+                .len()
+                .checked_sub(end - start)
+                .and_then(|length| length.checked_add(edit.new_text.len()))
+                .ok_or_else(|| anyhow::anyhow!("updated source size overflowed"))?;
+            validate_source_length(&path, result_len)?;
             updated_source = splice_source(&updated_source, start..end, &edit.new_text);
         }
 

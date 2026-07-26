@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::language::{normalize_absolute_path, normalize_path, read_source, write_source_atomic};
+use crate::language::{
+    normalize_absolute_path, normalize_path, read_source, validate_source_length,
+    write_source_atomic,
+};
 use crate::model::{PatchAstNodeResult, PatchPreviewResult, Position};
 
 use super::{
@@ -84,6 +87,12 @@ pub fn patch_ast_node(
     validate_patch_replacement(new_code)?;
     validate_bypass_reason(bypass_reason)?;
     let prepared = prepare_patch_replacement(&path, source, semantic_target, new_code)?;
+    let result_len = source
+        .len()
+        .checked_sub(prepared.end_byte - prepared.start_byte)
+        .and_then(|length| length.checked_add(prepared.replacement.len()))
+        .ok_or_else(|| anyhow::anyhow!("updated source size overflowed"))?;
+    validate_source_length(&path, result_len)?;
     let updated_source = splice_source(
         source,
         prepared.start_byte..prepared.end_byte,
