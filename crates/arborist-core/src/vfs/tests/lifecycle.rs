@@ -1,4 +1,5 @@
 use super::*;
+use crate::read_symbol_from_index;
 
 #[test]
 fn path_aliases_share_one_virtual_entry() {
@@ -257,6 +258,48 @@ fn commits_refresh_registered_symbol_index() {
 
     assert!(vfs.unregister_symbol_index(&workspace).unwrap());
     assert!(vfs.registered_symbol_indexes().is_empty());
+}
+
+#[test]
+fn commit_retries_registered_index_sync_after_a_previous_failure() {
+    let workspace = temp_workspace();
+    let helper_path = workspace.join("helper.py");
+    let db_path = workspace.join("symbols.db");
+    fs::write(&helper_path, "def helper() -> int:\n    return 1\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.register_symbol_index(&workspace, &db_path).unwrap();
+    let snapshot = vfs.read_file(&helper_path).unwrap();
+    let digit_offset = snapshot.source.rfind('1').unwrap();
+    vfs.apply_edit(&helper_path, digit_offset, digit_offset + 1, "2")
+        .unwrap();
+
+    let workspace_key = vfs.registered_symbol_indexes()[0].workspace_root.clone();
+    let invalid_db_path = workspace.join("invalid-index");
+    fs::create_dir_all(&invalid_db_path).unwrap();
+    vfs.symbol_indexes
+        .insert(workspace_key.clone(), invalid_db_path);
+
+    vfs.commit_file(&helper_path)
+        .expect_err("missing registered index should make the initial sync fail");
+    assert!(
+        fs::read_to_string(&helper_path)
+            .unwrap()
+            .contains("return 2")
+    );
+
+    vfs.symbol_indexes.insert(workspace_key, db_path.clone());
+    let committed = vfs
+        .commit_file(&helper_path)
+        .expect("a retry should refresh the previously stale index");
+
+    assert!(!committed.dirty);
+    assert!(
+        read_symbol_from_index(&db_path, "helper")
+            .unwrap()
+            .source
+            .contains("return 2")
+    );
 }
 
 #[test]

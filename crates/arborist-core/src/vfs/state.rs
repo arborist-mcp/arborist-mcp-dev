@@ -16,6 +16,7 @@ pub(super) struct VirtualFileEntry {
     pub(super) tree: Tree,
     pub(super) version: u64,
     pub(super) dirty: bool,
+    pub(super) index_sync_pending: bool,
 }
 
 pub(super) fn normalized_virtual_path(path: &Path) -> Result<(PathBuf, String)> {

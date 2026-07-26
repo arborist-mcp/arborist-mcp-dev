@@ -206,8 +206,21 @@ impl VirtualFileSystem {
             entry.path.clone()
         };
 
-        if source_changed {
+        let index_sync_pending = self
+            .entries
+            .get(&normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+            .index_sync_pending;
+        if source_changed || index_sync_pending {
+            self.entries
+                .get_mut(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+                .index_sync_pending = true;
             self.sync_registered_indexes(&committed_path)?;
+            self.entries
+                .get_mut(&normalized)
+                .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+                .index_sync_pending = false;
         }
 
         let entry = self
@@ -286,6 +299,7 @@ impl VirtualFileSystem {
                         tree: document.tree,
                         version: 0,
                         dirty,
+                        index_sync_pending: false,
                     },
                 );
             }
