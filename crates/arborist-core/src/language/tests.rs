@@ -50,6 +50,14 @@ fn detect_language_reports_original_unsupported_extension() {
 }
 
 #[test]
+fn rejects_cpp_module_extensions_until_the_grammar_supports_module_declarations() {
+    let error = detect_language(Path::new("sample.cppm"))
+        .expect_err("C++ module extensions must remain unsupported until module syntax parses");
+
+    assert!(error.to_string().contains(r#"Some("cppm")"#));
+}
+
+#[test]
 fn c_header_detection_accepts_uppercase_extensions() {
     assert!(is_c_header_path(Path::new("sample.h")));
     assert!(is_c_header_path(Path::new("sample.H")));
