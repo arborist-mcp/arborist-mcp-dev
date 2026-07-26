@@ -14,9 +14,9 @@ pub use patch_validation::{
 };
 pub(crate) use primitives::validate_position_edit_batch;
 pub use primitives::{
-    LanguageId, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS, MAX_SEMANTIC_EXPAND_NODES,
-    MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit, QueryCaptureResult, SemanticSkeleton,
-    SemanticSkeletonSymbol, TraceDirection,
+    LanguageId, MAX_POSITION_EDIT_NEW_TEXT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS,
+    MAX_SEMANTIC_EXPAND_NODES, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit,
+    QueryCaptureResult, SemanticSkeleton, SemanticSkeletonSymbol, TraceDirection,
 };
 pub use query_results::{
     RegisteredSymbolIndex, SymbolContextResult, SymbolIndexHealth, SymbolIndexMigrationPlan,

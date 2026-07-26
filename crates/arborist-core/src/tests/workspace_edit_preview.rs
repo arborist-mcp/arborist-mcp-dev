@@ -2,8 +2,9 @@ use std::fs;
 
 use super::support::temporary_dir;
 use crate::{
-    MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS, MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position,
-    PositionEdit, WorkspacePositionEdits, preview_workspace_position_edits,
+    MAX_POSITION_EDIT_NEW_TEXT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS,
+    MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit, WorkspacePositionEdits,
+    preview_workspace_position_edits,
 };
 
 #[test]
@@ -154,11 +155,14 @@ fn rejects_position_edit_text_budget_before_reading_source() {
     let error = preview_workspace_position_edits(&[WorkspacePositionEdits {
         file_path: missing.display().to_string(),
         source: None,
-        edits: vec![PositionEdit {
-            start: Position { row: 0, column: 0 },
-            end: Position { row: 0, column: 0 },
-            new_text: "x".repeat(MAX_POSITION_EDIT_TEXT_BYTES + 1),
-        }],
+        edits: vec![
+            PositionEdit {
+                start: Position { row: 0, column: 0 },
+                end: Position { row: 0, column: 0 },
+                new_text: "x".repeat(MAX_POSITION_EDIT_NEW_TEXT_BYTES),
+            };
+            (MAX_POSITION_EDIT_TEXT_BYTES / MAX_POSITION_EDIT_NEW_TEXT_BYTES) + 1
+        ],
     }])
     .expect_err("replacement text beyond the batch budget should be rejected");
 

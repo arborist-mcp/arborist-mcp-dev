@@ -1,6 +1,9 @@
 use super::*;
 
-use crate::{MAX_PATCH_REPLACEMENT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS};
+use crate::{
+    MAX_PATCH_REPLACEMENT_BYTES, MAX_POSITION_EDIT_NEW_TEXT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES,
+    MAX_POSITION_EDITS,
+};
 
 #[test]
 fn rejects_oversized_virtual_edit_without_dirtying_buffer() {
@@ -45,7 +48,7 @@ fn rejects_too_many_position_edits_without_dirtying_buffer() {
 }
 
 #[test]
-fn rejects_position_edit_text_budget_without_dirtying_buffer() {
+fn rejects_oversized_position_edit_without_dirtying_buffer() {
     let file = temp_file("value = 1\n");
     let mut vfs = VirtualFileSystem::new();
     let initial = vfs.read_file(&file).unwrap();
@@ -56,9 +59,37 @@ fn rejects_position_edit_text_budget_without_dirtying_buffer() {
             &[PositionEdit {
                 start: Position { row: 0, column: 0 },
                 end: Position { row: 0, column: 0 },
-                new_text: "x".repeat(MAX_POSITION_EDIT_TEXT_BYTES + 1),
+                new_text: "x".repeat(MAX_POSITION_EDIT_NEW_TEXT_BYTES + 1),
             }],
         )
+        .expect_err("oversized position edits should be rejected");
+
+    assert!(error.to_string().contains("position edits[0].new_text"));
+    assert!(
+        error
+            .to_string()
+            .contains(&MAX_POSITION_EDIT_NEW_TEXT_BYTES.to_string())
+    );
+    let snapshot = vfs.read_file(&file).unwrap();
+    assert_eq!(snapshot.source, initial.source);
+    assert_eq!(snapshot.version, initial.version);
+    assert_eq!(snapshot.dirty, initial.dirty);
+}
+
+#[test]
+fn rejects_position_edit_text_budget_without_dirtying_buffer() {
+    let file = temp_file("value = 1\n");
+    let mut vfs = VirtualFileSystem::new();
+    let initial = vfs.read_file(&file).unwrap();
+
+    let edit = PositionEdit {
+        start: Position { row: 0, column: 0 },
+        end: Position { row: 0, column: 0 },
+        new_text: "x".repeat(MAX_POSITION_EDIT_NEW_TEXT_BYTES),
+    };
+    let edits = vec![edit; (MAX_POSITION_EDIT_TEXT_BYTES / MAX_POSITION_EDIT_NEW_TEXT_BYTES) + 1];
+    let error = vfs
+        .apply_position_edits(&file, &edits)
         .expect_err("replacement text beyond the batch budget should be rejected");
 
     assert!(error.to_string().contains("position edits"));
