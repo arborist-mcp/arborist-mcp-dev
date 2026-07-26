@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::model::Position;
 use crate::model::{TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult};
-use crate::symbol_index_workspace::load_live_workspace_symbols;
+use crate::symbol_index_workspace::load_live_workspace_symbols_with_timeout;
 use crate::symbol_query_execution::{
     trace_from_symbols_with_timeout, trace_neighborhood_from_symbols_with_timeout,
     trace_symbol_graph_at_position_from_symbols_with_timeout,
@@ -12,7 +12,7 @@ use crate::symbol_query_execution::{
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
-use super::load_live_workspace_symbols_at_path;
+use super::load_live_workspace_symbols_at_path_with_timeout;
 
 pub fn trace_symbol_graph(
     workspace_root: &Path,
@@ -29,7 +29,8 @@ pub fn trace_symbol_graph_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
+    let (resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_with_timeout(workspace_root, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     trace_from_symbols_with_timeout(
         &resolved_symbols,
@@ -66,7 +67,8 @@ pub fn trace_symbol_neighborhood_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let (resolved_symbols, indexed_files) = load_live_workspace_symbols(workspace_root)?;
+    let (resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_with_timeout(workspace_root, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     trace_neighborhood_from_symbols_with_timeout(
         &resolved_symbols,
@@ -103,7 +105,7 @@ pub fn trace_symbol_graph_at_position_with_timeout(
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let (file_path, resolved_symbols, indexed_files) =
-        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
+        load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     trace_symbol_graph_at_position_from_symbols_with_timeout(
         &resolved_symbols,
@@ -146,7 +148,7 @@ pub fn trace_symbol_neighborhood_at_position_with_timeout(
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let (file_path, resolved_symbols, indexed_files) =
-        load_live_workspace_symbols_at_path(workspace_root, file_path)?;
+        load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         &resolved_symbols,
