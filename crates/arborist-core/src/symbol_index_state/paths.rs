@@ -205,7 +205,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 
-    use super::symbol_index_freshness_issues;
+    use super::{
+        symbol_index_freshness_issues, validate_persisted_index_paths_with_overrides_and_deadline,
+    };
     use crate::workspace_scan::WorkspaceScanDeadline;
 
     #[test]
@@ -219,6 +221,30 @@ mod tests {
 
         let error = symbol_index_freshness_issues(&file_states, None, Some(&deadline))
             .expect_err("expired freshness checks should stop before reading files");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn persisted_path_validation_rejects_expired_deadline_before_path_checks() {
+        let mut file_states = BTreeMap::new();
+        file_states.insert("C:\\workspace\\source.py".to_owned(), 0);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = validate_persisted_index_paths_with_overrides_and_deadline(
+            std::path::Path::new("C:\\workspace"),
+            &file_states,
+            &[],
+            None,
+            Some(&deadline),
+        )
+        .expect_err("expired path validation should stop before path normalization");
         assert!(
             error
                 .to_string()
