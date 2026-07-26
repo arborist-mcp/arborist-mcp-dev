@@ -248,13 +248,17 @@ pub(crate) fn string_list_from_json_column(
     column_name: &str,
 ) -> rusqlite::Result<Vec<String>> {
     let values: Vec<String> = json_from_column(json, column)?;
-    if values.iter().any(|value| value.trim().is_empty()) {
+    let mut seen = BTreeSet::new();
+    if values
+        .iter()
+        .any(|value| value.trim().is_empty() || !seen.insert(value.clone()))
+    {
         return Err(rusqlite::Error::FromSqlConversionFailure(
             column,
             Type::Text,
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("empty {column_name} entry"),
+                format!("empty or duplicate {column_name} entry"),
             )),
         ));
     }
@@ -317,4 +321,17 @@ fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
             message,
         )),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::string_list_from_json_column;
+
+    #[test]
+    fn string_list_from_json_column_rejects_duplicate_entries() {
+        let error = string_list_from_json_column(r#"["helper", "helper"]"#, 0, "dependencies_json")
+            .expect_err("duplicate persisted list entries should be rejected");
+
+        assert!(error.to_string().contains("duplicate"));
+    }
 }
