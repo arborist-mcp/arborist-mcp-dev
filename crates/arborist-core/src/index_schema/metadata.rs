@@ -190,7 +190,9 @@ mod tests {
 
     use crate::workspace_scan::WorkspaceScanDeadline;
 
-    use super::load_indexed_files_metadata_with_deadline;
+    use super::{
+        load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
+    };
 
     #[test]
     fn load_indexed_files_metadata_checks_deadline_before_query() {
@@ -202,6 +204,28 @@ mod tests {
 
         let error = load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))
             .expect_err("expired deadline should stop before metadata loading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn load_optional_metadata_checks_deadline_before_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = load_optional_metadata_value_with_deadline(
+            &connection,
+            "schema_version",
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop before metadata loading");
 
         assert!(
             error

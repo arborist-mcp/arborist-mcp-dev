@@ -72,7 +72,10 @@ mod tests {
 
     use crate::workspace_scan::WorkspaceScanDeadline;
 
-    use super::{load_file_states, load_file_states_with_deadline, load_legacy_file_states};
+    use super::{
+        count_table_rows_with_deadline, load_file_states, load_file_states_with_deadline,
+        load_legacy_file_states,
+    };
 
     #[test]
     fn load_file_states_restores_signed_fingerprints() {
@@ -144,5 +147,23 @@ mod tests {
         let states = load_legacy_file_states(&connection).unwrap();
 
         assert_eq!(states["/workspace/helper.py"], u64::MAX);
+    }
+
+    #[test]
+    fn count_table_rows_checks_deadline_before_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = count_table_rows_with_deadline(&connection, "symbols", Some(&deadline))
+            .expect_err("expired deadline should stop before counting rows");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
     }
 }
