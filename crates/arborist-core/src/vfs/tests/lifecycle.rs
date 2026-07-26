@@ -89,6 +89,21 @@ fn refreshes_clean_file_deleted_on_disk_as_empty() {
 }
 
 #[test]
+fn rejects_oversized_disk_sources() {
+    let file = temp_file("");
+    let handle = fs::File::create(&file).unwrap();
+    handle.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+    drop(handle);
+    let mut vfs = VirtualFileSystem::new();
+
+    let error = vfs
+        .read_file(&file)
+        .expect_err("oversized disk sources should be rejected");
+    assert!(error.to_string().contains("source file too large"));
+    let _ = fs::remove_dir_all(file.parent().unwrap());
+}
+
+#[test]
 fn commit_refreshes_clean_file_changed_on_disk() {
     let file = temp_file("def value() -> int:\n    return 1\n");
     let mut vfs = VirtualFileSystem::new();

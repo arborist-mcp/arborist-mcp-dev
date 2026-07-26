@@ -1,11 +1,9 @@
-use std::fs;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use tree_sitter::Tree;
 
-use crate::language::{normalize_absolute_path, normalize_path};
+use crate::language::{normalize_absolute_path, normalize_path, read_source};
 use crate::model::{LanguageId, VirtualFileSnapshot};
 use crate::patching::collect_syntax_errors;
 
@@ -27,13 +25,10 @@ pub(super) fn normalized_virtual_path(path: &Path) -> Result<(PathBuf, String)> 
 }
 
 pub(super) fn read_virtual_disk_source(path: &Path) -> Result<String> {
-    match fs::read_to_string(path) {
-        Ok(source) => Ok(source),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(String::new()),
-        Err(error) => {
-            Err(error).with_context(|| format!("failed to read source file {}", path.display()))
-        }
+    if !path.exists() {
+        return Ok(String::new());
     }
+    read_source(path)
 }
 
 pub(super) fn snapshot_from_entry(

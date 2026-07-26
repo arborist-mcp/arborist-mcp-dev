@@ -4,7 +4,7 @@ pub(super) use std::sync::atomic::{AtomicU64, Ordering};
 pub(super) use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) use super::VirtualFileSystem;
-pub(super) use crate::language::{point_for_offset, position_from};
+pub(super) use crate::language::{MAX_SOURCE_FILE_BYTES, point_for_offset, position_from};
 pub(super) use crate::{Position, PositionEdit, TraceDirection, trace_symbol_graph_from_index};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
