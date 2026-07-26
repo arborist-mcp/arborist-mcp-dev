@@ -35,6 +35,7 @@ pub(crate) fn normalize_source_overrides_for_workspace(
                 file_path.display()
             );
         }
+        language::validate_source_size(&file_path, source)?;
 
         let normalized_path = language::normalize_path(&file_path);
         let duplicate_key = if cfg!(windows) {
@@ -75,6 +76,18 @@ mod tests {
         let error = normalize_source_overrides_for_workspace(&workspace, &overrides, "workspace")
             .expect_err("duplicate normalized overlay paths should be rejected");
         assert!(error.to_string().contains("duplicate file path"));
+    }
+
+    #[test]
+    fn rejects_oversized_normalized_overlay_source() {
+        let workspace = normalize_absolute_path(&env::current_dir().unwrap()).unwrap();
+        let file_path = workspace.join("oversized_overlay.py");
+        let source = "x".repeat((crate::language::MAX_SOURCE_FILE_BYTES + 1) as usize);
+        let overrides = BTreeMap::from([(file_path.to_string_lossy().into_owned(), source)]);
+
+        let error = normalize_source_overrides_for_workspace(&workspace, &overrides, "workspace")
+            .expect_err("oversized source overlays should be rejected during normalization");
+        assert!(error.to_string().contains("source text too large"));
     }
 
     #[cfg(windows)]
