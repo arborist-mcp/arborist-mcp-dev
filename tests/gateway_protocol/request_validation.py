@@ -807,6 +807,21 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
             gateway=gateway,
         )
 
+    def test_rejects_empty_workspace_preview_files_before_core_call(self) -> None:
+        class StubCore:
+            def preview_workspace_position_edits_json(self, *args: object) -> str:
+                raise AssertionError("core should not be called")
+
+        gateway = self.make_gateway()
+        gateway._core = StubCore()
+        self.assert_invalid_params(
+            "arborist/preview_workspace_position_edits",
+            {"files": []},
+            request_id=16,
+            contains="files must contain at least 1 entry",
+            gateway=gateway,
+        )
+
     def test_rejects_oversized_workspace_preview_source_before_core_call(self) -> None:
         class StubCore:
             def preview_workspace_position_edits_json(self, *args: object) -> str:

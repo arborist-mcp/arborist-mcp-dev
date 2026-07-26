@@ -36,6 +36,11 @@ class GatewayPatchValidationRoutes:
         files = params.get("files")
         if not isinstance(files, list):
             raise JsonRpcError(-32602, "missing required array param: files")
+        if not files:
+            raise JsonRpcError(
+                -32602,
+                "invalid params: files must contain at least 1 entry",
+            )
         if len(files) > MAX_WORKSPACE_EDIT_PREVIEW_FILES:
             raise JsonRpcError(
                 -32602,
