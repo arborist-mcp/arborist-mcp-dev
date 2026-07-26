@@ -149,6 +149,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<Vec<SymbolMeta>> {
+    deadline.check("resolving symbol dependencies")?;
     let name_index = build_name_index(raw_symbols);
     let semantic_path_index = build_semantic_path_index(raw_symbols);
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
@@ -515,4 +516,28 @@ fn resolve_reference_path(
             )
         })
         .map(|index| raw_symbols[index].symbol_id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::resolve_symbol_dependencies_with_overrides_with_deadline;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[test]
+    fn deadline_resolver_rejects_expired_empty_input() {
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = resolve_symbol_dependencies_with_overrides_with_deadline(&[], None, &deadline)
+            .expect_err("expired dependency resolution should fail before indexing");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
 }
