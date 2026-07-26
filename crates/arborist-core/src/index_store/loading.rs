@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, Row, types::Type};
-use serde::de::DeserializeOwned;
+use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 
 use crate::index_schema::load_indexed_files_metadata;
 use crate::model::{SymbolMeta, SymbolMetaInit};
@@ -269,7 +270,11 @@ fn call_arities_from_json_column(
     json: &str,
     column: usize,
 ) -> rusqlite::Result<BTreeMap<String, BTreeSet<usize>>> {
-    let call_arities: BTreeMap<String, BTreeSet<usize>> = json_from_column(json, column)?;
+    let call_arities = serde_json::from_str::<UniqueStringMap<BTreeSet<usize>>>(json)
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(column, Type::Text, Box::new(error))
+        })?
+        .0;
     if call_arities
         .iter()
         .any(|(name, arities)| name.trim().is_empty() || arities.is_empty())
@@ -284,6 +289,46 @@ fn call_arities_from_json_column(
         ));
     }
     Ok(call_arities)
+}
+
+struct UniqueStringMap<T>(BTreeMap<String, T>);
+
+impl<'de, T> serde::Deserialize<'de> for UniqueStringMap<T>
+where
+    T: serde::Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct UniqueStringMapVisitor<T>(std::marker::PhantomData<T>);
+
+        impl<'de, T> Visitor<'de> for UniqueStringMapVisitor<T>
+        where
+            T: serde::Deserialize<'de>,
+        {
+            type Value = UniqueStringMap<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an object with unique string keys")
+            }
+
+            fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut values = BTreeMap::new();
+                while let Some((key, value)) = access.next_entry::<String, T>()? {
+                    if values.insert(key, value).is_some() {
+                        return Err(de::Error::custom("duplicate object key"));
+                    }
+                }
+                Ok(UniqueStringMap(values))
+            }
+        }
+
+        deserializer.deserialize_map(UniqueStringMapVisitor(std::marker::PhantomData))
+    }
 }
 
 pub(crate) fn byte_range_from_row(
@@ -325,7 +370,7 @@ fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::string_list_from_json_column;
+    use super::{call_arities_from_json_column, string_list_from_json_column};
 
     #[test]
     fn string_list_from_json_column_rejects_duplicate_entries() {
@@ -333,5 +378,13 @@ mod tests {
             .expect_err("duplicate persisted list entries should be rejected");
 
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn call_arities_from_json_column_rejects_duplicate_object_keys() {
+        let error = call_arities_from_json_column(r#"{"helper":[1],"helper":[2]}"#, 0)
+            .expect_err("duplicate persisted map keys should be rejected");
+
+        assert!(error.to_string().contains("duplicate object key"));
     }
 }
