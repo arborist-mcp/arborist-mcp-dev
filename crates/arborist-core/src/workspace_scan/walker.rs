@@ -94,9 +94,11 @@ fn walk_workspace(
             return Ok(());
         }
 
-        let mut entries = fs::read_dir(path)?
-            .map(|entry| entry.map(|entry| entry.path()))
-            .collect::<std::io::Result<Vec<_>>>()?;
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path)? {
+            deadline.check("reading workspace directory")?;
+            entries.push(entry?.path());
+        }
         entries.sort();
 
         for entry_path in entries {
