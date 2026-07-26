@@ -12,7 +12,7 @@ use crate::symbol_query_execution::{
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
-use super::load_normalized_symbol_index;
+use super::load_normalized_symbol_index_with_timeout;
 
 pub fn trace_symbol_graph_from_index(
     db_path: &Path,
@@ -29,7 +29,8 @@ pub fn trace_symbol_graph_from_index_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     trace_from_symbols_with_timeout(
         &resolved_symbols,
@@ -66,7 +67,8 @@ pub fn trace_symbol_neighborhood_from_index_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     trace_neighborhood_from_symbols_with_timeout(
         &resolved_symbols,
@@ -99,7 +101,8 @@ pub fn trace_symbol_graph_at_position_from_index_with_timeout(
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let file_path = normalize_absolute_path(file_path)?;
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     trace_symbol_graph_at_position_from_symbols_with_timeout(
         &resolved_symbols,
@@ -136,7 +139,8 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_timeout(
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let file_path = normalize_absolute_path(file_path)?;
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         &resolved_symbols,

@@ -27,6 +27,28 @@ use super::freshness::{ensure_symbol_index_fresh, validate_indexed_file_count};
 use super::paths::{validate_persisted_index_paths, validate_persisted_index_paths_with_overrides};
 
 pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usize)> {
+    load_symbol_index_internal(db_path, None)
+}
+
+pub(crate) fn load_symbol_index_with_timeout(
+    db_path: &Path,
+    timeout_ms: Option<u64>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    let limits = WorkspaceScanLimits {
+        timeout_ms,
+        ..WorkspaceScanLimits::default()
+    };
+    let deadline = WorkspaceScanDeadline::new(limits)?;
+    load_symbol_index_internal(db_path, Some(&deadline))
+}
+
+fn load_symbol_index_internal(
+    db_path: &Path,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<(Vec<SymbolMeta>, usize)> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed symbols")?;
+    }
     if !db_path.exists() {
         return Err(anyhow!("symbol index {} does not exist", db_path.display()));
     }
@@ -43,6 +65,9 @@ pub(crate) fn load_symbol_index(db_path: &Path) -> Result<(Vec<SymbolMeta>, usiz
     let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
     validate_persisted_index_paths(&workspace_root, &file_states, &resolved_symbols.0)?;
     ensure_symbol_index_fresh(db_path, &workspace_root, &file_states, None)?;
+    if let Some(deadline) = deadline {
+        deadline.check("validating indexed symbol freshness")?;
+    }
     Ok(resolved_symbols)
 }
 
