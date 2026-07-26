@@ -23,25 +23,6 @@ fn ensure_within_deadline(path: &Path, timeout_micros: u64, deadline: Instant) -
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use std::time::{Duration, Instant};
-
-    use super::ensure_within_deadline;
-
-    #[test]
-    fn deadline_helper_reports_expiration() {
-        let error = ensure_within_deadline(
-            std::path::Path::new("sample.py"),
-            1,
-            Instant::now() - Duration::from_micros(1),
-        )
-        .expect_err("expired query deadlines should fail before execution");
-
-        assert!(error.to_string().contains("timed out"));
-        assert!(error.to_string().contains("sample.py"));
-    }
-}
 pub(super) fn execute_tree_query_with_timeout(
     path: &Path,
     source: &str,
@@ -138,8 +119,29 @@ pub(super) fn execute_tree_query_with_timeout(
     }
 
     for (index, capture) in captures.iter().enumerate() {
+        ensure_within_deadline(&path, timeout_micros, deadline)?;
         capture.validate_public_output(index)?;
     }
 
     Ok(captures)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::ensure_within_deadline;
+
+    #[test]
+    fn deadline_helper_reports_expiration() {
+        let error = ensure_within_deadline(
+            std::path::Path::new("sample.py"),
+            1,
+            Instant::now() - Duration::from_micros(1),
+        )
+        .expect_err("expired query deadlines should fail before execution");
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(error.to_string().contains("sample.py"));
+    }
 }
