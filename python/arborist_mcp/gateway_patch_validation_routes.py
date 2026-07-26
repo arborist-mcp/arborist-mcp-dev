@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .tool_result_schemas import JsonRpcError
-from .tool_specs import MAX_WORKSPACE_EDIT_PREVIEW_FILES
+from .tool_specs import MAX_WORKSPACE_EDIT_PREVIEW_FILES, TEXT_PARAM_MAX_LENGTH
 
 
 class GatewayPatchValidationRoutes:
@@ -45,6 +45,13 @@ class GatewayPatchValidationRoutes:
         for index, file in enumerate(files):
             if not isinstance(file, dict):
                 continue
+            source = file.get("source")
+            if isinstance(source, str):
+                self._validate_string_length(
+                    source,
+                    f"files[{index}].source",
+                    TEXT_PARAM_MAX_LENGTH,
+                )
             edits = file.get("edits")
             if isinstance(edits, list):
                 try:

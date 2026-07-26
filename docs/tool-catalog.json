@@ -54452,7 +54452,8 @@
               },
               "source": {
                 "type": "string",
-                "description": "Optional unsaved source text."
+                "description": "Optional unsaved source text.",
+                "maxLength": 4194304
               },
               "edits": {
                 "type": "array",

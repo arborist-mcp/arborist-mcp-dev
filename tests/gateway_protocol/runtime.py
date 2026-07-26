@@ -302,6 +302,12 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(
             by_name["arborist/preview_workspace_position_edits"]["inputSchema"]["properties"][
                 "files"
+            ]["items"]["properties"]["source"]["maxLength"],
+            gateway_module.TEXT_PARAM_MAX_LENGTH,
+        )
+        self.assertEqual(
+            by_name["arborist/preview_workspace_position_edits"]["inputSchema"]["properties"][
+                "files"
             ]["items"]["properties"]["edits"]["maxItems"],
             gateway_module.MAX_POSITION_EDITS,
         )

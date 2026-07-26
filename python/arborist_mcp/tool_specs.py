@@ -306,7 +306,12 @@ TOOL_PARAM_SPECS = {
                 "type": "object",
                 "properties": {
                     "file_path": _schema("string", "Source file path."),
-                    "source": _schema("string", "Optional unsaved source text.", allow_empty=True),
+                    "source": _schema(
+                        "string",
+                        "Optional unsaved source text.",
+                        allow_empty=True,
+                        max_length=TEXT_PARAM_MAX_LENGTH,
+                    ),
                     "edits": {
                         "type": "array",
                         "description": "Ordered LSP-style position edits.",
