@@ -6,6 +6,8 @@ mod graph;
 mod neighborhood;
 
 pub const MAX_TRACE_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
+pub const MAX_GRAPH_DEPTH: usize = 64;
+pub const MAX_GRAPH_NODES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TraceQueryDeadline {
@@ -55,7 +57,10 @@ pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_timeout;
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline};
+    use super::{
+        MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline,
+        neighborhood::validate_neighborhood_bounds,
+    };
 
     #[test]
     fn validates_trace_timeout_bounds() {
@@ -76,5 +81,14 @@ mod tests {
             .expect_err("expired trace deadline should fail");
         assert!(error.to_string().contains("trace timeout exceeded"));
         assert!(error.to_string().contains("timeout_ms=1"));
+    }
+
+    #[test]
+    fn validates_neighborhood_bounds() {
+        assert!(validate_neighborhood_bounds(MAX_GRAPH_DEPTH, 1).is_ok());
+        assert!(validate_neighborhood_bounds(MAX_GRAPH_DEPTH + 1, 1).is_err());
+        assert!(validate_neighborhood_bounds(0, 0).is_err());
+        assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES).is_ok());
+        assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES + 1).is_err());
     }
 }

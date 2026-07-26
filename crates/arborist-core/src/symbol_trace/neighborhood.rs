@@ -9,7 +9,7 @@ use crate::model::{
 use crate::symbol_map::resolved_symbol_map;
 use crate::symbol_summary::symbol_summary_from_meta;
 
-use super::TraceQueryDeadline;
+use super::{MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, TraceQueryDeadline};
 
 #[allow(dead_code)]
 pub(crate) fn trace_neighborhood_from_symbol(
@@ -40,9 +40,7 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    if max_nodes == 0 {
-        return Err(anyhow!("max_nodes must be greater than zero"));
-    }
+    validate_neighborhood_bounds(max_depth, max_nodes)?;
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("starting neighborhood expansion")?;
 
@@ -118,6 +116,19 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
     deadline.check("validating neighborhood output")?;
     result.validate_public_output()?;
     Ok(result)
+}
+
+pub(crate) fn validate_neighborhood_bounds(max_depth: usize, max_nodes: usize) -> Result<()> {
+    if max_depth > MAX_GRAPH_DEPTH {
+        return Err(anyhow!("max_depth must not exceed {}", MAX_GRAPH_DEPTH));
+    }
+    if max_nodes == 0 {
+        return Err(anyhow!("max_nodes must be greater than zero"));
+    }
+    if max_nodes > MAX_GRAPH_NODES {
+        return Err(anyhow!("max_nodes must not exceed {}", MAX_GRAPH_NODES));
+    }
+    Ok(())
 }
 
 fn neighborhood_edges_for_symbol(
