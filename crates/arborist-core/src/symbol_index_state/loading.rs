@@ -158,8 +158,14 @@ fn load_symbol_index_with_overrides_internal(
         &changed_file_paths,
         Some(&file_overrides),
     );
+    if let Some(deadline) = deadline {
+        deadline.check("resolving indexed override symbols")?;
+    }
     let indexed_files = persisted_indexed_files + added_file_paths.len();
 
+    if let Some(deadline) = deadline {
+        deadline.check("materializing indexed override symbols")?;
+    }
     Ok((
         materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),
         indexed_files,
