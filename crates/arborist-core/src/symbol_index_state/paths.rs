@@ -169,3 +169,30 @@ pub(crate) fn symbol_index_freshness_issues(
     }
     Ok(issues)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+
+    use super::symbol_index_freshness_issues;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[test]
+    fn freshness_checks_reject_expired_deadline_before_reading_files() {
+        let mut file_states = BTreeMap::new();
+        file_states.insert("C:\\workspace\\source.py".to_owned(), 0);
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = symbol_index_freshness_issues(&file_states, None, Some(&deadline))
+            .expect_err("expired freshness checks should stop before reading files");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+}
