@@ -4,9 +4,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+use crate::language::MAX_SOURCE_FILE_BYTES;
+
 pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
 pub const MAX_WORKSPACE_SCAN_FILES: usize = 200_000;
-pub const MAX_WORKSPACE_SCAN_FILE_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_WORKSPACE_SCAN_FILE_BYTES: u64 = MAX_SOURCE_FILE_BYTES;
 pub const MAX_WORKSPACE_SCAN_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Debug, Clone, Copy)]

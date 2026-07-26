@@ -20,8 +20,8 @@ pub use paths::{normalize_absolute_path, normalize_path};
 pub use positions::{offset_for_position, point_for_offset, position_from};
 pub use tree::*;
 
-pub use io::read_source;
 pub(crate) use io::write_source_atomic;
+pub use io::{MAX_SOURCE_FILE_BYTES, read_source};
 
 #[cfg(test)]
 mod tests;

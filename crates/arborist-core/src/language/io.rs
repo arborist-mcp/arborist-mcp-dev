@@ -1,12 +1,40 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 
+pub const MAX_SOURCE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+
 pub fn read_source(path: &Path) -> Result<String> {
-    fs::read_to_string(path)
-        .with_context(|| format!("failed to read source file {}", path.display()))
+    let file = File::open(path)
+        .with_context(|| format!("failed to read source file {}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("failed to inspect source file {}", path.display()))?;
+    if metadata.len() > MAX_SOURCE_FILE_BYTES {
+        bail!(
+            "source file too large at {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            metadata.len(),
+            MAX_SOURCE_FILE_BYTES,
+        );
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len().try_into().unwrap_or(0));
+    file.take(MAX_SOURCE_FILE_BYTES.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("failed to read source file {}", path.display()))?;
+    if bytes.len() as u64 > MAX_SOURCE_FILE_BYTES {
+        bail!(
+            "source file too large at {}: size_bytes={} max_file_bytes={}",
+            path.display(),
+            bytes.len(),
+            MAX_SOURCE_FILE_BYTES,
+        );
+    }
+    String::from_utf8(bytes)
+        .with_context(|| format!("source file is not valid UTF-8: {}", path.display()))
 }
 
 pub(crate) fn write_source_atomic(path: &Path, source: &str) -> Result<()> {

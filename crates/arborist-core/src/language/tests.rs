@@ -3,8 +3,9 @@ use std::path::Path;
 use tree_sitter::Point;
 
 use super::{
-    c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
-    offset_for_position, parse_document, point_for_offset, supported_languages,
+    MAX_SOURCE_FILE_BYTES, c_companion_source_path, detect_language, is_c_header_path,
+    normalize_absolute_path, offset_for_position, parse_document, point_for_offset, read_source,
+    supported_languages,
 };
 use crate::model::{LanguageId, Position};
 
@@ -181,4 +182,20 @@ fn offset_for_position_rejects_non_boundary_byte_columns() {
             .to_string()
             .contains("does not align to a UTF-8 character boundary")
     );
+}
+
+#[test]
+fn read_source_rejects_oversized_files_before_loading_contents() {
+    let path = std::env::temp_dir().join(format!(
+        "arborist-language-oversized-source-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();
+    drop(file);
+
+    let error = read_source(&path).expect_err("oversized source files should be rejected");
+    assert!(error.to_string().contains("source file too large"));
+    let _ = std::fs::remove_file(path);
 }

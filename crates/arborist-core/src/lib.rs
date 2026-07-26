@@ -57,7 +57,7 @@ pub(crate) use api::{
     validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
 };
 pub use api_patch_validation::export_patch_diagnostics_sarif;
-pub use language::{read_source, supported_languages};
+pub use language::{MAX_SOURCE_FILE_BYTES, read_source, supported_languages};
 pub use patching::{
     MAX_BYPASS_REASON_BYTES, MAX_PATCH_REPLACEMENT_BYTES, patch_ast_node,
     patch_ast_node_at_position, patch_ast_node_at_position_from_path, patch_ast_node_from_path,
