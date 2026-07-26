@@ -217,6 +217,8 @@ paths such as `api::Vector<int>` and `api::increment<int>`.
 `available_symbols`. Each symbol includes stable `symbol_id`, `semantic_path`,
 optional `scope_path`, `node_kind`, `byte_range`, structured `parameters`,
 optional `return_type`, and optional `signature` / `docstring`.
+Its optional `depth_limit` defaults to `2` and is capped at `64`; use
+`expand_nodes` to include selected deeper symbols.
 
 `execute_tree_query` runs raw Tree-sitter queries and returns optional
 `owner_symbol_id`, `owner_semantic_path`, and `owner_scope_path` fields when a
