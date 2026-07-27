@@ -100,13 +100,14 @@ fn collect_python_import_bindings_from_statement(
     }
     match statement_node.kind() {
         "import_statement" => {
-            collect_python_import_statement_bindings(statement_node, source, bindings)
+            collect_python_import_statement_bindings(statement_node, source, bindings, deadline)
         }
         "import_from_statement" => collect_python_import_from_statement_bindings(
             current_path,
             statement_node,
             source,
             bindings,
+            deadline,
         ),
         "expression_statement" => {
             let mut cursor = statement_node.walk();
@@ -129,9 +130,13 @@ fn collect_python_import_statement_bindings(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut cursor = statement_node.walk();
     for child in statement_node.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python imports")?;
+        }
         match child.kind() {
             "aliased_import" => {
                 let mut alias_cursor = child.walk();
@@ -161,7 +166,11 @@ fn collect_python_import_from_statement_bindings(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python imports")?;
+    }
     let mut cursor = statement_node.walk();
     let named_children = statement_node
         .named_children(&mut cursor)
@@ -172,6 +181,9 @@ fn collect_python_import_from_statement_bindings(
     let module_name = node_text(*module_node, source)?.trim().to_string();
 
     for child in named_children.into_iter().skip(1) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python imports")?;
+        }
         match child.kind() {
             "aliased_import" => {
                 let mut alias_cursor = child.walk();
