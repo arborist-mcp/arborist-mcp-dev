@@ -1,5 +1,5 @@
 use crate::model::{SymbolMeta, TraceDirection, TraceSymbolGraphResult};
-use crate::symbol_summary::{summarize_symbols, trace_evidence_keys};
+use crate::symbol_summary::{summarize_symbols_with_deadline, trace_evidence_keys};
 
 use super::TraceQueryDeadline;
 use anyhow::Result;
@@ -26,18 +26,19 @@ pub(crate) fn trace_from_symbol_with_timeout(
 
     let callers = if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
         deadline.check("expanding callers")?;
-        summarize_symbols(resolved_symbols, &symbol.references, None)
+        summarize_symbols_with_deadline(resolved_symbols, &symbol.references, None, &deadline)?
     } else {
         Vec::new()
     };
 
     let callees = if matches!(direction, TraceDirection::Callees | TraceDirection::Both) {
         deadline.check("expanding callees")?;
-        summarize_symbols(
+        summarize_symbols_with_deadline(
             resolved_symbols,
             &symbol.dependencies,
             Some(&symbol.file_path),
-        )
+            &deadline,
+        )?
     } else {
         Vec::new()
     };

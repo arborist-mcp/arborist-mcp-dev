@@ -78,6 +78,8 @@ mod tests {
         MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline,
         neighborhood::validate_neighborhood_bounds,
     };
+    use crate::model::{SymbolMeta, SymbolMetaInit};
+    use crate::symbol_summary::summarize_symbols_with_deadline;
 
     #[test]
     fn validates_trace_timeout_bounds() {
@@ -120,5 +122,33 @@ mod tests {
         assert!(validate_neighborhood_bounds(0, 0).is_err());
         assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES).is_ok());
         assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES + 1).is_err());
+    }
+
+    #[test]
+    fn summarizing_symbols_checks_expired_deadline() {
+        let symbol = SymbolMeta::new(SymbolMetaInit {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "helper.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        });
+        let deadline = TraceQueryDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error =
+            summarize_symbols_with_deadline(&[symbol], &[String::from("helper")], None, &deadline)
+                .expect_err("expired summary deadline should fail");
+        assert!(error.to_string().contains("trace timeout exceeded"));
     }
 }
