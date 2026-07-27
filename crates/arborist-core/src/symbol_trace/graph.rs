@@ -52,5 +52,6 @@ pub(crate) fn trace_from_symbol_with_timeout(
         indexed_files,
     };
     result.validate_public_output()?;
+    deadline.check("validating graph output")?;
     Ok(result)
 }
