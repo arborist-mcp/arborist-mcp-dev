@@ -4,7 +4,7 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::{c_is_callable_declaration, c_semantic_path};
-use crate::workspace_scan::WorkspaceScanDeadline;
+use crate::deadline::DeadlineCheck;
 
 pub(crate) fn c_symbol_nodes<'tree>(
     path: &Path,
@@ -18,7 +18,7 @@ pub(crate) fn c_symbol_nodes_with_deadline<'tree>(
     path: &Path,
     root: Node<'tree>,
     source: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<Node<'tree>>> {
     let mut symbols = Vec::new();
     collect_c_scope_symbols(root, &mut symbols, deadline)?;
@@ -49,7 +49,7 @@ pub(crate) fn c_symbol_nodes_with_deadline<'tree>(
 fn collect_c_scope_symbols<'tree>(
     scope: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting C/C++ symbol nodes")?;
@@ -85,7 +85,7 @@ fn collect_c_scope_symbols<'tree>(
 fn collect_c_scope_child<'tree>(
     child: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting C/C++ symbol nodes")?;
@@ -124,7 +124,7 @@ fn is_c_preprocessor_conditional(node: Node<'_>) -> bool {
 fn collect_c_preprocessor_symbols<'tree>(
     conditional: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = conditional.walk();
     for child in conditional.named_children(&mut cursor) {
@@ -143,7 +143,7 @@ pub(super) fn is_cpp_type_scope(node: Node<'_>) -> bool {
 fn collect_c_named_type_definition_symbols<'tree>(
     declaration: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for child in declaration.named_children(&mut cursor) {
@@ -162,7 +162,7 @@ fn collect_c_named_type_definition_symbols<'tree>(
 fn collect_c_enum_symbols<'tree>(
     enum_node: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting C/C++ symbol nodes")?;
@@ -187,7 +187,7 @@ fn collect_c_enum_symbols<'tree>(
 fn collect_cpp_type_scope_symbols<'tree>(
     type_node: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting C/C++ symbol nodes")?;
@@ -208,7 +208,7 @@ fn collect_cpp_type_scope_symbols<'tree>(
 fn collect_cpp_type_scope_child<'tree>(
     child: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting C/C++ symbol nodes")?;
@@ -240,7 +240,7 @@ fn collect_cpp_type_scope_child<'tree>(
 fn collect_cpp_friend_function_symbols<'tree>(
     friend_declaration: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = friend_declaration.walk();
     for child in friend_declaration.named_children(&mut cursor) {
@@ -257,7 +257,7 @@ fn collect_cpp_friend_function_symbols<'tree>(
 fn collect_cpp_nested_type_symbols<'tree>(
     declaration: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for child in declaration.named_children(&mut cursor) {
@@ -276,7 +276,7 @@ fn collect_cpp_nested_type_symbols<'tree>(
 fn collect_cpp_template_symbols<'tree>(
     template_node: Node<'tree>,
     symbols: &mut Vec<Node<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = template_node.walk();
 

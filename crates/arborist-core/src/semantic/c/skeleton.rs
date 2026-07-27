@@ -9,9 +9,10 @@ use super::identity::cpp_callable_symbol_id;
 use super::{
     c_function_declarator, c_function_declarator_name, c_function_display_node, c_function_header,
     c_is_callable_declaration, c_named_node_name, c_operator_cast_name, c_parameters,
-    c_return_type, c_semantic_path, c_symbol_nodes, c_template_instantiation_name,
-    c_using_declaration_name, is_c_callable_node,
+    c_return_type, c_semantic_path, c_symbol_nodes, c_symbol_nodes_with_deadline,
+    c_template_instantiation_name, c_using_declaration_name, is_c_callable_node,
 };
+use crate::deadline::DeadlineCheck;
 use crate::language::{
     C_FAMILY_HEADER_EXTENSIONS, c_include_targets, detect_language, extension_case_candidates,
     first_identifier, is_c_header_path, last_type_identifier, node_text, normalize_path,
@@ -60,6 +61,7 @@ pub(crate) fn build_c_skeleton(
     source: &str,
     tree: &Tree,
     expand_nodes: &[String],
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticSkeleton> {
     let root = tree.root_node();
     let mut skeleton_items = Vec::new();
@@ -67,7 +69,10 @@ pub(crate) fn build_c_skeleton(
     let mut available_symbols = Vec::new();
     let expand_set: BTreeSet<_> = expand_nodes.iter().map(String::as_str).collect();
 
-    for child in c_symbol_nodes(path, root, source)? {
+    for child in c_symbol_nodes_with_deadline(path, root, source, deadline)? {
+        if let Some(deadline) = deadline {
+            deadline.check("rendering C/C++ semantic skeleton")?;
+        }
         match child.kind() {
             "alias_declaration"
             | "class_specifier"
@@ -162,6 +167,9 @@ pub(crate) fn build_c_skeleton(
         }
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("validating C/C++ semantic skeleton")?;
+    }
     let result = SemanticSkeleton {
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),

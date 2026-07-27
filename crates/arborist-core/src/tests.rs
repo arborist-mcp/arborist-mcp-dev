@@ -2,9 +2,11 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    DEFAULT_TREE_QUERY_MAX_BYTES, Position, TraceDirection, VirtualFileSystem, execute_tree_query,
-    execute_tree_query_from_path, execute_tree_query_with_limit, export_patch_diagnostics_sarif,
-    get_semantic_skeleton, get_semantic_skeleton_from_path, list_symbols, list_symbols_context,
+    DEFAULT_TREE_QUERY_MAX_BYTES, MAX_SEMANTIC_SKELETON_TIMEOUT_MS, Position, TraceDirection,
+    VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
+    execute_tree_query_with_limit, export_patch_diagnostics_sarif, get_semantic_skeleton,
+    get_semantic_skeleton_from_path, get_semantic_skeleton_from_path_with_timeout,
+    get_semantic_skeleton_with_timeout, list_symbols, list_symbols_context,
     list_symbols_context_from_index, list_symbols_discovery_context,
     list_symbols_discovery_context_from_index, list_symbols_filtered, list_symbols_from_index,
     list_symbols_from_index_filtered, list_symbols_neighborhood_context,

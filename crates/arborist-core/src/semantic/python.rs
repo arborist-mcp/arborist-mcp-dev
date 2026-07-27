@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use tree_sitter::{Node, Query, QueryCursor, StreamingIterator, Tree};
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{contains_node, language_for_id, node_text, normalize_path};
 use crate::model::{LanguageId, SemanticSkeleton, SemanticSkeletonSymbol};
 
@@ -78,6 +79,7 @@ pub(super) fn build_python_skeleton(
     tree: &Tree,
     depth_limit: usize,
     expand_nodes: &[String],
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticSkeleton> {
     let language = language_for_id(LanguageId::Python);
     let query = Query::new(
@@ -101,9 +103,15 @@ pub(super) fn build_python_skeleton(
 
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(query_match) = matches.next() {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python semantic symbols")?;
+        }
         let mut item_node = None;
 
         for capture in query_match.captures.iter() {
+            if let Some(deadline) = deadline {
+                deadline.check("collecting Python semantic captures")?;
+            }
             let capture_name = &query.capture_names()[capture.index as usize];
             if *capture_name == "item" {
                 item_node = Some(capture.node);
@@ -146,6 +154,9 @@ pub(super) fn build_python_skeleton(
     let mut skeleton_items = Vec::new();
     let mut expanded_items = Vec::new();
     for (item, path, symbol_id) in symbol_items {
+        if let Some(deadline) = deadline {
+            deadline.check("rendering Python semantic skeleton")?;
+        }
         if expanded_items
             .iter()
             .any(|ancestor: &Node<'_>| contains_node(*ancestor, item))
@@ -163,6 +174,9 @@ pub(super) fn build_python_skeleton(
         }
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("validating Python semantic skeleton")?;
+    }
     let result = SemanticSkeleton {
         file: normalize_path(path),
         skeleton: skeleton_items.join("\n\n"),

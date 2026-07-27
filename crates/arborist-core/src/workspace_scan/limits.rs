@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+use crate::deadline::DeadlineCheck;
 use crate::language::MAX_SOURCE_FILE_BYTES;
 
 pub const DEFAULT_WORKSPACE_MAX_FILES: usize = 20_000;
@@ -96,6 +97,12 @@ impl WorkspaceScanDeadline {
             .as_micros()
             .saturating_add(999)
             .min(u128::from(u64::MAX)) as u64)
+    }
+}
+
+impl DeadlineCheck for WorkspaceScanDeadline {
+    fn check(&self, phase: &str) -> Result<()> {
+        WorkspaceScanDeadline::check(self, phase)
     }
 }
 

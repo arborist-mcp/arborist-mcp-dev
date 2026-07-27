@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::{Node, Tree};
 
+use crate::deadline::DeadlineCheck;
 use crate::model::{LanguageId, SemanticSkeleton};
 
 mod c;
@@ -26,19 +27,22 @@ pub(crate) use python::{
     python_return_type,
 };
 
-pub fn get_semantic_skeleton(
+pub(crate) fn get_semantic_skeleton_with_deadline(
     path: &Path,
     language_id: LanguageId,
     source: &str,
     tree: &Tree,
     depth_limit: usize,
     expand_nodes: &[String],
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticSkeleton> {
     match language_id {
         LanguageId::Python => {
-            python::build_python_skeleton(path, source, tree, depth_limit, expand_nodes)
+            python::build_python_skeleton(path, source, tree, depth_limit, expand_nodes, deadline)
         }
-        LanguageId::C | LanguageId::Cpp => c::build_c_skeleton(path, source, tree, expand_nodes),
+        LanguageId::C | LanguageId::Cpp => {
+            c::build_c_skeleton(path, source, tree, expand_nodes, deadline)
+        }
     }
 }
 
@@ -98,4 +102,51 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::get_semantic_skeleton_with_deadline;
+    use crate::deadline::CooperativeDeadline;
+    use crate::language::parse_document;
+
+    #[test]
+    fn semantic_skeleton_traversal_checks_expired_deadlines() {
+        let cases = [
+            (
+                Path::new("sample.py"),
+                "def sample():
+    return 1
+",
+            ),
+            (
+                Path::new("sample.c"),
+                "int sample(void) { return 1; }
+",
+            ),
+        ];
+
+        for (path, source) in cases {
+            let document = parse_document(path, source).expect("source should parse");
+            let deadline = CooperativeDeadline::expired_for_tests(1, "semantic skeleton");
+            let error = get_semantic_skeleton_with_deadline(
+                path,
+                document.language_id,
+                source,
+                &document.tree,
+                2,
+                &[],
+                Some(&deadline),
+            )
+            .expect_err("expired skeleton traversal should fail");
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("semantic skeleton timeout exceeded")
+            );
+        }
+    }
 }

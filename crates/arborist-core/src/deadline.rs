@@ -2,6 +2,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 
+pub(crate) trait DeadlineCheck {
+    fn check(&self, phase: &str) -> Result<()>;
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CooperativeDeadline {
     deadline: Option<Instant>,
@@ -69,6 +73,12 @@ impl CooperativeDeadline {
             timeout_ms: Some(timeout_ms),
             operation,
         }
+    }
+}
+
+impl DeadlineCheck for CooperativeDeadline {
+    fn check(&self, phase: &str) -> Result<()> {
+        CooperativeDeadline::check(self, phase)
     }
 }
 

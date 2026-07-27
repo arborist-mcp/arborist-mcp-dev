@@ -1,3 +1,41 @@
+#[test]
+fn semantic_skeleton_timeout_variants_reject_invalid_budgets_before_path_work() {
+    let path = Path::new("");
+    let errors = [
+        get_semantic_skeleton_with_timeout(
+            path,
+            "value = 1
+",
+            2,
+            &[],
+            Some(0),
+        )
+        .expect_err("inline skeleton should reject zero timeout"),
+        get_semantic_skeleton_from_path_with_timeout(path, 2, &[], Some(0))
+            .expect_err("path skeleton should reject zero timeout"),
+        get_semantic_skeleton_with_timeout(
+            path,
+            "value = 1
+",
+            2,
+            &[],
+            Some(MAX_SEMANTIC_SKELETON_TIMEOUT_MS + 1),
+        )
+        .expect_err("inline skeleton should reject excessive timeout"),
+        get_semantic_skeleton_from_path_with_timeout(
+            path,
+            2,
+            &[],
+            Some(MAX_SEMANTIC_SKELETON_TIMEOUT_MS + 1),
+        )
+        .expect_err("path skeleton should reject excessive timeout"),
+    ];
+
+    for error in errors {
+        assert!(error.to_string().contains("semantic skeleton timeout_ms"));
+    }
+}
+
 use super::*;
 
 #[test]
