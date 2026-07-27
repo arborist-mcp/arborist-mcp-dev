@@ -1,11 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use anyhow::Result;
+
 use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
     raw_symbol_indexes_by_id, resolve_dependencies_for_symbol,
 };
 use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn refresh_resolved_symbol_subgraph(
     raw_symbols: &[IndexedSymbol],
@@ -14,10 +17,20 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     new_changed_symbols: &[IndexedSymbol],
     changed_file_paths: &BTreeSet<String>,
     file_overrides: Option<&BTreeMap<String, String>>,
-) -> (BTreeMap<String, SymbolMeta>, BTreeSet<String>) {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<(BTreeMap<String, SymbolMeta>, BTreeSet<String>)> {
     let name_index = build_name_index(raw_symbols);
+    if let Some(deadline) = deadline {
+        deadline.check("building refresh symbol indexes")?;
+    }
     let semantic_path_index = build_semantic_path_index(raw_symbols);
+    if let Some(deadline) = deadline {
+        deadline.check("building refresh symbol indexes")?;
+    }
     let raw_symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
+    if let Some(deadline) = deadline {
+        deadline.check("building refresh symbol indexes")?;
+    }
     let representative_raw_symbols = raw_symbol_map(raw_symbols);
     let impacted_ids = impacted_symbol_ids(
         raw_symbols,
@@ -33,6 +46,9 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     }
 
     for impacted_id in &impacted_ids {
+        if let Some(deadline) = deadline {
+            deadline.check("refreshing impacted symbols")?;
+        }
         let Some(raw_symbol) = representative_raw_symbols.get(impacted_id) else {
             resolved_map.remove(impacted_id);
             continue;
@@ -45,6 +61,9 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         let mut symbol = symbol_meta_from_indexed(raw_symbol);
         let mut dependencies = BTreeSet::new();
         for index in indexes {
+            if let Some(deadline) = deadline {
+                deadline.check("refreshing impacted symbols")?;
+            }
             dependencies.extend(resolve_dependencies_for_symbol(
                 &raw_symbols[*index],
                 raw_symbols,
@@ -61,23 +80,29 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         reference_impacted_paths(old_resolved_map, &resolved_map, &impacted_ids);
 
     for impacted_path in reference_impacted_paths {
-        let callers = resolved_map
-            .iter()
-            .filter_map(|(caller_path, symbol)| {
-                symbol
-                    .dependencies
-                    .iter()
-                    .any(|dependency| dependency == &impacted_path)
-                    .then_some(caller_path.clone())
-            })
-            .collect::<Vec<_>>();
+        if let Some(deadline) = deadline {
+            deadline.check("refreshing impacted references")?;
+        }
+        let mut callers = Vec::new();
+        for (caller_path, symbol) in &resolved_map {
+            if let Some(deadline) = deadline {
+                deadline.check("refreshing impacted references")?;
+            }
+            if symbol
+                .dependencies
+                .iter()
+                .any(|dependency| dependency == &impacted_path)
+            {
+                callers.push(caller_path.clone());
+            }
+        }
 
         if let Some(symbol) = resolved_map.get_mut(&impacted_path) {
             symbol.references = callers;
         }
     }
 
-    (resolved_map, impacted_ids)
+    Ok((resolved_map, impacted_ids))
 }
 
 pub(crate) fn materialize_resolved_symbol_rows(

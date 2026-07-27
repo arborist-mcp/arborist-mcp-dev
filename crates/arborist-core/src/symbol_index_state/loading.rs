@@ -243,7 +243,8 @@ fn load_symbol_index_with_overrides_internal(
         &new_changed_symbols,
         &changed_file_paths,
         Some(&file_overrides),
-    );
+        deadline,
+    )?;
     if let Some(deadline) = deadline {
         deadline.check("resolving indexed override symbols")?;
     }

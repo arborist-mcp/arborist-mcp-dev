@@ -235,7 +235,8 @@ pub fn refresh_symbol_index_for_file_with_limits(
         &new_changed_symbols,
         &changed_file_paths,
         None,
-    );
+        Some(&deadline),
+    )?;
     deadline.check("resolving refreshed symbols")?;
     let resolved_symbols = materialize_resolved_symbol_rows(&raw_symbols, &resolved_map);
     deadline.check("materializing refreshed symbols")?;
