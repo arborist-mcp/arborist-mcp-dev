@@ -15,9 +15,7 @@ use crate::symbol_query_execution::{
     read_symbol_at_position_from_symbols, read_symbol_context_at_position_from_symbols,
     read_symbol_context_from_symbols, read_symbol_discovery_context_at_position_from_symbols,
     read_symbol_discovery_context_from_symbols, read_symbol_from_symbols,
-    read_symbol_neighborhood_context_at_position_from_symbols,
     read_symbol_neighborhood_context_at_position_from_symbols_with_timeout,
-    read_symbol_neighborhood_context_from_symbols,
     read_symbol_neighborhood_context_from_symbols_with_timeout,
 };
 use crate::symbol_trace::TraceQueryDeadline;
@@ -164,27 +162,6 @@ pub fn read_symbol_context_at_position_with_overrides(
         position,
         direction,
         Some(file_overrides),
-    )
-}
-
-pub fn read_symbol_neighborhood_context_at_position_with_overrides(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
-        workspace_root,
-        file_overrides,
-        file_path,
-        position,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
     )
 }
 
@@ -383,27 +360,6 @@ pub fn read_symbol_context_at_position_from_index_with_overrides(
         position,
         direction,
         Some(file_overrides),
-    )
-}
-
-pub fn read_symbol_neighborhood_context_at_position_from_index_with_overrides(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_at_position_from_index_with_overrides_with_timeout(
-        db_path,
-        file_overrides,
-        file_path,
-        position,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
     )
 }
 

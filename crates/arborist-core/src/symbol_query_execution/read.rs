@@ -29,27 +29,6 @@ pub(crate) fn read_symbol_context_from_meta(
     Ok(result)
 }
 
-pub(crate) fn read_symbol_neighborhood_context_from_meta(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_from_meta_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-        None,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout(
     resolved_symbols: &[SymbolMeta],
@@ -195,30 +174,6 @@ pub(crate) fn read_symbol_context_at_position_from_symbols(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        file_path,
-        position,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -299,27 +254,6 @@ pub(crate) fn read_symbol_context_from_symbols(
         symbol,
         direction,
         file_overrides,
-    )
-}
-
-pub(crate) fn read_symbol_neighborhood_context_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-        None,
     )
 }
 

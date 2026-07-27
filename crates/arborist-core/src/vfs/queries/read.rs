@@ -12,9 +12,7 @@ use crate::symbols::{
     read_symbol_at_position_with_overrides, read_symbol_context_at_position_with_overrides,
     read_symbol_context_with_overrides, read_symbol_discovery_context_at_position_with_overrides,
     read_symbol_discovery_context_with_overrides,
-    read_symbol_neighborhood_context_at_position_with_overrides,
     read_symbol_neighborhood_context_at_position_with_overrides_with_timeout,
-    read_symbol_neighborhood_context_with_overrides,
     read_symbol_neighborhood_context_with_overrides_with_timeout, read_symbol_with_overrides,
 };
 
