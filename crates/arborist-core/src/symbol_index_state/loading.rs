@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow, bail};
 
 use crate::index_schema::{
-    load_indexed_files_metadata_with_deadline, load_symbol_index_workspace_root,
+    load_indexed_files_metadata_with_deadline, load_symbol_index_workspace_root_with_deadline,
     open_symbol_index_read_only, require_current_symbol_index_schema, require_symbol_index_tables,
     validate_symbol_index_schema_version,
 };
@@ -82,10 +82,8 @@ fn load_symbol_index_internal(
         deadline.check("loading resolved symbols")?;
     }
     validate_indexed_file_count(indexed_files, file_states.len())?;
-    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed workspace root")?;
-    }
+    let workspace_root =
+        load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
     validate_persisted_index_paths_with_overrides_and_deadline(
         &workspace_root,
         &file_states,
@@ -142,10 +140,8 @@ fn load_symbol_index_with_overrides_internal(
     require_symbol_index_tables(&connection, db_path)?;
     validate_symbol_index_schema_version(&connection, db_path)?;
     require_current_symbol_index_schema(&connection, db_path)?;
-    let workspace_root = load_symbol_index_workspace_root(&connection, db_path)?;
-    if let Some(deadline) = deadline {
-        deadline.check("loading indexed workspace root")?;
-    }
+    let workspace_root =
+        load_symbol_index_workspace_root_with_deadline(&connection, db_path, deadline)?;
     let file_overrides = normalize_source_overrides_for_workspace(
         &workspace_root,
         file_overrides,

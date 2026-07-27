@@ -39,6 +39,17 @@ pub(crate) fn load_symbol_index_workspace_root(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<PathBuf> {
+    load_symbol_index_workspace_root_with_deadline(connection, db_path, None)
+}
+
+pub(crate) fn load_symbol_index_workspace_root_with_deadline(
+    connection: &Connection,
+    db_path: &Path,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<PathBuf> {
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed workspace root")?;
+    }
     let Some(stored_workspace) = connection
         .query_row(
             "SELECT value FROM metadata WHERE key = 'workspace_root'",
@@ -52,6 +63,9 @@ pub(crate) fn load_symbol_index_workspace_root(
             db_path.display()
         ));
     };
+    if let Some(deadline) = deadline {
+        deadline.check("loading indexed workspace root")?;
+    }
 
     let stored_workspace_path = Path::new(&stored_workspace);
     if !stored_workspace_path.is_absolute() {
@@ -63,6 +77,9 @@ pub(crate) fn load_symbol_index_workspace_root(
     }
 
     let normalized_workspace = normalize_absolute_path(stored_workspace_path)?;
+    if let Some(deadline) = deadline {
+        deadline.check("validating indexed workspace root")?;
+    }
     if normalize_path(&normalized_workspace) != stored_workspace {
         return Err(anyhow!(
             "workspace_root metadata in symbol index {} is not a normalized absolute path: {}",
@@ -184,6 +201,7 @@ pub(crate) fn load_indexed_files_metadata_with_deadline(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     use rusqlite::Connection;
@@ -192,6 +210,7 @@ mod tests {
 
     use super::{
         load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
+        load_symbol_index_workspace_root_with_deadline,
     };
 
     #[test]
@@ -226,6 +245,28 @@ mod tests {
             Some(&deadline),
         )
         .expect_err("expired deadline should stop before metadata loading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn load_workspace_root_checks_deadline_before_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = load_symbol_index_workspace_root_with_deadline(
+            &connection,
+            Path::new("symbols.db"),
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop before workspace metadata loading");
 
         assert!(
             error

@@ -6,7 +6,7 @@ use crate::index_migration;
 use crate::index_schema::{
     PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
     load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
-    load_symbol_index_workspace_root, open_symbol_index_read_only,
+    load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only,
     require_current_symbol_index_schema, require_legacy_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
@@ -143,7 +143,11 @@ pub fn inspect_symbol_index_with_timeout(
         return Ok(health);
     }
 
-    let workspace_root = match load_symbol_index_workspace_root(&connection, &db_path) {
+    let workspace_root = match load_symbol_index_workspace_root_with_deadline(
+        &connection,
+        &db_path,
+        Some(&deadline),
+    ) {
         Ok(workspace_root) => {
             health.workspace_root = Some(normalize_path(&workspace_root));
             Some(workspace_root)
