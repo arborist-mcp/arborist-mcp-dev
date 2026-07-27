@@ -155,14 +155,22 @@ pub(crate) fn unindexed_workspace_files(
         Some(deadline) => collect_source_files_with_deadline(workspace_root, limits, deadline)?,
         None => collect_source_files_with_limits(workspace_root, limits)?,
     };
-    Ok(paths
-        .into_iter()
-        .map(|path| normalize_path(&path))
-        .filter(|path| {
-            !file_states.contains_key(path)
-                && !file_overrides.is_some_and(|overrides| overrides.contains_key(path))
-        })
-        .collect())
+    let mut unindexed = Vec::new();
+    for path in paths {
+        if let Some(deadline) = deadline {
+            deadline.check("filtering unindexed workspace files")?;
+        }
+        let path = normalize_path(&path);
+        if !file_states.contains_key(&path)
+            && !file_overrides.is_some_and(|overrides| overrides.contains_key(&path))
+        {
+            unindexed.push(path);
+        }
+    }
+    if let Some(deadline) = deadline {
+        deadline.check("filtering unindexed workspace files")?;
+    }
+    Ok(unindexed)
 }
 
 pub(crate) fn symbol_index_freshness_issues(
