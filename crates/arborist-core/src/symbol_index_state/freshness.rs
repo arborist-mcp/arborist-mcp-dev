@@ -47,6 +47,7 @@ pub(crate) fn inspect_symbol_index_freshness(
             }
         }
     }
+    deadline.check("inspecting indexed file freshness")?;
     health.fresh_file_count = Some(fresh_files);
     Ok(())
 }

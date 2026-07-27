@@ -197,6 +197,9 @@ pub(crate) fn symbol_index_freshness_issues(
             }
         }
     }
+    if let Some(deadline) = deadline {
+        deadline.check("checking indexed file freshness")?;
+    }
     Ok(issues)
 }
 
