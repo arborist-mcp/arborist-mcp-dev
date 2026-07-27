@@ -166,6 +166,86 @@ fn graph_context_patch_bindings_forward_zero_timeout_before_patch_work() {
 }
 
 #[test]
+fn rich_context_patch_bindings_forward_zero_timeout_before_patch_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let bounds = NeighborhoodBounds::new(2, 64);
+    let errors = [
+        core.validate_patch_with_neighborhood_context_json_impl(
+            ".",
+            "missing.py",
+            "missing",
+            "def missing():
+    return 1
+",
+            None,
+            None,
+            "both",
+            bounds,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach semantic neighborhood-context validation"),
+        core.validate_patch_with_neighborhood_context_at_position_json_impl(
+            ".",
+            "missing.py",
+            0,
+            0,
+            "def missing():
+    return 1
+",
+            None,
+            None,
+            "both",
+            bounds,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach position neighborhood-context validation"),
+        core.validate_patch_with_discovery_context_json_impl(
+            ".",
+            "missing.py",
+            "missing",
+            "def missing():
+    return 1
+",
+            None,
+            None,
+            "both",
+            bounds,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach semantic discovery-context validation"),
+        core.validate_patch_with_discovery_context_at_position_json_impl(
+            ".",
+            "missing.py",
+            0,
+            0,
+            "def missing():
+    return 1
+",
+            None,
+            None,
+            "both",
+            bounds,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach position discovery-context validation"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
 fn direct_read_bindings_forward_zero_timeout_before_query_work() {
     prepare_python();
 

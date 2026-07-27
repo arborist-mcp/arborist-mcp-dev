@@ -268,17 +268,22 @@ class GatewayPatchValidationRoutes:
         max_depth = self._optional_int(params, "max_depth", default=2)
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().validate_patch_with_neighborhood_context_json(
-            workspace_root,
-            file_path,
-            semantic_path,
-            new_code,
-            source,
-            bypass_reason,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().validate_patch_with_neighborhood_context_json,
+            (
+                workspace_root,
+                file_path,
+                semantic_path,
+                new_code,
+                source,
+                bypass_reason,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -300,18 +305,23 @@ class GatewayPatchValidationRoutes:
         max_depth = self._optional_int(params, "max_depth", default=2)
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().validate_patch_with_neighborhood_context_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            new_code,
-            source,
-            bypass_reason,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().validate_patch_with_neighborhood_context_at_position_json,
+            (
+                workspace_root,
+                file_path,
+                row,
+                column,
+                new_code,
+                source,
+                bypass_reason,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -333,17 +343,22 @@ class GatewayPatchValidationRoutes:
         max_depth = self._optional_int(params, "max_depth", default=2)
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().validate_patch_with_discovery_context_json(
-            workspace_root,
-            file_path,
-            semantic_path,
-            new_code,
-            source,
-            bypass_reason,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().validate_patch_with_discovery_context_json,
+            (
+                workspace_root,
+                file_path,
+                semantic_path,
+                new_code,
+                source,
+                bypass_reason,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -365,17 +380,22 @@ class GatewayPatchValidationRoutes:
         max_depth = self._optional_int(params, "max_depth", default=2)
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().validate_patch_with_discovery_context_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            new_code,
-            source,
-            bypass_reason,
-            direction,
-            max_depth,
-            max_nodes,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().validate_patch_with_discovery_context_at_position_json,
+            (
+                workspace_root,
+                file_path,
+                row,
+                column,
+                new_code,
+                source,
+                bypass_reason,
+                direction,
+                max_depth,
+                max_nodes,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)

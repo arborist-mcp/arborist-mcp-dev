@@ -360,11 +360,11 @@ a transitive impact analysis; callers should use the neighborhood variants when
 they need bounded multi-hop context. `impact` is `null` when tracing is skipped
 or when a VFS-backed operation cannot retain a pre-patch trace baseline.
 
-The graph-context variant and its position form accept the same optional
-`timeout_ms` budget. It covers file or overlay setup, patch validation, the
-updated trace, bounded neighborhood expansion, and result validation; a single
-blocking source read or parse remains non-preemptible. The graph, neighborhood,
-and discovery context variants add bounded impact analysis and aligned source
+The graph, neighborhood, and discovery context variants and their position
+forms accept the same optional `timeout_ms` budget. It covers file or overlay
+setup, patch validation, the updated trace, bounded graph or source-context
+expansion, and result validation; a single blocking source read or parse remains
+non-preemptible. These variants add bounded impact analysis and aligned source
 snippets for reachable symbols. `*_at_position` variants resolve the target from
 `file_path + position` before running the same workflow.
 
