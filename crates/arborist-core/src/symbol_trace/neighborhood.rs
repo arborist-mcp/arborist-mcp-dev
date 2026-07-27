@@ -6,7 +6,7 @@ use crate::model::{
     SymbolMeta, TraceDirection, TraceSymbolNeighborhoodEdge, TraceSymbolNeighborhoodNode,
     TraceSymbolNeighborhoodResult,
 };
-use crate::symbol_map::resolved_symbol_map;
+use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_summary::symbol_summary_from_meta;
 
 use super::{MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, TraceQueryDeadline};
@@ -45,7 +45,7 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
     deadline.check("starting neighborhood expansion")?;
 
     let root = symbol.clone().with_origin_type("trace_root");
-    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
 
     let mut nodes = vec![TraceSymbolNeighborhoodNode {
         symbol: symbol_summary_from_meta(&root),
@@ -63,7 +63,7 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
             continue;
         }
 
-        let Some(current) = resolved_map.get(&symbol_id) else {
+        let Some(current) = resolved_map.get(symbol_id.as_str()) else {
             continue;
         };
 
@@ -75,7 +75,7 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
                 &from_symbol_id
             };
 
-            let Some(next_symbol) = resolved_map.get(next_symbol_id) else {
+            let Some(next_symbol) = resolved_map.get(next_symbol_id.as_str()) else {
                 continue;
             };
 

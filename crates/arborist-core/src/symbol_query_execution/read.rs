@@ -8,7 +8,7 @@ use crate::model::{
     Position, SymbolContextResult, SymbolMeta, SymbolNeighborhoodContextResult,
     SymbolReadDiscoveryContextResult, SymbolReadResult, TraceDirection,
 };
-use crate::symbol_map::resolved_symbol_map;
+use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_position::resolve_symbol_at_position;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_trace::{
@@ -72,17 +72,19 @@ pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout(
         max_nodes,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(neighborhood.nodes.len());
 
     for node in &neighborhood.nodes {
         deadline.check("neighborhood context reads")?;
-        let symbol = resolved_map.get(&node.symbol.symbol_id).ok_or_else(|| {
-            anyhow!(
-                "symbol not found in workspace index while reading neighborhood node: {}",
-                node.symbol.symbol_id
-            )
-        })?;
+        let symbol = resolved_map
+            .get(node.symbol.symbol_id.as_str())
+            .ok_or_else(|| {
+                anyhow!(
+                    "symbol not found in workspace index while reading neighborhood node: {}",
+                    node.symbol.symbol_id
+                )
+            })?;
         reads.push(read_symbol_result_from_meta(
             symbol,
             indexed_files,

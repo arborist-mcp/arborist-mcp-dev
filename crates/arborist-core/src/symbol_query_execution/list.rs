@@ -7,7 +7,7 @@ use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, SymbolMeta, TraceDirection,
 };
-use crate::symbol_map::resolved_symbol_map;
+use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_query::validate_symbol_limit;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{normalize_optional_search_filter, symbol_matches_search_filters};
@@ -116,12 +116,12 @@ pub(crate) fn list_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
         deadline.check("symbol listing context reads")?;
-        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+        let meta = resolved_map.get(symbol.symbol_id.as_str()).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading listed symbol: {}",
                 symbol.symbol_id
@@ -189,13 +189,13 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
     let mut contexts = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
         deadline.check("symbol discovery context reads")?;
-        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+        let meta = resolved_map.get(symbol.symbol_id.as_str()).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading listed symbol: {}",
                 symbol.symbol_id
@@ -278,12 +278,12 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut contexts = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
         deadline.check("symbol neighborhood contexts")?;
-        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+        let meta = resolved_map.get(symbol.symbol_id.as_str()).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading listed symbol: {}",
                 symbol.symbol_id
