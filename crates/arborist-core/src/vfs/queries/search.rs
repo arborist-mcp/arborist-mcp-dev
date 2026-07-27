@@ -12,7 +12,7 @@ use crate::symbols::{
     search_symbols_context_with_overrides_filtered,
     search_symbols_discovery_context_with_overrides_filtered,
     search_symbols_neighborhood_context_with_overrides_filtered,
-    search_symbols_with_overrides_filtered,
+    search_symbols_with_overrides_filtered, search_symbols_with_overrides_filtered_with_timeout,
 };
 
 impl VirtualFileSystem {
@@ -42,6 +42,28 @@ impl VirtualFileSystem {
             limit,
             file_path_contains,
             node_kind,
+        )
+    }
+
+    pub fn search_symbols_filtered_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        query: &str,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolSearchResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        search_symbols_with_overrides_filtered_with_timeout(
+            &workspace_root,
+            &overrides,
+            query,
+            limit,
+            file_path_contains,
+            node_kind,
+            timeout_ms,
         )
     }
 

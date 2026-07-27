@@ -343,6 +343,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                     "file_path_contains": "graph",
                     "node_kind": "function_definition",
+                    "timeout_ms": 37,
                 },
                 "payload": self.make_search_result(),
                 "expected_call": (
@@ -352,6 +353,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["query"], "helper"),

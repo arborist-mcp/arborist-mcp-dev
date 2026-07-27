@@ -8,10 +8,10 @@ use crate::model::{
 };
 use crate::symbol_query_execution::{
     search_context_from_symbols, search_discovery_context_from_symbols, search_from_symbols,
-    search_neighborhood_context_from_symbols,
+    search_from_symbols_with_timeout, search_neighborhood_context_from_symbols,
 };
 
-use super::load_normalized_symbol_index;
+use super::{load_normalized_symbol_index, load_normalized_symbol_index_with_timeout};
 
 pub fn search_symbols_from_index(
     db_path: &Path,
@@ -70,6 +70,27 @@ pub fn search_symbols_from_index_filtered(
         limit,
         file_path_contains,
         node_kind,
+    )
+}
+
+pub fn search_symbols_from_index_filtered_with_timeout(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchResult> {
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    search_from_symbols_with_timeout(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        timeout_ms,
     )
 }
 

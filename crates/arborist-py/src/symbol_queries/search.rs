@@ -4,11 +4,13 @@ use arborist_core::{
     search_symbols_context_with_source_filtered,
     search_symbols_discovery_context_from_index_filtered,
     search_symbols_discovery_context_from_index_with_source_filtered,
-    search_symbols_discovery_context_with_source_filtered, search_symbols_from_index_filtered,
-    search_symbols_from_index_with_source_filtered,
+    search_symbols_discovery_context_with_source_filtered,
+    search_symbols_from_index_filtered_with_timeout,
+    search_symbols_from_index_with_source_filtered_with_timeout,
     search_symbols_neighborhood_context_from_index_filtered,
     search_symbols_neighborhood_context_from_index_with_source_filtered,
-    search_symbols_neighborhood_context_with_source_filtered, search_symbols_with_source_filtered,
+    search_symbols_neighborhood_context_with_source_filtered,
+    search_symbols_with_source_filtered_with_timeout,
 };
 use pyo3::prelude::*;
 
@@ -17,7 +19,7 @@ use crate::{ArboristCore, NeighborhoodBounds, parse_direction, to_json_result, t
 
 #[pymethods]
 impl ArboristCore {
-    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, query, limit=20, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn search_symbols_json(
         &self,
@@ -29,6 +31,7 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.search_symbols_json_impl(
             workspace_root,
@@ -39,6 +42,7 @@ impl ArboristCore {
             node_kind,
             file_path,
             source,
+            timeout_ms,
         )
     }
 
@@ -140,19 +144,23 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let result = match (context.source(), context.index_db_path()) {
-            (Some(source), Some(index_db_path)) => search_symbols_from_index_with_source_filtered(
-                index_db_path,
-                context.source_file_path()?,
-                source,
-                query,
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (Some(source), None) => search_symbols_with_source_filtered(
+            (Some(source), Some(index_db_path)) => {
+                search_symbols_from_index_with_source_filtered_with_timeout(
+                    index_db_path,
+                    context.source_file_path()?,
+                    source,
+                    query,
+                    limit,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
+            (Some(source), None) => search_symbols_with_source_filtered_with_timeout(
                 context.workspace_root(),
                 context.source_file_path()?,
                 source,
@@ -160,20 +168,23 @@ impl ArboristCore {
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
+                timeout_ms,
             ),
-            (None, Some(index_db_path)) => search_symbols_from_index_filtered(
+            (None, Some(index_db_path)) => search_symbols_from_index_filtered_with_timeout(
                 index_db_path,
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
+                timeout_ms,
             ),
-            (None, None) => self.vfs.borrow_mut().search_symbols_filtered(
+            (None, None) => self.vfs.borrow_mut().search_symbols_filtered_with_timeout(
                 context.workspace_root(),
                 query,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
+                timeout_ms,
             ),
         }
         .map_err(to_py_error)?;

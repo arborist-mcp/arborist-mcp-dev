@@ -140,9 +140,12 @@ still a non-preemptible boundary.
 freshness or unindexed-file scanning exceeds it; its successful health response
 shape is unchanged.
 
-The four `list_symbols*` tools also accept the optional `timeout_ms` budget.
-The budget covers workspace or persisted-index loading and symbol traversal;
-the result and truncation response shapes are unchanged.
+The four `list_symbols*` tools and the base `search_symbols` tool also accept
+the optional `timeout_ms` budget. The budget covers workspace or
+persisted-index loading and symbol traversal; the result and truncation
+response shapes are unchanged. The context-enriched search variants retain
+their existing request shape until their full expansion pipeline is made
+cooperative.
 
 `execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped
 at `300000`; omitting it keeps the existing `500ms` default. The budget is

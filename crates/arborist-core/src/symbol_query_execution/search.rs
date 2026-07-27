@@ -14,6 +14,7 @@ use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
 use crate::symbol_summary::symbol_summary_from_meta;
+use crate::symbol_trace::TraceQueryDeadline;
 
 pub(crate) fn search_from_symbols(
     resolved_symbols: &[SymbolMeta],
@@ -23,6 +24,27 @@ pub(crate) fn search_from_symbols(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolSearchResult> {
+    search_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+pub(crate) fn search_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     validate_symbol_limit(limit)?;
     let query = query.trim();
     if query.is_empty() {
@@ -33,20 +55,21 @@ pub(crate) fn search_from_symbols(
     let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
 
     let normalized_query = query.to_lowercase();
-    let mut ranked_matches = resolved_symbols
-        .iter()
-        .filter_map(|symbol| {
-            if !symbol_matches_search_filters(
-                symbol,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ) {
-                return None;
-            }
-            let detail = search_match_detail(symbol, query, &normalized_query)?;
-            Some((detail, symbol))
-        })
-        .collect::<Vec<_>>();
+    let mut ranked_matches = Vec::new();
+    for symbol in resolved_symbols {
+        deadline.check("symbol search")?;
+        if !symbol_matches_search_filters(
+            symbol,
+            file_path_contains.as_deref(),
+            node_kind.as_deref(),
+        ) {
+            continue;
+        }
+        if let Some(detail) = search_match_detail(symbol, query, &normalized_query) {
+            ranked_matches.push((detail, symbol));
+        }
+    }
+    deadline.check("symbol search ranking")?;
     ranked_matches.sort_by(|left, right| {
         right
             .0
@@ -80,6 +103,7 @@ pub(crate) fn search_from_symbols(
         matches,
         match_details,
     };
+    deadline.check("symbol search result")?;
     result.validate_public_output()?;
     Ok(result)
 }
