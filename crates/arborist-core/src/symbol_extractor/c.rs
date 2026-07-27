@@ -13,16 +13,21 @@ use crate::semantic::{
     c_symbol_nodes, semantic_parent_path,
 };
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
-pub(super) fn index_c_symbols(
+pub(super) fn index_c_symbols_with_deadline(
     path: &Path,
     source: &str,
     root: Node<'_>,
     is_cpp: bool,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<IndexedSymbol>> {
     let normalized_path = normalize_path(path);
     let mut symbols = Vec::new();
     for child in c_symbol_nodes(path, root, source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting C/C++ symbols")?;
+        }
         match child.kind() {
             "alias_declaration"
             | "class_specifier"
@@ -107,5 +112,8 @@ pub(super) fn index_c_symbols(
         }
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("extracting C/C++ symbols")?;
+    }
     Ok(symbols)
 }

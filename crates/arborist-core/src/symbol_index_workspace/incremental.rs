@@ -11,7 +11,7 @@ use crate::language::{normalize_path, parse_document_with_timeout, read_source};
 use crate::symbol_dependency::{
     assign_symbol_ids_with_deadline, resolve_symbol_dependencies_with_overrides_with_deadline,
 };
-use crate::symbol_extractor::index_symbols_from_document;
+use crate::symbol_extractor::index_symbols_from_document_with_deadline;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
 use crate::workspace_scan::{
@@ -78,7 +78,12 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
             &source,
             deadline.remaining_timeout_micros("parsing workspace files")?,
         )?;
-        raw_symbols.extend(index_symbols_from_document(&path, &source, &document)?);
+        raw_symbols.extend(index_symbols_from_document_with_deadline(
+            &path,
+            &source,
+            &document,
+            Some(deadline),
+        )?);
         rebuilt_files += 1;
     }
 

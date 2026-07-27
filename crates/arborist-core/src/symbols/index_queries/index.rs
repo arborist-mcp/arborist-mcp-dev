@@ -23,7 +23,7 @@ use crate::symbol_dependency::{
     assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
     refresh_resolved_symbol_subgraph,
 };
-use crate::symbol_extractor::index_symbols_from_document;
+use crate::symbol_extractor::index_symbols_from_document_with_deadline;
 use crate::symbol_index_state::{
     source_fingerprint, validate_persisted_index_paths_with_overrides_and_deadline,
 };
@@ -201,7 +201,12 @@ pub fn refresh_symbol_index_for_file_with_limits(
                 deadline.remaining_timeout_micros("parsing refreshed files")?,
             )?;
             deadline.check("extracting refreshed symbols")?;
-            let fresh_symbols = index_symbols_from_document(refresh_path, &source, &document)?;
+            let fresh_symbols = index_symbols_from_document_with_deadline(
+                refresh_path,
+                &source,
+                &document,
+                Some(&deadline),
+            )?;
 
             file_states.insert(normalized_refresh_path.clone(), source_fingerprint(&source));
             grouped_symbols.insert(normalized_refresh_path.clone(), fresh_symbols);

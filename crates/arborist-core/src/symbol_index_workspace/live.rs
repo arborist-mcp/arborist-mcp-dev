@@ -14,7 +14,9 @@ use crate::symbol_dependency::{
     resolve_symbol_dependencies_with_overrides,
     resolve_symbol_dependencies_with_overrides_with_deadline,
 };
-use crate::symbol_extractor::index_symbols_from_document;
+use crate::symbol_extractor::{
+    index_symbols_from_document, index_symbols_from_document_with_deadline,
+};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files,
@@ -212,7 +214,12 @@ fn build_workspace_index_with_deadline(
             &source,
             deadline.remaining_timeout_micros("parsing workspace files")?,
         )?;
-        symbols.extend(index_symbols_from_document(path, &source, &document)?);
+        symbols.extend(index_symbols_from_document_with_deadline(
+            path,
+            &source,
+            &document,
+            Some(deadline),
+        )?);
     }
 
     deadline.check("assigning symbol identities")?;

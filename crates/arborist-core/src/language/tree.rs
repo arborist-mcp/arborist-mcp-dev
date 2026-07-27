@@ -1,6 +1,8 @@
 use anyhow::Result;
 use tree_sitter::Node;
 
+use crate::workspace_scan::WorkspaceScanDeadline;
+
 pub fn node_text<'a>(node: Node<'_>, source: &'a str) -> Result<&'a str> {
     Ok(node.utf8_text(source.as_bytes())?)
 }
@@ -13,6 +15,22 @@ pub fn visit_tree(node: Node<'_>, callback: &mut impl FnMut(Node<'_>)) {
             visit_tree(child, callback);
         }
     }
+}
+
+pub fn visit_tree_with_deadline(
+    node: Node<'_>,
+    callback: &mut impl FnMut(Node<'_>),
+    deadline: &WorkspaceScanDeadline,
+) -> Result<()> {
+    deadline.check("walking syntax tree")?;
+    callback(node);
+    let child_count = node.child_count();
+    for index in 0..child_count {
+        if let Some(child) = node.child(index) {
+            visit_tree_with_deadline(child, callback, deadline)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn contains_kind(node: Node<'_>, wanted: &str) -> bool {

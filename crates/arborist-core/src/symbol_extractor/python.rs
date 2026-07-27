@@ -4,18 +4,20 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::{normalize_path, visit_tree};
+use crate::language::{normalize_path, visit_tree, visit_tree_with_deadline};
 use crate::patching::collect_python_references;
 use crate::semantic::{
     python_display_byte_range, python_display_header, python_docstring, python_parameters,
     python_return_type, semantic_parent_path, semantic_path,
 };
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
-pub(super) fn index_python_symbols(
+pub(super) fn index_python_symbols_with_deadline(
     path: &Path,
     source: &str,
     root: Node<'_>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<IndexedSymbol>> {
     let mut symbols = Vec::new();
     let normalized_path = normalize_path(path);
@@ -55,7 +57,13 @@ pub(super) fn index_python_symbols(
         });
     };
 
-    visit_tree(root, &mut callback);
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(root, &mut callback, deadline)?,
+        None => visit_tree(root, &mut callback),
+    }
+    if let Some(deadline) = deadline {
+        deadline.check("extracting Python symbols")?;
+    }
     Ok(symbols)
 }
 

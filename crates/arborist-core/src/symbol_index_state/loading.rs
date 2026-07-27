@@ -20,7 +20,9 @@ use crate::symbol_dependency::{
     assign_symbol_ids, assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
     refresh_resolved_symbol_subgraph,
 };
-use crate::symbol_extractor::index_symbols_from_document;
+use crate::symbol_extractor::{
+    index_symbols_from_document, index_symbols_from_document_with_deadline,
+};
 use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline, WorkspaceScanLimits};
 
@@ -205,7 +207,15 @@ fn load_symbol_index_with_overrides_internal(
             )?,
             None => parse_document(override_path, override_source)?,
         };
-        let symbols = index_symbols_from_document(override_path, override_source, &document)?;
+        let symbols = match deadline {
+            Some(deadline) => index_symbols_from_document_with_deadline(
+                override_path,
+                override_source,
+                &document,
+                Some(deadline),
+            )?,
+            None => index_symbols_from_document(override_path, override_source, &document)?,
+        };
         let normalized_path = normalize_path(override_path);
         if !persisted_file_states.contains_key(&normalized_path) {
             added_file_paths.insert(normalized_path.clone());
