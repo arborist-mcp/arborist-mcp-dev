@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
-use super::read::read_symbol_neighborhood_context_from_symbols;
+use super::read::read_symbol_neighborhood_context_from_meta_with_timeout;
 use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, SymbolMeta, TraceDirection,
@@ -152,18 +152,49 @@ pub(crate) fn list_discovery_context_from_symbols(
     node_kind: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    let list = list_from_symbols(
+    list_discovery_context_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn list_discovery_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListDiscoveryContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
+    let list = list_from_symbols_with_timeout(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
+        timeout_ms,
     )?;
     let resolved_map = resolved_symbol_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
     let mut contexts = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
+        deadline.check("symbol discovery context reads")?;
         let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading listed symbol: {}",
@@ -175,14 +206,16 @@ pub(crate) fn list_discovery_context_from_symbols(
             indexed_files,
             file_overrides,
         )?);
-        contexts.push(read_symbol_neighborhood_context_from_symbols(
+        let timeout_ms = deadline.remaining_timeout_ms("symbol discovery neighborhood")?;
+        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
             resolved_symbols,
             indexed_files,
-            &symbol.symbol_id,
+            meta,
             direction,
             max_depth,
             max_nodes,
             file_overrides,
+            timeout_ms,
         )?);
     }
 
@@ -191,6 +224,7 @@ pub(crate) fn list_discovery_context_from_symbols(
         reads,
         contexts,
     };
+    deadline.check("symbol discovery context result")?;
     result.validate_public_output()?;
     Ok(result)
 }
@@ -207,28 +241,71 @@ pub(crate) fn list_neighborhood_context_from_symbols(
     node_kind: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    let list = list_from_symbols(
+    list_neighborhood_context_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
+    let list = list_from_symbols_with_timeout(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
+        timeout_ms,
     )?;
     let mut contexts = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
-        contexts.push(read_symbol_neighborhood_context_from_symbols(
+        deadline.check("symbol neighborhood contexts")?;
+        let meta = resolved_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == symbol.symbol_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "symbol not found in workspace index while reading listed symbol: {}",
+                    symbol.symbol_id
+                )
+            })?;
+        let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
+        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
             resolved_symbols,
             indexed_files,
-            &symbol.symbol_id,
+            meta,
             direction,
             max_depth,
             max_nodes,
             file_overrides,
+            timeout_ms,
         )?);
     }
 
     let result = SymbolListNeighborhoodContextResult { list, contexts };
+    deadline.check("symbol neighborhood context result")?;
     result.validate_public_output()?;
     Ok(result)
 }
