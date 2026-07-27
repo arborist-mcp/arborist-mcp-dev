@@ -13,7 +13,9 @@ use crate::symbols::{
     read_symbol_context_with_overrides, read_symbol_discovery_context_at_position_with_overrides,
     read_symbol_discovery_context_with_overrides,
     read_symbol_neighborhood_context_at_position_with_overrides,
-    read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
+    read_symbol_neighborhood_context_at_position_with_overrides_with_timeout,
+    read_symbol_neighborhood_context_with_overrides,
+    read_symbol_neighborhood_context_with_overrides_with_timeout, read_symbol_with_overrides,
 };
 
 impl VirtualFileSystem {
@@ -75,15 +77,36 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolNeighborhoodContextResult> {
+        self.read_symbol_neighborhood_context_with_timeout(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_neighborhood_context_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolNeighborhoodContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_neighborhood_context_with_overrides(
+        read_symbol_neighborhood_context_with_overrides_with_timeout(
             &workspace_root,
             &overrides,
             symbol_path,
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )
     }
 
@@ -96,9 +119,31 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolNeighborhoodContextResult> {
+        self.read_symbol_neighborhood_context_at_position_with_timeout(
+            workspace_root,
+            file_path,
+            position,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_neighborhood_context_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolNeighborhoodContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_neighborhood_context_at_position_with_overrides(
+        read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
             &workspace_root,
             &overrides,
             file_path,
@@ -106,6 +151,7 @@ impl VirtualFileSystem {
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )
     }
 

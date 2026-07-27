@@ -205,8 +205,36 @@ pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols(
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolNeighborhoodContextResult> {
+    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    deadline.check("symbol neighborhood position resolution")?;
     let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
-    read_symbol_neighborhood_context_from_meta(
+    let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
+    read_symbol_neighborhood_context_from_meta_with_timeout(
         resolved_symbols,
         indexed_files,
         symbol,
@@ -214,6 +242,7 @@ pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols(
         max_depth,
         max_nodes,
         file_overrides,
+        timeout_ms,
     )
 }
 
@@ -282,11 +311,37 @@ pub(crate) fn read_symbol_neighborhood_context_from_symbols(
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolNeighborhoodContextResult> {
+    read_symbol_neighborhood_context_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     validate_trace_symbol_path(symbol_path)?;
+    deadline.check("symbol neighborhood resolution")?;
 
     let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    read_symbol_neighborhood_context_from_meta(
+    let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
+    read_symbol_neighborhood_context_from_meta_with_timeout(
         resolved_symbols,
         indexed_files,
         symbol,
@@ -294,6 +349,7 @@ pub(crate) fn read_symbol_neighborhood_context_from_symbols(
         max_depth,
         max_nodes,
         file_overrides,
+        timeout_ms,
     )
 }
 

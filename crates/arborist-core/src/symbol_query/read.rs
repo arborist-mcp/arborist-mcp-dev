@@ -99,25 +99,44 @@ impl SymbolQueryContext {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolNeighborhoodContextResult> {
+        self.read_symbol_neighborhood_context_with_timeout(
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    pub fn read_symbol_neighborhood_context_with_timeout(
+        &self,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolNeighborhoodContextResult> {
         self.dispatch(
             |workspace_root, overrides| {
-                symbols::read_symbol_neighborhood_context_with_overrides(
+                symbols::read_symbol_neighborhood_context_with_overrides_with_timeout(
                     workspace_root,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
+                    timeout_ms,
                 )
             },
             |db_path, overrides| {
-                symbols::read_symbol_neighborhood_context_from_index_with_overrides(
+                symbols::read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
                     db_path,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
+                    timeout_ms,
                 )
             },
         )
@@ -131,9 +150,24 @@ impl SymbolQueryContext {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolNeighborhoodContextResult> {
+        self.read_symbol_neighborhood_context_at_position_with_timeout(
+            file_path, position, direction, max_depth, max_nodes, None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_neighborhood_context_at_position_with_timeout(
+        &self,
+        file_path: &Path,
+        position: &Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolNeighborhoodContextResult> {
         self.dispatch(
             |workspace_root, overrides| {
-                symbols::read_symbol_neighborhood_context_at_position_with_overrides(
+                symbols::read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
                     workspace_root,
                     overrides,
                     file_path,
@@ -141,11 +175,19 @@ impl SymbolQueryContext {
                     direction,
                     max_depth,
                     max_nodes,
+                    timeout_ms,
                 )
             },
             |db_path, overrides| {
-                symbols::read_symbol_neighborhood_context_at_position_from_index_with_overrides(
-                    db_path, overrides, file_path, position, direction, max_depth, max_nodes,
+                symbols::read_symbol_neighborhood_context_at_position_from_index_with_overrides_with_timeout(
+                    db_path,
+                    overrides,
+                    file_path,
+                    position,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    timeout_ms,
                 )
             },
         )
