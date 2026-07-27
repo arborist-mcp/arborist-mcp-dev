@@ -18,7 +18,7 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     raw_symbols: &mut [IndexedSymbol],
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
-    let mut languages_by_file = HashMap::new();
+    let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
     let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
     for index in 0..raw_symbols.len() {
         if let Some(deadline) = deadline {
@@ -44,15 +44,15 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     Ok(())
 }
 
-fn symbol_id_for_index(
+fn symbol_id_for_index<'a>(
     index: usize,
-    raw_symbols: &[IndexedSymbol],
-    languages_by_file: &mut HashMap<String, Option<LanguageId>>,
+    raw_symbols: &'a [IndexedSymbol],
+    languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
 ) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
     let language = *languages_by_file
-        .entry(symbol.file_path.clone())
+        .entry(symbol.file_path.as_str())
         .or_insert_with(|| detect_language(path).ok());
     if language == Some(LanguageId::Cpp)
         && matches!(

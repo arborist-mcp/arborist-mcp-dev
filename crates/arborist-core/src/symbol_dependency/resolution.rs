@@ -7,7 +7,7 @@ mod symbol_ids;
 mod template_paths;
 mod type_alias;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use anyhow::Result;
@@ -99,6 +99,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let semantic_path_index = build_semantic_path_index(raw_symbols);
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut languages_by_file = HashMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -109,6 +110,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &name_index,
                 &semantic_path_index,
                 file_overrides,
+                &mut languages_by_file,
             ));
         }
     }
@@ -161,6 +163,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let semantic_path_index = build_semantic_path_index(raw_symbols);
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut languages_by_file = HashMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;
@@ -172,6 +175,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &name_index,
                 &semantic_path_index,
                 file_overrides,
+                &mut languages_by_file,
                 Some(deadline),
             )?);
             deadline.check("resolving symbol dependencies")?;
@@ -218,12 +222,13 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     Ok(resolved_symbols)
 }
 
-pub(super) fn resolve_dependencies_for_symbol(
-    symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
+pub(super) fn resolve_dependencies_for_symbol<'a>(
+    symbol: &'a IndexedSymbol,
+    raw_symbols: &'a [IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -231,21 +236,25 @@ pub(super) fn resolve_dependencies_for_symbol(
         name_index,
         semantic_path_index,
         file_overrides,
+        languages_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
 }
 
-pub(super) fn resolve_dependencies_for_symbol_with_deadline(
-    symbol: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
+pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
+    symbol: &'a IndexedSymbol,
+    raw_symbols: &'a [IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
-    let language_id = detect_language(Path::new(&symbol.file_path)).ok();
+    let language_id = *languages_by_file
+        .entry(symbol.file_path.as_str())
+        .or_insert_with(|| detect_language(Path::new(&symbol.file_path)).ok());
     for encoded_reference_name in &symbol.references_by_name {
         if let Some(deadline) = deadline {
             deadline.check("resolving symbol references")?;
@@ -642,6 +651,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             None,
+            &mut std::collections::HashMap::new(),
             Some(&deadline),
         )
         .expect_err("expired reference resolution should fail before lookup");
