@@ -4,6 +4,14 @@ from typing import Any
 
 
 class GatewaySymbolListRoutes:
+    @staticmethod
+    def _call_with_optional_timeout(
+        method: Any, args: tuple[Any, ...], timeout_ms: int | None
+    ) -> Any:
+        if timeout_ms is None:
+            return method(*args)
+        return method(*args, timeout_ms)
+
     def _list_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         limit = self._optional_int(params, "limit", default=100)
@@ -12,27 +20,27 @@ class GatewaySymbolListRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        timeout_ms = self._optional_int(params, "timeout_ms")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.list_symbols_json(
-                workspace_root,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_json,
+                (
+                    workspace_root,
+                    limit,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    source,
+                ),
                 timeout_ms,
             )
         else:
-            payload = core.list_symbols_json(
-                workspace_root,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_json,
+                (workspace_root, limit, index_db_path, file_path_contains, node_kind),
                 timeout_ms,
             )
         return self._decode_core_object(payload)
@@ -45,27 +53,27 @@ class GatewaySymbolListRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        timeout_ms = self._optional_int(params, "timeout_ms")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.list_symbols_context_json(
-                workspace_root,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_context_json,
+                (
+                    workspace_root,
+                    limit,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    source,
+                ),
                 timeout_ms,
             )
         else:
-            payload = core.list_symbols_context_json(
-                workspace_root,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_context_json,
+                (workspace_root, limit, index_db_path, file_path_contains, node_kind),
                 timeout_ms,
             )
         return self._decode_core_object(payload)
@@ -88,33 +96,39 @@ class GatewaySymbolListRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        timeout_ms = self._optional_int(params, "timeout_ms")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.list_symbols_neighborhood_context_json(
-                workspace_root,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                file_path_contains,
-                node_kind,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_neighborhood_context_json,
+                (
+                    workspace_root,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    source,
+                ),
                 timeout_ms,
             )
         else:
-            payload = core.list_symbols_neighborhood_context_json(
-                workspace_root,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                file_path_contains,
-                node_kind,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_neighborhood_context_json,
+                (
+                    workspace_root,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                ),
                 timeout_ms,
             )
         return self._decode_core_object(payload)
@@ -137,33 +151,39 @@ class GatewaySymbolListRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        timeout_ms = self._optional_int(params, "timeout_ms")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.list_symbols_discovery_context_json(
-                workspace_root,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                file_path_contains,
-                node_kind,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_discovery_context_json,
+                (
+                    workspace_root,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    source,
+                ),
                 timeout_ms,
             )
         else:
-            payload = core.list_symbols_discovery_context_json(
-                workspace_root,
-                limit,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                file_path_contains,
-                node_kind,
+            payload = self._call_with_optional_timeout(
+                core.list_symbols_discovery_context_json,
+                (
+                    workspace_root,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                ),
                 timeout_ms,
             )
         return self._decode_core_object(payload)
