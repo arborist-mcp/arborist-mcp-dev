@@ -52,5 +52,48 @@ fn choose_trace_symbol<'a>(symbols: &'a [SymbolMeta], symbol_path: &str) -> Opti
     symbols
         .iter()
         .filter(|symbol| symbol.symbol_id == symbol_path || symbol.semantic_path == symbol_path)
-        .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
+        .max_by(|left, right| {
+            symbol_kind_rank(&left.node_kind)
+                .cmp(&symbol_kind_rank(&right.node_kind))
+                .then_with(|| right.file_path.cmp(&left.file_path))
+                .then_with(|| right.byte_range.cmp(&left.byte_range))
+                .then_with(|| right.symbol_id.cmp(&left.symbol_id))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choose_trace_symbol;
+    use crate::model::{SymbolMeta, SymbolMetaInit};
+
+    fn symbol(symbol_id: &str, file_path: &str, byte_range: (usize, usize)) -> SymbolMeta {
+        SymbolMeta::new(SymbolMetaInit {
+            symbol_id: symbol_id.to_string(),
+            semantic_path: "overloaded".to_string(),
+            scope_path: None,
+            file_path: file_path.to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range,
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn choose_trace_symbol_is_stable_for_equal_rank_candidates() {
+        let symbols = vec![
+            symbol("z", "z.py", (20, 21)),
+            symbol("a", "a.py", (40, 41)),
+            symbol("b", "a.py", (10, 11)),
+        ];
+
+        let selected = choose_trace_symbol(&symbols, "overloaded")
+            .expect("semantic path should select a candidate");
+        assert_eq!(selected.symbol_id, "b");
+    }
 }
