@@ -8,7 +8,9 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::python_bindings::collect_python_local_bindings;
+use super::python_bindings::{
+    collect_python_local_bindings, collect_python_local_bindings_with_deadline,
+};
 use super::python_imports::{
     collect_visible_python_import_bindings, collect_visible_python_import_bindings_with_deadline,
 };
@@ -158,7 +160,12 @@ pub(crate) fn collect_python_references_with_deadline(
         )?,
         None => collect_visible_python_import_bindings(current_path, node, source)?,
     };
-    let local_bindings = collect_python_local_bindings(current_path, node, source)?;
+    let local_bindings = match deadline {
+        Some(deadline) => {
+            collect_python_local_bindings_with_deadline(current_path, node, source, Some(deadline))?
+        }
+        None => collect_python_local_bindings(current_path, node, source)?,
+    };
     let instance_bindings = match deadline {
         Some(deadline) => {
             let mut bindings = std::collections::BTreeMap::new();

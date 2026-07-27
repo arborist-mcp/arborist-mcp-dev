@@ -1,5 +1,6 @@
 use crate::language::node_text;
 use crate::semantic::semantic_path;
+use crate::workspace_scan::WorkspaceScanDeadline;
 use anyhow::Result;
 use std::collections::BTreeSet;
 use tree_sitter::Node;
@@ -8,8 +9,16 @@ pub(super) fn collect_python_external_binding_names(
     body_node: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<String>> {
+    collect_python_external_binding_names_with_deadline(body_node, source, None)
+}
+
+pub(super) fn collect_python_external_binding_names_with_deadline(
+    body_node: Node<'_>,
+    source: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<BTreeSet<String>> {
     let mut names = BTreeSet::new();
-    collect_python_external_binding_names_in_scope(body_node, source, &mut names)?;
+    collect_python_external_binding_names_in_scope(body_node, source, &mut names, deadline)?;
     Ok(names)
 }
 
@@ -17,7 +26,11 @@ fn collect_python_external_binding_names_in_scope(
     node: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python external bindings")?;
+    }
     if matches!(
         node.kind(),
         "function_definition" | "class_definition" | "lambda"
@@ -40,7 +53,7 @@ fn collect_python_external_binding_names_in_scope(
 
     for index in 0..node.child_count() {
         if let Some(child) = node.child(index) {
-            collect_python_external_binding_names_in_scope(child, source, names)?;
+            collect_python_external_binding_names_in_scope(child, source, names, deadline)?;
         }
     }
 
