@@ -278,19 +278,17 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
+    let resolved_map = resolved_symbol_map(resolved_symbols);
     let mut contexts = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
         deadline.check("symbol neighborhood contexts")?;
-        let meta = resolved_symbols
-            .iter()
-            .find(|candidate| candidate.symbol_id == symbol.symbol_id)
-            .ok_or_else(|| {
-                anyhow!(
-                    "symbol not found in workspace index while reading listed symbol: {}",
-                    symbol.symbol_id
-                )
-            })?;
+        let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
+            anyhow!(
+                "symbol not found in workspace index while reading listed symbol: {}",
+                symbol.symbol_id
+            )
+        })?;
         let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
         contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
             resolved_symbols,
