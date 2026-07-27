@@ -12,6 +12,7 @@ use crate::symbol_query::validate_symbol_limit;
 use crate::symbol_read::read_symbol_result_from_meta;
 use crate::symbol_search::{normalize_optional_search_filter, symbol_matches_search_filters};
 use crate::symbol_summary::symbol_summary_from_meta;
+use crate::symbol_trace::TraceQueryDeadline;
 
 pub(crate) fn list_from_symbols(
     resolved_symbols: &[SymbolMeta],
@@ -20,22 +21,42 @@ pub(crate) fn list_from_symbols(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
+    list_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+pub(crate) fn list_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     validate_symbol_limit(limit)?;
     let file_path_contains =
         normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
     let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
 
-    let mut symbols = resolved_symbols
-        .iter()
-        .filter(|symbol| {
-            symbol_matches_search_filters(
-                symbol,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            )
-        })
-        .map(symbol_summary_from_meta)
-        .collect::<Vec<_>>();
+    let mut symbols = Vec::new();
+    for symbol in resolved_symbols {
+        deadline.check("symbol listing")?;
+        if symbol_matches_search_filters(
+            symbol,
+            file_path_contains.as_deref(),
+            node_kind.as_deref(),
+        ) {
+            symbols.push(symbol_summary_from_meta(symbol));
+        }
+    }
+    deadline.check("symbol listing sort")?;
     symbols.sort_by(|left, right| {
         left.file_path
             .cmp(&right.file_path)
@@ -43,6 +64,7 @@ pub(crate) fn list_from_symbols(
             .then_with(|| left.byte_range.cmp(&right.byte_range))
             .then_with(|| left.symbol_id.cmp(&right.symbol_id))
     });
+    deadline.check("symbol listing result")?;
 
     let total_symbols = symbols.len();
     symbols.truncate(limit);

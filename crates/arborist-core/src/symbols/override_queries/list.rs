@@ -10,7 +10,7 @@ use crate::model::{
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides_with_timeout;
 use crate::symbol_query_execution::{
     list_context_from_symbols, list_discovery_context_from_symbols, list_from_symbols,
-    list_neighborhood_context_from_symbols,
+    list_from_symbols_with_timeout, list_neighborhood_context_from_symbols,
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
@@ -49,12 +49,14 @@ pub fn list_symbols_with_overrides_filtered_with_timeout(
         timeout_ms,
     )?;
     deadline.check("workspace symbol listing")?;
-    list_from_symbols(
+    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol listing")?;
+    list_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
+        timeout_ms,
     )
 }
 
