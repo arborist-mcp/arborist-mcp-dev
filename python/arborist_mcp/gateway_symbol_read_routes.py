@@ -139,26 +139,19 @@ class GatewaySymbolReadRoutes:
                 ),
                 timeout_ms,
             )
-        elif timeout_ms is not None:
-            payload = core.read_symbol_neighborhood_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                None,
-                None,
-                timeout_ms,
-            )
         else:
-            payload = core.read_symbol_neighborhood_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_neighborhood_context_json,
+                (
+                    workspace_root,
+                    symbol_path,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                ),
+                timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
