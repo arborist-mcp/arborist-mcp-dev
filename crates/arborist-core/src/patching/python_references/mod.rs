@@ -16,6 +16,7 @@ use super::{
 };
 use crate::language::normalize_path;
 use crate::model::{DisambiguationContext, ValidationAmbiguity, ValidationBinding};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 use self::candidates::python_binding_candidates_for_reference;
 pub(super) use self::filters::{
@@ -23,7 +24,8 @@ pub(super) use self::filters::{
     python_nearest_scope_node,
 };
 use self::targets::{
-    collect_python_instance_type_bindings, collect_python_reference_entries,
+    collect_python_instance_type_bindings, collect_python_instance_type_bindings_with_deadline,
+    collect_python_reference_entries, collect_python_reference_entries_with_deadline,
     collect_python_reference_targets,
 };
 
@@ -135,18 +137,52 @@ pub(crate) fn collect_python_references(
     source: &str,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
+    collect_python_references_with_deadline(current_path, node, source, references, None)
+}
+
+pub(crate) fn collect_python_references_with_deadline(
+    current_path: &Path,
+    node: Node<'_>,
+    source: &str,
+    references: &mut BTreeSet<String>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<()> {
     let bindings = collect_visible_python_import_bindings(current_path, node, source)?;
     let local_bindings = collect_python_local_bindings(current_path, node, source)?;
-    let instance_bindings = collect_python_instance_type_bindings(node, source)?;
-    collect_python_reference_entries(
-        current_path,
-        node,
-        source,
-        &bindings,
-        &local_bindings,
-        &instance_bindings,
-        references,
-    )
+    let instance_bindings = match deadline {
+        Some(deadline) => {
+            let mut bindings = std::collections::BTreeMap::new();
+            collect_python_instance_type_bindings_with_deadline(
+                node,
+                source,
+                &mut bindings,
+                Some(deadline),
+            )?;
+            bindings
+        }
+        None => collect_python_instance_type_bindings(node, source)?,
+    };
+    match deadline {
+        Some(deadline) => collect_python_reference_entries_with_deadline(
+            current_path,
+            node,
+            source,
+            &bindings,
+            &local_bindings,
+            &instance_bindings,
+            references,
+            Some(deadline),
+        ),
+        None => collect_python_reference_entries(
+            current_path,
+            node,
+            source,
+            &bindings,
+            &local_bindings,
+            &instance_bindings,
+            references,
+        ),
+    }
 }
 
 #[derive(Debug, Clone)]

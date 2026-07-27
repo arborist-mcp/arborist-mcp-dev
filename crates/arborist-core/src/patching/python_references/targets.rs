@@ -12,6 +12,7 @@ use super::PythonReferenceTarget;
 use super::candidates::python_enclosing_local_binding_should_suppress_reference;
 use super::filters::should_count_python_reference;
 use crate::language::node_text;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(super) fn collect_python_reference_targets<'tree>(
     symbol_node: Node<'tree>,
@@ -19,16 +20,26 @@ pub(super) fn collect_python_reference_targets<'tree>(
     bindings: &BTreeMap<String, PythonImportBinding>,
 ) -> Result<Vec<PythonReferenceTarget<'tree>>> {
     let mut references = Vec::new();
-    collect_python_reference_targets_inner(symbol_node, source, bindings, &mut references)?;
+    collect_python_reference_targets_with_deadline(
+        symbol_node,
+        source,
+        bindings,
+        &mut references,
+        None,
+    )?;
     Ok(references)
 }
 
-fn collect_python_reference_targets_inner<'tree>(
+pub(super) fn collect_python_reference_targets_with_deadline<'tree>(
     node: Node<'tree>,
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
     references: &mut Vec<PythonReferenceTarget<'tree>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python reference targets")?;
+    }
     if node.kind() == "attribute"
         && let (Some(object_node), Some(attribute_node)) = (
             node.child_by_field_name("object"),
@@ -50,7 +61,13 @@ fn collect_python_reference_targets_inner<'tree>(
             }
         }
 
-        collect_python_reference_targets_inner(object_node, source, bindings, references)?;
+        collect_python_reference_targets_with_deadline(
+            object_node,
+            source,
+            bindings,
+            references,
+            deadline,
+        )?;
         return Ok(());
     }
 
@@ -75,7 +92,9 @@ fn collect_python_reference_targets_inner<'tree>(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_reference_targets_inner(child, source, bindings, references)?;
+            collect_python_reference_targets_with_deadline(
+                child, source, bindings, references, deadline,
+            )?;
         }
     }
 
@@ -91,6 +110,32 @@ pub(super) fn collect_python_reference_entries(
     instance_bindings: &BTreeMap<String, String>,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
+    collect_python_reference_entries_with_deadline(
+        current_path,
+        node,
+        source,
+        bindings,
+        local_bindings,
+        instance_bindings,
+        references,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_python_reference_entries_with_deadline(
+    current_path: &Path,
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, PythonImportBinding>,
+    local_bindings: &[PythonAccessibleSymbol],
+    instance_bindings: &BTreeMap<String, String>,
+    references: &mut BTreeSet<String>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python references")?;
+    }
     if node.kind() == "attribute"
         && let (Some(object_node), Some(attribute_node)) = (
             node.child_by_field_name("object"),
@@ -110,7 +155,7 @@ pub(super) fn collect_python_reference_entries(
             }
         }
 
-        collect_python_reference_entries(
+        collect_python_reference_entries_with_deadline(
             current_path,
             object_node,
             source,
@@ -118,6 +163,7 @@ pub(super) fn collect_python_reference_entries(
             local_bindings,
             instance_bindings,
             references,
+            deadline,
         )?;
         return Ok(());
     }
@@ -159,7 +205,7 @@ pub(super) fn collect_python_reference_entries(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_reference_entries(
+            collect_python_reference_entries_with_deadline(
                 current_path,
                 child,
                 source,
@@ -167,6 +213,7 @@ pub(super) fn collect_python_reference_entries(
                 local_bindings,
                 instance_bindings,
                 references,
+                deadline,
             )?;
         }
     }
@@ -179,15 +226,19 @@ pub(super) fn collect_python_instance_type_bindings(
     source: &str,
 ) -> Result<BTreeMap<String, String>> {
     let mut bindings = BTreeMap::new();
-    collect_python_instance_type_bindings_inner(node, source, &mut bindings)?;
+    collect_python_instance_type_bindings_with_deadline(node, source, &mut bindings, None)?;
     Ok(bindings)
 }
 
-fn collect_python_instance_type_bindings_inner(
+pub(super) fn collect_python_instance_type_bindings_with_deadline(
     node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, String>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python instance bindings")?;
+    }
     if node.kind() == "assignment"
         && let (Some(left), Some(right)) = (
             node.child_by_field_name("left"),
@@ -208,7 +259,7 @@ fn collect_python_instance_type_bindings_inner(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index) {
-            collect_python_instance_type_bindings_inner(child, source, bindings)?;
+            collect_python_instance_type_bindings_with_deadline(child, source, bindings, deadline)?;
         }
     }
 

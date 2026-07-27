@@ -5,7 +5,7 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use crate::language::{normalize_path, visit_tree, visit_tree_with_deadline};
-use crate::patching::collect_python_references;
+use crate::patching::{collect_python_references, collect_python_references_with_deadline};
 use crate::semantic::{
     python_display_byte_range, python_display_header, python_docstring, python_parameters,
     python_return_type, semantic_parent_path, semantic_path,
@@ -21,15 +21,32 @@ pub(super) fn index_python_symbols_with_deadline(
 ) -> Result<Vec<IndexedSymbol>> {
     let mut symbols = Vec::new();
     let normalized_path = normalize_path(path);
+    let mut extraction_error = None;
 
     let mut callback = |node: Node<'_>| {
+        if extraction_error.is_some() {
+            return;
+        }
         if !matches!(node.kind(), "class_definition" | "function_definition") {
             return;
         }
 
         let mut references = BTreeSet::new();
         let reference_node = python_reference_node(node);
-        let _ = collect_python_references(path, reference_node, source, &mut references);
+        let reference_result = match deadline {
+            Some(deadline) => collect_python_references_with_deadline(
+                path,
+                reference_node,
+                source,
+                &mut references,
+                Some(deadline),
+            ),
+            None => collect_python_references(path, reference_node, source, &mut references),
+        };
+        if let Err(error) = reference_result {
+            extraction_error = Some(error);
+            return;
+        }
         let signature = python_display_header(node, source).ok();
         let path = match semantic_path(node, source) {
             Ok(path) => path,
@@ -60,6 +77,9 @@ pub(super) fn index_python_symbols_with_deadline(
     match deadline {
         Some(deadline) => visit_tree_with_deadline(root, &mut callback, deadline)?,
         None => visit_tree(root, &mut callback),
+    }
+    if let Some(error) = extraction_error {
+        return Err(error);
     }
     if let Some(deadline) = deadline {
         deadline.check("extracting Python symbols")?;
