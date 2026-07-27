@@ -536,6 +536,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                     "file_path_contains": "graph",
                     "node_kind": "function_definition",
+                    "timeout_ms": 37,
                 },
                 "payload": self.make_list_result(),
                 "expected_call": (
@@ -544,6 +545,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["total_symbols"], 1),
@@ -588,6 +590,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                     "file_path_contains": "graph",
                     "node_kind": "function_definition",
+                    "timeout_ms": 37,
                 },
                 "payload": {
                     "list": self.make_list_result(),
@@ -599,6 +602,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["list"]["total_symbols"], 1),
@@ -621,6 +625,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                     "file_path_contains": "graph",
                     "node_kind": "function_definition",
+                    "timeout_ms": 37,
                 },
                 "payload": {
                     "list": self.make_list_result(),
@@ -635,6 +640,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["list"]["total_symbols"], 1),
@@ -661,6 +667,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "index_db_path": "symbols.db",
                     "file_path_contains": "graph",
                     "node_kind": "function_definition",
+                    "timeout_ms": 37,
                 },
                 "payload": {
                     "list": self.make_list_result(),
@@ -676,6 +683,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(result["list"]["total_symbols"], 1),
