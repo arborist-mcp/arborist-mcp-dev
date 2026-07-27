@@ -40,7 +40,14 @@ pub(in super::super) fn collect_python_local_bindings_with_deadline(
         if let Some(deadline) = deadline {
             deadline.check("collecting Python local bindings")?;
         }
-        collect_python_scope_symbols(node, source, &normalized_path, 0, &mut symbols)?;
+        collect_python_scope_symbols_with_deadline(
+            node,
+            source,
+            &normalized_path,
+            0,
+            &mut symbols,
+            deadline,
+        )?;
         return Ok(symbols);
     }
 
@@ -60,7 +67,7 @@ pub(in super::super) fn collect_python_local_bindings_with_deadline(
             deadline.check("collecting Python local bindings")?;
         }
         let mut statement_symbols = Vec::new();
-        collect_python_statement_symbols(
+        collect_python_statement_symbols_with_deadline(
             statement,
             source,
             &normalized_path,
@@ -68,6 +75,7 @@ pub(in super::super) fn collect_python_local_bindings_with_deadline(
             origin_type,
             0,
             &mut statement_symbols,
+            deadline,
         )?;
         if let Some(class_range) = class_visibility {
             for symbol in &mut statement_symbols {

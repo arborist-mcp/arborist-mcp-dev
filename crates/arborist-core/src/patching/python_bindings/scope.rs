@@ -6,17 +6,22 @@ use super::path::*;
 use super::summary::*;
 use super::targets::*;
 use super::types::*;
-use crate::language::{node_text, visit_tree};
+use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
+use crate::workspace_scan::WorkspaceScanDeadline;
 use anyhow::Result;
 use tree_sitter::Node;
 
-pub(in super::super) fn collect_python_scope_symbols(
+pub(in super::super) fn collect_python_scope_symbols_with_deadline(
     scope_node: Node<'_>,
     source: &str,
     normalized_path: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python scope symbols")?;
+    }
     let scope_path = python_binding_scope_path(scope_node, source)?;
     let origin_type = if scope_node.kind() == "module" {
         "module_scope"
@@ -40,7 +45,7 @@ pub(in super::super) fn collect_python_scope_symbols(
         let Some(body_node) = scope_node.child_by_field_name("body") else {
             return Ok(());
         };
-        collect_python_statement_symbols(
+        collect_python_statement_symbols_with_deadline(
             body_node,
             source,
             normalized_path,
@@ -48,6 +53,7 @@ pub(in super::super) fn collect_python_scope_symbols(
             origin_type,
             scope_rank,
             symbols,
+            deadline,
         )?;
         return Ok(());
     }
@@ -62,11 +68,19 @@ pub(in super::super) fn collect_python_scope_symbols(
         return Ok(());
     };
 
-    let external_bindings = collect_python_external_binding_names(body_node, source)?;
+    let external_bindings = match deadline {
+        Some(deadline) => {
+            collect_python_external_binding_names_with_deadline(body_node, source, Some(deadline))?
+        }
+        None => collect_python_external_binding_names(body_node, source)?,
+    };
     let mut cursor = body_node.walk();
     for child in body_node.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python scope symbols")?;
+        }
         let mut statement_symbols = Vec::new();
-        collect_python_statement_symbols(
+        collect_python_statement_symbols_with_deadline(
             child,
             source,
             normalized_path,
@@ -74,6 +88,7 @@ pub(in super::super) fn collect_python_scope_symbols(
             origin_type,
             scope_rank,
             &mut statement_symbols,
+            deadline,
         )?;
         if let Some(class_range) = class_visibility {
             for symbol in &mut statement_symbols {
@@ -91,7 +106,8 @@ pub(in super::super) fn collect_python_scope_symbols(
     Ok(())
 }
 
-pub(super) fn collect_python_statement_symbols(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_python_statement_symbols_with_deadline(
     statement_node: Node<'_>,
     source: &str,
     normalized_path: &str,
@@ -99,8 +115,12 @@ pub(super) fn collect_python_statement_symbols(
     origin_type: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
-    collect_python_named_expression_symbols(
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python statement symbols")?;
+    }
+    collect_python_named_expression_symbols_with_deadline(
         statement_node,
         source,
         normalized_path,
@@ -108,8 +128,9 @@ pub(super) fn collect_python_statement_symbols(
         origin_type,
         scope_rank + 350_000 + statement_node.start_byte(),
         symbols,
+        deadline,
     )?;
-    collect_python_comprehension_target_symbols(
+    collect_python_comprehension_target_symbols_with_deadline(
         statement_node,
         source,
         normalized_path,
@@ -117,6 +138,7 @@ pub(super) fn collect_python_statement_symbols(
         origin_type,
         scope_rank + 325_000 + statement_node.start_byte(),
         symbols,
+        deadline,
     )?;
 
     match statement_node.kind() {
@@ -170,7 +192,7 @@ pub(super) fn collect_python_statement_symbols(
                     symbols,
                 )?;
             }
-            collect_python_child_block_symbols(
+            collect_python_child_block_symbols_with_deadline(
                 statement_node,
                 source,
                 normalized_path,
@@ -178,6 +200,7 @@ pub(super) fn collect_python_statement_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
         "with_statement" => {
@@ -190,7 +213,7 @@ pub(super) fn collect_python_statement_symbols(
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
             )?;
-            collect_python_child_block_symbols(
+            collect_python_child_block_symbols_with_deadline(
                 statement_node,
                 source,
                 normalized_path,
@@ -198,6 +221,7 @@ pub(super) fn collect_python_statement_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
         "try_statement" => {
@@ -210,7 +234,7 @@ pub(super) fn collect_python_statement_symbols(
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
             )?;
-            collect_python_child_block_symbols(
+            collect_python_child_block_symbols_with_deadline(
                 statement_node,
                 source,
                 normalized_path,
@@ -218,6 +242,7 @@ pub(super) fn collect_python_statement_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
         "match_statement" => {
@@ -230,7 +255,7 @@ pub(super) fn collect_python_statement_symbols(
                 scope_rank + 300_000 + statement_node.start_byte(),
                 symbols,
             )?;
-            collect_python_child_block_symbols(
+            collect_python_child_block_symbols_with_deadline(
                 statement_node,
                 source,
                 normalized_path,
@@ -238,10 +263,11 @@ pub(super) fn collect_python_statement_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
         "if_statement" | "while_statement" => {
-            collect_python_child_block_symbols(
+            collect_python_child_block_symbols_with_deadline(
                 statement_node,
                 source,
                 normalized_path,
@@ -249,6 +275,7 @@ pub(super) fn collect_python_statement_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
         "import_statement" | "import_from_statement" => {
@@ -265,7 +292,7 @@ pub(super) fn collect_python_statement_symbols(
         "expression_statement" => {
             let mut cursor = statement_node.walk();
             for child in statement_node.named_children(&mut cursor) {
-                collect_python_statement_symbols(
+                collect_python_statement_symbols_with_deadline(
                     child,
                     source,
                     normalized_path,
@@ -273,6 +300,7 @@ pub(super) fn collect_python_statement_symbols(
                     origin_type,
                     scope_rank,
                     symbols,
+                    deadline,
                 )?;
             }
         }
@@ -282,7 +310,8 @@ pub(super) fn collect_python_statement_symbols(
     Ok(())
 }
 
-fn collect_python_comprehension_target_symbols(
+#[allow(clippy::too_many_arguments)]
+fn collect_python_comprehension_target_symbols_with_deadline(
     node: Node<'_>,
     source: &str,
     normalized_path: &str,
@@ -290,6 +319,7 @@ fn collect_python_comprehension_target_symbols(
     origin_type: &str,
     rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if !matches!(
@@ -333,11 +363,17 @@ fn collect_python_comprehension_target_symbols(
             clause_index += 1;
         }
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline),
+        None => {
+            visit_tree(node, &mut callback);
+            Ok(())
+        }
+    }
 }
 
-fn collect_python_child_block_symbols(
+#[allow(clippy::too_many_arguments)]
+fn collect_python_child_block_symbols_with_deadline(
     node: Node<'_>,
     source: &str,
     normalized_path: &str,
@@ -345,16 +381,20 @@ fn collect_python_child_block_symbols(
     origin_type: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python child blocks")?;
+        }
         if child.kind() != "block" {
             continue;
         }
 
         let mut block_cursor = child.walk();
         for statement in child.named_children(&mut block_cursor) {
-            collect_python_statement_symbols(
+            collect_python_statement_symbols_with_deadline(
                 statement,
                 source,
                 normalized_path,
@@ -362,6 +402,7 @@ fn collect_python_child_block_symbols(
                 origin_type,
                 scope_rank,
                 symbols,
+                deadline,
             )?;
         }
     }
@@ -369,7 +410,8 @@ fn collect_python_child_block_symbols(
     Ok(())
 }
 
-fn collect_python_named_expression_symbols(
+#[allow(clippy::too_many_arguments)]
+fn collect_python_named_expression_symbols_with_deadline(
     node: Node<'_>,
     source: &str,
     normalized_path: &str,
@@ -377,6 +419,7 @@ fn collect_python_named_expression_symbols(
     origin_type: &str,
     rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() != "named_expression" {
@@ -416,6 +459,11 @@ fn collect_python_named_expression_symbols(
         };
         visit_tree(left, &mut target_callback);
     };
-    visit_tree(node, &mut callback);
-    Ok(())
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline),
+        None => {
+            visit_tree(node, &mut callback);
+            Ok(())
+        }
+    }
 }

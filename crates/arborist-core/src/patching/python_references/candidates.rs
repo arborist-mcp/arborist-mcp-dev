@@ -4,7 +4,7 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::super::python_bindings::{
-    PythonAccessibleSymbol, PythonSymbolVisibility, collect_python_scope_symbols,
+    PythonAccessibleSymbol, PythonSymbolVisibility, collect_python_scope_symbols_with_deadline,
     python_scope_declares_external_name,
 };
 use super::super::python_visibility::{
@@ -99,12 +99,13 @@ pub(super) fn python_binding_candidates_for_reference(
         };
 
         if include_scope {
-            collect_python_scope_symbols(
+            collect_python_scope_symbols_with_deadline(
                 node,
                 source,
                 normalized_path,
                 scope_rank,
                 &mut candidates,
+                None,
             )?;
             scope_rank = scope_rank.saturating_sub(1_000_000);
         }
@@ -199,12 +200,13 @@ pub(super) fn python_enclosing_local_binding_should_suppress_reference(
         };
 
         if include_scope {
-            collect_python_scope_symbols(
+            collect_python_scope_symbols_with_deadline(
                 node,
                 source,
                 &normalized_path,
                 scope_rank,
                 &mut candidates,
+                None,
             )?;
             scope_rank = scope_rank.saturating_sub(1_000_000);
         }
