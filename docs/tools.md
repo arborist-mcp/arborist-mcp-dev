@@ -238,7 +238,8 @@ and start/end points.
 
 `read_symbol` and `read_symbol_at_position` bridge discovery and action by
 returning structured symbol metadata plus the exact source snippet and start/end
-points.
+points. They and the context/discovery variants described below accept an
+optional cooperative `timeout_ms` budget capped at `300000` milliseconds.
 
 The `list_symbols*` and `search_symbols*` families use the same structured
 symbol shape as skeleton, trace, and patch flows. All four `list_symbols*`
@@ -336,11 +337,12 @@ non-preemptible.
 
 `read_symbol_context`, `read_symbol_neighborhood_context`, and
 `read_symbol_discovery_context` combine source reads with trace and neighborhood
-data to reduce multi-call orchestration. Both direct neighborhood-context read
-tools accept the same optional `timeout_ms` budget as neighborhood traces. The
-budget covers workspace or persisted-index loading, bounded graph expansion,
-and per-node source reads; source-overlay parsing remains a non-preemptible
-boundary.
+data to reduce multi-call orchestration. All eight direct read tools, including
+their position variants, accept the same optional `timeout_ms` budget as
+neighborhood traces. The budget covers workspace or persisted-index loading,
+symbol or position resolution, source reads, bounded graph expansion, and
+per-node source reads where applicable; a single blocking source or overlay
+parse remains a non-preemptible boundary.
 
 `validate_patch_with_trace_context` runs patch validation, traces the patched
 symbol with the updated file held in memory, and returns the trace-backed

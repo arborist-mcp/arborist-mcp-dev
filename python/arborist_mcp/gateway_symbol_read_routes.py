@@ -10,21 +10,21 @@ class GatewaySymbolReadRoutes:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.read_symbol_json(
-                workspace_root,
-                symbol_path,
-                index_db_path,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_json,
+                (workspace_root, symbol_path, index_db_path, file_path, source),
+                timeout_ms,
             )
         else:
-            payload = core.read_symbol_json(
-                workspace_root,
-                symbol_path,
-                index_db_path,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_json,
+                (workspace_root, symbol_path, index_db_path),
+                timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -34,13 +34,11 @@ class GatewaySymbolReadRoutes:
         row, column = self._require_position(params, "position")
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            source,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().read_symbol_at_position_json,
+            (workspace_root, file_path, row, column, source, index_db_path),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -56,23 +54,28 @@ class GatewaySymbolReadRoutes:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.read_symbol_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                index_db_path,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_context_json,
+                (
+                    workspace_root,
+                    symbol_path,
+                    direction,
+                    index_db_path,
+                    file_path,
+                    source,
+                ),
+                timeout_ms,
             )
         else:
-            payload = core.read_symbol_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                index_db_path,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_context_json,
+                (workspace_root, symbol_path, direction, index_db_path),
+                timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -88,14 +91,19 @@ class GatewaySymbolReadRoutes:
         )
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_context_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            direction,
-            source,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().read_symbol_context_at_position_json,
+            (
+                workspace_root,
+                file_path,
+                row,
+                column,
+                direction,
+                source,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -202,27 +210,37 @@ class GatewaySymbolReadRoutes:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.read_symbol_discovery_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_discovery_context_json,
+                (
+                    workspace_root,
+                    symbol_path,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path,
+                    source,
+                ),
+                timeout_ms,
             )
         else:
-            payload = core.read_symbol_discovery_context_json(
-                workspace_root,
-                symbol_path,
-                direction,
-                max_depth,
-                max_nodes,
-                index_db_path,
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_discovery_context_json,
+                (
+                    workspace_root,
+                    symbol_path,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                ),
+                timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -242,15 +260,20 @@ class GatewaySymbolReadRoutes:
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_discovery_context_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            direction,
-            max_depth,
-            max_nodes,
-            source,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().read_symbol_discovery_context_at_position_json,
+            (
+                workspace_root,
+                file_path,
+                row,
+                column,
+                direction,
+                max_depth,
+                max_nodes,
+                source,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)

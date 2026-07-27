@@ -66,6 +66,39 @@ class NativeBindingsTests(unittest.TestCase):
 
         self.assertFalse(missing, f"native extension is missing gateway methods: {missing}")
 
+    def test_direct_read_timeouts_reach_native_timeout_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_db_path = str(Path(temp_dir) / "missing.db")
+            cases = (
+                (gateway._read_symbol, {"symbol_path": "missing"}),
+                (
+                    gateway._read_symbol_at_position,
+                    {"file_path": "missing.py", "position": {"row": 0, "column": 0}},
+                ),
+                (gateway._read_symbol_context, {"symbol_path": "missing"}),
+                (
+                    gateway._read_symbol_context_at_position,
+                    {"file_path": "missing.py", "position": {"row": 0, "column": 0}},
+                ),
+                (gateway._read_symbol_discovery_context, {"symbol_path": "missing"}),
+                (
+                    gateway._read_symbol_discovery_context_at_position,
+                    {"file_path": "missing.py", "position": {"row": 0, "column": 0}},
+                ),
+            )
+
+            for handler, required_params in cases:
+                with self.subTest(handler=handler.__name__):
+                    params = {
+                        "workspace_root": ".",
+                        "index_db_path": index_db_path,
+                        "timeout_ms": 300000,
+                        **required_params,
+                    }
+                    with self.assertRaisesRegex(ValueError, "does not exist"):
+                        handler(params)
+
     def test_list_and_search_timeouts_reach_native_timeout_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         with tempfile.TemporaryDirectory() as temp_dir:

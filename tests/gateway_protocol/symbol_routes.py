@@ -291,6 +291,157 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
         check_result(result)
         self.assertEqual(core.calls_for(core_method), [expected_call])
 
+    def test_direct_read_timeouts_reach_final_core_parameter(self) -> None:
+        helper_read = self.helper_read()
+        helper_read_graph = self.helper_read(file_path="graph_b.py")
+        helper_trace = self.helper_trace_context()
+        helper_trace_graph = self.helper_trace_context(file_path="graph_b.py")
+        helper_context = self.helper_neighborhood_context()
+        helper_context_graph = self.helper_neighborhood_context(file_path="graph_b.py")
+        cases = (
+            {
+                "core_method": "read_symbol_json",
+                "rpc_method": "arborist/read_symbol",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": helper_read,
+                "expected_call": (".", "helper", "symbols.db", None, None, 37),
+            },
+            {
+                "core_method": "read_symbol_at_position_json",
+                "rpc_method": "arborist/read_symbol_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": helper_read_graph,
+                "expected_call": (".", "graph_b.py", 0, 5, None, "symbols.db", 37),
+            },
+            {
+                "core_method": "read_symbol_context_json",
+                "rpc_method": "arborist/read_symbol_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": {"read": helper_read, "trace": helper_trace},
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    "symbols.db",
+                    None,
+                    None,
+                    37,
+                ),
+            },
+            {
+                "core_method": "read_symbol_context_at_position_json",
+                "rpc_method": "arborist/read_symbol_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": {"read": helper_read_graph, "trace": helper_trace_graph},
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    None,
+                    "symbols.db",
+                    37,
+                ),
+            },
+            {
+                "core_method": "read_symbol_discovery_context_json",
+                "rpc_method": "arborist/read_symbol_discovery_context",
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": {
+                    "read": helper_read,
+                    "trace": helper_trace,
+                    "neighborhood_context": helper_context,
+                },
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    37,
+                ),
+            },
+            {
+                "core_method": "read_symbol_discovery_context_at_position_json",
+                "rpc_method": "arborist/read_symbol_discovery_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "graph_b.py",
+                    "position": {"row": 0, "column": 5},
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": {
+                    "read": helper_read_graph,
+                    "trace": helper_trace_graph,
+                    "neighborhood_context": helper_context_graph,
+                },
+                "expected_call": (
+                    ".",
+                    "graph_b.py",
+                    0,
+                    5,
+                    "callers",
+                    2,
+                    10,
+                    None,
+                    "symbols.db",
+                    37,
+                ),
+            },
+        )
+
+        for request_id, case in enumerate(cases, start=240):
+            with self.subTest(method=case["rpc_method"]):
+                self.assert_routed_json(
+                    core_method=case["core_method"],
+                    rpc_method=case["rpc_method"],
+                    params=case["params"],
+                    payload=case["payload"],
+                    request_id=request_id,
+                    expected_call=case["expected_call"],
+                    check_result=lambda result: self.assertIsInstance(result, dict),
+                )
+
     def test_trace_context_returns_trace_error_when_patch_gate_rejects(self) -> None:
         with self.temp_workspace(
             {

@@ -96,7 +96,7 @@ Minimal legacy messages:
 {"jsonrpc":"2.0","id":7,"method":"arborist/inspect_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":8,"method":"arborist/migrate_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":9,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":10,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":10,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db","timeout_ms":5000}}
 {"jsonrpc":"2.0","id":11,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db"}}
 ```
 
@@ -140,13 +140,11 @@ still a non-preemptible boundary.
 freshness or unindexed-file scanning exceeds it; its successful health response
 shape is unchanged.
 
-The four `list_symbols*` tools, the base `search_symbols` tool,
-`search_symbols_context`, `search_symbols_neighborhood_context`,
-`search_symbols_discovery_context`, `read_symbol_neighborhood_context`, and
-`read_symbol_neighborhood_context_at_position` also accept the optional
-`timeout_ms` budget. The budget covers workspace or persisted-index loading,
-symbol traversal, and neighborhood source reads; the result and truncation
-response shapes are unchanged.
+The four `list_symbols*` tools, the four `search_symbols*` tools, and all eight
+`read_symbol*` tools also accept the optional `timeout_ms` budget. For direct
+reads, the budget covers workspace or persisted-index loading, symbol or
+position resolution, source reads, trace expansion, and neighborhood source
+reads where applicable. Result and truncation response shapes are unchanged.
 
 `execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped
 at `300000`; omitting it keeps the existing `500ms` default. The budget is
