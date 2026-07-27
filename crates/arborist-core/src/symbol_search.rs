@@ -1,5 +1,5 @@
 use crate::model::{SymbolMeta, SymbolSearchMatchDetail};
-use crate::symbol_index_model::symbol_base_name;
+use crate::symbol_index_model::symbol_base_name_ref;
 
 mod filters;
 
@@ -10,7 +10,7 @@ pub(crate) fn search_match_detail(
     query: &str,
     normalized_query: &str,
 ) -> Option<SymbolSearchMatchDetail> {
-    let base_name = symbol_base_name(&symbol.semantic_path);
+    let base_name = symbol_base_name_ref(&symbol.semantic_path);
     let normalized_base_name = base_name.to_lowercase();
     let normalized_symbol_id = symbol.symbol_id.to_lowercase();
     let normalized_semantic_path = symbol.semantic_path.to_lowercase();
@@ -22,7 +22,7 @@ pub(crate) fn search_match_detail(
     let normalized_return_type = symbol.return_type.as_deref().unwrap_or("").to_lowercase();
     let normalized_docstring = symbol.docstring.as_deref().unwrap_or("").to_lowercase();
 
-    let mut matched_fields = Vec::new();
+    let mut matched_fields = Vec::with_capacity(10);
     if normalized_base_name.contains(normalized_query) {
         matched_fields.push("base_name".to_string());
     }

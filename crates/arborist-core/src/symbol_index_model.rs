@@ -42,7 +42,7 @@ pub(crate) struct PersistedFileState {
     pub(crate) fingerprint: u64,
 }
 
-pub(crate) fn symbol_base_name(semantic_path: &str) -> String {
+pub(crate) fn symbol_base_name_ref(semantic_path: &str) -> &str {
     semantic_path
         .rsplit("::")
         .next()
@@ -50,7 +50,10 @@ pub(crate) fn symbol_base_name(semantic_path: &str) -> String {
         .rsplit('.')
         .next()
         .unwrap_or(semantic_path)
-        .to_string()
+}
+
+pub(crate) fn symbol_base_name(semantic_path: &str) -> String {
+    symbol_base_name_ref(semantic_path).to_string()
 }
 
 pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
