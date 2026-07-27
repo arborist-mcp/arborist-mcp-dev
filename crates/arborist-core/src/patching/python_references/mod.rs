@@ -18,9 +18,9 @@ use super::{
     ReferenceValidation, ambiguous_binding_decision, resolved_binding_decision,
     unresolved_binding_decision,
 };
+use crate::deadline::DeadlineCheck;
 use crate::language::normalize_path;
 use crate::model::{DisambiguationContext, ValidationAmbiguity, ValidationBinding};
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 use self::candidates::python_binding_candidates_for_reference;
 pub(super) use self::filters::{
@@ -149,7 +149,7 @@ pub(crate) fn collect_python_references_with_deadline(
     node: Node<'_>,
     source: &str,
     references: &mut BTreeSet<String>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let bindings = match deadline {
         Some(deadline) => collect_visible_python_import_bindings_with_deadline(

@@ -6,8 +6,8 @@ use super::path::*;
 use super::summary::*;
 use super::targets::*;
 use super::types::*;
+use crate::deadline::DeadlineCheck;
 use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
-use crate::workspace_scan::WorkspaceScanDeadline;
 use anyhow::Result;
 use tree_sitter::Node;
 
@@ -17,7 +17,7 @@ pub(in super::super) fn collect_python_scope_symbols_with_deadline(
     normalized_path: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python scope symbols")?;
@@ -115,7 +115,7 @@ pub(super) fn collect_python_statement_symbols_with_deadline(
     origin_type: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python statement symbols")?;
@@ -319,7 +319,7 @@ fn collect_python_comprehension_target_symbols_with_deadline(
     origin_type: &str,
     rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if !matches!(
@@ -381,7 +381,7 @@ fn collect_python_child_block_symbols_with_deadline(
     origin_type: &str,
     scope_rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -419,7 +419,7 @@ fn collect_python_named_expression_symbols_with_deadline(
     origin_type: &str,
     rank: usize,
     symbols: &mut Vec<PythonAccessibleSymbol>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() != "named_expression" {

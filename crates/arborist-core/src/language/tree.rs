@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::workspace_scan::WorkspaceScanDeadline;
+use crate::deadline::DeadlineCheck;
 
 pub fn node_text<'a>(node: Node<'_>, source: &'a str) -> Result<&'a str> {
     Ok(node.utf8_text(source.as_bytes())?)
@@ -20,7 +20,7 @@ pub fn visit_tree(node: Node<'_>, callback: &mut impl FnMut(Node<'_>)) {
 pub fn visit_tree_with_deadline(
     node: Node<'_>,
     callback: &mut impl FnMut(Node<'_>),
-    deadline: &WorkspaceScanDeadline,
+    deadline: &dyn DeadlineCheck,
 ) -> Result<()> {
     deadline.check("walking syntax tree")?;
     callback(node);

@@ -16,8 +16,8 @@ use super::{
     collect_cpp_local_bindings, cpp_local_member_receiver_type, cpp_temporary_type_from_expression,
     cpp_this_receiver_from_expression,
 };
+use crate::deadline::DeadlineCheck;
 use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn collect_c_call_arities(
     node: Node<'_>,
@@ -31,7 +31,7 @@ pub(crate) fn collect_c_call_arities_with_deadline(
     node: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| collect_c_call_arity(candidate, source, call_arities);
     match deadline {
@@ -53,7 +53,7 @@ pub(crate) fn collect_cpp_call_arities_with_deadline(
     node: Node<'_>,
     source: &str,
     call_arities: &mut BTreeMap<String, BTreeSet<usize>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let local_bindings = collect_cpp_local_bindings(node, source);
     let mut callback = |candidate: Node<'_>| match candidate.kind() {

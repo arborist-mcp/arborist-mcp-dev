@@ -1,6 +1,6 @@
+use crate::deadline::DeadlineCheck;
 use crate::language::node_text;
 use crate::semantic::semantic_path;
-use crate::workspace_scan::WorkspaceScanDeadline;
 use anyhow::Result;
 use std::collections::BTreeSet;
 use tree_sitter::Node;
@@ -15,7 +15,7 @@ pub(super) fn collect_python_external_binding_names(
 pub(super) fn collect_python_external_binding_names_with_deadline(
     body_node: Node<'_>,
     source: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<String>> {
     let mut names = BTreeSet::new();
     collect_python_external_binding_names_in_scope(body_node, source, &mut names, deadline)?;
@@ -26,7 +26,7 @@ fn collect_python_external_binding_names_in_scope(
     node: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python external bindings")?;

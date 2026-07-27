@@ -5,8 +5,8 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use super::module_path::resolve_local_python_module_path;
+use crate::deadline::DeadlineCheck;
 use crate::language::node_text;
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone)]
 pub(crate) enum PythonImportBinding {
@@ -31,7 +31,7 @@ pub(crate) fn collect_visible_python_import_bindings_with_deadline(
     current_path: &Path,
     node: Node<'_>,
     source: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeMap<String, PythonImportBinding>> {
     let mut scopes = Vec::new();
     let mut current = Some(node);
@@ -62,7 +62,7 @@ fn collect_python_scope_import_bindings(
     scope_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let body_node = if scope_node.kind() == "module" {
         scope_node
@@ -93,7 +93,7 @@ fn collect_python_import_bindings_from_statement(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python imports")?;
@@ -130,7 +130,7 @@ fn collect_python_import_statement_bindings(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut cursor = statement_node.walk();
     for child in statement_node.named_children(&mut cursor) {
@@ -166,7 +166,7 @@ fn collect_python_import_from_statement_bindings(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python imports")?;

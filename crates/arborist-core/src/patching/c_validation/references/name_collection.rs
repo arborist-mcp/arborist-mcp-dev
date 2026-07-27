@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 use tree_sitter::Node;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(in super::super) fn collect_c_local_definitions(
     node: Node<'_>,
@@ -83,7 +83,7 @@ pub(crate) fn collect_c_graph_references_with_deadline(
     node: Node<'_>,
     source: &str,
     references: &mut BTreeSet<String>,
-    deadline: &WorkspaceScanDeadline,
+    deadline: &dyn DeadlineCheck,
 ) -> Result<()> {
     collect_c_references_with_options(node, source, references, true, Some(deadline))
 }
@@ -93,7 +93,7 @@ fn collect_c_references_with_options(
     source: &str,
     references: &mut BTreeSet<String>,
     suppress_direct_qualified_call_components: bool,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut template_parameters = BTreeSet::new();
     collect_cpp_template_parameter_definitions(node, source, &mut template_parameters)?;

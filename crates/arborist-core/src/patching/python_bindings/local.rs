@@ -1,8 +1,8 @@
 use super::path::*;
 use super::scope::*;
 use super::types::*;
+use crate::deadline::DeadlineCheck;
 use crate::language::normalize_path;
-use crate::workspace_scan::WorkspaceScanDeadline;
 use anyhow::Result;
 use std::path::Path;
 use tree_sitter::Node;
@@ -19,7 +19,7 @@ pub(in super::super) fn collect_python_local_bindings_with_deadline(
     current_path: &Path,
     node: Node<'_>,
     source: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Vec<PythonAccessibleSymbol>> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python local bindings")?;

@@ -11,8 +11,8 @@ use super::super::python_visibility::python_local_binding_visible;
 use super::PythonReferenceTarget;
 use super::candidates::python_enclosing_local_binding_should_suppress_reference;
 use super::filters::should_count_python_reference;
+use crate::deadline::DeadlineCheck;
 use crate::language::node_text;
-use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(super) fn collect_python_reference_targets<'tree>(
     symbol_node: Node<'tree>,
@@ -35,7 +35,7 @@ pub(super) fn collect_python_reference_targets_with_deadline<'tree>(
     source: &str,
     bindings: &BTreeMap<String, PythonImportBinding>,
     references: &mut Vec<PythonReferenceTarget<'tree>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python reference targets")?;
@@ -131,7 +131,7 @@ pub(super) fn collect_python_reference_entries_with_deadline(
     local_bindings: &[PythonAccessibleSymbol],
     instance_bindings: &BTreeMap<String, String>,
     references: &mut BTreeSet<String>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python references")?;
@@ -234,7 +234,7 @@ pub(super) fn collect_python_instance_type_bindings_with_deadline(
     node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, String>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Python instance bindings")?;
