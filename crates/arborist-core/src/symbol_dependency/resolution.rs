@@ -238,6 +238,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
+    let language_id = detect_language(Path::new(&symbol.file_path)).ok();
     for encoded_reference_name in &symbol.references_by_name {
         if let Some(deadline) = deadline {
             deadline.check("resolving symbol references")?;
@@ -300,7 +301,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
                 })
                 .unwrap_or((encoded_reference_name.as_str(), false, false, false));
         let call_arities = symbol.call_arities_by_name.get(encoded_reference_name);
-        if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Cpp)
+        if language_id == Some(LanguageId::Cpp)
             && let Some(call_arities) = call_arities
         {
             for call_arity in call_arities {
