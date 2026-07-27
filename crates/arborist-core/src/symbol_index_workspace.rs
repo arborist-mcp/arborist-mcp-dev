@@ -7,7 +7,7 @@ pub(crate) use incremental::{
 };
 pub(crate) use live::{
     load_live_workspace_symbols, load_live_workspace_symbols_with_timeout,
-    resolve_workspace_symbols, resolve_workspace_symbols_with_overrides,
+    resolve_workspace_symbols_with_overrides,
     resolve_workspace_symbols_with_overrides_with_timeout, resolve_workspace_symbols_with_timeout,
 };
 

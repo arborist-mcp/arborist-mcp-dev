@@ -4,15 +4,6 @@ use crate::symbol_summary::{summarize_symbols_with_deadline, trace_evidence_keys
 use super::TraceQueryDeadline;
 use anyhow::Result;
 
-pub(crate) fn trace_from_symbol(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    trace_from_symbol_with_timeout(resolved_symbols, indexed_files, symbol, direction, None)
-}
-
 pub(crate) fn trace_from_symbol_with_timeout(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,

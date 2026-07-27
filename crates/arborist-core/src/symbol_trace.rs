@@ -71,7 +71,7 @@ fn ceil_duration_millis(duration: Duration) -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
-pub(crate) use graph::{trace_from_symbol, trace_from_symbol_with_timeout};
+pub(crate) use graph::trace_from_symbol_with_timeout;
 
 pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_timeout;
 

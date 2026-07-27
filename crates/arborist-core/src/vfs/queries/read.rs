@@ -9,11 +9,14 @@ use crate::model::{
     SymbolReadResult, TraceDirection,
 };
 use crate::symbols::{
-    read_symbol_at_position_with_overrides, read_symbol_context_at_position_with_overrides,
-    read_symbol_context_with_overrides, read_symbol_discovery_context_at_position_with_overrides,
-    read_symbol_discovery_context_with_overrides,
+    read_symbol_at_position_with_overrides_with_timeout,
+    read_symbol_context_at_position_with_overrides_with_timeout,
+    read_symbol_context_with_overrides_with_timeout,
+    read_symbol_discovery_context_at_position_with_overrides_with_timeout,
+    read_symbol_discovery_context_with_overrides_with_timeout,
     read_symbol_neighborhood_context_at_position_with_overrides_with_timeout,
-    read_symbol_neighborhood_context_with_overrides_with_timeout, read_symbol_with_overrides,
+    read_symbol_neighborhood_context_with_overrides_with_timeout,
+    read_symbol_with_overrides_with_timeout,
 };
 
 impl VirtualFileSystem {
@@ -22,9 +25,23 @@ impl VirtualFileSystem {
         workspace_root: &Path,
         symbol_path: &str,
     ) -> Result<SymbolReadResult> {
+        self.read_symbol_with_timeout(workspace_root, symbol_path, None)
+    }
+
+    pub fn read_symbol_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolReadResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_with_overrides(&workspace_root, &overrides, symbol_path)
+        read_symbol_with_overrides_with_timeout(
+            &workspace_root,
+            &overrides,
+            symbol_path,
+            timeout_ms,
+        )
     }
 
     pub fn read_symbol_at_position(
@@ -33,9 +50,25 @@ impl VirtualFileSystem {
         file_path: &Path,
         position: &crate::model::Position,
     ) -> Result<SymbolReadResult> {
+        self.read_symbol_at_position_with_timeout(workspace_root, file_path, position, None)
+    }
+
+    pub fn read_symbol_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolReadResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_at_position_with_overrides(&workspace_root, &overrides, file_path, position)
+        read_symbol_at_position_with_overrides_with_timeout(
+            &workspace_root,
+            &overrides,
+            file_path,
+            position,
+            timeout_ms,
+        )
     }
 
     pub fn read_symbol_context(
@@ -44,9 +77,25 @@ impl VirtualFileSystem {
         symbol_path: &str,
         direction: TraceDirection,
     ) -> Result<SymbolContextResult> {
+        self.read_symbol_context_with_timeout(workspace_root, symbol_path, direction, None)
+    }
+
+    pub fn read_symbol_context_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_context_with_overrides(&workspace_root, &overrides, symbol_path, direction)
+        read_symbol_context_with_overrides_with_timeout(
+            &workspace_root,
+            &overrides,
+            symbol_path,
+            direction,
+            timeout_ms,
+        )
     }
 
     pub fn read_symbol_context_at_position(
@@ -56,14 +105,33 @@ impl VirtualFileSystem {
         position: &crate::model::Position,
         direction: TraceDirection,
     ) -> Result<SymbolContextResult> {
+        self.read_symbol_context_at_position_with_timeout(
+            workspace_root,
+            file_path,
+            position,
+            direction,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_context_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_context_at_position_with_overrides(
+        read_symbol_context_at_position_with_overrides_with_timeout(
             &workspace_root,
             &overrides,
             file_path,
             position,
             direction,
+            timeout_ms,
         )
     }
 
@@ -161,15 +229,36 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolReadDiscoveryContextResult> {
+        self.read_symbol_discovery_context_with_timeout(
+            workspace_root,
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_discovery_context_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolReadDiscoveryContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_discovery_context_with_overrides(
+        read_symbol_discovery_context_with_overrides_with_timeout(
             &workspace_root,
             &overrides,
             symbol_path,
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )
     }
 
@@ -182,9 +271,31 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<SymbolReadDiscoveryContextResult> {
+        self.read_symbol_discovery_context_at_position_with_timeout(
+            workspace_root,
+            file_path,
+            position,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_symbol_discovery_context_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        file_path: &Path,
+        position: &crate::model::Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolReadDiscoveryContextResult> {
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        read_symbol_discovery_context_at_position_with_overrides(
+        read_symbol_discovery_context_at_position_with_overrides_with_timeout(
             &workspace_root,
             &overrides,
             file_path,
@@ -192,6 +303,7 @@ impl VirtualFileSystem {
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )
     }
 }
