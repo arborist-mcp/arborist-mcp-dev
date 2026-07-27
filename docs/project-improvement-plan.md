@@ -259,6 +259,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `state.rs`.
 - [x] Isolate persisted-index freshness gating and indexed-file count
   invariants in `symbol_index_state/freshness.rs`.
+- [x] Propagate cooperative workspace-scan deadlines through C/C++ symbol
+  collection and Python reference, import, and local-binding traversal paths,
+  with focused expired-deadline regression coverage.
 - [x] Move persisted-index freshness inspection (fresh/stale/missing/unreadable
   file classification) into the freshness module.
 - [x] Move persisted-index migration orchestration into
