@@ -146,6 +146,11 @@ reads, the budget covers workspace or persisted-index loading, symbol or
 position resolution, source reads, trace expansion, and neighborhood source
 reads where applicable. Result and truncation response shapes are unchanged.
 
+`validate_patch_with_trace_context` and its position variant accept the same
+optional budget. It spans file or overlay setup, patch validation, baseline and
+updated trace queries, impact calculation, and trace-backed result validation.
+A single blocking source read or parse remains a non-preemptible boundary.
+
 `execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped
 at `300000`; omitting it keeps the existing `500ms` default. The budget is
 checked by Tree-sitter progress callbacks and capture collection.

@@ -346,7 +346,11 @@ parse remains a non-preemptible boundary.
 
 `validate_patch_with_trace_context` runs patch validation, traces the patched
 symbol with the updated file held in memory, and returns the trace-backed
-validation decision in one response. If syntax validation or the patch gate
+validation decision in one response. It and its position variant accept an
+optional cooperative `timeout_ms` budget capped at `300000` milliseconds. The
+budget spans file or overlay setup, patch validation, baseline and updated trace
+queries, impact calculation, and result validation; a single blocking source
+read or parse remains non-preemptible. If syntax validation or the patch gate
 rejects first, tracing is skipped and `trace_error` explains why.
 
 Successful live-workspace and persisted-index trace-backed patch results also

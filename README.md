@@ -383,7 +383,8 @@ for response shapes, error behavior, and examples.
 - MCP resources expose the generated tool catalog snapshot for clients that
   prefer resource reads over `tools/list`.
 - Semantic patching with structured binding decisions, commit gates, bypass
-  auditing, and trace-backed replay validation.
+  auditing, trace-backed replay validation, and cooperative budgets for
+  trace-context validation.
 - Session-scoped VFS with open/change/close, virtual patching, commit/discard,
   and incremental Tree-sitter edits.
 - Python/C workspace symbol graph indexing, listing, searching, reading,

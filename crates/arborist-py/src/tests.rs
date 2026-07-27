@@ -76,6 +76,48 @@ fn parse_json_arg_rejects_excessive_nesting() {
 }
 
 #[test]
+fn trace_context_patch_bindings_forward_zero_timeout_before_patch_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let errors = [
+        core.validate_patch_with_trace_context_json_impl(
+            ".",
+            "missing.py",
+            "missing",
+            "def missing():\n    return 1\n",
+            None,
+            None,
+            "both",
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach semantic trace-context validation"),
+        core.validate_patch_with_trace_context_at_position_json_impl(
+            ".",
+            "missing.py",
+            0,
+            0,
+            "def missing():\n    return 1\n",
+            None,
+            None,
+            "both",
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should reach position trace-context validation"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
 fn direct_read_bindings_forward_zero_timeout_before_query_work() {
     prepare_python();
 
