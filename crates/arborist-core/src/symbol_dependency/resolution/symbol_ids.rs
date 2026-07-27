@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -17,12 +18,17 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     raw_symbols: &mut [IndexedSymbol],
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    let mut languages_by_file = HashMap::new();
     let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
     for index in 0..raw_symbols.len() {
         if let Some(deadline) = deadline {
             deadline.check("assigning symbol identities")?;
         }
-        symbol_ids.push(symbol_id_for_index(index, raw_symbols)?);
+        symbol_ids.push(symbol_id_for_index(
+            index,
+            raw_symbols,
+            &mut languages_by_file,
+        )?);
     }
 
     for (symbol, symbol_id) in raw_symbols.iter_mut().zip(symbol_ids) {
@@ -38,10 +44,17 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     Ok(())
 }
 
-fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<String> {
+fn symbol_id_for_index(
+    index: usize,
+    raw_symbols: &[IndexedSymbol],
+    languages_by_file: &mut HashMap<String, Option<LanguageId>>,
+) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
-    if detect_language(path).ok() == Some(LanguageId::Cpp)
+    let language = *languages_by_file
+        .entry(symbol.file_path.clone())
+        .or_insert_with(|| detect_language(path).ok());
+    if language == Some(LanguageId::Cpp)
         && matches!(
             symbol.node_kind.as_str(),
             "function_definition" | "declaration" | "field_declaration"
@@ -53,10 +66,8 @@ fn symbol_id_for_index(index: usize, raw_symbols: &[IndexedSymbol]) -> Result<St
             symbol.signature.as_deref(),
         ));
     }
-    if !matches!(
-        detect_language(path).ok(),
-        Some(LanguageId::C | LanguageId::Cpp)
-    ) || symbol.semantic_path.contains("::")
+    if !matches!(language, Some(LanguageId::C | LanguageId::Cpp))
+        || symbol.semantic_path.contains("::")
     {
         return Ok(symbol.semantic_path.clone());
     }
