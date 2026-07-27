@@ -12,6 +12,7 @@ class GatewaySymbolListRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_int(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
@@ -23,6 +24,7 @@ class GatewaySymbolListRoutes:
                 node_kind,
                 file_path,
                 source,
+                timeout_ms,
             )
         else:
             payload = core.list_symbols_json(
@@ -31,6 +33,7 @@ class GatewaySymbolListRoutes:
                 index_db_path,
                 file_path_contains,
                 node_kind,
+                timeout_ms,
             )
         return self._decode_core_object(payload)
 

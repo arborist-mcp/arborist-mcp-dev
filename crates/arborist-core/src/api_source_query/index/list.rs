@@ -17,6 +17,20 @@ pub fn list_symbols_from_index_with_source_filtered(
         context.list_symbols(limit, file_path_contains, node_kind)
     })
 }
+
+pub fn list_symbols_from_index_with_source_filtered_with_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListResult> {
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.list_symbols_with_timeout(limit, file_path_contains, node_kind, timeout_ms)
+    })
+}
 pub fn list_symbols_context_from_index_with_source_filtered(
     db_path: &Path,
     path: &Path,

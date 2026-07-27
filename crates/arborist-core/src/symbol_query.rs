@@ -92,4 +92,18 @@ impl SymbolQueryContext {
             SymbolQueryBackend::Index(db_path) => index(db_path, &self.file_overrides),
         }
     }
+
+    pub(crate) fn dispatch_with_timeout<T>(
+        &self,
+        timeout_ms: Option<u64>,
+        workspace: impl FnOnce(&Path, &BTreeMap<String, String>, Option<u64>) -> Result<T>,
+        index: impl FnOnce(&Path, &BTreeMap<String, String>, Option<u64>) -> Result<T>,
+    ) -> Result<T> {
+        match &self.backend {
+            SymbolQueryBackend::Workspace(workspace_root) => {
+                workspace(workspace_root, &self.file_overrides, timeout_ms)
+            }
+            SymbolQueryBackend::Index(db_path) => index(db_path, &self.file_overrides, timeout_ms),
+        }
+    }
 }
