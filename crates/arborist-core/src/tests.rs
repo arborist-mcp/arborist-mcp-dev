@@ -20,6 +20,7 @@ use super::{
     rebuild_symbol_index, refresh_symbol_index, replay_patch_evidence_against_trace,
     search_symbols, search_symbols_context, search_symbols_context_filtered_with_timeout,
     search_symbols_context_from_index, search_symbols_discovery_context,
+    search_symbols_discovery_context_filtered_with_timeout,
     search_symbols_discovery_context_from_index, search_symbols_filtered,
     search_symbols_filtered_with_timeout, search_symbols_from_index,
     search_symbols_from_index_filtered, search_symbols_from_index_filtered_with_timeout,

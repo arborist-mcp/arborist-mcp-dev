@@ -88,6 +88,51 @@ impl SymbolQueryContext {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_symbols_discovery_context_with_timeout(
+        &self,
+        query: &str,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolSearchDiscoveryContextResult> {
+        self.dispatch_with_timeout(
+            timeout_ms,
+            |workspace_root, overrides, timeout_ms| {
+                symbols::search_symbols_discovery_context_with_overrides_filtered_with_timeout(
+                    workspace_root,
+                    overrides,
+                    query,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    file_path_contains,
+                    node_kind,
+                    timeout_ms,
+                )
+            },
+            |db_path, overrides, timeout_ms| {
+                symbols::search_symbols_discovery_context_from_index_with_overrides_filtered_with_timeout(
+                    db_path,
+                    overrides,
+                    query,
+                    limit,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    file_path_contains,
+                    node_kind,
+                    timeout_ms,
+                )
+            },
+        )
+    }
+
     pub fn search_symbols_with_timeout(
         &self,
         query: &str,
