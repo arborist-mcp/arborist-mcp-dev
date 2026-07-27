@@ -175,3 +175,21 @@ fn search_symbols_filtered_uses_dirty_vfs_overrides() {
     assert_eq!(filtered.matches[0].semantic_path, "RenamedHelper");
     assert_eq!(filtered.matches[0].node_kind, "class_definition");
 }
+
+#[test]
+fn search_symbols_is_case_insensitive_for_unicode_identifiers() {
+    let dir = temporary_dir();
+    let source = dir.join("unicode.py");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(&source, "def Δelta(value: int) -> int:\n    return value\n").unwrap();
+
+    let live = search_symbols(&dir, "δELTA", 10).unwrap();
+    assert_eq!(live.total_matches, 1);
+    assert_eq!(live.matches[0].semantic_path, "Δelta");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = search_symbols_from_index(&db_path, "δELTA", 10).unwrap();
+    assert_eq!(persisted.total_matches, 1);
+    assert_eq!(persisted.matches[0].semantic_path, "Δelta");
+}

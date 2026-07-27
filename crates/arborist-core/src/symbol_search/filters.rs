@@ -12,7 +12,7 @@ pub(crate) fn normalize_optional_search_filter(
             if trimmed.is_empty() {
                 return Err(anyhow!("{field} must not be blank"));
             }
-            Ok(Some(trimmed.to_ascii_lowercase()))
+            Ok(Some(trimmed.to_lowercase()))
         }
         None => Ok(None),
     }
@@ -24,15 +24,12 @@ pub(crate) fn symbol_matches_search_filters(
     node_kind: Option<&str>,
 ) -> bool {
     if let Some(file_path_contains) = file_path_contains
-        && !symbol
-            .file_path
-            .to_ascii_lowercase()
-            .contains(file_path_contains)
+        && !symbol.file_path.to_lowercase().contains(file_path_contains)
     {
         return false;
     }
     if let Some(node_kind) = node_kind
-        && symbol.node_kind.to_ascii_lowercase() != node_kind
+        && symbol.node_kind.to_lowercase() != node_kind
     {
         return false;
     }

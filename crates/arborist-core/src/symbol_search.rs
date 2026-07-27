@@ -11,32 +11,16 @@ pub(crate) fn search_match_detail(
     normalized_query: &str,
 ) -> Option<SymbolSearchMatchDetail> {
     let base_name = symbol_base_name(&symbol.semantic_path);
-    let normalized_base_name = base_name.to_ascii_lowercase();
-    let normalized_symbol_id = symbol.symbol_id.to_ascii_lowercase();
-    let normalized_semantic_path = symbol.semantic_path.to_ascii_lowercase();
-    let normalized_scope_path = symbol
-        .scope_path
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_file_path = symbol.file_path.to_ascii_lowercase();
-    let normalized_node_kind = symbol.node_kind.to_ascii_lowercase();
-    let normalized_signature = symbol
-        .signature
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_parameters = symbol.parameters.join(" ").to_ascii_lowercase();
-    let normalized_return_type = symbol
-        .return_type
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let normalized_docstring = symbol
-        .docstring
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let normalized_base_name = base_name.to_lowercase();
+    let normalized_symbol_id = symbol.symbol_id.to_lowercase();
+    let normalized_semantic_path = symbol.semantic_path.to_lowercase();
+    let normalized_scope_path = symbol.scope_path.as_deref().unwrap_or("").to_lowercase();
+    let normalized_file_path = symbol.file_path.to_lowercase();
+    let normalized_node_kind = symbol.node_kind.to_lowercase();
+    let normalized_signature = symbol.signature.as_deref().unwrap_or("").to_lowercase();
+    let normalized_parameters = symbol.parameters.join(" ").to_lowercase();
+    let normalized_return_type = symbol.return_type.as_deref().unwrap_or("").to_lowercase();
+    let normalized_docstring = symbol.docstring.as_deref().unwrap_or("").to_lowercase();
 
     let mut matched_fields = Vec::new();
     if normalized_base_name.contains(normalized_query) {

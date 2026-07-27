@@ -32,7 +32,7 @@ pub(crate) fn search_from_symbols(
         normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
     let node_kind = normalize_optional_search_filter(node_kind, "node_kind")?;
 
-    let normalized_query = query.to_ascii_lowercase();
+    let normalized_query = query.to_lowercase();
     let mut ranked_matches = resolved_symbols
         .iter()
         .filter_map(|symbol| {
