@@ -147,13 +147,15 @@ pub(crate) fn load_optional_metadata_value_with_deadline(
     Ok(value)
 }
 
-pub(crate) fn validate_symbol_index_workspace(
+pub(crate) fn validate_symbol_index_workspace_with_deadline(
     connection: &Connection,
     workspace_root: &Path,
     db_path: &Path,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let expected_workspace = normalize_path(workspace_root);
-    let stored_workspace = load_symbol_index_workspace_root(connection, db_path)?;
+    let stored_workspace =
+        load_symbol_index_workspace_root_with_deadline(connection, db_path, deadline)?;
     let stored_workspace = normalize_path(&stored_workspace);
 
     if stored_workspace != expected_workspace {
@@ -165,6 +167,9 @@ pub(crate) fn validate_symbol_index_workspace(
         ));
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("validating indexed workspace")?;
+    }
     Ok(())
 }
 
@@ -211,6 +216,7 @@ mod tests {
     use super::{
         load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
         load_symbol_index_workspace_root_with_deadline,
+        validate_symbol_index_workspace_with_deadline,
     };
 
     #[test]
@@ -267,6 +273,29 @@ mod tests {
             Some(&deadline),
         )
         .expect_err("expired deadline should stop before workspace metadata loading");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn validate_workspace_checks_deadline_before_query() {
+        let connection = Connection::open_in_memory().unwrap();
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = validate_symbol_index_workspace_with_deadline(
+            &connection,
+            Path::new("workspace"),
+            Path::new("symbols.db"),
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop before workspace validation");
 
         assert!(
             error
