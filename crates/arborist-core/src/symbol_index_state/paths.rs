@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -78,11 +78,14 @@ pub(super) fn validate_persisted_symbol_paths_with_deadline(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut sources_by_path = BTreeMap::new();
+    let mut validated_paths = BTreeSet::new();
     for symbol in symbols {
         if let Some(deadline) = deadline {
             deadline.check("validating persisted symbol paths")?;
         }
-        validate_persisted_source_path(workspace_root, &symbol.file_path, "symbols.file_path")?;
+        if validated_paths.insert(symbol.file_path.clone()) {
+            validate_persisted_source_path(workspace_root, &symbol.file_path, "symbols.file_path")?;
+        }
         if !file_states.contains_key(&symbol.file_path) {
             bail!(
                 "persisted symbol path {} has no matching file_state entry",
