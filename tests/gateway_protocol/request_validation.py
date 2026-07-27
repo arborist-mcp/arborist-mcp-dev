@@ -1812,6 +1812,27 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("timeout_ms", response["error"]["message"])
 
+    def test_rejects_invalid_search_symbols_neighborhood_context_timeout_bounds(self) -> None:
+        for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+            with self.subTest(timeout_ms=timeout_ms):
+                response = self.make_gateway().handle_request(
+                    self.request(
+                        "arborist/search_symbols_neighborhood_context",
+                        {
+                            "workspace_root": ".",
+                            "query": "helper",
+                            "direction": "callers",
+                            "max_depth": 2,
+                            "max_nodes": 10,
+                            "timeout_ms": timeout_ms,
+                        },
+                        request_id=150 + timeout_ms,
+                    )
+                )
+
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_read_symbol_context_direction_as_invalid_params(self) -> None:
         gateway = self.make_gateway()
 

@@ -20,12 +20,12 @@ pub(super) use super::{
     search_symbols_discovery_context, search_symbols_discovery_context_from_index,
     search_symbols_filtered, search_symbols_filtered_with_timeout, search_symbols_from_index,
     search_symbols_from_index_filtered, search_symbols_from_index_filtered_with_timeout,
-    search_symbols_neighborhood_context, search_symbols_neighborhood_context_from_index,
-    trace_symbol_graph_at_position, trace_symbol_graph_at_position_from_index,
-    trace_symbol_graph_at_position_with_source, trace_symbol_graph_from_index,
-    trace_symbol_neighborhood, trace_symbol_neighborhood_at_position,
-    trace_symbol_neighborhood_at_position_from_index, trace_symbol_neighborhood_from_index,
-    validate_patch_with_discovery_context_at_position,
+    search_symbols_neighborhood_context, search_symbols_neighborhood_context_filtered_with_timeout,
+    search_symbols_neighborhood_context_from_index, trace_symbol_graph_at_position,
+    trace_symbol_graph_at_position_from_index, trace_symbol_graph_at_position_with_source,
+    trace_symbol_graph_from_index, trace_symbol_neighborhood,
+    trace_symbol_neighborhood_at_position, trace_symbol_neighborhood_at_position_from_index,
+    trace_symbol_neighborhood_from_index, validate_patch_with_discovery_context_at_position,
     validate_patch_with_trace_context_at_position,
 };
 pub(super) use crate::language::normalize_path;

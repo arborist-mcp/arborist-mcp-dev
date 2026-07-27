@@ -504,6 +504,15 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             search_context_timeout["properties"]["timeout_ms"]["maximum"],
             gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         )
+        neighborhood_timeout = by_name[
+            "arborist/search_symbols_neighborhood_context"
+        ]["inputSchema"]
+        self.assertNotIn("timeout_ms", neighborhood_timeout["required"])
+        self.assertEqual(neighborhood_timeout["properties"]["timeout_ms"]["minimum"], 1)
+        self.assertEqual(
+            neighborhood_timeout["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         self.assertEqual(
             list_symbols["required"], ["indexed_files", "total_symbols", "truncated", "symbols"]
         )

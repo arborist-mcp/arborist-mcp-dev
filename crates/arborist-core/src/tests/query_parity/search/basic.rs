@@ -198,6 +198,20 @@ fn search_symbols_timeout_rejects_zero_before_loading_backends() {
         search_symbols_context_filtered_with_timeout(&dir, "helper", 10, None, None, Some(0))
             .expect_err("zero context timeout should be rejected before workspace loading");
     assert!(context_error.to_string().contains("timeout"));
+
+    let neighborhood_error = search_symbols_neighborhood_context_filtered_with_timeout(
+        &dir,
+        "helper",
+        10,
+        TraceDirection::Callers,
+        2,
+        10,
+        None,
+        None,
+        Some(0),
+    )
+    .expect_err("zero neighborhood timeout should be rejected before workspace loading");
+    assert!(neighborhood_error.to_string().contains("timeout"));
 }
 
 #[test]

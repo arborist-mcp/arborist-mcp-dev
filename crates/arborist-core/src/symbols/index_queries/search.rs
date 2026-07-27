@@ -10,6 +10,7 @@ use crate::symbol_query_execution::{
     search_context_from_symbols, search_context_from_symbols_with_timeout,
     search_discovery_context_from_symbols, search_from_symbols, search_from_symbols_with_timeout,
     search_neighborhood_context_from_symbols,
+    search_neighborhood_context_from_symbols_with_timeout,
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
@@ -164,6 +165,39 @@ pub fn search_symbols_context_from_index_filtered_with_timeout(
         indexed_files,
         query,
         limit,
+        file_path_contains,
+        node_kind,
+        None,
+        timeout_ms,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_neighborhood_context_from_index_filtered_with_timeout(
+    db_path: &Path,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol search")?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
+    search_neighborhood_context_from_symbols_with_timeout(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
         file_path_contains,
         node_kind,
         None,

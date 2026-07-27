@@ -48,25 +48,6 @@ pub(crate) fn trace_from_symbols_with_timeout(
     )
 }
 
-pub(crate) fn trace_neighborhood_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    trace_neighborhood_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
-    )
-}
-
 pub(crate) fn trace_neighborhood_from_symbols_with_timeout(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,

@@ -11,7 +11,9 @@ use crate::model::{
 use crate::symbol_map::resolved_symbol_map;
 use crate::symbol_position::resolve_symbol_at_position;
 use crate::symbol_read::read_symbol_result_from_meta;
-use crate::symbol_trace::trace_from_symbol;
+use crate::symbol_trace::{
+    TraceQueryDeadline, trace_from_symbol, trace_neighborhood_from_symbol_with_timeout,
+};
 
 pub(crate) fn read_symbol_context_from_meta(
     resolved_symbols: &[SymbolMeta],
@@ -36,18 +38,45 @@ pub(crate) fn read_symbol_neighborhood_context_from_meta(
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let neighborhood = super::trace::trace_neighborhood_from_symbols(
+    read_symbol_neighborhood_context_from_meta_with_timeout(
         resolved_symbols,
         indexed_files,
-        &symbol.symbol_id,
+        symbol,
         direction,
         max_depth,
         max_nodes,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol: &SymbolMeta,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("neighborhood expansion")?;
+    let neighborhood = trace_neighborhood_from_symbol_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        timeout_ms,
     )?;
     let resolved_map = resolved_symbol_map(resolved_symbols);
     let mut reads = Vec::with_capacity(neighborhood.nodes.len());
 
     for node in &neighborhood.nodes {
+        deadline.check("neighborhood context reads")?;
         let symbol = resolved_map.get(&node.symbol.symbol_id).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading neighborhood node: {}",
@@ -65,6 +94,7 @@ pub(crate) fn read_symbol_neighborhood_context_from_meta(
         neighborhood,
         reads,
     };
+    deadline.check("neighborhood context result")?;
     result.validate_public_output()?;
     Ok(result)
 }

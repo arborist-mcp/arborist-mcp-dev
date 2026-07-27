@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
-use super::read::read_symbol_neighborhood_context_from_symbols;
+use super::read::{
+    read_symbol_neighborhood_context_from_meta_with_timeout,
+    read_symbol_neighborhood_context_from_symbols,
+};
 use crate::model::{
     SymbolMeta, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
@@ -245,29 +248,74 @@ pub(crate) fn search_neighborhood_context_from_symbols(
     node_kind: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    let search = search_from_symbols(
+    search_neighborhood_context_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("symbol search")?;
+    let search = search_from_symbols_with_timeout(
         resolved_symbols,
         indexed_files,
         query,
         limit,
         file_path_contains,
         node_kind,
+        timeout_ms,
     )?;
     let mut contexts = Vec::with_capacity(search.matches.len());
 
     for symbol in &search.matches {
-        contexts.push(read_symbol_neighborhood_context_from_symbols(
+        deadline.check("search neighborhood contexts")?;
+        let meta = resolved_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == symbol.symbol_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "symbol not found in workspace index while reading search match: {}",
+                    symbol.symbol_id
+                )
+            })?;
+        let timeout_ms = deadline.remaining_timeout_ms("search neighborhood context")?;
+        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
             resolved_symbols,
             indexed_files,
-            &symbol.symbol_id,
+            meta,
             direction,
             max_depth,
             max_nodes,
             file_overrides,
+            timeout_ms,
         )?);
     }
 
     let result = SymbolSearchNeighborhoodContextResult { search, contexts };
+    deadline.check("search neighborhood context result")?;
     result.validate_public_output()?;
     Ok(result)
 }
