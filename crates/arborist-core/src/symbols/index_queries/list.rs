@@ -10,8 +10,9 @@ use crate::symbol_query_execution::{
     list_context_from_symbols, list_discovery_context_from_symbols, list_from_symbols,
     list_neighborhood_context_from_symbols,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 
-use super::load_normalized_symbol_index;
+use super::load_normalized_symbol_index_with_timeout;
 
 pub fn list_symbols_from_index(db_path: &Path, limit: usize) -> Result<SymbolListResult> {
     list_symbols_from_index_filtered(db_path, limit, None, None)
@@ -54,7 +55,27 @@ pub fn list_symbols_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListResult> {
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    list_symbols_from_index_filtered_with_timeout(
+        db_path,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+pub fn list_symbols_from_index_filtered_with_timeout(
+    db_path: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol listing")?;
     list_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -70,7 +91,27 @@ pub fn list_symbols_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListContextResult> {
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    list_symbols_context_from_index_filtered_with_timeout(
+        db_path,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+pub fn list_symbols_context_from_index_filtered_with_timeout(
+    db_path: &Path,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol listing")?;
     list_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -91,7 +132,34 @@ pub fn list_symbols_discovery_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    list_symbols_discovery_context_from_index_filtered_with_timeout(
+        db_path,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_discovery_context_from_index_filtered_with_timeout(
+    db_path: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListDiscoveryContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol listing")?;
     list_discovery_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -115,7 +183,34 @@ pub fn list_symbols_neighborhood_context_from_index_filtered(
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    let (resolved_symbols, indexed_files) = load_normalized_symbol_index(db_path)?;
+    list_symbols_neighborhood_context_from_index_filtered_with_timeout(
+        db_path,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn list_symbols_neighborhood_context_from_index_filtered_with_timeout(
+    db_path: &Path,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListNeighborhoodContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol listing")?;
     list_neighborhood_context_from_symbols(
         &resolved_symbols,
         indexed_files,
@@ -127,4 +222,28 @@ pub fn list_symbols_neighborhood_context_from_index_filtered(
         node_kind,
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::list_symbols_from_index_filtered_with_timeout;
+
+    #[test]
+    fn index_listing_rejects_zero_timeout_before_opening_database() {
+        let error = list_symbols_from_index_filtered_with_timeout(
+            Path::new("missing-index.sqlite"),
+            10,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
 }
