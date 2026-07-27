@@ -552,18 +552,24 @@ fn resolve_reference_path_with_deadline(
     }
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
-    let selected = arity_candidates
-        .iter()
-        .copied()
-        .max_by_key(|index| {
-            indexed_symbol_candidate_rank(
-                &raw_symbols[*index],
-                source_symbol,
-                Some(&source_symbol.file_path),
-                include_context.as_ref(),
-            )
-        })
-        .map(|index| raw_symbols[index].symbol_id.clone());
+    let mut selected_index = None;
+    let mut selected_rank = 0;
+    for index in arity_candidates {
+        if let Some(deadline) = deadline {
+            deadline.check("ranking reference candidates")?;
+        }
+        let rank = indexed_symbol_candidate_rank(
+            &raw_symbols[index],
+            source_symbol,
+            Some(&source_symbol.file_path),
+            include_context.as_ref(),
+        );
+        if selected_index.is_none() || rank >= selected_rank {
+            selected_index = Some(index);
+            selected_rank = rank;
+        }
+    }
+    let selected = selected_index.map(|index| raw_symbols[index].symbol_id.clone());
     if let Some(deadline) = deadline {
         deadline.check("ranking reference candidates")?;
     }
