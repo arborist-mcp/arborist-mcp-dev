@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::Result;
 
+use super::c::CIncludeContext;
 use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
     raw_symbol_indexes_by_id, resolve_dependencies_for_symbol_with_deadline,
@@ -42,6 +43,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
 
     let mut resolved_map = old_resolved_map.clone();
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
+    let mut include_contexts_by_file: HashMap<&str, Option<CIncludeContext>> = HashMap::new();
     for symbol in old_changed_symbols {
         resolved_map.remove(&symbol.symbol_id);
     }
@@ -72,6 +74,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &semantic_path_index,
                 file_overrides,
                 &mut languages_by_file,
+                &mut include_contexts_by_file,
                 deadline,
             )?);
         }

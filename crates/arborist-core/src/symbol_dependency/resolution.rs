@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::c::c_include_context_for_file;
+use super::c::{CIncludeContext, c_include_context_for_file};
 use crate::language::detect_language;
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
 use crate::patching::resolve_local_python_imported_symbol;
@@ -100,6 +100,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
+    let mut include_contexts_by_file = HashMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -111,6 +112,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &semantic_path_index,
                 file_overrides,
                 &mut languages_by_file,
+                &mut include_contexts_by_file,
             ));
         }
     }
@@ -164,6 +166,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
+    let mut include_contexts_by_file = HashMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;
@@ -176,6 +179,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &semantic_path_index,
                 file_overrides,
                 &mut languages_by_file,
+                &mut include_contexts_by_file,
                 Some(deadline),
             )?);
             deadline.check("resolving symbol dependencies")?;
@@ -229,6 +233,7 @@ pub(super) fn resolve_dependencies_for_symbol<'a>(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
+    include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -237,11 +242,13 @@ pub(super) fn resolve_dependencies_for_symbol<'a>(
         semantic_path_index,
         file_overrides,
         languages_by_file,
+        include_contexts_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
     symbol: &'a IndexedSymbol,
     raw_symbols: &'a [IndexedSymbol],
@@ -249,6 +256,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
+    include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -338,6 +346,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
                     name_index,
                     semantic_path_index,
                     file_overrides,
+                    include_contexts_by_file,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -353,6 +362,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
             name_index,
             semantic_path_index,
             file_overrides,
+            include_contexts_by_file,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -366,15 +376,16 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline<'a>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn resolve_reference_path_with_deadline(
+fn resolve_reference_path_with_deadline<'a>(
     reference_name: &str,
     language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
-    source_symbol: &IndexedSymbol,
+    source_symbol: &'a IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -569,7 +580,9 @@ fn resolve_reference_path_with_deadline(
     if let Some(deadline) = deadline {
         deadline.check("ranking reference candidates")?;
     }
-    let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
+    let include_context = include_contexts_by_file
+        .entry(source_symbol.file_path.as_str())
+        .or_insert_with(|| c_include_context_for_file(&source_symbol.file_path).ok());
 
     let mut selected_index = None;
     let mut selected_rank = 0;
@@ -651,6 +664,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             None,
+            &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
             Some(&deadline),
         )
