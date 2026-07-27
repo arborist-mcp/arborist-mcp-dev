@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::{node_text, visit_tree};
+use crate::language::{node_text, visit_tree, visit_tree_with_deadline};
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(in super::super) fn collect_c_local_definitions(
     node: Node<'_>,
@@ -67,7 +68,7 @@ pub(crate) fn collect_c_references(
     source: &str,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
-    collect_c_references_with_options(node, source, references, false)
+    collect_c_references_with_options(node, source, references, false, None)
 }
 
 pub(crate) fn collect_c_graph_references(
@@ -75,7 +76,16 @@ pub(crate) fn collect_c_graph_references(
     source: &str,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
-    collect_c_references_with_options(node, source, references, true)
+    collect_c_references_with_options(node, source, references, true, None)
+}
+
+pub(crate) fn collect_c_graph_references_with_deadline(
+    node: Node<'_>,
+    source: &str,
+    references: &mut BTreeSet<String>,
+    deadline: &WorkspaceScanDeadline,
+) -> Result<()> {
+    collect_c_references_with_options(node, source, references, true, Some(deadline))
 }
 
 fn collect_c_references_with_options(
@@ -83,6 +93,7 @@ fn collect_c_references_with_options(
     source: &str,
     references: &mut BTreeSet<String>,
     suppress_direct_qualified_call_components: bool,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut template_parameters = BTreeSet::new();
     collect_cpp_template_parameter_definitions(node, source, &mut template_parameters)?;
@@ -104,7 +115,10 @@ fn collect_c_references_with_options(
             });
         }
     };
-    visit_tree(node, &mut callback);
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline)?,
+        None => visit_tree(node, &mut callback),
+    }
     Ok(())
 }
 

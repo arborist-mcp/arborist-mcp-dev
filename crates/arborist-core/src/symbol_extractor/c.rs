@@ -6,7 +6,9 @@ use tree_sitter::Node;
 
 use crate::language::{node_text, normalize_path};
 use crate::patching::{
-    collect_c_call_arities, collect_c_graph_references, collect_cpp_call_arities,
+    collect_c_call_arities, collect_c_call_arities_with_deadline, collect_c_graph_references,
+    collect_c_graph_references_with_deadline, collect_cpp_call_arities,
+    collect_cpp_call_arities_with_deadline,
 };
 use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
@@ -82,12 +84,39 @@ pub(super) fn index_c_symbols_with_deadline(
             "function_definition" => {
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let mut references = BTreeSet::new();
-                    collect_c_graph_references(child, source, &mut references)?;
+                    if let Some(deadline) = deadline {
+                        collect_c_graph_references_with_deadline(
+                            child,
+                            source,
+                            &mut references,
+                            deadline,
+                        )?;
+                    } else {
+                        collect_c_graph_references(child, source, &mut references)?;
+                    }
                     let mut call_arities = BTreeMap::new();
                     if is_cpp {
-                        collect_cpp_call_arities(child, source, &mut call_arities)?;
+                        if let Some(deadline) = deadline {
+                            collect_cpp_call_arities_with_deadline(
+                                child,
+                                source,
+                                &mut call_arities,
+                                Some(deadline),
+                            )?;
+                        } else {
+                            collect_cpp_call_arities(child, source, &mut call_arities)?;
+                        }
                     } else {
-                        collect_c_call_arities(child, source, &mut call_arities)?;
+                        if let Some(deadline) = deadline {
+                            collect_c_call_arities_with_deadline(
+                                child,
+                                source,
+                                &mut call_arities,
+                                Some(deadline),
+                            )?;
+                        } else {
+                            collect_c_call_arities(child, source, &mut call_arities)?;
+                        }
                     }
                     references.extend(call_arities.keys().cloned());
                     let scope_path = semantic_parent_path(&name);

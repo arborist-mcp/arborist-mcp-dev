@@ -98,5 +98,7 @@ pub(crate) fn collect_c_reference_validation(
 }
 
 pub(crate) use references::{
-    collect_c_call_arities, collect_c_graph_references, collect_cpp_call_arities,
+    collect_c_call_arities, collect_c_call_arities_with_deadline, collect_c_graph_references,
+    collect_c_graph_references_with_deadline, collect_cpp_call_arities,
+    collect_cpp_call_arities_with_deadline,
 };

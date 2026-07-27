@@ -9,9 +9,14 @@ mod type_qualifiers;
 mod types;
 
 pub(super) use bindings::collect_cpp_local_bindings;
-pub(crate) use call_arities::{collect_c_call_arities, collect_cpp_call_arities};
+pub(crate) use call_arities::{
+    collect_c_call_arities, collect_c_call_arities_with_deadline, collect_cpp_call_arities,
+    collect_cpp_call_arities_with_deadline,
+};
 pub(super) use name_collection::collect_c_local_definitions;
-pub(crate) use name_collection::{collect_c_graph_references, collect_c_references};
+pub(crate) use name_collection::{
+    collect_c_graph_references, collect_c_graph_references_with_deadline, collect_c_references,
+};
 use receivers::*;
 pub(super) use receivers::{
     cpp_local_member_receiver_type, cpp_standard_sequence_at_receiver, cpp_subscript_receiver,
