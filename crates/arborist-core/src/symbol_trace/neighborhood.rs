@@ -134,21 +134,26 @@ pub(crate) fn validate_neighborhood_bounds(max_depth: usize, max_nodes: usize) -
 fn neighborhood_edges_for_symbol<'a>(
     symbol: &'a SymbolMeta,
     direction: &TraceDirection,
-) -> Box<dyn Iterator<Item = (String, String)> + 'a> {
-    let callers = symbol
+) -> impl Iterator<Item = (String, String)> + 'a {
+    let reference_count = symbol.references.len();
+    let direction = *direction;
+    symbol
         .references
         .iter()
-        .cloned()
-        .map(|caller_id| (caller_id, symbol.symbol_id.clone()));
-    let callees = symbol
-        .dependencies
-        .iter()
-        .cloned()
-        .map(|callee_id| (symbol.symbol_id.clone(), callee_id));
+        .chain(symbol.dependencies.iter())
+        .enumerate()
+        .filter_map(move |(index, target_id)| {
+            let is_caller = index < reference_count;
+            if (is_caller && matches!(direction, TraceDirection::Callees))
+                || (!is_caller && matches!(direction, TraceDirection::Callers))
+            {
+                return None;
+            }
 
-    match direction {
-        TraceDirection::Callers => Box::new(callers),
-        TraceDirection::Callees => Box::new(callees),
-        TraceDirection::Both => Box::new(callers.chain(callees)),
-    }
+            if is_caller {
+                Some((target_id.clone(), symbol.symbol_id.clone()))
+            } else {
+                Some((symbol.symbol_id.clone(), target_id.clone()))
+            }
+        })
 }
