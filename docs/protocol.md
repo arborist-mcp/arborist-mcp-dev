@@ -155,6 +155,11 @@ validation, the updated trace, bounded graph or source-context expansion, and
 result validation. A single blocking source read or parse remains a
 non-preemptible boundary.
 
+`preview_workspace_position_edits` accepts the same optional budget across file
+validation, source reads, sequential edit application, updated-source parsing,
+diff generation, syntax diagnostics, and result validation. A single blocking
+source read or parse remains non-preemptible, and no file is written.
+
 `execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped
 at `300000`; omitting it keeps the existing `500ms` default. The budget is
 checked by Tree-sitter progress callbacks and capture collection.

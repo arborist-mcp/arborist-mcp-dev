@@ -5,7 +5,7 @@ use arborist_core::{
     export_patch_diagnostics_sarif, patch_ast_node, patch_ast_node_at_position,
     preview_patch_ast_node, preview_patch_ast_node_at_position,
     preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
-    preview_workspace_position_edits, replay_patch_evidence_against_trace,
+    preview_workspace_position_edits_with_timeout, replay_patch_evidence_against_trace,
     validate_patch_commit_with_trace,
 };
 use pyo3::prelude::*;
@@ -129,12 +129,15 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
+    #[pyo3(signature = (files_json, timeout_ms=None))]
     pub(super) fn preview_workspace_position_edits_json(
         &self,
         files_json: &str,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let files: Vec<WorkspacePositionEdits> = parse_json_arg(files_json)?;
-        let result = preview_workspace_position_edits(&files).map_err(to_py_error)?;
+        let result = preview_workspace_position_edits_with_timeout(&files, timeout_ms)
+            .map_err(to_py_error)?;
         to_json_result(&result)
     }
 

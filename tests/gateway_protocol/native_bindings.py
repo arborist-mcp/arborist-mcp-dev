@@ -66,6 +66,24 @@ class NativeBindingsTests(unittest.TestCase):
 
         self.assertFalse(missing, f"native extension is missing gateway methods: {missing}")
 
+    def test_workspace_edit_preview_timeout_reaches_native_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        result = gateway._preview_workspace_position_edits(
+            {
+                "files": [
+                    {
+                        "file_path": "unsaved.py",
+                        "source": "value = 1\n",
+                        "edits": [],
+                    }
+                ],
+                "timeout_ms": 300000,
+            }
+        )
+
+        self.assertFalse(result["changed"])
+        self.assertEqual(result["files"][0]["source"], "value = 1\n")
+
     def test_trace_context_patch_timeouts_reach_native_timeout_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         source = "def target() -> int:\n    return 1\n"

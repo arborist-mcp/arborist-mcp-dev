@@ -51,6 +51,21 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
         check_result(result)
         self.assertEqual(core.calls_for(core_method), [expected_call])
 
+    def test_workspace_edit_preview_timeout_reaches_final_core_parameter(self) -> None:
+        files = [{"file_path": "sample.py", "source": "value = 1\n", "edits": []}]
+        self.assert_routed_json(
+            core_method="preview_workspace_position_edits_json",
+            rpc_method="arborist/preview_workspace_position_edits",
+            params={"files": files, "timeout_ms": 37},
+            payload={"changed": False, "files": []},
+            request_id=126,
+            expected_call=(
+                '[{"file_path": "sample.py", "source": "value = 1\\n", "edits": []}]',
+                37,
+            ),
+            check_result=lambda result: self.assertFalse(result["changed"]),
+        )
+
     def test_symbol_index_management_routes_params_to_core(self) -> None:
         cases = [
             {

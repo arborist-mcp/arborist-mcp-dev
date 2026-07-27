@@ -384,7 +384,7 @@ for response shapes, error behavior, and examples.
   prefer resource reads over `tools/list`.
 - Semantic patching with structured binding decisions, commit gates, bypass
   auditing, trace-backed replay validation, and cooperative budgets across
-  trace, graph, neighborhood, and discovery context validation.
+  context validation and multi-file edit previews.
 - Session-scoped VFS with open/change/close, virtual patching, commit/discard,
   and incremental Tree-sitter edits.
 - Python/C workspace symbol graph indexing, listing, searching, reading,

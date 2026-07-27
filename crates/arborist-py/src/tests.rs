@@ -76,6 +76,22 @@ fn parse_json_arg_rejects_excessive_nesting() {
 }
 
 #[test]
+fn workspace_edit_preview_binding_forwards_zero_timeout() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let error = core
+        .preview_workspace_position_edits_json("[]", Some(0))
+        .expect_err("zero timeout should reach workspace edit preview");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid workspace edit preview timeout_ms: value must be greater than zero")
+    );
+}
+
+#[test]
 fn trace_context_patch_bindings_forward_zero_timeout_before_patch_work() {
     prepare_python();
 

@@ -88,7 +88,12 @@ class GatewayPatchValidationRoutes:
                     f"invalid files[{index}].edits: {error}",
                 ) from error
         files_json = self._encode_json_param(files, "files")
-        payload = self._require_core().preview_workspace_position_edits_json(files_json)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().preview_workspace_position_edits_json,
+            (files_json,),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _validate_patch_commit_with_trace(
