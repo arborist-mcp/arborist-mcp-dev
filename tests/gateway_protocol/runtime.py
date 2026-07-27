@@ -369,6 +369,17 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             False,
         )
         preview = by_name["arborist/preview_patch_ast_node"]
+        for preview_name in (
+            "arborist/preview_patch_ast_node",
+            "arborist/preview_patch_ast_node_at_position",
+        ):
+            preview_timeout = by_name[preview_name]["inputSchema"]
+            self.assertNotIn("timeout_ms", preview_timeout["required"])
+            self.assertEqual(preview_timeout["properties"]["timeout_ms"]["minimum"], 1)
+            self.assertEqual(
+                preview_timeout["properties"]["timeout_ms"]["maximum"],
+                gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+            )
         preview_result = preview["outputSchema"]["properties"]["result"]
         self.assertEqual(preview_result["required"], ["patch", "unified_diff", "changed"])
         self.assertEqual(preview_result["properties"]["patch"], patch_result)

@@ -134,6 +134,13 @@ boundaries, Python query iteration, C/C++ symbol collection, skeleton rendering,
 and result validation. A single blocking source read or parse remains
 non-preemptible.
 
+`preview_patch_ast_node` and `preview_patch_ast_node_at_position` also accept
+an optional cooperative `timeout_ms` budget capped at `300000`. It spans
+file-backed source reads, target resolution, replacement preparation, updated
+source parsing, syntax and reference validation, commit-gate evaluation, diff
+generation, and result validation. A single blocking source read or parse
+remains non-preemptible.
+
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during
 workspace traversal, per-file indexing, C include dependency expansion, and

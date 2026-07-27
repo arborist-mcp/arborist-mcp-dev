@@ -381,6 +381,77 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                 contains="outside server workspace",
             )
 
+    def test_patch_preview_timeouts_reach_final_core_parameters(self) -> None:
+        class StubCore:
+            def preview_patch_ast_node_json(self, *args: object) -> str:
+                self.semantic_args = args
+                return "{}"
+
+            def preview_patch_ast_node_at_position_json(self, *args: object) -> str:
+                self.position_args = args
+                return "{}"
+
+        core = StubCore()
+        gateway = self.make_gateway(core)
+        semantic = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                gateway,
+                "arborist/preview_patch_ast_node",
+                {
+                    "file_path": "sample.py",
+                    "semantic_path": "sample",
+                    "new_code": "def sample():\n    return 2\n",
+                    "source": "def sample():\n    return 1\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 37,
+                },
+                request_id=123,
+            ),
+            request_id=123,
+        )
+        position = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                gateway,
+                "arborist/preview_patch_ast_node_at_position",
+                {
+                    "file_path": "sample.py",
+                    "position": {"row": 0, "column": 4},
+                    "new_code": "def sample():\n    return 2\n",
+                    "source": "def sample():\n    return 1\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 41,
+                },
+                request_id=124,
+            ),
+            request_id=124,
+        )
+
+        self.assertEqual(semantic, {})
+        self.assertEqual(position, {})
+        self.assertEqual(
+            core.semantic_args,
+            (
+                "sample.py",
+                "sample",
+                "def sample():\n    return 2\n",
+                "def sample():\n    return 1\n",
+                "approved",
+                37,
+            ),
+        )
+        self.assertEqual(
+            core.position_args,
+            (
+                "sample.py",
+                0,
+                4,
+                "def sample():\n    return 2\n",
+                "def sample():\n    return 1\n",
+                "approved",
+                41,
+            ),
+        )
+
     def test_preview_patch_ast_node_returns_diff_without_writing_disk(self) -> None:
         with self.temp_workspace() as workspace:
             file_path = workspace.joinpath("sample.py")

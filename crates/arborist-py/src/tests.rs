@@ -407,6 +407,43 @@ fn neighborhood_read_bindings_forward_zero_timeout_before_query_work() {
 }
 
 #[test]
+fn patch_preview_bindings_forward_zero_timeout_before_path_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let source = Some("def target():\n    return 1\n".to_string());
+    let errors = [
+        core.preview_patch_ast_node_json_impl(
+            "",
+            "target",
+            "def target():\n    return 2\n",
+            source.clone(),
+            None,
+            Some(0),
+        )
+        .expect_err("semantic preview should reject zero timeout"),
+        core.preview_patch_ast_node_at_position_json_impl(
+            "",
+            0,
+            4,
+            "def target():\n    return 2\n",
+            source,
+            None,
+            Some(0),
+        )
+        .expect_err("position preview should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid patch preview timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
 fn virtual_file_and_source_preview_dispatch_preserve_results() {
     prepare_python();
 
@@ -439,6 +476,7 @@ fn virtual_file_and_source_preview_dispatch_preserve_results() {
                 "target",
                 replacement,
                 Some(source.to_string()),
+                None,
                 None,
             )
             .expect("source-backed patch preview should succeed"),

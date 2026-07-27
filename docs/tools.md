@@ -290,6 +290,13 @@ disk. They return:
 - `unified_diff`: a compact unified diff from original source to preview source.
 - `changed`: whether the preview changes source text.
 
+Both single-file preview tools accept an optional cooperative `timeout_ms`
+budget capped at `300000` milliseconds. The budget spans file-backed source
+reads, semantic or position target resolution, replacement preparation, updated
+source parsing, syntax and reference validation, commit-gate evaluation, diff
+generation, and result validation. A single blocking source read or parse
+remains non-preemptible.
+
 `preview_workspace_position_edits` extends previewing to a batch of up to 32
 files. It accepts sequential `PositionEdit` values per file and returns each
 updated source, unified diff, and syntax diagnostics without writing any file.

@@ -3,10 +3,10 @@ use std::path::Path;
 use arborist_core::{
     PatchAstNodeResult, TraceSymbolGraphResult, WorkspacePositionEdits,
     export_patch_diagnostics_sarif, patch_ast_node, patch_ast_node_at_position,
-    preview_patch_ast_node, preview_patch_ast_node_at_position,
-    preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
-    preview_workspace_position_edits_with_timeout, replay_patch_evidence_against_trace,
-    validate_patch_commit_with_trace,
+    preview_patch_ast_node_at_position_from_path_with_timeout,
+    preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path_with_timeout,
+    preview_patch_ast_node_with_timeout, preview_workspace_position_edits_with_timeout,
+    replay_patch_evidence_against_trace, validate_patch_commit_with_trace,
 };
 use pyo3::prelude::*;
 
@@ -46,7 +46,14 @@ impl ArboristCore {
         )
     }
 
-    #[pyo3(signature = (file_path, semantic_path, new_code, source=None, bypass_reason=None))]
+    #[pyo3(signature = (
+        file_path,
+        semantic_path,
+        new_code,
+        source=None,
+        bypass_reason=None,
+        timeout_ms=None
+    ))]
     fn preview_patch_ast_node_json(
         &self,
         file_path: &str,
@@ -54,6 +61,7 @@ impl ArboristCore {
         new_code: &str,
         source: Option<String>,
         bypass_reason: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.preview_patch_ast_node_json_impl(
             file_path,
@@ -61,10 +69,20 @@ impl ArboristCore {
             new_code,
             source,
             bypass_reason,
+            timeout_ms,
         )
     }
 
-    #[pyo3(signature = (file_path, row, column, new_code, source=None, bypass_reason=None))]
+    #[pyo3(signature = (
+        file_path,
+        row,
+        column,
+        new_code,
+        source=None,
+        bypass_reason=None,
+        timeout_ms=None
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn preview_patch_ast_node_at_position_json(
         &self,
         file_path: &str,
@@ -73,6 +91,7 @@ impl ArboristCore {
         new_code: &str,
         source: Option<String>,
         bypass_reason: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.preview_patch_ast_node_at_position_json_impl(
             file_path,
@@ -81,6 +100,7 @@ impl ArboristCore {
             new_code,
             source,
             bypass_reason,
+            timeout_ms,
         )
     }
 
@@ -237,20 +257,23 @@ impl ArboristCore {
         new_code: &str,
         source: Option<String>,
         bypass_reason: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let result = match source {
-            Some(source) => preview_patch_ast_node(
+            Some(source) => preview_patch_ast_node_with_timeout(
                 Path::new(file_path),
                 &source,
                 semantic_path,
                 new_code,
                 bypass_reason.as_deref(),
+                timeout_ms,
             ),
-            None => preview_patch_ast_node_from_path(
+            None => preview_patch_ast_node_from_path_with_timeout(
                 Path::new(file_path),
                 semantic_path,
                 new_code,
                 bypass_reason.as_deref(),
+                timeout_ms,
             ),
         }
         .map_err(to_py_error)?;
@@ -258,6 +281,7 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn preview_patch_ast_node_at_position_json_impl(
         &self,
         file_path: &str,
@@ -266,21 +290,24 @@ impl ArboristCore {
         new_code: &str,
         source: Option<String>,
         bypass_reason: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let position = source_position(row, column);
         let result = match source {
-            Some(source) => preview_patch_ast_node_at_position(
+            Some(source) => preview_patch_ast_node_at_position_with_timeout(
                 Path::new(file_path),
                 &source,
                 &position,
                 new_code,
                 bypass_reason.as_deref(),
+                timeout_ms,
             ),
-            None => preview_patch_ast_node_at_position_from_path(
+            None => preview_patch_ast_node_at_position_from_path_with_timeout(
                 Path::new(file_path),
                 &position,
                 new_code,
                 bypass_reason.as_deref(),
+                timeout_ms,
             ),
         }
         .map_err(to_py_error)?;

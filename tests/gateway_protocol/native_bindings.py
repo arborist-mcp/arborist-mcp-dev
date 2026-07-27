@@ -78,6 +78,35 @@ class NativeBindingsTests(unittest.TestCase):
 
         self.assertIn("sample", result["available_paths"])
 
+    def test_patch_preview_timeouts_reach_native_parameters(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        source = "def sample():\n    return 1\n"
+        replacement = "def sample():\n    return 2\n"
+        cases = (
+            (
+                gateway._preview_patch_ast_node,
+                {"semantic_path": "sample"},
+            ),
+            (
+                gateway._preview_patch_ast_node_at_position,
+                {"position": {"row": 0, "column": 4}},
+            ),
+        )
+
+        for handler, target_params in cases:
+            with self.subTest(handler=handler.__name__):
+                result = handler(
+                    {
+                        "file_path": "unsaved.py",
+                        "source": source,
+                        "new_code": replacement,
+                        "timeout_ms": 300000,
+                        **target_params,
+                    }
+                )
+                self.assertTrue(result["changed"])
+                self.assertTrue(result["patch"]["applied"])
+
     def test_workspace_edit_preview_timeout_reaches_native_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         result = gateway._preview_workspace_position_edits(

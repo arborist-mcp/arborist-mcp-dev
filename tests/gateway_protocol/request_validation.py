@@ -1763,6 +1763,37 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                 self.assertEqual(response["error"]["code"], -32602)
                 self.assertIn("timeout_ms", response["error"]["message"])
 
+    def test_rejects_invalid_patch_preview_timeout_bounds(self) -> None:
+        cases = (
+            (
+                "arborist/preview_patch_ast_node",
+                {"semantic_path": "sample"},
+            ),
+            (
+                "arborist/preview_patch_ast_node_at_position",
+                {"position": {"row": 0, "column": 4}},
+            ),
+        )
+        for method, target_params in cases:
+            for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+                with self.subTest(method=method, timeout_ms=timeout_ms):
+                    response = self.make_gateway().handle_request(
+                        self.request(
+                            method,
+                            {
+                                "file_path": "sample.py",
+                                "source": "def sample():\n    return 1\n",
+                                "new_code": "def sample():\n    return 2\n",
+                                "timeout_ms": timeout_ms,
+                                **target_params,
+                            },
+                            request_id=85 + timeout_ms,
+                        )
+                    )
+
+                    self.assertEqual(response["error"]["code"], -32602)
+                    self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_workspace_edit_preview_timeout_bounds(self) -> None:
         for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
             with self.subTest(timeout_ms=timeout_ms):
