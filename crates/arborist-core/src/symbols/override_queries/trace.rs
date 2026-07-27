@@ -20,21 +20,6 @@ use super::{
     load_workspace_symbols_with_overrides_at_path_with_timeout,
 };
 
-pub fn trace_symbol_graph_with_overrides(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    trace_symbol_graph_with_overrides_and_timeout(
-        workspace_root,
-        file_overrides,
-        symbol_path,
-        direction,
-        None,
-    )
-}
-
 pub fn trace_symbol_graph_with_overrides_and_timeout(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -187,21 +172,6 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
         max_nodes,
         Some(file_overrides),
         timeout_ms,
-    )
-}
-
-pub fn trace_symbol_graph_from_index_with_overrides(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    trace_symbol_graph_from_index_with_overrides_and_timeout(
-        db_path,
-        file_overrides,
-        symbol_path,
-        direction,
-        None,
     )
 }
 

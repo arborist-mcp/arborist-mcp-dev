@@ -9,8 +9,9 @@ use crate::model::{
 };
 use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols::{
-    read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
-    trace_symbol_graph_with_overrides, trace_symbol_graph_with_overrides_and_timeout,
+    read_symbol_discovery_context_with_overrides_with_timeout,
+    read_symbol_neighborhood_context_with_overrides_with_timeout,
+    trace_symbol_graph_with_overrides_and_timeout,
     trace_symbol_neighborhood_with_overrides_and_timeout,
 };
 use crate::{
@@ -170,16 +171,19 @@ impl VirtualFileSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn neighborhood_context_patch_result(
+    pub(super) fn neighborhood_context_patch_result_with_timeout(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
         max_depth: usize,
         max_nodes: usize,
+        timeout_ms: Option<u64>,
     ) -> Result<NeighborhoodContextPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
+            deadline.check("virtual neighborhood patch validation result")?;
             let result = NeighborhoodContextPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -195,6 +199,7 @@ impl VirtualFileSystem {
         }
 
         if !patch.applied {
+            deadline.check("virtual neighborhood patch validation result")?;
             let result = NeighborhoodContextPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -210,22 +215,28 @@ impl VirtualFileSystem {
             return Ok(result);
         }
 
+        deadline.check("virtual neighborhood patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let trace = trace_symbol_graph_with_overrides(
+        let timeout_ms = deadline.remaining_timeout_ms("virtual neighborhood patch trace")?;
+        let trace = trace_symbol_graph_with_overrides_and_timeout(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
+            timeout_ms,
         )?;
-        let neighborhood_context = read_symbol_neighborhood_context_with_overrides(
+        let timeout_ms = deadline.remaining_timeout_ms("virtual patch neighborhood context")?;
+        let neighborhood_context = read_symbol_neighborhood_context_with_overrides_with_timeout(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )?;
+        deadline.check("virtual neighborhood patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
         let result = NeighborhoodContextPatchResult {
             patch: patch.clone(),
@@ -235,21 +246,25 @@ impl VirtualFileSystem {
             trace_validation: Some(trace_validation),
             trace_error: None,
         };
+        deadline.check("virtual neighborhood-context patch result")?;
         validate_neighborhood_context_patch_result(&result)?;
         Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn discovery_context_patch_result(
+    pub(super) fn discovery_context_patch_result_with_timeout(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
         max_depth: usize,
         max_nodes: usize,
+        timeout_ms: Option<u64>,
     ) -> Result<DiscoveryContextPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
+            deadline.check("virtual discovery patch validation result")?;
             let result = DiscoveryContextPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -266,6 +281,7 @@ impl VirtualFileSystem {
         }
 
         if !patch.applied {
+            deadline.check("virtual discovery patch validation result")?;
             let result = DiscoveryContextPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -282,33 +298,31 @@ impl VirtualFileSystem {
             return Ok(result);
         }
 
+        deadline.check("virtual discovery patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let trace = trace_symbol_graph_with_overrides(
-            workspace_root,
-            &overrides,
-            &trace_target,
-            direction,
-        )?;
-        let read = read_symbol_with_overrides(workspace_root, &overrides, &trace_target)?;
-        let neighborhood_context = read_symbol_neighborhood_context_with_overrides(
+        let timeout_ms = deadline.remaining_timeout_ms("virtual patch discovery context")?;
+        let discovery = read_symbol_discovery_context_with_overrides_with_timeout(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
+            timeout_ms,
         )?;
-        let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
+        deadline.check("virtual discovery patch trace validation")?;
+        let trace_validation = validate_patch_commit_with_trace(patch, &discovery.trace)?;
         let result = DiscoveryContextPatchResult {
             patch: patch.clone(),
             trace_target,
-            trace: Some(trace),
-            read: Some(read),
-            neighborhood_context: Some(neighborhood_context),
+            trace: Some(discovery.trace),
+            read: Some(discovery.read),
+            neighborhood_context: Some(discovery.neighborhood_context),
             trace_validation: Some(trace_validation),
             trace_error: None,
         };
+        deadline.check("virtual discovery-context patch result")?;
         validate_discovery_context_patch_result(&result)?;
         Ok(result)
     }

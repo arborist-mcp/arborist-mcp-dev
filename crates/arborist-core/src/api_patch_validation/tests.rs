@@ -1,7 +1,16 @@
 use std::path::Path;
 
 use super::{
-    sarif_artifact_uri, validate_patch_with_graph_context_at_position_from_index_path_with_timeout,
+    sarif_artifact_uri,
+    validate_patch_with_discovery_context_at_position_from_index_path_with_timeout,
+    validate_patch_with_discovery_context_at_position_from_index_with_timeout,
+    validate_patch_with_discovery_context_at_position_from_path_with_timeout,
+    validate_patch_with_discovery_context_at_position_with_timeout,
+    validate_patch_with_discovery_context_from_index_path_with_timeout,
+    validate_patch_with_discovery_context_from_index_with_timeout,
+    validate_patch_with_discovery_context_from_path_with_timeout,
+    validate_patch_with_discovery_context_with_timeout,
+    validate_patch_with_graph_context_at_position_from_index_path_with_timeout,
     validate_patch_with_graph_context_at_position_from_index_with_timeout,
     validate_patch_with_graph_context_at_position_from_path_with_timeout,
     validate_patch_with_graph_context_at_position_with_timeout,
@@ -9,6 +18,14 @@ use super::{
     validate_patch_with_graph_context_from_index_with_timeout,
     validate_patch_with_graph_context_from_path_with_timeout,
     validate_patch_with_graph_context_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_from_index_path_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_from_index_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_from_path_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_with_timeout,
+    validate_patch_with_neighborhood_context_from_index_path_with_timeout,
+    validate_patch_with_neighborhood_context_from_index_with_timeout,
+    validate_patch_with_neighborhood_context_from_path_with_timeout,
+    validate_patch_with_neighborhood_context_with_timeout,
     validate_patch_with_trace_context_at_position_from_index_path_with_timeout,
     validate_patch_with_trace_context_at_position_from_index_with_timeout,
     validate_patch_with_trace_context_at_position_from_path_with_timeout,
@@ -250,6 +267,250 @@ fn graph_context_timeout_variants_reject_zero_before_path_or_patch_work() {
             Some(0),
         )
         .expect_err("indexed position path graph context should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
+fn neighborhood_context_timeout_variants_reject_zero_before_path_or_patch_work() {
+    let path = Path::new("");
+    let position = Position { row: 0, column: 0 };
+    let source = "def target():
+    return 1
+";
+    let replacement = "def target():
+    return 2
+";
+    let errors = [
+        validate_patch_with_neighborhood_context_with_timeout(
+            path,
+            path,
+            source,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("workspace neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_at_position_with_timeout(
+            path,
+            path,
+            source,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("position neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_from_path_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("path neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_from_index_with_timeout(
+            path,
+            path,
+            source,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_at_position_from_path_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("position path neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_from_index_path_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed path neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_at_position_from_index_with_timeout(
+            path,
+            path,
+            source,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed position neighborhood context should reject zero timeout"),
+        validate_patch_with_neighborhood_context_at_position_from_index_path_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed position path neighborhood context should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
+fn discovery_context_timeout_variants_reject_zero_before_path_or_patch_work() {
+    let path = Path::new("");
+    let position = Position { row: 0, column: 0 };
+    let source = "def target():
+    return 1
+";
+    let replacement = "def target():
+    return 2
+";
+    let errors = [
+        validate_patch_with_discovery_context_with_timeout(
+            path,
+            path,
+            source,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("workspace discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_at_position_with_timeout(
+            path,
+            path,
+            source,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("position discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_from_path_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("path discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_from_index_with_timeout(
+            path,
+            path,
+            source,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_at_position_from_path_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("position path discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_from_index_path_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed path discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_at_position_from_index_with_timeout(
+            path,
+            path,
+            source,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed position discovery context should reject zero timeout"),
+        validate_patch_with_discovery_context_at_position_from_index_path_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("indexed position path discovery context should reject zero timeout"),
     ];
 
     for error in errors {

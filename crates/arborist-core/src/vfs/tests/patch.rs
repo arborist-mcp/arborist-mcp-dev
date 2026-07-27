@@ -1,4 +1,72 @@
 #[test]
+fn read_context_validation_rejects_zero_timeout_before_virtual_file_work() {
+    let mut vfs = VirtualFileSystem::new();
+    let path = Path::new("");
+    let position = Position { row: 0, column: 0 };
+    let replacement = "def target():
+    return 2
+";
+    let errors = [
+        vfs.validate_patch_with_neighborhood_context_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("virtual neighborhood context should reject zero timeout"),
+        vfs.validate_patch_with_neighborhood_context_at_position_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("virtual position neighborhood context should reject zero timeout"),
+        vfs.validate_patch_with_discovery_context_with_timeout(
+            path,
+            path,
+            "target",
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("virtual discovery context should reject zero timeout"),
+        vfs.validate_patch_with_discovery_context_at_position_with_timeout(
+            path,
+            path,
+            &position,
+            replacement,
+            None,
+            TraceDirection::Both,
+            2,
+            10,
+            Some(0),
+        )
+        .expect_err("virtual position discovery context should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
 fn graph_context_validation_rejects_zero_timeout_before_virtual_file_work() {
     let mut vfs = VirtualFileSystem::new();
     let path = Path::new("");

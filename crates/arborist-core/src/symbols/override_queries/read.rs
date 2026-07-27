@@ -25,14 +25,6 @@ use super::{
     load_workspace_symbols_with_overrides_at_path_with_timeout,
 };
 
-pub fn read_symbol_with_overrides(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-) -> Result<SymbolReadResult> {
-    read_symbol_with_overrides_with_timeout(workspace_root, file_overrides, symbol_path, None)
-}
-
 pub fn read_symbol_with_overrides_with_timeout(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -81,26 +73,6 @@ pub fn read_symbol_context_with_overrides_with_timeout(
     )
 }
 
-pub fn read_symbol_neighborhood_context_with_overrides(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_with_overrides_with_timeout(
-        workspace_root,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn read_symbol_neighborhood_context_with_overrides_with_timeout(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -285,14 +257,6 @@ pub fn read_symbol_discovery_context_at_position_with_overrides_with_timeout(
     )
 }
 
-pub fn read_symbol_from_index_with_overrides(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-) -> Result<SymbolReadResult> {
-    read_symbol_from_index_with_overrides_with_timeout(db_path, file_overrides, symbol_path, None)
-}
-
 pub fn read_symbol_from_index_with_overrides_with_timeout(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -343,26 +307,6 @@ pub fn read_symbol_context_from_index_with_overrides_with_timeout(
     )
 }
 
-pub fn read_symbol_neighborhood_context_from_index_with_overrides(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<SymbolNeighborhoodContextResult> {
-    read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
-        db_path,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub fn read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
