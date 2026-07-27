@@ -47,20 +47,27 @@ pub(crate) fn symbol_summary_from_meta(symbol: &SymbolMeta) -> SymbolSummary {
     })
 }
 
-pub(crate) fn trace_evidence_keys(
+pub(crate) fn trace_evidence_keys_with_deadline(
     symbol: &SymbolMeta,
     callers: &[SymbolSummary],
     callees: &[SymbolSummary],
-) -> TraceEvidenceKeys {
-    TraceEvidenceKeys {
-        symbol: symbol.evidence_key.clone(),
-        callers: callers
-            .iter()
-            .map(|summary| summary.evidence_key.clone())
-            .collect(),
-        callees: callees
-            .iter()
-            .map(|summary| summary.evidence_key.clone())
-            .collect(),
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceEvidenceKeys> {
+    deadline.check("building trace evidence keys")?;
+    let mut caller_keys = Vec::with_capacity(callers.len());
+    for summary in callers {
+        deadline.check("building trace evidence keys")?;
+        caller_keys.push(summary.evidence_key.clone());
     }
+    let mut callee_keys = Vec::with_capacity(callees.len());
+    for summary in callees {
+        deadline.check("building trace evidence keys")?;
+        callee_keys.push(summary.evidence_key.clone());
+    }
+    deadline.check("building trace evidence keys")?;
+    Ok(TraceEvidenceKeys {
+        symbol: symbol.evidence_key.clone(),
+        callers: caller_keys,
+        callees: callee_keys,
+    })
 }

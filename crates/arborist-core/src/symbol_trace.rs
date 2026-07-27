@@ -79,7 +79,9 @@ mod tests {
         neighborhood::validate_neighborhood_bounds,
     };
     use crate::model::{SymbolMeta, SymbolMetaInit};
-    use crate::symbol_summary::summarize_symbols_with_deadline;
+    use crate::symbol_summary::{
+        summarize_symbols_with_deadline, trace_evidence_keys_with_deadline,
+    };
 
     #[test]
     fn validates_trace_timeout_bounds() {
@@ -149,6 +151,33 @@ mod tests {
         let error =
             summarize_symbols_with_deadline(&[symbol], &[String::from("helper")], None, &deadline)
                 .expect_err("expired summary deadline should fail");
+        assert!(error.to_string().contains("trace timeout exceeded"));
+    }
+
+    #[test]
+    fn building_trace_evidence_keys_checks_expired_deadline() {
+        let symbol = SymbolMeta::new(SymbolMetaInit {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "helper.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        });
+        let deadline = TraceQueryDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = trace_evidence_keys_with_deadline(&symbol, &[], &[], &deadline)
+            .expect_err("expired evidence-key deadline should fail");
         assert!(error.to_string().contains("trace timeout exceeded"));
     }
 }

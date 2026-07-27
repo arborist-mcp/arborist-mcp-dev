@@ -1,5 +1,5 @@
 use crate::model::{SymbolMeta, TraceDirection, TraceSymbolGraphResult};
-use crate::symbol_summary::{summarize_symbols_with_deadline, trace_evidence_keys};
+use crate::symbol_summary::{summarize_symbols_with_deadline, trace_evidence_keys_with_deadline};
 
 use super::TraceQueryDeadline;
 use anyhow::Result;
@@ -45,7 +45,7 @@ pub(crate) fn trace_from_symbol_with_timeout(
     deadline.check("validating graph output")?;
 
     let result = TraceSymbolGraphResult {
-        evidence_keys: trace_evidence_keys(&symbol, &callers, &callees),
+        evidence_keys: trace_evidence_keys_with_deadline(&symbol, &callers, &callees, &deadline)?,
         symbol,
         callers,
         callees,
