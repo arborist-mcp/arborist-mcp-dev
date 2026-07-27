@@ -1,6 +1,6 @@
-use std::time::{Duration, Instant};
+use anyhow::Result;
 
-use anyhow::{Result, anyhow};
+use crate::deadline::CooperativeDeadline;
 
 mod graph;
 mod neighborhood;
@@ -10,65 +10,25 @@ pub const MAX_GRAPH_DEPTH: usize = 64;
 pub const MAX_GRAPH_NODES: usize = 10_000;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct TraceQueryDeadline {
-    deadline: Option<Instant>,
-    timeout_ms: Option<u64>,
-}
+pub(crate) struct TraceQueryDeadline(CooperativeDeadline);
 
 impl TraceQueryDeadline {
     pub(crate) fn new(timeout_ms: Option<u64>) -> Result<Self> {
-        if timeout_ms == Some(0) {
-            return Err(anyhow!(
-                "invalid trace timeout_ms: value must be greater than zero"
-            ));
-        }
-        if timeout_ms.is_some_and(|value| value > MAX_TRACE_TIMEOUT_MS) {
-            return Err(anyhow!(
-                "invalid trace timeout_ms: value must not exceed {}",
-                MAX_TRACE_TIMEOUT_MS
-            ));
-        }
-
-        Ok(Self {
-            deadline: timeout_ms.map(|value| Instant::now() + Duration::from_millis(value)),
-            timeout_ms,
-        })
+        CooperativeDeadline::new(timeout_ms, MAX_TRACE_TIMEOUT_MS, "trace").map(Self)
     }
 
     pub(crate) fn check(&self, phase: &str) -> Result<()> {
-        if self
-            .deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            return Err(anyhow!(
-                "trace timeout exceeded during {phase}: timeout_ms={}",
-                self.timeout_ms.unwrap_or_default()
-            ));
-        }
-        Ok(())
+        self.0.check(phase)
     }
 
     pub(crate) fn remaining_timeout_ms(&self, phase: &str) -> Result<Option<u64>> {
-        let Some(deadline) = self.deadline else {
-            return Ok(None);
-        };
-        let remaining_ms = ceil_duration_millis(deadline.saturating_duration_since(Instant::now()));
-        if remaining_ms == 0 {
-            return Err(anyhow!(
-                "trace timeout exceeded during {phase}: timeout_ms={}",
-                self.timeout_ms.unwrap_or_default()
-            ));
-        }
-        Ok(Some(remaining_ms))
+        self.0.remaining_timeout_ms(phase)
     }
-}
 
-fn ceil_duration_millis(duration: Duration) -> u64 {
-    duration
-        .as_micros()
-        .saturating_add(999)
-        .saturating_div(1_000)
-        .min(u128::from(u64::MAX)) as u64
+    #[cfg(test)]
+    fn expired_for_tests(timeout_ms: u64) -> Self {
+        Self(CooperativeDeadline::expired_for_tests(timeout_ms, "trace"))
+    }
 }
 
 pub(crate) use graph::trace_from_symbol_with_timeout;
@@ -77,8 +37,6 @@ pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_timeout;
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
-
     use super::{
         MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline,
         neighborhood::validate_neighborhood_bounds,
@@ -97,10 +55,7 @@ mod tests {
 
     #[test]
     fn reports_expired_trace_deadline() {
-        let deadline = TraceQueryDeadline {
-            deadline: Some(Instant::now() - Duration::from_millis(1)),
-            timeout_ms: Some(1),
-        };
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
 
         let error = deadline
             .check("test phase")
@@ -111,22 +66,12 @@ mod tests {
 
     #[test]
     fn reports_expired_remaining_trace_budget() {
-        let deadline = TraceQueryDeadline {
-            deadline: Some(Instant::now() - Duration::from_millis(1)),
-            timeout_ms: Some(1),
-        };
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
 
         let error = deadline
             .remaining_timeout_ms("override loading")
             .expect_err("expired remaining budgets should fail");
         assert!(error.to_string().contains("override loading"));
-    }
-
-    #[test]
-    fn rounds_remaining_trace_budget_up_to_milliseconds() {
-        assert_eq!(super::ceil_duration_millis(Duration::from_micros(1)), 1);
-        assert_eq!(super::ceil_duration_millis(Duration::from_millis(1)), 1);
-        assert_eq!(super::ceil_duration_millis(Duration::from_micros(1_001)), 2);
     }
 
     #[test]
@@ -155,10 +100,7 @@ mod tests {
             dependencies: Vec::new(),
             references: Vec::new(),
         });
-        let deadline = TraceQueryDeadline {
-            deadline: Some(Instant::now() - Duration::from_millis(1)),
-            timeout_ms: Some(1),
-        };
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
 
         let error =
             summarize_symbols_with_deadline(&[symbol], &[String::from("helper")], None, &deadline)
@@ -183,10 +125,7 @@ mod tests {
             dependencies: Vec::new(),
             references: Vec::new(),
         });
-        let deadline = TraceQueryDeadline {
-            deadline: Some(Instant::now() - Duration::from_millis(1)),
-            timeout_ms: Some(1),
-        };
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
 
         let error = trace_evidence_keys_with_deadline(&symbol, &[], &[], &deadline)
             .expect_err("expired evidence-key deadline should fail");
