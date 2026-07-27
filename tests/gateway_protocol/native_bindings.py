@@ -66,6 +66,18 @@ class NativeBindingsTests(unittest.TestCase):
 
         self.assertFalse(missing, f"native extension is missing gateway methods: {missing}")
 
+    def test_semantic_skeleton_timeout_reaches_native_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        result = gateway._get_semantic_skeleton(
+            {
+                "file_path": "unsaved.py",
+                "source": "def sample():\n    return 1\n",
+                "timeout_ms": 300000,
+            }
+        )
+
+        self.assertIn("sample", result["available_paths"])
+
     def test_workspace_edit_preview_timeout_reaches_native_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         result = gateway._preview_workspace_position_edits(

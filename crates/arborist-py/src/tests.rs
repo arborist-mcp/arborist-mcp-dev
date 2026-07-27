@@ -76,6 +76,27 @@ fn parse_json_arg_rejects_excessive_nesting() {
 }
 
 #[test]
+fn semantic_skeleton_binding_forwards_zero_timeout_before_path_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let errors = [
+        core.get_semantic_skeleton_json_impl("", None, 2, None, Some(0))
+            .expect_err("path skeleton should reject zero timeout"),
+        core.get_semantic_skeleton_json_impl("", Some("value = 1\n".to_string()), 2, None, Some(0))
+            .expect_err("inline skeleton should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid semantic skeleton timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
 fn workspace_edit_preview_binding_forwards_zero_timeout() {
     prepare_python();
 

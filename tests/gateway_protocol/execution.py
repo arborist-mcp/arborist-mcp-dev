@@ -158,6 +158,41 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
         self.assertEqual(result, {})
         self.assertEqual(core.args, ("sample.py", None, 2, None))
 
+    def test_semantic_skeleton_timeout_reaches_final_core_parameter(self) -> None:
+        class StubCore:
+            def get_semantic_skeleton_json(self, *args: object) -> str:
+                self.args = args
+                return "{}"
+
+        core = StubCore()
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "arborist/get_semantic_skeleton",
+                {
+                    "file_path": "sample.py",
+                    "source": "def sample():\n    return 1\n",
+                    "depth_limit": 3,
+                    "expand_nodes": ["sample"],
+                    "timeout_ms": 37,
+                },
+                request_id=44,
+            ),
+            request_id=44,
+        )
+
+        self.assertEqual(result, {})
+        self.assertEqual(
+            core.args,
+            (
+                "sample.py",
+                "def sample():\n    return 1\n",
+                3,
+                ["sample"],
+                37,
+            ),
+        )
+
     def test_get_semantic_skeleton_accepts_unsaved_source(self) -> None:
         with self.temp_workspace() as workspace:
             file_path = workspace.joinpath("sample.py")

@@ -1745,6 +1745,24 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
         self.assertEqual(response["error"]["code"], -32602)
         self.assertIn("max_nodes", response["error"]["message"])
 
+    def test_rejects_invalid_semantic_skeleton_timeout_bounds(self) -> None:
+        for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+            with self.subTest(timeout_ms=timeout_ms):
+                response = self.make_gateway().handle_request(
+                    self.request(
+                        "arborist/get_semantic_skeleton",
+                        {
+                            "file_path": "sample.py",
+                            "source": "def sample():\n    return 1\n",
+                            "timeout_ms": timeout_ms,
+                        },
+                        request_id=80 + timeout_ms,
+                    )
+                )
+
+                self.assertEqual(response["error"]["code"], -32602)
+                self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_workspace_edit_preview_timeout_bounds(self) -> None:
         for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
             with self.subTest(timeout_ms=timeout_ms):

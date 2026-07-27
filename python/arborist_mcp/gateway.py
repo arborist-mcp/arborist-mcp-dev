@@ -262,11 +262,11 @@ class ArboristGateway(
             "expand_nodes",
             max_items=MAX_SEMANTIC_EXPAND_NODES,
         )
-        payload = self._require_core().get_semantic_skeleton_json(
-            file_path,
-            source,
-            depth_limit,
-            expand_nodes,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().get_semantic_skeleton_json,
+            (file_path, source, depth_limit, expand_nodes),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 

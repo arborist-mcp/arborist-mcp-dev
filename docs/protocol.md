@@ -128,6 +128,12 @@ File-backed source reads are capped at 64 MiB before parsing; inline gateway
 source parameters remain capped at 4 MiB, and direct core source overlays are
 capped at 64 MiB before parsing.
 
+`get_semantic_skeleton` accepts an optional cooperative `timeout_ms` budget
+capped at `300000`. It covers path setup, file-backed source reads, parsing
+boundaries, Python query iteration, C/C++ symbol collection, skeleton rendering,
+and result validation. A single blocking source read or parse remains
+non-preemptible.
+
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during
 workspace traversal, per-file indexing, C include dependency expansion, and

@@ -380,6 +380,8 @@ for response shapes, error behavior, and examples.
   read/trace/list/search overlays when `index_db_path` is supplied.
 - Patch preview tools that return validation plus unified diff without writing
   to disk.
+- Semantic skeleton extraction with bounded depth and expansion selectors plus
+  cooperative budgets for file reads and post-parse symbol traversal.
 - MCP resources expose the generated tool catalog snapshot for clients that
   prefer resource reads over `tools/list`.
 - Semantic patching with structured binding decisions, commit gates, bypass

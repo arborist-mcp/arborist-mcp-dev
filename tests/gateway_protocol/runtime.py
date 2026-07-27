@@ -193,6 +193,15 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             skeleton["inputSchema"]["properties"]["source"]["maxLength"],
             gateway_module.TEXT_PARAM_MAX_LENGTH,
         )
+        self.assertNotIn("timeout_ms", skeleton["inputSchema"]["required"])
+        self.assertEqual(
+            skeleton["inputSchema"]["properties"]["timeout_ms"]["minimum"],
+            1,
+        )
+        self.assertEqual(
+            skeleton["inputSchema"]["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         self.assertIn(
             "Tree-sitter C++ grammar",
             skeleton["inputSchema"]["properties"]["file_path"]["description"],
