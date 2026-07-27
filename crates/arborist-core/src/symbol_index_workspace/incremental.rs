@@ -8,7 +8,9 @@ use crate::index_store::{
     load_file_states_with_deadline, load_indexed_symbols_grouped_by_file_with_deadline,
 };
 use crate::language::{normalize_path, parse_document_with_timeout, read_source};
-use crate::symbol_dependency::{assign_symbol_ids, resolve_symbol_dependencies};
+use crate::symbol_dependency::{
+    assign_symbol_ids, resolve_symbol_dependencies_with_overrides_with_deadline,
+};
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
 use crate::symbol_index_state::source_fingerprint;
@@ -83,7 +85,8 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     deadline.check("assigning symbol identities")?;
     assign_symbol_ids(&mut raw_symbols)?;
     deadline.check("resolving workspace symbols")?;
-    let resolved_symbols = resolve_symbol_dependencies(&raw_symbols);
+    let resolved_symbols =
+        resolve_symbol_dependencies_with_overrides_with_deadline(&raw_symbols, None, deadline)?;
     Ok((
         raw_symbols,
         resolved_symbols,
