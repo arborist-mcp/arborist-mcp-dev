@@ -477,6 +477,19 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             by_name["arborist/list_symbols"]["inputSchema"]["properties"]["limit"]["maximum"],
             gateway_module.MAX_SYMBOL_LIMIT,
         )
+        for list_tool_name in (
+            "arborist/list_symbols",
+            "arborist/list_symbols_context",
+            "arborist/list_symbols_neighborhood_context",
+            "arborist/list_symbols_discovery_context",
+        ):
+            list_timeout = by_name[list_tool_name]["inputSchema"]
+            self.assertNotIn("timeout_ms", list_timeout["required"])
+            self.assertEqual(list_timeout["properties"]["timeout_ms"]["minimum"], 1)
+            self.assertEqual(
+                list_timeout["properties"]["timeout_ms"]["maximum"],
+                gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+            )
         self.assertEqual(
             list_symbols["required"], ["indexed_files", "total_symbols", "truncated", "symbols"]
         )
