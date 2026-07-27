@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::c::{CIncludeContext, c_include_context_for_file_with_overrides};
+use super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use crate::language::detect_language;
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
 use crate::patching::resolve_local_python_imported_symbol;
@@ -580,11 +580,22 @@ fn resolve_reference_path_with_deadline<'a>(
     if let Some(deadline) = deadline {
         deadline.check("ranking reference candidates")?;
     }
+    let source_file_path = source_symbol.file_path.as_str();
+    if !include_contexts_by_file.contains_key(source_file_path) {
+        let context = c_include_context_for_file_with_overrides_and_deadline(
+            &source_symbol.file_path,
+            file_overrides,
+            deadline,
+        )
+        .ok();
+        if let Some(deadline) = deadline {
+            deadline.check("building C include context")?;
+        }
+        include_contexts_by_file.insert(source_file_path, context);
+    }
     let include_context = include_contexts_by_file
-        .entry(source_symbol.file_path.as_str())
-        .or_insert_with(|| {
-            c_include_context_for_file_with_overrides(&source_symbol.file_path, file_overrides).ok()
-        });
+        .get(source_file_path)
+        .and_then(Option::as_ref);
 
     let mut selected_index = None;
     let mut selected_rank = 0;
@@ -596,7 +607,7 @@ fn resolve_reference_path_with_deadline<'a>(
             &raw_symbols[index],
             source_symbol,
             Some(&source_symbol.file_path),
-            include_context.as_ref(),
+            include_context,
         );
         if selected_index.is_none() || rank >= selected_rank {
             selected_index = Some(index);

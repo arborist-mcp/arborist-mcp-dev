@@ -5,10 +5,12 @@ use anyhow::Result;
 
 use crate::language::{
     c_companion_source_path, c_include_targets, c_include_targets_before, detect_language,
-    is_c_header_path, normalize_path, parse_document, read_source, resolve_local_c_include,
+    is_c_header_path, normalize_path, parse_document, parse_document_with_timeout, read_source,
+    resolve_local_c_include,
 };
 use crate::model::LanguageId;
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Default)]
 pub(crate) struct CIncludeContext {
@@ -23,6 +25,14 @@ pub(crate) fn c_include_context_for_file(file_path: &str) -> Result<CIncludeCont
 pub(crate) fn c_include_context_for_file_with_overrides(
     file_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<CIncludeContext> {
+    c_include_context_for_file_with_overrides_and_deadline(file_path, file_overrides, None)
+}
+
+pub(crate) fn c_include_context_for_file_with_overrides_and_deadline(
+    file_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CIncludeContext> {
     let path = Path::new(file_path);
     if !matches!(
@@ -39,6 +49,7 @@ pub(crate) fn c_include_context_for_file_with_overrides(
         &mut include_paths,
         &mut visited,
         file_overrides,
+        deadline,
     )?;
 
     let companion_source_paths = include_paths
@@ -86,6 +97,7 @@ pub(crate) fn c_include_context_for_file_before_with_overrides(
                 &mut include_paths,
                 &mut visited,
                 file_overrides,
+                None,
             )?;
         }
     }
@@ -143,14 +155,28 @@ fn collect_c_include_closure_with_overrides(
     include_paths: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("building C include context")?;
+    }
     let normalized_path = normalize_path(path);
     if !visited.insert(normalized_path) {
         return Ok(());
     }
 
     let source = source_for_path(path, file_overrides)?;
-    let document = parse_document(path, &source)?;
+    let document = match deadline {
+        Some(deadline) => parse_document_with_timeout(
+            path,
+            &source,
+            deadline.remaining_timeout_micros("parsing C include context")?,
+        )?,
+        None => parse_document(path, &source)?,
+    };
+    if let Some(deadline) = deadline {
+        deadline.check("extracting C include context")?;
+    }
     for include_target in c_include_targets(document.tree.root_node(), &source)? {
         let Some(include_path) =
             resolve_local_c_include_with_overrides(path, &include_target, file_overrides)
@@ -164,6 +190,7 @@ fn collect_c_include_closure_with_overrides(
                 include_paths,
                 visited,
                 file_overrides,
+                deadline,
             )?;
         }
     }
