@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
-    raw_symbol_indexes_by_id, resolve_dependencies_for_symbol,
+    raw_symbol_indexes_by_id, resolve_dependencies_for_symbol_with_deadline,
 };
 use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
@@ -64,13 +64,14 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
             if let Some(deadline) = deadline {
                 deadline.check("refreshing impacted symbols")?;
             }
-            dependencies.extend(resolve_dependencies_for_symbol(
+            dependencies.extend(resolve_dependencies_for_symbol_with_deadline(
                 &raw_symbols[*index],
                 raw_symbols,
                 &name_index,
                 &semantic_path_index,
                 file_overrides,
-            ));
+                deadline,
+            )?);
         }
         symbol.dependencies = dependencies.into_iter().collect();
         resolved_map.insert(impacted_id.clone(), symbol);

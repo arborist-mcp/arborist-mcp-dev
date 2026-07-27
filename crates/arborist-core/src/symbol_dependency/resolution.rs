@@ -159,13 +159,14 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
         deadline.check("resolving symbol dependencies")?;
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
         for index in indexes {
-            dependencies.extend(resolve_dependencies_for_symbol(
+            dependencies.extend(resolve_dependencies_for_symbol_with_deadline(
                 &raw_symbols[*index],
                 raw_symbols,
                 &name_index,
                 &semantic_path_index,
                 file_overrides,
-            ));
+                Some(deadline),
+            )?);
             deadline.check("resolving symbol dependencies")?;
         }
     }
@@ -217,8 +218,30 @@ pub(super) fn resolve_dependencies_for_symbol(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<String> {
+    resolve_dependencies_for_symbol_with_deadline(
+        symbol,
+        raw_symbols,
+        name_index,
+        semantic_path_index,
+        file_overrides,
+        None,
+    )
+    .expect("dependency resolution without a deadline cannot fail")
+}
+
+pub(super) fn resolve_dependencies_for_symbol_with_deadline(
+    symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
     for encoded_reference_name in &symbol.references_by_name {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving symbol references")?;
+        }
         let (reference_name, rvalue_this_receiver, const_this_receiver, explicit_member_receiver) =
             encoded_reference_name
                 .strip_prefix(CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX)
@@ -281,6 +304,9 @@ pub(super) fn resolve_dependencies_for_symbol(
             && let Some(call_arities) = call_arities
         {
             for call_arity in call_arities {
+                if let Some(deadline) = deadline {
+                    deadline.check("resolving symbol call arities")?;
+                }
                 if let Some(target_symbol_id) = resolve_reference_path(
                     reference_name,
                     CallResolutionContext::cpp(
@@ -312,7 +338,10 @@ pub(super) fn resolve_dependencies_for_symbol(
             dependencies.insert(target_symbol_id);
         }
     }
-    dependencies.into_iter().collect()
+    if let Some(deadline) = deadline {
+        deadline.check("resolving symbol references")?;
+    }
+    Ok(dependencies.into_iter().collect())
 }
 
 fn resolve_reference_path(
@@ -520,9 +549,14 @@ fn resolve_reference_path(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
     use std::time::{Duration, Instant};
 
-    use super::resolve_symbol_dependencies_with_overrides_with_deadline;
+    use super::{
+        resolve_dependencies_for_symbol_with_deadline,
+        resolve_symbol_dependencies_with_overrides_with_deadline,
+    };
+    use crate::symbol_index_model::IndexedSymbol;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
     #[test]
@@ -534,6 +568,44 @@ mod tests {
 
         let error = resolve_symbol_dependencies_with_overrides_with_deadline(&[], None, &deadline)
             .expect_err("expired dependency resolution should fail before indexing");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+
+    #[test]
+    fn deadline_resolver_checks_each_symbol_reference() {
+        let symbol = IndexedSymbol {
+            symbol_id: "caller".to_string(),
+            semantic_path: "caller".to_string(),
+            base_name: "caller".to_string(),
+            scope_path: None,
+            file_path: "caller.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            references_by_name: BTreeSet::from(["callee".to_string()]),
+            call_arities_by_name: BTreeMap::new(),
+        };
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = resolve_dependencies_for_symbol_with_deadline(
+            &symbol,
+            std::slice::from_ref(&symbol),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            None,
+            Some(&deadline),
+        )
+        .expect_err("expired reference resolution should fail before lookup");
         assert!(
             error
                 .to_string()
