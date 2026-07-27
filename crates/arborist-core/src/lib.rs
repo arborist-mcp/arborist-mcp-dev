@@ -138,7 +138,9 @@ pub use symbols::{
     trace_symbol_neighborhood_from_index_with_timeout, trace_symbol_neighborhood_with_timeout,
 };
 pub use vfs::VirtualFileSystem;
-pub use workspace_edit_preview::preview_workspace_position_edits;
+pub use workspace_edit_preview::{
+    preview_workspace_position_edits, preview_workspace_position_edits_with_timeout,
+};
 pub use workspace_scan::{
     DEFAULT_WORKSPACE_MAX_FILES, MAX_WORKSPACE_SCAN_FILE_BYTES, MAX_WORKSPACE_SCAN_FILES,
     MAX_WORKSPACE_SCAN_TIMEOUT_MS, WorkspaceScanLimits,

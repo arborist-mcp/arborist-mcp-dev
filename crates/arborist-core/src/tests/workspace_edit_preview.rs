@@ -1,10 +1,37 @@
+#[test]
+fn rejects_zero_timeout_before_workspace_edit_preview_work() {
+    let error = preview_workspace_position_edits_with_timeout(&[], Some(0))
+        .expect_err("zero timeout should be rejected before input validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid workspace edit preview timeout_ms: value must be greater than zero")
+    );
+}
+
+#[test]
+fn rejects_excessive_workspace_edit_preview_timeout() {
+    let error = preview_workspace_position_edits_with_timeout(
+        &[],
+        Some(crate::MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1),
+    )
+    .expect_err("oversized timeout should be rejected before input validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid workspace edit preview timeout_ms: value must not exceed")
+    );
+}
+
 use std::fs;
 
 use super::support::temporary_dir;
 use crate::{
     MAX_POSITION_EDIT_NEW_TEXT_BYTES, MAX_POSITION_EDIT_TEXT_BYTES, MAX_POSITION_EDITS,
     MAX_WORKSPACE_EDIT_PREVIEW_FILES, Position, PositionEdit, WorkspacePositionEdits,
-    preview_workspace_position_edits,
+    preview_workspace_position_edits, preview_workspace_position_edits_with_timeout,
 };
 
 #[test]
