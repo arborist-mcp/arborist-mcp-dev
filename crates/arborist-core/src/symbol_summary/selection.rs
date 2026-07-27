@@ -11,7 +11,13 @@ pub(super) fn choose_symbol_summary(
     symbols
         .iter()
         .filter(|symbol| symbol.symbol_id == symbol_id)
-        .max_by_key(|symbol| symbol_candidate_rank(symbol, context_file, include_context))
+        .max_by(|left, right| {
+            symbol_candidate_rank(left, context_file, include_context)
+                .cmp(&symbol_candidate_rank(right, context_file, include_context))
+                .then_with(|| right.file_path.cmp(&left.file_path))
+                .then_with(|| right.byte_range.cmp(&left.byte_range))
+                .then_with(|| right.symbol_id.cmp(&left.symbol_id))
+        })
         .map(|symbol| {
             SymbolSummary::new(SymbolSummaryInit {
                 symbol_id: symbol.symbol_id.clone(),

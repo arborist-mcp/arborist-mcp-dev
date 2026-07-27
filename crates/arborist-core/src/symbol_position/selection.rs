@@ -36,7 +36,13 @@ pub(super) fn choose_symbol_at_location<'a>(
                 && symbol.byte_range == byte_range
                 && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
         })
-        .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
+        .max_by(|left, right| {
+            symbol_kind_rank(&left.node_kind)
+                .cmp(&symbol_kind_rank(&right.node_kind))
+                .then_with(|| right.file_path.cmp(&left.file_path))
+                .then_with(|| right.byte_range.cmp(&left.byte_range))
+                .then_with(|| right.symbol_id.cmp(&left.symbol_id))
+        })
         .or_else(|| {
             resolved_symbols
                 .iter()
@@ -44,6 +50,12 @@ pub(super) fn choose_symbol_at_location<'a>(
                     symbol.file_path == file_path
                         && (symbol.symbol_id == symbol_id || symbol.semantic_path == semantic_path)
                 })
-                .max_by_key(|symbol| symbol_kind_rank(&symbol.node_kind))
+                .max_by(|left, right| {
+                    symbol_kind_rank(&left.node_kind)
+                        .cmp(&symbol_kind_rank(&right.node_kind))
+                        .then_with(|| right.file_path.cmp(&left.file_path))
+                        .then_with(|| right.byte_range.cmp(&left.byte_range))
+                        .then_with(|| right.symbol_id.cmp(&left.symbol_id))
+                })
         })
 }
