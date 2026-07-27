@@ -24,14 +24,13 @@ pub fn migrate_symbol_index(db_path: &Path) -> Result<crate::model::SymbolIndexH
     }
 
     let mut connection = Connection::open(&db_path)?;
-    let workspace_root = if load_optional_metadata_value(&connection, "schema_version")?
+    let schema_version = load_optional_metadata_value(&connection, "schema_version")?;
+    let workspace_root = if schema_version
         .as_deref()
         .is_some_and(index_migration::is_migratable_symbol_index_schema_version)
     {
         require_symbol_index_tables(&connection, &db_path)?;
-        if load_optional_metadata_value(&connection, "schema_version")?.as_deref()
-            == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION)
-        {
+        if schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
             require_previous_symbol_index_schema(&connection, &db_path)?;
         } else {
             require_legacy_symbol_index_schema(&connection, &db_path)?;
