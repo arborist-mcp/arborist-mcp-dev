@@ -307,7 +307,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
                 if let Some(deadline) = deadline {
                     deadline.check("resolving symbol call arities")?;
                 }
-                if let Some(target_symbol_id) = resolve_reference_path(
+                if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
                     reference_name,
                     CallResolutionContext::cpp(
                         *call_arity,
@@ -320,12 +320,13 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
                     name_index,
                     semantic_path_index,
                     file_overrides,
-                ) && target_symbol_id != symbol.symbol_id
+                    deadline,
+                )? && target_symbol_id != symbol.symbol_id
                 {
                     dependencies.insert(target_symbol_id);
                 }
             }
-        } else if let Some(target_symbol_id) = resolve_reference_path(
+        } else if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
             reference_name,
             CallResolutionContext::non_call(),
             symbol,
@@ -333,7 +334,8 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
             name_index,
             semantic_path_index,
             file_overrides,
-        ) && target_symbol_id != symbol.symbol_id
+            deadline,
+        )? && target_symbol_id != symbol.symbol_id
         {
             dependencies.insert(target_symbol_id);
         }
@@ -344,7 +346,8 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
     Ok(dependencies.into_iter().collect())
 }
 
-fn resolve_reference_path(
+#[allow(clippy::too_many_arguments)]
+fn resolve_reference_path_with_deadline(
     reference_name: &str,
     call_context: CallResolutionContext,
     source_symbol: &IndexedSymbol,
@@ -352,7 +355,11 @@ fn resolve_reference_path(
     name_index: &BTreeMap<String, Vec<usize>>,
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
-) -> Option<String> {
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving reference candidates")?;
+    }
     let call_arity = call_context.arity;
     let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
@@ -406,10 +413,16 @@ fn resolve_reference_path(
             ),
         }
     } else {
-        (name_index.get(lookup_name)?.clone(), false)
+        let Some(candidates) = name_index.get(lookup_name) else {
+            return Ok(None);
+        };
+        (candidates.clone(), false)
     };
     if candidates.is_empty() {
-        return None;
+        return Ok(None);
+    }
+    if let Some(deadline) = deadline {
+        deadline.check("filtering reference candidates")?;
     }
     let visible_candidates = if qualified_cpp_reference || scoped_cpp_candidates {
         candidates.clone()
@@ -459,6 +472,9 @@ fn resolve_reference_path(
     } else {
         candidate_slice
     };
+    if let Some(deadline) = deadline {
+        deadline.check("filtering reference candidates")?;
+    }
     let arity_candidates = if let Some(call_arity) = call_arity {
         let type_alias_candidates = cpp_type_alias_target_indexes(
             &hinted_candidates,
@@ -531,9 +547,12 @@ fn resolve_reference_path(
         call_context.const_this_receiver,
         call_context.explicit_member_receiver,
     );
+    if let Some(deadline) = deadline {
+        deadline.check("ranking reference candidates")?;
+    }
     let include_context = c_include_context_for_file(&source_symbol.file_path).ok();
 
-    arity_candidates
+    let selected = arity_candidates
         .iter()
         .copied()
         .max_by_key(|index| {
@@ -544,7 +563,11 @@ fn resolve_reference_path(
                 include_context.as_ref(),
             )
         })
-        .map(|index| raw_symbols[index].symbol_id.clone())
+        .map(|index| raw_symbols[index].symbol_id.clone());
+    if let Some(deadline) = deadline {
+        deadline.check("ranking reference candidates")?;
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
