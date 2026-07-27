@@ -70,12 +70,12 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
         for (from_symbol_id, to_symbol_id) in neighborhood_edges_for_symbol(current, &direction) {
             deadline.check("expanding neighborhood edges")?;
             let next_symbol_id = if from_symbol_id == current.symbol_id {
-                &to_symbol_id
+                to_symbol_id
             } else {
-                &from_symbol_id
+                from_symbol_id
             };
 
-            let Some(next_symbol) = resolved_map.get(next_symbol_id.as_str()) else {
+            let Some(next_symbol) = resolved_map.get(next_symbol_id) else {
                 continue;
             };
 
@@ -85,15 +85,15 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
                     continue;
                 }
 
-                queued.insert(next_symbol_id.clone());
-                queue.push_back((next_symbol_id.clone(), depth + 1));
+                queued.insert(next_symbol_id.to_owned());
+                queue.push_back((next_symbol_id.to_owned(), depth + 1));
                 nodes.push(TraceSymbolNeighborhoodNode {
                     symbol: symbol_summary_from_meta(next_symbol),
                     depth: depth + 1,
                 });
             }
 
-            let edge_key = (from_symbol_id.clone(), to_symbol_id.clone());
+            let edge_key = (from_symbol_id.to_owned(), to_symbol_id.to_owned());
             if edge_keys.insert(edge_key.clone()) {
                 edges.push(TraceSymbolNeighborhoodEdge {
                     from_symbol_id: edge_key.0,
@@ -134,9 +134,10 @@ pub(crate) fn validate_neighborhood_bounds(max_depth: usize, max_nodes: usize) -
 fn neighborhood_edges_for_symbol<'a>(
     symbol: &'a SymbolMeta,
     direction: &TraceDirection,
-) -> impl Iterator<Item = (String, String)> + 'a {
+) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
     let reference_count = symbol.references.len();
     let direction = *direction;
+    let symbol_id = symbol.symbol_id.as_str();
     symbol
         .references
         .iter()
@@ -151,9 +152,9 @@ fn neighborhood_edges_for_symbol<'a>(
             }
 
             if is_caller {
-                Some((target_id.clone(), symbol.symbol_id.clone()))
+                Some((target_id.as_str(), symbol_id))
             } else {
-                Some((symbol.symbol_id.clone(), target_id.clone()))
+                Some((symbol_id, target_id.as_str()))
             }
         })
 }
