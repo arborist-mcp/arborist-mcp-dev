@@ -10,8 +10,9 @@ use crate::symbol_index_workspace::{
     load_live_workspace_symbols, load_live_workspace_symbols_with_timeout,
 };
 use crate::symbol_query_execution::{
-    search_context_from_symbols, search_discovery_context_from_symbols, search_from_symbols,
-    search_from_symbols_with_timeout, search_neighborhood_context_from_symbols,
+    search_context_from_symbols, search_context_from_symbols_with_timeout,
+    search_discovery_context_from_symbols, search_from_symbols, search_from_symbols_with_timeout,
+    search_neighborhood_context_from_symbols,
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
@@ -156,6 +157,32 @@ pub fn search_symbols_context_filtered(
         file_path_contains,
         node_kind,
         None,
+    )
+}
+
+pub fn search_symbols_context_filtered_with_timeout(
+    workspace_root: &Path,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
+    let (resolved_symbols, indexed_files) =
+        load_live_workspace_symbols_with_timeout(workspace_root, timeout_ms)?;
+    deadline.check("workspace symbol search")?;
+    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol search")?;
+    search_context_from_symbols_with_timeout(
+        &resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        None,
+        timeout_ms,
     )
 }
 

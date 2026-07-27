@@ -117,18 +117,45 @@ pub(crate) fn search_context_from_symbols(
     node_kind: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolSearchContextResult> {
-    let search = search_from_symbols(
+    search_context_from_symbols_with_timeout(
         resolved_symbols,
         indexed_files,
         query,
         limit,
         file_path_contains,
         node_kind,
+        file_overrides,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("symbol search")?;
+    let search = search_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        timeout_ms,
     )?;
     let resolved_map = resolved_symbol_map(resolved_symbols);
     let mut reads = Vec::with_capacity(search.matches.len());
 
     for symbol in &search.matches {
+        deadline.check("symbol search context")?;
         let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading search match: {}",
@@ -142,6 +169,7 @@ pub(crate) fn search_context_from_symbols(
         )?);
     }
 
+    deadline.check("symbol search context result")?;
     let result = SymbolSearchContextResult { search, reads };
     result.validate_public_output()?;
     Ok(result)

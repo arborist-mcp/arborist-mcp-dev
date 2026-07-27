@@ -193,6 +193,11 @@ fn search_symbols_timeout_rejects_zero_before_loading_backends() {
     )
     .expect_err("zero timeout should be rejected before index loading");
     assert!(index_error.to_string().contains("timeout"));
+
+    let context_error =
+        search_symbols_context_filtered_with_timeout(&dir, "helper", 10, None, None, Some(0))
+            .expect_err("zero context timeout should be rejected before workspace loading");
+    assert!(context_error.to_string().contains("timeout"));
 }
 
 #[test]

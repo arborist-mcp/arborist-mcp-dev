@@ -242,7 +242,7 @@ points.
 
 The `list_symbols*` and `search_symbols*` families use the same structured
 symbol shape as skeleton, trace, and patch flows. All four `list_symbols*`
-tools and the base `search_symbols` tool accept an optional cooperative
+tools, the base `search_symbols` tool, and `search_symbols_context` accept an optional cooperative
 `timeout_ms` budget capped at `300000` milliseconds; omitting it preserves the
 existing behavior. Search matches are case-insensitive and can include
 matched-field metadata for ranking.

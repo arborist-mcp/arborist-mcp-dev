@@ -34,6 +34,29 @@ pub fn search_symbols_from_index_with_source_filtered_with_timeout(
         context.search_symbols_with_timeout(query, limit, file_path_contains, node_kind, timeout_ms)
     })
 }
+
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_context_from_index_with_source_filtered_with_timeout(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchContextResult> {
+    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
+        context.search_symbols_context_with_timeout(
+            query,
+            limit,
+            file_path_contains,
+            node_kind,
+            timeout_ms,
+        )
+    })
+}
+
 pub fn search_symbols_context_from_index_with_source_filtered(
     db_path: &Path,
     path: &Path,

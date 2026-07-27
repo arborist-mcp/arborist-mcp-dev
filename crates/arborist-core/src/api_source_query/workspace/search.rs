@@ -49,6 +49,33 @@ pub fn search_symbols_with_source_filtered_with_timeout(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn search_symbols_context_with_source_filtered_with_timeout(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolSearchContextResult> {
+    with_source_query_context(
+        SourceQueryRoot::Workspace(workspace_root),
+        path,
+        source,
+        |context| {
+            context.search_symbols_context_with_timeout(
+                query,
+                limit,
+                file_path_contains,
+                node_kind,
+                timeout_ms,
+            )
+        },
+    )
+}
+
 pub fn search_symbols_context_with_source_filtered(
     workspace_root: &Path,
     path: &Path,

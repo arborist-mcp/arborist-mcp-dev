@@ -65,27 +65,36 @@ class GatewaySymbolSearchRoutes:
         node_kind = self._optional_string(params, "node_kind")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
-            payload = core.search_symbols_context_json(
-                workspace_root,
-                query,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
-                file_path,
-                source,
+            payload = self._call_with_optional_timeout(
+                core.search_symbols_context_json,
+                (
+                    workspace_root,
+                    query,
+                    limit,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                    file_path,
+                    source,
+                ),
+                timeout_ms,
             )
         else:
-            payload = core.search_symbols_context_json(
-                workspace_root,
-                query,
-                limit,
-                index_db_path,
-                file_path_contains,
-                node_kind,
+            payload = self._call_with_optional_timeout(
+                core.search_symbols_context_json,
+                (
+                    workspace_root,
+                    query,
+                    limit,
+                    index_db_path,
+                    file_path_contains,
+                    node_kind,
+                ),
+                timeout_ms,
             )
         return self._decode_core_object(payload)
 
