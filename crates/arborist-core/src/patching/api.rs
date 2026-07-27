@@ -49,7 +49,15 @@ pub fn patch_ast_node_at_position_from_path(
 ) -> Result<PatchAstNodeResult> {
     let path = normalize_absolute_path(path)?;
     let disk_source = read_source(&path)?;
-    patch_ast_node_at_position(&path, &disk_source, position, new_code, bypass_reason)
+    let result =
+        patch_ast_node_at_position(&path, &disk_source, position, new_code, bypass_reason)?;
+
+    if result.applied {
+        write_source_atomic(&path, &result.updated_source)
+            .with_context(|| format!("failed to write patched source to {}", path.display()))?;
+    }
+
+    Ok(result)
 }
 
 pub fn preview_patch_ast_node_from_path(

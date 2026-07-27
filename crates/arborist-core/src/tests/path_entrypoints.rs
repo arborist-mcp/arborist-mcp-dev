@@ -2,9 +2,10 @@ use std::fs;
 
 use super::support::temporary_dir;
 use super::{
-    TraceDirection, execute_tree_query, execute_tree_query_from_path, get_semantic_skeleton,
-    get_semantic_skeleton_from_path, patch_ast_node, patch_ast_node_from_path,
-    rebuild_symbol_index, trace_symbol_graph_from_index,
+    Position, TraceDirection, execute_tree_query, execute_tree_query_from_path,
+    get_semantic_skeleton, get_semantic_skeleton_from_path, patch_ast_node,
+    patch_ast_node_at_position_from_path, patch_ast_node_from_path, rebuild_symbol_index,
+    trace_symbol_graph_from_index,
 };
 #[test]
 fn from_path_entrypoints_normalize_file_paths() {
@@ -131,4 +132,33 @@ fn from_path_entrypoints_accept_case_insensitive_extensions() {
     assert!(trace_symbol_graph_from_index(&db_path, "py_value", TraceDirection::Both).is_ok());
     assert!(trace_symbol_graph_from_index(&db_path, "c_value", TraceDirection::Both).is_ok());
     assert!(trace_symbol_graph_from_index(&db_path, "hh_value", TraceDirection::Both).is_ok());
+}
+
+#[test]
+fn position_from_path_patch_writes_only_applied_results() {
+    let dir = temporary_dir();
+    let file = dir.join("buffer.py");
+    let original = "def value() -> int:\n    return 1\n";
+    fs::write(&file, original).unwrap();
+
+    let applied = patch_ast_node_at_position_from_path(
+        &file,
+        &Position { row: 0, column: 4 },
+        "def value() -> int:\n    return 2\n",
+        None,
+    )
+    .unwrap();
+    assert!(applied.applied);
+    assert_eq!(fs::read_to_string(&file).unwrap(), applied.updated_source);
+
+    let before_blocked = fs::read_to_string(&file).unwrap();
+    let blocked = patch_ast_node_at_position_from_path(
+        &file,
+        &Position { row: 0, column: 4 },
+        "def value() -> int:\n    return missing_name\n",
+        None,
+    )
+    .unwrap();
+    assert!(!blocked.applied);
+    assert_eq!(fs::read_to_string(&file).unwrap(), before_blocked);
 }
