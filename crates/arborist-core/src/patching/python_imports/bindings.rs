@@ -6,6 +6,7 @@ use tree_sitter::Node;
 
 use super::module_path::resolve_local_python_module_path;
 use crate::language::node_text;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone)]
 pub(crate) enum PythonImportBinding {
@@ -23,6 +24,15 @@ pub(crate) fn collect_visible_python_import_bindings(
     node: Node<'_>,
     source: &str,
 ) -> Result<BTreeMap<String, PythonImportBinding>> {
+    collect_visible_python_import_bindings_with_deadline(current_path, node, source, None)
+}
+
+pub(crate) fn collect_visible_python_import_bindings_with_deadline(
+    current_path: &Path,
+    node: Node<'_>,
+    source: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<BTreeMap<String, PythonImportBinding>> {
     let mut scopes = Vec::new();
     let mut current = Some(node);
     while let Some(candidate) = current {
@@ -38,7 +48,10 @@ pub(crate) fn collect_visible_python_import_bindings(
 
     let mut bindings = BTreeMap::new();
     for scope in scopes {
-        collect_python_scope_import_bindings(current_path, scope, source, &mut bindings)?;
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python imports")?;
+        }
+        collect_python_scope_import_bindings(current_path, scope, source, &mut bindings, deadline)?;
     }
 
     Ok(bindings)
@@ -49,6 +62,7 @@ fn collect_python_scope_import_bindings(
     scope_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let body_node = if scope_node.kind() == "module" {
         scope_node
@@ -60,7 +74,16 @@ fn collect_python_scope_import_bindings(
 
     let mut cursor = body_node.walk();
     for child in body_node.named_children(&mut cursor) {
-        collect_python_import_bindings_from_statement(current_path, child, source, bindings)?;
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python imports")?;
+        }
+        collect_python_import_bindings_from_statement(
+            current_path,
+            child,
+            source,
+            bindings,
+            deadline,
+        )?;
     }
     Ok(())
 }
@@ -70,7 +93,11 @@ fn collect_python_import_bindings_from_statement(
     statement_node: Node<'_>,
     source: &str,
     bindings: &mut BTreeMap<String, PythonImportBinding>,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Python imports")?;
+    }
     match statement_node.kind() {
         "import_statement" => {
             collect_python_import_statement_bindings(statement_node, source, bindings)
@@ -89,6 +116,7 @@ fn collect_python_import_bindings_from_statement(
                     child,
                     source,
                     bindings,
+                    deadline,
                 )?;
             }
             Ok(())
@@ -217,5 +245,39 @@ fn join_python_module_reference(module_name: &str, imported_name: &str) -> Strin
         format!("{module_name}{imported_name}")
     } else {
         format!("{module_name}.{imported_name}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    use super::collect_visible_python_import_bindings_with_deadline;
+    use crate::language::parse_document;
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    #[test]
+    fn visible_import_collection_rejects_expired_deadline() {
+        let source = "import pathlib\n\ndef sample():\n    return pathlib.Path('.')\n";
+        let path = Path::new("sample.py");
+        let document = parse_document(path, source).expect("source should parse");
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = collect_visible_python_import_bindings_with_deadline(
+            path,
+            document.tree.root_node(),
+            source,
+            Some(&deadline),
+        )
+        .expect_err("expired import collection should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
     }
 }
