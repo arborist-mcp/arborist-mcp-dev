@@ -8,7 +8,7 @@ pub(crate) use metadata::{
     load_legacy_file_states,
 };
 pub(crate) use refresh::{SymbolRefreshPersistence, persist_symbol_refresh};
-pub(crate) use validation::validate_resolved_symbol_edges;
+pub(crate) use validation::validate_resolved_symbol_edges_with_deadline;
 
 mod core;
 mod loading;

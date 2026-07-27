@@ -3,7 +3,7 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
-use crate::index_store::validate_resolved_symbol_edges;
+use crate::index_store::validate_resolved_symbol_edges_with_deadline;
 use crate::language::{
     detect_language, normalize_absolute_path, normalize_path, path_is_inside_workspace, read_source,
 };
@@ -111,7 +111,7 @@ pub(super) fn validate_persisted_symbol_paths_with_deadline(
             }
         }
     }
-    validate_resolved_symbol_edges(symbols)
+    validate_resolved_symbol_edges_with_deadline(symbols, deadline)
 }
 
 fn validate_persisted_source_path(
