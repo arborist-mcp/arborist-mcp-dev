@@ -2,7 +2,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::{SourceQueryRoot, with_source_query_context};
+use super::super::{
+    SourceQueryRoot, with_source_query_context, with_source_query_context_with_timeout,
+};
 use crate::model::*;
 
 pub fn list_symbols_with_source_filtered(
@@ -30,11 +32,12 @@ pub fn list_symbols_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListResult> {
-    with_source_query_context(
+    with_source_query_context_with_timeout(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| {
+        timeout_ms,
+        |context, timeout_ms| {
             context.list_symbols_with_timeout(limit, file_path_contains, node_kind, timeout_ms)
         },
     )
@@ -65,11 +68,12 @@ pub fn list_symbols_context_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListContextResult> {
-    with_source_query_context(
+    with_source_query_context_with_timeout(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| {
+        timeout_ms,
+        |context, timeout_ms| {
             context.list_symbols_context_with_timeout(
                 limit,
                 file_path_contains,
@@ -122,11 +126,12 @@ pub fn list_symbols_neighborhood_context_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    with_source_query_context(
+    with_source_query_context_with_timeout(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| {
+        timeout_ms,
+        |context, timeout_ms| {
             context.list_symbols_neighborhood_context_with_timeout(
                 limit,
                 direction,
@@ -182,11 +187,12 @@ pub fn list_symbols_discovery_context_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    with_source_query_context(
+    with_source_query_context_with_timeout(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
-        |context| {
+        timeout_ms,
+        |context, timeout_ms| {
             context.list_symbols_discovery_context_with_timeout(
                 limit,
                 direction,

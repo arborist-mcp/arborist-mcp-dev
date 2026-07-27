@@ -2,7 +2,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::{SourceQueryRoot, with_source_query_context};
+use super::super::{
+    SourceQueryRoot, with_source_query_context, with_source_query_context_with_timeout,
+};
 use crate::model::*;
 
 pub fn list_symbols_from_index_with_source_filtered(
@@ -27,9 +29,15 @@ pub fn list_symbols_from_index_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListResult> {
-    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.list_symbols_with_timeout(limit, file_path_contains, node_kind, timeout_ms)
-    })
+    with_source_query_context_with_timeout(
+        SourceQueryRoot::Index(db_path),
+        path,
+        source,
+        timeout_ms,
+        |context, timeout_ms| {
+            context.list_symbols_with_timeout(limit, file_path_contains, node_kind, timeout_ms)
+        },
+    )
 }
 pub fn list_symbols_context_from_index_with_source_filtered(
     db_path: &Path,
@@ -53,9 +61,20 @@ pub fn list_symbols_context_from_index_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListContextResult> {
-    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.list_symbols_context_with_timeout(limit, file_path_contains, node_kind, timeout_ms)
-    })
+    with_source_query_context_with_timeout(
+        SourceQueryRoot::Index(db_path),
+        path,
+        source,
+        timeout_ms,
+        |context, timeout_ms| {
+            context.list_symbols_context_with_timeout(
+                limit,
+                file_path_contains,
+                node_kind,
+                timeout_ms,
+            )
+        },
+    )
 }
 #[allow(clippy::too_many_arguments)]
 pub fn list_symbols_neighborhood_context_from_index_with_source_filtered(
@@ -94,17 +113,23 @@ pub fn list_symbols_neighborhood_context_from_index_with_source_filtered_with_ti
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
-    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.list_symbols_neighborhood_context_with_timeout(
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-            timeout_ms,
-        )
-    })
+    with_source_query_context_with_timeout(
+        SourceQueryRoot::Index(db_path),
+        path,
+        source,
+        timeout_ms,
+        |context, timeout_ms| {
+            context.list_symbols_neighborhood_context_with_timeout(
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+                timeout_ms,
+            )
+        },
+    )
 }
 #[allow(clippy::too_many_arguments)]
 pub fn list_symbols_discovery_context_from_index_with_source_filtered(
@@ -143,15 +168,21 @@ pub fn list_symbols_discovery_context_from_index_with_source_filtered_with_timeo
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListDiscoveryContextResult> {
-    with_source_query_context(SourceQueryRoot::Index(db_path), path, source, |context| {
-        context.list_symbols_discovery_context_with_timeout(
-            limit,
-            direction,
-            max_depth,
-            max_nodes,
-            file_path_contains,
-            node_kind,
-            timeout_ms,
-        )
-    })
+    with_source_query_context_with_timeout(
+        SourceQueryRoot::Index(db_path),
+        path,
+        source,
+        timeout_ms,
+        |context, timeout_ms| {
+            context.list_symbols_discovery_context_with_timeout(
+                limit,
+                direction,
+                max_depth,
+                max_nodes,
+                file_path_contains,
+                node_kind,
+                timeout_ms,
+            )
+        },
+    )
 }
