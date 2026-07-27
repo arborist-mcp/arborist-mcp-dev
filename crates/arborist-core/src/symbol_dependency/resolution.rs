@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::c::{CIncludeContext, c_include_context_for_file};
+use super::c::{CIncludeContext, c_include_context_for_file_with_overrides};
 use crate::language::detect_language;
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
 use crate::patching::resolve_local_python_imported_symbol;
@@ -582,7 +582,9 @@ fn resolve_reference_path_with_deadline<'a>(
     }
     let include_context = include_contexts_by_file
         .entry(source_symbol.file_path.as_str())
-        .or_insert_with(|| c_include_context_for_file(&source_symbol.file_path).ok());
+        .or_insert_with(|| {
+            c_include_context_for_file_with_overrides(&source_symbol.file_path, file_overrides).ok()
+        });
 
     let mut selected_index = None;
     let mut selected_rank = 0;

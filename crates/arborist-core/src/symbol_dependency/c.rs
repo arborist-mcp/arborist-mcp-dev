@@ -17,6 +17,13 @@ pub(crate) struct CIncludeContext {
 }
 
 pub(crate) fn c_include_context_for_file(file_path: &str) -> Result<CIncludeContext> {
+    c_include_context_for_file_with_overrides(file_path, None)
+}
+
+pub(crate) fn c_include_context_for_file_with_overrides(
+    file_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+) -> Result<CIncludeContext> {
     let path = Path::new(file_path);
     if !matches!(
         detect_language(path).ok(),
@@ -27,7 +34,12 @@ pub(crate) fn c_include_context_for_file(file_path: &str) -> Result<CIncludeCont
 
     let mut include_paths = BTreeSet::new();
     let mut visited = BTreeSet::new();
-    collect_c_include_closure(path, &mut include_paths, &mut visited)?;
+    collect_c_include_closure_with_overrides(
+        path,
+        &mut include_paths,
+        &mut visited,
+        file_overrides,
+    )?;
 
     let companion_source_paths = include_paths
         .iter()
@@ -126,14 +138,6 @@ pub(super) fn same_stem(left: &Path, right: &Path) -> bool {
         .is_some_and(|(left_stem, right_stem)| left_stem == right_stem)
 }
 
-fn collect_c_include_closure(
-    path: &Path,
-    include_paths: &mut BTreeSet<String>,
-    visited: &mut BTreeSet<String>,
-) -> Result<()> {
-    collect_c_include_closure_with_overrides(path, include_paths, visited, None)
-}
-
 fn collect_c_include_closure_with_overrides(
     path: &Path,
     include_paths: &mut BTreeSet<String>,
@@ -207,4 +211,47 @@ fn c_family_header_rank(
         rank += 500;
     }
     rank
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    use super::c_include_context_for_file_with_overrides;
+    use crate::language::{normalize_path, write_source_atomic};
+
+    #[test]
+    fn include_context_reads_source_overrides() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-c-include-overrides-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("temporary include workspace should be created");
+        let source_path = root.join("main.c");
+        let header_path = root.join("extra.h");
+        write_source_atomic(&source_path, "int main(void) { return 0; }\n")
+            .expect("source should be written");
+        write_source_atomic(&header_path, "#define EXTRA 1\n").expect("header should be written");
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            normalize_path(&source_path),
+            "#include \"extra.h\"\nint main(void) { return EXTRA; }\n".to_owned(),
+        );
+
+        let context = c_include_context_for_file_with_overrides(
+            &normalize_path(&source_path),
+            Some(&overrides),
+        )
+        .expect("override include context should load");
+
+        assert!(
+            context
+                .include_paths
+                .contains(&normalize_path(&header_path))
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }
