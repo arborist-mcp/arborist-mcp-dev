@@ -9,10 +9,13 @@ pub(crate) fn validate_resolved_symbol_edges_with_deadline(
     symbols: &[SymbolMeta],
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
-    let symbols_by_id = symbols
-        .iter()
-        .map(|symbol| (symbol.symbol_id.as_str(), symbol))
-        .collect::<BTreeMap<_, _>>();
+    let mut symbols_by_id = BTreeMap::new();
+    for symbol in symbols {
+        if let Some(deadline) = deadline {
+            deadline.check("indexing persisted symbol edges")?;
+        }
+        symbols_by_id.insert(symbol.symbol_id.as_str(), symbol);
+    }
 
     for symbol in symbols {
         if let Some(deadline) = deadline {
