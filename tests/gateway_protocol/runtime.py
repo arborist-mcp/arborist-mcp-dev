@@ -465,6 +465,8 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         for patch_tool_name in (
             "arborist/validate_patch_with_trace_context",
             "arborist/validate_patch_with_trace_context_at_position",
+            "arborist/validate_patch_with_graph_context",
+            "arborist/validate_patch_with_graph_context_at_position",
         ):
             patch_timeout = by_name[patch_tool_name]["inputSchema"]
             self.assertNotIn("timeout_ms", patch_timeout["required"])

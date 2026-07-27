@@ -1893,6 +1893,85 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     check_result=lambda result: self.assertEqual(result, {}),
                 )
 
+    def test_graph_context_timeouts_reach_final_core_parameter(self) -> None:
+        source = "def orchestrate(value: int) -> int:\n    return value + 1\n"
+        updated_source = self.orchestrate_updated_source()
+        cases = (
+            {
+                "core_method": "validate_patch_with_graph_context_json",
+                "rpc_method": "arborist/validate_patch_with_graph_context",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "semantic_path": "orchestrate",
+                    "new_code": updated_source,
+                    "source": source,
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                    "max_depth": 3,
+                    "max_nodes": 17,
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "expected_call": (
+                    ".",
+                    "caller.py",
+                    "orchestrate",
+                    updated_source,
+                    source,
+                    "known-safe",
+                    "callers",
+                    3,
+                    17,
+                    "symbols.db",
+                    37,
+                ),
+            },
+            {
+                "core_method": "validate_patch_with_graph_context_at_position_json",
+                "rpc_method": "arborist/validate_patch_with_graph_context_at_position",
+                "params": {
+                    "workspace_root": ".",
+                    "file_path": "caller.py",
+                    "position": {"row": 0, "column": 5},
+                    "new_code": updated_source,
+                    "source": source,
+                    "bypass_reason": "known-safe",
+                    "direction": "callers",
+                    "max_depth": 3,
+                    "max_nodes": 17,
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "expected_call": (
+                    ".",
+                    "caller.py",
+                    0,
+                    5,
+                    updated_source,
+                    source,
+                    "known-safe",
+                    "callers",
+                    3,
+                    17,
+                    "symbols.db",
+                    37,
+                ),
+            },
+        )
+
+        for request_id, case in enumerate(cases, start=248):
+            with self.subTest(method=case["rpc_method"]):
+                self.assert_routed_json(
+                    core_method=case["core_method"],
+                    rpc_method=case["rpc_method"],
+                    params=case["params"],
+                    payload={},
+                    request_id=request_id,
+                    expected_call=case["expected_call"],
+                    check_result=lambda result: self.assertEqual(result, {}),
+                )
+
     def test_trace_context_returns_trace_error_when_patch_has_syntax_errors(self) -> None:
         with self.temp_workspace(
             {

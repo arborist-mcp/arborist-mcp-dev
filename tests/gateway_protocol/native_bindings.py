@@ -97,6 +97,37 @@ class NativeBindingsTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "does not exist"):
                         handler(params)
 
+    def test_graph_context_patch_timeouts_reach_native_timeout_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        source = "def target() -> int:\n    return 1\n"
+        replacement = "def target() -> int:\n    return 2\n"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_db_path = str(Path(temp_dir) / "missing.db")
+            cases = (
+                (
+                    gateway._validate_patch_with_graph_context,
+                    {"semantic_path": "target"},
+                ),
+                (
+                    gateway._validate_patch_with_graph_context_at_position,
+                    {"position": {"row": 0, "column": 5}},
+                ),
+            )
+
+            for handler, target_params in cases:
+                with self.subTest(handler=handler.__name__):
+                    params = {
+                        "workspace_root": temp_dir,
+                        "file_path": str(Path(temp_dir) / "target.py"),
+                        "new_code": replacement,
+                        "source": source,
+                        "index_db_path": index_db_path,
+                        "timeout_ms": 300000,
+                        **target_params,
+                    }
+                    with self.assertRaisesRegex(ValueError, "does not exist"):
+                        handler(params)
+
     def test_direct_read_timeouts_reach_native_timeout_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         with tempfile.TemporaryDirectory() as temp_dir:
