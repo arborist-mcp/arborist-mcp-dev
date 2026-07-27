@@ -1,13 +1,15 @@
 use arborist_core::{
-    list_symbols_context_from_index_filtered, list_symbols_context_from_index_with_source_filtered,
-    list_symbols_context_with_source_filtered, list_symbols_discovery_context_from_index_filtered,
-    list_symbols_discovery_context_from_index_with_source_filtered,
-    list_symbols_discovery_context_with_source_filtered,
+    list_symbols_context_from_index_filtered_with_timeout,
+    list_symbols_context_from_index_with_source_filtered_with_timeout,
+    list_symbols_context_with_source_filtered_with_timeout,
+    list_symbols_discovery_context_from_index_filtered_with_timeout,
+    list_symbols_discovery_context_from_index_with_source_filtered_with_timeout,
+    list_symbols_discovery_context_with_source_filtered_with_timeout,
     list_symbols_from_index_filtered_with_timeout,
     list_symbols_from_index_with_source_filtered_with_timeout,
-    list_symbols_neighborhood_context_from_index_filtered,
-    list_symbols_neighborhood_context_from_index_with_source_filtered,
-    list_symbols_neighborhood_context_with_source_filtered,
+    list_symbols_neighborhood_context_from_index_filtered_with_timeout,
+    list_symbols_neighborhood_context_from_index_with_source_filtered_with_timeout,
+    list_symbols_neighborhood_context_with_source_filtered_with_timeout,
     list_symbols_with_source_filtered_with_timeout,
 };
 use pyo3::prelude::*;
@@ -42,7 +44,7 @@ impl ArboristCore {
         )
     }
 
-    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, limit=100, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn list_symbols_context_json(
         &self,
@@ -53,6 +55,7 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.list_symbols_context_json_impl(
             workspace_root,
@@ -62,10 +65,11 @@ impl ArboristCore {
             node_kind,
             file_path,
             source,
+            timeout_ms,
         )
     }
 
-    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn list_symbols_neighborhood_context_json(
         &self,
@@ -79,6 +83,7 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.list_symbols_neighborhood_context_json_impl(
             workspace_root,
@@ -90,10 +95,11 @@ impl ArboristCore {
             node_kind,
             file_path,
             source,
+            timeout_ms,
         )
     }
 
-    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None))]
+    #[pyo3(signature = (workspace_root, limit=100, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path_contains=None, node_kind=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn list_symbols_discovery_context_json(
         &self,
@@ -107,6 +113,7 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         self.list_symbols_discovery_context_json_impl(
             workspace_root,
@@ -118,6 +125,7 @@ impl ArboristCore {
             node_kind,
             file_path,
             source,
+            timeout_ms,
         )
     }
 }
@@ -187,39 +195,47 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                list_symbols_context_from_index_with_source_filtered(
+                list_symbols_context_from_index_with_source_filtered_with_timeout(
                     index_db_path,
                     context.source_file_path()?,
                     source,
                     limit,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => list_symbols_context_with_source_filtered(
+            (Some(source), None) => list_symbols_context_with_source_filtered_with_timeout(
                 context.workspace_root(),
                 context.source_file_path()?,
                 source,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
+                timeout_ms,
             ),
-            (None, Some(index_db_path)) => list_symbols_context_from_index_filtered(
+            (None, Some(index_db_path)) => list_symbols_context_from_index_filtered_with_timeout(
                 index_db_path,
                 limit,
                 file_path_contains.as_deref(),
                 node_kind.as_deref(),
+                timeout_ms,
             ),
-            (None, None) => self.vfs.borrow_mut().list_symbols_context_filtered(
-                context.workspace_root(),
-                limit,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
+            (None, None) => self
+                .vfs
+                .borrow_mut()
+                .list_symbols_context_filtered_with_timeout(
+                    context.workspace_root(),
+                    limit,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                ),
         }
         .map_err(to_py_error)?;
 
@@ -238,12 +254,13 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                list_symbols_neighborhood_context_from_index_with_source_filtered(
+                list_symbols_neighborhood_context_from_index_with_source_filtered_with_timeout(
                     index_db_path,
                     context.source_file_path()?,
                     source,
@@ -253,32 +270,39 @@ impl ArboristCore {
                     bounds.max_nodes,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => list_symbols_neighborhood_context_with_source_filtered(
-                context.workspace_root(),
-                context.source_file_path()?,
-                source,
-                limit,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_neighborhood_context_from_index_filtered(
-                index_db_path,
-                limit,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
+            (Some(source), None) => {
+                list_symbols_neighborhood_context_with_source_filtered_with_timeout(
+                    context.workspace_root(),
+                    context.source_file_path()?,
+                    source,
+                    limit,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
+            (None, Some(index_db_path)) => {
+                list_symbols_neighborhood_context_from_index_filtered_with_timeout(
+                    index_db_path,
+                    limit,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .list_symbols_neighborhood_context_filtered(
+                .list_symbols_neighborhood_context_filtered_with_timeout(
                     context.workspace_root(),
                     limit,
                     direction,
@@ -286,6 +310,7 @@ impl ArboristCore {
                     bounds.max_nodes,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
+                    timeout_ms,
                 ),
         }
         .map_err(to_py_error)?;
@@ -305,12 +330,13 @@ impl ArboristCore {
         node_kind: Option<String>,
         file_path: Option<String>,
         source: Option<String>,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let direction = parse_direction(direction)?;
         let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                list_symbols_discovery_context_from_index_with_source_filtered(
+                list_symbols_discovery_context_from_index_with_source_filtered_with_timeout(
                     index_db_path,
                     context.source_file_path()?,
                     source,
@@ -320,32 +346,39 @@ impl ArboristCore {
                     bounds.max_nodes,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
+                    timeout_ms,
                 )
             }
-            (Some(source), None) => list_symbols_discovery_context_with_source_filtered(
-                context.workspace_root(),
-                context.source_file_path()?,
-                source,
-                limit,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
-            (None, Some(index_db_path)) => list_symbols_discovery_context_from_index_filtered(
-                index_db_path,
-                limit,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                file_path_contains.as_deref(),
-                node_kind.as_deref(),
-            ),
+            (Some(source), None) => {
+                list_symbols_discovery_context_with_source_filtered_with_timeout(
+                    context.workspace_root(),
+                    context.source_file_path()?,
+                    source,
+                    limit,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
+            (None, Some(index_db_path)) => {
+                list_symbols_discovery_context_from_index_filtered_with_timeout(
+                    index_db_path,
+                    limit,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    file_path_contains.as_deref(),
+                    node_kind.as_deref(),
+                    timeout_ms,
+                )
+            }
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .list_symbols_discovery_context_filtered(
+                .list_symbols_discovery_context_filtered_with_timeout(
                     context.workspace_root(),
                     limit,
                     direction,
@@ -353,6 +386,7 @@ impl ArboristCore {
                     bounds.max_nodes,
                     file_path_contains.as_deref(),
                     node_kind.as_deref(),
+                    timeout_ms,
                 ),
         }
         .map_err(to_py_error)?;

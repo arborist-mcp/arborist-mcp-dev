@@ -10,8 +10,11 @@ use crate::model::{
 };
 use crate::symbols::{
     list_symbols_context_with_overrides_filtered,
+    list_symbols_context_with_overrides_filtered_with_timeout,
     list_symbols_discovery_context_with_overrides_filtered,
+    list_symbols_discovery_context_with_overrides_filtered_with_timeout,
     list_symbols_neighborhood_context_with_overrides_filtered,
+    list_symbols_neighborhood_context_with_overrides_filtered_with_timeout,
     list_symbols_with_overrides_filtered, list_symbols_with_overrides_filtered_with_timeout,
 };
 
@@ -126,6 +129,26 @@ impl VirtualFileSystem {
         )
     }
 
+    pub fn list_symbols_context_filtered_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolListContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        list_symbols_context_with_overrides_filtered_with_timeout(
+            &workspace_root,
+            &overrides,
+            limit,
+            file_path_contains,
+            node_kind,
+            timeout_ms,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn list_symbols_neighborhood_context_filtered(
         &mut self,
@@ -152,6 +175,33 @@ impl VirtualFileSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn list_symbols_neighborhood_context_filtered_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolListNeighborhoodContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        list_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
+            &workspace_root,
+            &overrides,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            file_path_contains,
+            node_kind,
+            timeout_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn list_symbols_discovery_context_filtered(
         &mut self,
         workspace_root: &Path,
@@ -173,6 +223,33 @@ impl VirtualFileSystem {
             max_nodes,
             file_path_contains,
             node_kind,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_symbols_discovery_context_filtered_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<SymbolListDiscoveryContextResult> {
+        let workspace_root = normalize_absolute_path(workspace_root)?;
+        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
+        list_symbols_discovery_context_with_overrides_filtered_with_timeout(
+            &workspace_root,
+            &overrides,
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            file_path_contains,
+            node_kind,
+            timeout_ms,
         )
     }
 }
