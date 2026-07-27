@@ -219,7 +219,9 @@ pub fn refresh_symbol_index_for_file_with_limits(
         .into_values()
         .flat_map(|symbols| symbols.into_iter())
         .collect::<Vec<_>>();
+    deadline.check("assigning refreshed symbol identities")?;
     assign_symbol_ids(&mut raw_symbols)?;
+    deadline.check("assigning refreshed symbol identities")?;
     let new_changed_symbols = raw_symbols
         .iter()
         .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
@@ -234,7 +236,9 @@ pub fn refresh_symbol_index_for_file_with_limits(
         &changed_file_paths,
         None,
     );
+    deadline.check("resolving refreshed symbols")?;
     let resolved_symbols = materialize_resolved_symbol_rows(&raw_symbols, &resolved_map);
+    deadline.check("materializing refreshed symbols")?;
     let indexed_files = file_states.len();
     let reused_files = indexed_files.saturating_sub(rebuilt_files);
 

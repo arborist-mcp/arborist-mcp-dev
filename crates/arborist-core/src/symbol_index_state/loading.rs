@@ -221,6 +221,9 @@ fn load_symbol_index_with_overrides_internal(
         deadline.check("assigning indexed override symbols")?;
     }
     assign_symbol_ids(&mut raw_symbols)?;
+    if let Some(deadline) = deadline {
+        deadline.check("assigning indexed override symbols")?;
+    }
 
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);
     let old_changed_symbols = original_grouped_symbols
@@ -247,13 +250,11 @@ fn load_symbol_index_with_overrides_internal(
     let indexed_files = persisted_indexed_files.saturating_add(added_file_paths.len());
     validate_indexed_overlay_file_count(persisted_indexed_files, added_file_paths.len())?;
 
+    let materialized = materialize_resolved_symbol_rows(&raw_symbols, &resolved_map);
     if let Some(deadline) = deadline {
         deadline.check("materializing indexed override symbols")?;
     }
-    Ok((
-        materialize_resolved_symbol_rows(&raw_symbols, &resolved_map),
-        indexed_files,
-    ))
+    Ok((materialized, indexed_files))
 }
 
 fn validate_indexed_overlay_file_count(persisted_files: usize, added_files: usize) -> Result<()> {
