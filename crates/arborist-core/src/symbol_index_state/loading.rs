@@ -157,7 +157,6 @@ fn load_symbol_index_with_overrides_internal(
     if let Some(deadline) = deadline {
         deadline.check("loading indexed symbols")?;
     }
-    let original_grouped_symbols = grouped_symbols.clone();
     let persisted_file_states = match deadline {
         Some(deadline) => load_file_states_with_deadline(&connection, Some(deadline))?,
         None => load_file_states(&connection)?,
@@ -189,6 +188,7 @@ fn load_symbol_index_with_overrides_internal(
     )?;
     let mut changed_file_paths = BTreeSet::new();
     let mut added_file_paths = BTreeSet::new();
+    let mut old_changed_symbols = Vec::new();
 
     for (override_path, override_source) in &file_overrides {
         if let Some(deadline) = deadline {
@@ -209,6 +209,9 @@ fn load_symbol_index_with_overrides_internal(
         if !persisted_file_states.contains_key(&normalized_path) {
             added_file_paths.insert(normalized_path.clone());
         }
+        if let Some(previous_symbols) = grouped_symbols.get(&normalized_path) {
+            old_changed_symbols.extend(previous_symbols.iter().cloned());
+        }
         grouped_symbols.insert(normalized_path.clone(), symbols);
         changed_file_paths.insert(normalized_path);
     }
@@ -226,11 +229,6 @@ fn load_symbol_index_with_overrides_internal(
     }
 
     let old_resolved_map = resolved_symbol_map(&resolved_symbols);
-    let old_changed_symbols = original_grouped_symbols
-        .iter()
-        .filter(|(file_path, _)| changed_file_paths.contains(*file_path))
-        .flat_map(|(_, symbols)| symbols.iter().cloned())
-        .collect::<Vec<_>>();
     let new_changed_symbols = raw_symbols
         .iter()
         .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
