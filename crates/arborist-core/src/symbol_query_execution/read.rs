@@ -10,7 +10,7 @@ use crate::model::{
 };
 use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_position::resolve_symbol_at_position;
-use crate::symbol_read::read_symbol_result_from_meta;
+use crate::symbol_read::read_symbol_result_from_meta_with_cache;
 use crate::symbol_trace::{
     TraceQueryDeadline, trace_from_symbol, trace_neighborhood_from_symbol_with_timeout,
 };
@@ -61,6 +61,32 @@ pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout(
     file_overrides: Option<&BTreeMap<String, String>>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolNeighborhoodContextResult> {
+    let mut source_cache = BTreeMap::new();
+    read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        file_overrides,
+        timeout_ms,
+        &mut source_cache,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol: &SymbolMeta,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+    source_cache: &mut BTreeMap<String, String>,
+) -> Result<SymbolNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("neighborhood expansion")?;
     let neighborhood = trace_neighborhood_from_symbol_with_timeout(
@@ -85,10 +111,11 @@ pub(crate) fn read_symbol_neighborhood_context_from_meta_with_timeout(
                     node.symbol.symbol_id
                 )
             })?;
-        reads.push(read_symbol_result_from_meta(
+        reads.push(read_symbol_result_from_meta_with_cache(
             symbol,
             indexed_files,
             file_overrides,
+            source_cache,
         )?);
     }
 
@@ -110,9 +137,15 @@ pub(crate) fn read_symbol_discovery_context_from_meta(
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let read = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
+    let mut source_cache = BTreeMap::new();
+    let read = read_symbol_result_from_meta_with_cache(
+        symbol,
+        indexed_files,
+        file_overrides,
+        &mut source_cache,
+    )?;
     let trace = trace_from_symbol(resolved_symbols, indexed_files, symbol, direction)?;
-    let neighborhood_context = read_symbol_neighborhood_context_from_meta(
+    let neighborhood_context = read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
         resolved_symbols,
         indexed_files,
         symbol,
@@ -120,6 +153,8 @@ pub(crate) fn read_symbol_discovery_context_from_meta(
         max_depth,
         max_nodes,
         file_overrides,
+        None,
+        &mut source_cache,
     )?;
     let result = SymbolReadDiscoveryContextResult {
         read,

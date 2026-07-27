@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
-use super::read::read_symbol_neighborhood_context_from_meta_with_timeout;
+use super::read::read_symbol_neighborhood_context_from_meta_with_timeout_and_cache;
 use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, SymbolMeta, TraceDirection,
 };
 use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_query::validate_symbol_limit;
-use crate::symbol_read::read_symbol_result_from_meta;
+use crate::symbol_read::read_symbol_result_from_meta_with_cache;
 use crate::symbol_search::{normalize_optional_search_filter, symbol_matches_search_filters};
 use crate::symbol_summary::symbol_summary_from_meta;
 use crate::symbol_trace::TraceQueryDeadline;
@@ -118,6 +118,7 @@ pub(crate) fn list_context_from_symbols_with_timeout(
     )?;
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
+    let mut source_cache = BTreeMap::new();
 
     for symbol in &list.symbols {
         deadline.check("symbol listing context reads")?;
@@ -127,10 +128,11 @@ pub(crate) fn list_context_from_symbols_with_timeout(
                 symbol.symbol_id
             )
         })?;
-        reads.push(read_symbol_result_from_meta(
+        reads.push(read_symbol_result_from_meta_with_cache(
             meta,
             indexed_files,
             file_overrides,
+            &mut source_cache,
         )?);
     }
 
@@ -192,6 +194,7 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
     let mut contexts = Vec::with_capacity(list.symbols.len());
+    let mut source_cache = BTreeMap::new();
 
     for symbol in &list.symbols {
         deadline.check("symbol discovery context reads")?;
@@ -201,22 +204,26 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
                 symbol.symbol_id
             )
         })?;
-        reads.push(read_symbol_result_from_meta(
+        reads.push(read_symbol_result_from_meta_with_cache(
             meta,
             indexed_files,
             file_overrides,
+            &mut source_cache,
         )?);
         let timeout_ms = deadline.remaining_timeout_ms("symbol discovery neighborhood")?;
-        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
-            resolved_symbols,
-            indexed_files,
-            meta,
-            direction,
-            max_depth,
-            max_nodes,
-            file_overrides,
-            timeout_ms,
-        )?);
+        contexts.push(
+            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+                resolved_symbols,
+                indexed_files,
+                meta,
+                direction,
+                max_depth,
+                max_nodes,
+                file_overrides,
+                timeout_ms,
+                &mut source_cache,
+            )?,
+        );
     }
 
     let result = SymbolListDiscoveryContextResult {
@@ -280,6 +287,7 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
     )?;
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut contexts = Vec::with_capacity(list.symbols.len());
+    let mut source_cache = BTreeMap::new();
 
     for symbol in &list.symbols {
         deadline.check("symbol neighborhood contexts")?;
@@ -290,16 +298,19 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
             )
         })?;
         let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
-        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
-            resolved_symbols,
-            indexed_files,
-            meta,
-            direction,
-            max_depth,
-            max_nodes,
-            file_overrides,
-            timeout_ms,
-        )?);
+        contexts.push(
+            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+                resolved_symbols,
+                indexed_files,
+                meta,
+                direction,
+                max_depth,
+                max_nodes,
+                file_overrides,
+                timeout_ms,
+                &mut source_cache,
+            )?,
+        );
     }
 
     let result = SymbolListNeighborhoodContextResult { list, contexts };

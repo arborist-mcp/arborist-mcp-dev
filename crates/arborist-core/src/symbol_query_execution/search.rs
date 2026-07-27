@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
-use super::read::read_symbol_neighborhood_context_from_meta_with_timeout;
+use super::read::read_symbol_neighborhood_context_from_meta_with_timeout_and_cache;
 use crate::model::{
     SymbolMeta, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
 };
 use crate::symbol_map::resolved_symbol_ref_map;
 use crate::symbol_query::validate_symbol_limit;
-use crate::symbol_read::read_symbol_result_from_meta;
+use crate::symbol_read::read_symbol_result_from_meta_with_cache;
 use crate::symbol_search::{
     normalize_optional_search_filter, search_match_detail, symbol_matches_search_filters,
 };
@@ -153,6 +153,7 @@ pub(crate) fn search_context_from_symbols_with_timeout(
     )?;
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(search.matches.len());
+    let mut source_cache = BTreeMap::new();
 
     for symbol in &search.matches {
         deadline.check("symbol search context")?;
@@ -162,10 +163,11 @@ pub(crate) fn search_context_from_symbols_with_timeout(
                 symbol.symbol_id
             )
         })?;
-        reads.push(read_symbol_result_from_meta(
+        reads.push(read_symbol_result_from_meta_with_cache(
             meta,
             indexed_files,
             file_overrides,
+            &mut source_cache,
         )?);
     }
 
@@ -230,6 +232,7 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
     )?;
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut reads = Vec::with_capacity(search.matches.len());
+    let mut source_cache = BTreeMap::new();
     let mut contexts = Vec::with_capacity(search.matches.len());
 
     for symbol in &search.matches {
@@ -240,22 +243,26 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
                 symbol.symbol_id
             )
         })?;
-        reads.push(read_symbol_result_from_meta(
+        reads.push(read_symbol_result_from_meta_with_cache(
             meta,
             indexed_files,
             file_overrides,
+            &mut source_cache,
         )?);
         let timeout_ms = deadline.remaining_timeout_ms("search discovery neighborhood")?;
-        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
-            resolved_symbols,
-            indexed_files,
-            meta,
-            direction,
-            max_depth,
-            max_nodes,
-            file_overrides,
-            timeout_ms,
-        )?);
+        contexts.push(
+            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+                resolved_symbols,
+                indexed_files,
+                meta,
+                direction,
+                max_depth,
+                max_nodes,
+                file_overrides,
+                timeout_ms,
+                &mut source_cache,
+            )?,
+        );
     }
 
     deadline.check("search discovery context result")?;
@@ -323,6 +330,7 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
     )?;
     let resolved_map = resolved_symbol_ref_map(resolved_symbols);
     let mut contexts = Vec::with_capacity(search.matches.len());
+    let mut source_cache = BTreeMap::new();
 
     for symbol in &search.matches {
         deadline.check("search neighborhood contexts")?;
@@ -333,16 +341,19 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
             )
         })?;
         let timeout_ms = deadline.remaining_timeout_ms("search neighborhood context")?;
-        contexts.push(read_symbol_neighborhood_context_from_meta_with_timeout(
-            resolved_symbols,
-            indexed_files,
-            meta,
-            direction,
-            max_depth,
-            max_nodes,
-            file_overrides,
-            timeout_ms,
-        )?);
+        contexts.push(
+            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+                resolved_symbols,
+                indexed_files,
+                meta,
+                direction,
+                max_depth,
+                max_nodes,
+                file_overrides,
+                timeout_ms,
+                &mut source_cache,
+            )?,
+        );
     }
 
     let result = SymbolSearchNeighborhoodContextResult { search, contexts };
