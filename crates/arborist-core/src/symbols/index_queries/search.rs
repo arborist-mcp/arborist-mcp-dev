@@ -10,6 +10,7 @@ use crate::symbol_query_execution::{
     search_context_from_symbols, search_discovery_context_from_symbols, search_from_symbols,
     search_from_symbols_with_timeout, search_neighborhood_context_from_symbols,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 
 use super::{load_normalized_symbol_index, load_normalized_symbol_index_with_timeout};
 
@@ -81,8 +82,12 @@ pub fn search_symbols_from_index_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_timeout(db_path, timeout_ms)?;
+    deadline.check("index symbol search")?;
+    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
     search_from_symbols_with_timeout(
         &resolved_symbols,
         indexed_files,
