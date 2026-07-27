@@ -86,17 +86,41 @@ pub(crate) fn list_context_from_symbols(
     node_kind: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Result<SymbolListContextResult> {
-    let list = list_from_symbols(
+    list_context_from_symbols_with_timeout(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
+        file_overrides,
+        None,
+    )
+}
+
+pub(crate) fn list_context_from_symbols_with_timeout(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    timeout_ms: Option<u64>,
+) -> Result<SymbolListContextResult> {
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
+    let list = list_from_symbols_with_timeout(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        timeout_ms,
     )?;
     let resolved_map = resolved_symbol_map(resolved_symbols);
     let mut reads = Vec::with_capacity(list.symbols.len());
 
     for symbol in &list.symbols {
+        deadline.check("symbol listing context reads")?;
         let meta = resolved_map.get(&symbol.symbol_id).ok_or_else(|| {
             anyhow!(
                 "symbol not found in workspace index while reading listed symbol: {}",
@@ -111,6 +135,7 @@ pub(crate) fn list_context_from_symbols(
     }
 
     let result = SymbolListContextResult { list, reads };
+    deadline.check("symbol listing context result")?;
     result.validate_public_output()?;
     Ok(result)
 }
