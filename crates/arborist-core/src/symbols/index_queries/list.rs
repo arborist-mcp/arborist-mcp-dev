@@ -236,13 +236,75 @@ pub fn list_symbols_neighborhood_context_from_index_filtered_with_timeout(
 mod tests {
     use std::path::Path;
 
-    use super::list_symbols_from_index_filtered_with_timeout;
+    use super::{
+        list_symbols_context_from_index_filtered_with_timeout,
+        list_symbols_discovery_context_from_index_filtered_with_timeout,
+        list_symbols_from_index_filtered_with_timeout,
+        list_symbols_neighborhood_context_from_index_filtered_with_timeout,
+    };
 
     #[test]
     fn index_listing_rejects_zero_timeout_before_opening_database() {
         let error = list_symbols_from_index_filtered_with_timeout(
             Path::new("missing-index.sqlite"),
             10,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn index_context_listing_rejects_zero_timeout_before_opening_database() {
+        let error = list_symbols_context_from_index_filtered_with_timeout(
+            Path::new("missing-index.sqlite"),
+            10,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn index_neighborhood_listing_rejects_zero_timeout_before_opening_database() {
+        let error = list_symbols_neighborhood_context_from_index_filtered_with_timeout(
+            Path::new("missing-index.sqlite"),
+            10,
+            crate::model::TraceDirection::Both,
+            2,
+            64,
+            None,
+            None,
+            Some(0),
+        )
+        .expect_err("zero timeout should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn index_discovery_listing_rejects_zero_timeout_before_opening_database() {
+        let error = list_symbols_discovery_context_from_index_filtered_with_timeout(
+            Path::new("missing-index.sqlite"),
+            10,
+            crate::model::TraceDirection::Both,
+            2,
+            64,
             None,
             None,
             Some(0),
