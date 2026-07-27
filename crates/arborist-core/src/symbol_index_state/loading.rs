@@ -17,7 +17,8 @@ use crate::language::{normalize_path, parse_document, parse_document_with_timeou
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
-    assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
+    assign_symbol_ids, assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
+    refresh_resolved_symbol_subgraph,
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_map::resolved_symbol_map;
@@ -223,7 +224,11 @@ fn load_symbol_index_with_overrides_internal(
     if let Some(deadline) = deadline {
         deadline.check("assigning indexed override symbols")?;
     }
-    assign_symbol_ids(&mut raw_symbols)?;
+    if let Some(deadline) = deadline {
+        assign_symbol_ids_with_deadline(&mut raw_symbols, deadline)?;
+    } else {
+        assign_symbol_ids(&mut raw_symbols)?;
+    }
     if let Some(deadline) = deadline {
         deadline.check("assigning indexed override symbols")?;
     }

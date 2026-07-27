@@ -7,16 +7,34 @@ use crate::language::{detect_language, is_c_header_path};
 use crate::model::LanguageId;
 use crate::semantic::cpp_callable_symbol_id;
 use crate::symbol_index_model::IndexedSymbol;
+use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()> {
-    let symbol_ids = (0..raw_symbols.len())
-        .map(|index| symbol_id_for_index(index, raw_symbols))
-        .collect::<Result<Vec<_>>>()?;
+    assign_symbol_ids_with_deadline(raw_symbols, None)
+}
+
+pub(crate) fn assign_symbol_ids_with_deadline(
+    raw_symbols: &mut [IndexedSymbol],
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<()> {
+    let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
+    for index in 0..raw_symbols.len() {
+        if let Some(deadline) = deadline {
+            deadline.check("assigning symbol identities")?;
+        }
+        symbol_ids.push(symbol_id_for_index(index, raw_symbols)?);
+    }
 
     for (symbol, symbol_id) in raw_symbols.iter_mut().zip(symbol_ids) {
+        if let Some(deadline) = deadline {
+            deadline.check("assigning symbol identities")?;
+        }
         symbol.symbol_id = symbol_id;
     }
 
+    if let Some(deadline) = deadline {
+        deadline.check("assigning symbol identities")?;
+    }
     Ok(())
 }
 

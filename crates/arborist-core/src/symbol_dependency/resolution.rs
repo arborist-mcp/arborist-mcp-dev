@@ -80,6 +80,13 @@ pub(crate) fn assign_symbol_ids(raw_symbols: &mut [IndexedSymbol]) -> Result<()>
     symbol_ids::assign_symbol_ids(raw_symbols)
 }
 
+pub(crate) fn assign_symbol_ids_with_deadline(
+    raw_symbols: &mut [IndexedSymbol],
+    deadline: &WorkspaceScanDeadline,
+) -> Result<()> {
+    symbol_ids::assign_symbol_ids_with_deadline(raw_symbols, Some(deadline))
+}
+
 pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta> {
     resolve_symbol_dependencies_with_overrides(raw_symbols, None)
 }

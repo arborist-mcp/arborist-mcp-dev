@@ -10,7 +10,8 @@ use crate::language::{
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
-    assign_symbol_ids, resolve_symbol_dependencies, resolve_symbol_dependencies_with_overrides,
+    assign_symbol_ids, assign_symbol_ids_with_deadline, resolve_symbol_dependencies,
+    resolve_symbol_dependencies_with_overrides,
     resolve_symbol_dependencies_with_overrides_with_deadline,
 };
 use crate::symbol_extractor::index_symbols_from_document;
@@ -215,7 +216,7 @@ fn build_workspace_index_with_deadline(
     }
 
     deadline.check("assigning symbol identities")?;
-    assign_symbol_ids(&mut symbols)?;
+    assign_symbol_ids_with_deadline(&mut symbols, deadline)?;
     Ok(symbols)
 }
 

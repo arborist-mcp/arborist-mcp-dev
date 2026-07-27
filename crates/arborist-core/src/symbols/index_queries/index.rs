@@ -20,7 +20,8 @@ use crate::language::{
 };
 use crate::model::SymbolIndexStats;
 use crate::symbol_dependency::{
-    assign_symbol_ids, materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
+    assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
+    refresh_resolved_symbol_subgraph,
 };
 use crate::symbol_extractor::index_symbols_from_document;
 use crate::symbol_index_state::{
@@ -220,7 +221,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
         .flat_map(|symbols| symbols.into_iter())
         .collect::<Vec<_>>();
     deadline.check("assigning refreshed symbol identities")?;
-    assign_symbol_ids(&mut raw_symbols)?;
+    assign_symbol_ids_with_deadline(&mut raw_symbols, &deadline)?;
     deadline.check("assigning refreshed symbol identities")?;
     let new_changed_symbols = raw_symbols
         .iter()
