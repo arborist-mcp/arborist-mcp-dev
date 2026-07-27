@@ -259,3 +259,38 @@ fn reference_base_name(reference_name: &str) -> String {
         .unwrap_or(reference_name)
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::time::{Duration, Instant};
+
+    use crate::workspace_scan::WorkspaceScanDeadline;
+
+    use super::refresh_resolved_symbol_subgraph;
+
+    #[test]
+    fn refresh_subgraph_rejects_expired_deadline_before_building_indexes() {
+        let deadline = WorkspaceScanDeadline {
+            deadline: Some(Instant::now() - Duration::from_millis(1)),
+            timeout_ms: Some(1),
+        };
+
+        let error = refresh_resolved_symbol_subgraph(
+            &[],
+            &BTreeMap::new(),
+            &[],
+            &[],
+            &BTreeSet::new(),
+            None,
+            Some(&deadline),
+        )
+        .expect_err("expired deadline should stop subgraph refresh");
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace scan timeout exceeded")
+        );
+    }
+}
