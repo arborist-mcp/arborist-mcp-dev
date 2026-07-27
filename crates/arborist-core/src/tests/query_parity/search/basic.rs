@@ -177,6 +177,25 @@ fn search_symbols_filtered_uses_dirty_vfs_overrides() {
 }
 
 #[test]
+fn search_symbols_timeout_rejects_zero_before_loading_backends() {
+    let dir = temporary_dir();
+    let error = search_symbols_filtered_with_timeout(&dir, "helper", 10, None, None, Some(0))
+        .expect_err("zero timeout should be rejected before workspace loading");
+    assert!(error.to_string().contains("timeout"));
+
+    let index_error = search_symbols_from_index_filtered_with_timeout(
+        &dir.join("missing.db"),
+        "helper",
+        10,
+        None,
+        None,
+        Some(0),
+    )
+    .expect_err("zero timeout should be rejected before index loading");
+    assert!(index_error.to_string().contains("timeout"));
+}
+
+#[test]
 fn search_symbols_is_case_insensitive_for_unicode_identifiers() {
     let dir = temporary_dir();
     let source = dir.join("unicode.py");
