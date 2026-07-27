@@ -13,6 +13,7 @@ use crate::patching::{
     build_patch_result, prepare_patch_replacement, semantic_target_at_position,
     validate_bypass_reason, validate_patch_replacement,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 mod results;
 
 impl VirtualFileSystem {
@@ -103,7 +104,6 @@ impl VirtualFileSystem {
 
         self.patch_node(&path, &semantic_target, new_code, bypass_reason)
     }
-
     pub fn validate_patch_with_trace_context(
         &mut self,
         workspace_root: &Path,
@@ -113,16 +113,41 @@ impl VirtualFileSystem {
         bypass_reason: Option<&str>,
         direction: TraceDirection,
     ) -> Result<TraceBackedPatchResult> {
+        self.validate_patch_with_trace_context_with_timeout(
+            workspace_root,
+            path,
+            semantic_target,
+            new_code,
+            bypass_reason,
+            direction,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_trace_context_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        timeout_ms: Option<u64>,
+    ) -> Result<TraceBackedPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
+        deadline.check("virtual patch setup")?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
+        deadline.check("virtual patch validation")?;
         let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        self.trace_backed_patch_result(&workspace_root, &patch, direction)
+        let timeout_ms = deadline.remaining_timeout_ms("virtual patch trace")?;
+        self.trace_backed_patch_result_with_timeout(&workspace_root, &patch, direction, timeout_ms)
     }
-
     pub fn validate_patch_with_trace_context_at_position(
         &mut self,
         workspace_root: &Path,
@@ -132,14 +157,40 @@ impl VirtualFileSystem {
         bypass_reason: Option<&str>,
         direction: TraceDirection,
     ) -> Result<TraceBackedPatchResult> {
+        self.validate_patch_with_trace_context_at_position_with_timeout(
+            workspace_root,
+            path,
+            position,
+            new_code,
+            bypass_reason,
+            direction,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_trace_context_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        timeout_ms: Option<u64>,
+    ) -> Result<TraceBackedPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
+        deadline.check("virtual position patch setup")?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
+        deadline.check("virtual position patch validation")?;
         let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        self.trace_backed_patch_result(&workspace_root, &patch, direction)
+        let timeout_ms = deadline.remaining_timeout_ms("virtual position patch trace")?;
+        self.trace_backed_patch_result_with_timeout(&workspace_root, &patch, direction, timeout_ms)
     }
 
     #[allow(clippy::too_many_arguments)]

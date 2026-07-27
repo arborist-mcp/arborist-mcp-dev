@@ -1,3 +1,44 @@
+#[test]
+fn trace_context_validation_rejects_zero_timeout_before_virtual_file_work() {
+    let mut vfs = VirtualFileSystem::new();
+    let path = Path::new("");
+    let position = Position { row: 0, column: 0 };
+    let errors = [
+        vfs.validate_patch_with_trace_context_with_timeout(
+            path,
+            path,
+            "target",
+            "def target():
+    return 2
+",
+            None,
+            TraceDirection::Both,
+            Some(0),
+        )
+        .expect_err("virtual trace context should reject zero timeout"),
+        vfs.validate_patch_with_trace_context_at_position_with_timeout(
+            path,
+            path,
+            &position,
+            "def target():
+    return 2
+",
+            None,
+            TraceDirection::Both,
+            Some(0),
+        )
+        .expect_err("virtual position trace context should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
 use super::*;
 
 #[test]

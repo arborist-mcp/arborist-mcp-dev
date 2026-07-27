@@ -7,9 +7,11 @@ use crate::model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchAstNodeResult, TraceBackedPatchResult, TraceDirection,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols::{
     read_symbol_neighborhood_context_with_overrides, read_symbol_with_overrides,
-    trace_symbol_graph_with_overrides, trace_symbol_neighborhood_with_overrides,
+    trace_symbol_graph_with_overrides, trace_symbol_graph_with_overrides_and_timeout,
+    trace_symbol_neighborhood_with_overrides,
 };
 use crate::{
     validate_discovery_context_patch_result, validate_graph_backed_patch_result,
@@ -18,14 +20,17 @@ use crate::{
 };
 
 impl VirtualFileSystem {
-    pub(super) fn trace_backed_patch_result(
+    pub(super) fn trace_backed_patch_result_with_timeout(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
+        timeout_ms: Option<u64>,
     ) -> Result<TraceBackedPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
+            deadline.check("virtual patch validation result")?;
             let result = TraceBackedPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -41,6 +46,7 @@ impl VirtualFileSystem {
         }
 
         if !patch.applied {
+            deadline.check("virtual patch validation result")?;
             let result = TraceBackedPatchResult {
                 patch: patch.clone(),
                 trace_target,
@@ -56,14 +62,18 @@ impl VirtualFileSystem {
             return Ok(result);
         }
 
+        deadline.check("virtual patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let trace = trace_symbol_graph_with_overrides(
+        let timeout_ms = deadline.remaining_timeout_ms("virtual patch trace")?;
+        let trace = trace_symbol_graph_with_overrides_and_timeout(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
+            timeout_ms,
         )?;
+        deadline.check("virtual patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
         let result = TraceBackedPatchResult {
             patch: patch.clone(),
@@ -73,6 +83,7 @@ impl VirtualFileSystem {
             impact: None,
             trace_error: None,
         };
+        deadline.check("virtual trace-backed patch result")?;
         validate_trace_backed_patch_result(&result)?;
         Ok(result)
     }
