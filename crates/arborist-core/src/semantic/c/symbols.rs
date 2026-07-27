@@ -147,6 +147,9 @@ fn collect_c_named_type_definition_symbols<'tree>(
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for child in declaration.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting C/C++ symbol nodes")?;
+        }
         if is_cpp_type_scope(child) && child.child_by_field_name("body").is_some() {
             collect_cpp_type_scope_symbols(child, symbols, deadline)?;
         } else if child.kind() == "enum_specifier" {
@@ -258,6 +261,9 @@ fn collect_cpp_nested_type_symbols<'tree>(
 ) -> Result<()> {
     let mut cursor = declaration.walk();
     for child in declaration.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting C/C++ symbol nodes")?;
+        }
         if is_cpp_type_scope(child) {
             collect_cpp_type_scope_symbols(child, symbols, deadline)?;
         } else if child.kind() == "enum_specifier" {
