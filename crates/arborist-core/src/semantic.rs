@@ -14,13 +14,13 @@ pub(crate) use paths::{semantic_depth, semantic_parent_path, semantic_path};
 pub(crate) use c::c_is_callable_declaration;
 pub(crate) use c::c_is_scoped_enumerator;
 pub(crate) use c::c_named_node_name;
-pub(crate) use c::c_symbol_nodes;
 pub(crate) use c::c_template_instantiation_name;
 pub(crate) use c::c_using_declaration_name;
 pub(crate) use c::cpp_callable_symbol_id;
 pub(crate) use c::has_c_internal_linkage;
 pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
 pub(crate) use c::{c_parameters, c_return_type};
+pub(crate) use c::{c_symbol_nodes, c_symbol_nodes_with_deadline};
 pub(crate) use python::{
     python_display_byte_range, python_display_header, python_docstring, python_parameters,
     python_return_type,
