@@ -353,6 +353,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -416,6 +418,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -457,6 +461,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -502,6 +508,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -553,6 +561,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -610,6 +620,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -648,6 +660,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (
@@ -691,6 +705,8 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "symbols.db",
                     "graph",
                     "function_definition",
+                    None,
+                    None,
                     37,
                 ),
                 "check": lambda result: (

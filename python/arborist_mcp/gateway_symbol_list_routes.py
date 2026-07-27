@@ -4,14 +4,6 @@ from typing import Any
 
 
 class GatewaySymbolListRoutes:
-    @staticmethod
-    def _call_with_optional_timeout(
-        method: Any, args: tuple[Any, ...], timeout_ms: int | None
-    ) -> Any:
-        if timeout_ms is None:
-            return method(*args)
-        return method(*args, timeout_ms)
-
     def _list_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         limit = self._optional_int(params, "limit", default=100)
@@ -42,6 +34,7 @@ class GatewaySymbolListRoutes:
                 core.list_symbols_json,
                 (workspace_root, limit, index_db_path, file_path_contains, node_kind),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -75,6 +68,7 @@ class GatewaySymbolListRoutes:
                 core.list_symbols_context_json,
                 (workspace_root, limit, index_db_path, file_path_contains, node_kind),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -130,6 +124,7 @@ class GatewaySymbolListRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -185,5 +180,6 @@ class GatewaySymbolListRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)

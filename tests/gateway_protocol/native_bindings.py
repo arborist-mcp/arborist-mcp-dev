@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import tempfile
 import unittest
 
 from arborist_mcp import gateway as gateway_module
@@ -64,6 +65,35 @@ class NativeBindingsTests(unittest.TestCase):
         )
 
         self.assertFalse(missing, f"native extension is missing gateway methods: {missing}")
+
+    def test_list_and_search_timeouts_reach_native_timeout_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            index_db_path = str(Path(temp_dir) / "missing.db")
+            cases = (
+                (gateway._list_symbols, {}),
+                (gateway._list_symbols_context, {}),
+                (gateway._list_symbols_neighborhood_context, {}),
+                (gateway._list_symbols_discovery_context, {}),
+                (gateway._search_symbols, {"query": "missing"}),
+                (gateway._search_symbols_context, {"query": "missing"}),
+                (
+                    gateway._search_symbols_neighborhood_context,
+                    {"query": "missing"},
+                ),
+                (gateway._search_symbols_discovery_context, {"query": "missing"}),
+            )
+
+            for handler, required_params in cases:
+                with self.subTest(handler=handler.__name__):
+                    params = {
+                        "workspace_root": ".",
+                        "index_db_path": index_db_path,
+                        "timeout_ms": 300000,
+                        **required_params,
+                    }
+                    with self.assertRaisesRegex(ValueError, "does not exist"):
+                        handler(params)
 
 
 if __name__ == "__main__":

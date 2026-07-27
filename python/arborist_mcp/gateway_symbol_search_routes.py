@@ -6,14 +6,6 @@ from .tool_specs import TREE_QUERY_MAX_LENGTH
 
 
 class GatewaySymbolSearchRoutes:
-    @staticmethod
-    def _call_with_optional_timeout(
-        method: Any, args: tuple[Any, ...], timeout_ms: int | None
-    ) -> Any:
-        if timeout_ms is None:
-            return method(*args)
-        return method(*args, timeout_ms)
-
     def _search_symbols(self, params: dict[str, Any]) -> dict[str, Any]:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
         query = self._require_string(params, "query", max_length=TREE_QUERY_MAX_LENGTH)
@@ -53,6 +45,7 @@ class GatewaySymbolSearchRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -95,6 +88,7 @@ class GatewaySymbolSearchRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -151,6 +145,7 @@ class GatewaySymbolSearchRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
 
@@ -207,5 +202,6 @@ class GatewaySymbolSearchRoutes:
                     node_kind,
                 ),
                 timeout_ms,
+                omitted_before_timeout=(None, None),
             )
         return self._decode_core_object(payload)
