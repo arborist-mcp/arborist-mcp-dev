@@ -310,6 +310,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
                 }
                 if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
                     reference_name,
+                    language_id,
                     CallResolutionContext::cpp(
                         *call_arity,
                         rvalue_this_receiver,
@@ -329,6 +330,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
             }
         } else if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
             reference_name,
+            language_id,
             CallResolutionContext::non_call(),
             symbol,
             raw_symbols,
@@ -350,6 +352,7 @@ pub(super) fn resolve_dependencies_for_symbol_with_deadline(
 #[allow(clippy::too_many_arguments)]
 fn resolve_reference_path_with_deadline(
     reference_name: &str,
+    language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
@@ -362,7 +365,6 @@ fn resolve_reference_path_with_deadline(
         deadline.check("resolving reference candidates")?;
     }
     let call_arity = call_context.arity;
-    let language_id = detect_language(Path::new(&source_symbol.file_path)).ok();
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
         python_reference_lookup(reference_name)
     } else {
