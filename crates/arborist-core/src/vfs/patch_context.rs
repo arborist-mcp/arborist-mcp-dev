@@ -205,14 +205,51 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<GraphBackedPatchResult> {
+        self.validate_patch_with_graph_context_with_timeout(
+            workspace_root,
+            path,
+            semantic_target,
+            new_code,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_graph_context_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        semantic_target: &str,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<GraphBackedPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
+        deadline.check("virtual graph patch setup")?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
+        deadline.check("virtual graph patch validation")?;
         let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        self.graph_backed_patch_result(&workspace_root, &patch, direction, max_depth, max_nodes)
+        let timeout_ms = deadline.remaining_timeout_ms("virtual graph patch trace")?;
+        self.graph_backed_patch_result_with_timeout(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+            timeout_ms,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -227,14 +264,51 @@ impl VirtualFileSystem {
         max_depth: usize,
         max_nodes: usize,
     ) -> Result<GraphBackedPatchResult> {
+        self.validate_patch_with_graph_context_at_position_with_timeout(
+            workspace_root,
+            path,
+            position,
+            new_code,
+            bypass_reason,
+            direction,
+            max_depth,
+            max_nodes,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_patch_with_graph_context_at_position_with_timeout(
+        &mut self,
+        workspace_root: &Path,
+        path: &Path,
+        position: &crate::model::Position,
+        new_code: &str,
+        bypass_reason: Option<&str>,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        timeout_ms: Option<u64>,
+    ) -> Result<GraphBackedPatchResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
         let (path, normalized) = normalized_virtual_path(path)?;
         ensure_path_inside_workspace(&workspace_root, &path)?;
+        deadline.check("virtual position graph patch setup")?;
         self.ensure_loaded(&path, None)?;
         self.refresh_if_clean(&normalized)?;
 
+        deadline.check("virtual position graph patch validation")?;
         let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        self.graph_backed_patch_result(&workspace_root, &patch, direction, max_depth, max_nodes)
+        let timeout_ms = deadline.remaining_timeout_ms("virtual position graph patch trace")?;
+        self.graph_backed_patch_result_with_timeout(
+            &workspace_root,
+            &patch,
+            direction,
+            max_depth,
+            max_nodes,
+            timeout_ms,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -59,25 +59,6 @@ pub fn trace_symbol_graph_with_overrides_and_timeout(
     )
 }
 
-pub fn trace_symbol_neighborhood_with_overrides(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    trace_symbol_neighborhood_with_overrides_and_timeout(
-        workspace_root,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
-    )
-}
-
 pub fn trace_symbol_neighborhood_with_overrides_and_timeout(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -246,25 +227,6 @@ pub fn trace_symbol_graph_from_index_with_overrides_and_timeout(
         symbol_path,
         direction,
         timeout_ms,
-    )
-}
-
-pub fn trace_symbol_neighborhood_from_index_with_overrides(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
-        db_path,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
     )
 }
 
