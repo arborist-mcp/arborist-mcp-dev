@@ -191,7 +191,8 @@ The MCP catalog currently returns 58 tools:
 
 - Read tools: 29, including batch reads, semantic skeletons, patch previews,
   bounded raw Tree-sitter queries with cooperative timeout budgets, symbol
-  reads, symbol list/search, and graph-backed read bundles.
+  reads (including bounded neighborhood reads), symbol list/search, and
+  graph-backed read bundles.
 - Write tools: 2, `patch_ast_node` and `patch_ast_node_at_position`.
 - VFS tools: 10, including open/change/close, virtual patching, byte edits, commit/discard,
   and virtual reads.

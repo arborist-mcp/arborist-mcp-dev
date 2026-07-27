@@ -54,8 +54,8 @@ TOOL_SPECS = (
     ToolSpec("arborist/read_symbol_at_position", "_read_symbol_at_position", ("workspace_root", "file_path", "position", "source", "index_db_path"), "read", "symbol_read"),
     ToolSpec("arborist/read_symbol_context", "_read_symbol_context", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source"), "read", "symbol_context"),
     ToolSpec("arborist/read_symbol_context_at_position", "_read_symbol_context_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path"), "read", "symbol_context"),
-    ToolSpec("arborist/read_symbol_neighborhood_context", "_read_symbol_neighborhood_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read", "symbol_neighborhood_context"),
-    ToolSpec("arborist/read_symbol_neighborhood_context_at_position", "_read_symbol_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read", "symbol_neighborhood_context"),
+    ToolSpec("arborist/read_symbol_neighborhood_context", "_read_symbol_neighborhood_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source", "timeout_ms"), "read", "symbol_neighborhood_context"),
+    ToolSpec("arborist/read_symbol_neighborhood_context_at_position", "_read_symbol_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path", "timeout_ms"), "read", "symbol_neighborhood_context"),
     ToolSpec("arborist/read_symbol_discovery_context", "_read_symbol_discovery_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source"), "read", "symbol_discovery_context"),
     ToolSpec("arborist/read_symbol_discovery_context_at_position", "_read_symbol_discovery_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path"), "read", "symbol_discovery_context"),
     ToolSpec("arborist/list_symbols", "_list_symbols", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_list"),
@@ -436,7 +436,7 @@ TOOL_PARAM_SPECS = {
     "timeout_ms": ToolParamSpec(
         _schema(
             "integer",
-            "Optional cooperative timeout for workspace scanning, indexing, trace expansion, and raw Tree-sitter queries in milliseconds.",
+            "Optional cooperative timeout for workspace scanning, indexing, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
             minimum=1,
             maximum=MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         ),

@@ -497,6 +497,29 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             search_timeout["properties"]["timeout_ms"]["maximum"],
             gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         )
+        read_neighborhood_timeout = by_name[
+            "arborist/read_symbol_neighborhood_context"
+        ]["inputSchema"]
+        self.assertNotIn("timeout_ms", read_neighborhood_timeout["required"])
+        self.assertEqual(
+            read_neighborhood_timeout["properties"]["timeout_ms"]["minimum"], 1
+        )
+        self.assertEqual(
+            read_neighborhood_timeout["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
+        read_position_neighborhood_timeout = by_name[
+            "arborist/read_symbol_neighborhood_context_at_position"
+        ]["inputSchema"]
+        self.assertNotIn("timeout_ms", read_position_neighborhood_timeout["required"])
+        self.assertEqual(
+            read_position_neighborhood_timeout["properties"]["timeout_ms"]["minimum"],
+            1,
+        )
+        self.assertEqual(
+            read_position_neighborhood_timeout["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         search_context_timeout = by_name["arborist/search_symbols_context"]["inputSchema"]
         self.assertNotIn("timeout_ms", search_context_timeout["required"])
         self.assertEqual(search_context_timeout["properties"]["timeout_ms"]["minimum"], 1)

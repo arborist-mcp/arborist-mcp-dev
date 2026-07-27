@@ -141,10 +141,11 @@ freshness or unindexed-file scanning exceeds it; its successful health response
 shape is unchanged.
 
 The four `list_symbols*` tools, the base `search_symbols` tool,
-`search_symbols_context`, `search_symbols_neighborhood_context`, and
-`search_symbols_discovery_context` also accept
-the optional `timeout_ms` budget. The budget covers workspace or
-persisted-index loading and symbol traversal; the result and truncation
+`search_symbols_context`, `search_symbols_neighborhood_context`,
+`search_symbols_discovery_context`, `read_symbol_neighborhood_context`, and
+`read_symbol_neighborhood_context_at_position` also accept the optional
+`timeout_ms` budget. The budget covers workspace or persisted-index loading,
+symbol traversal, and neighborhood source reads; the result and truncation
 response shapes are unchanged.
 
 `execute_tree_query` accepts an optional `timeout_ms` cooperative budget capped

@@ -1007,6 +1007,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "max_nodes": 10,
                     "file_path": "graph_b.py",
                     "source": source,
+                    "timeout_ms": 37,
                 },
                 "payload": helper_context,
                 "expected_call": (
@@ -1018,6 +1019,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     None,
                     "graph_b.py",
                     source,
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(
@@ -1053,6 +1055,35 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                 ),
             },
             {
+                "core_method": "read_symbol_neighborhood_context_json",
+                "rpc_method": "arborist/read_symbol_neighborhood_context",
+                "request_id": 187,
+                "params": {
+                    "workspace_root": ".",
+                    "symbol_path": "helper",
+                    "direction": "callers",
+                    "max_depth": 2,
+                    "max_nodes": 10,
+                    "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
+                },
+                "payload": helper_context,
+                "expected_call": (
+                    ".",
+                    "helper",
+                    "callers",
+                    2,
+                    10,
+                    "symbols.db",
+                    None,
+                    None,
+                    37,
+                ),
+                "check": lambda result: self.assertEqual(
+                    result["neighborhood"]["symbol"]["semantic_path"], "helper"
+                ),
+            },
+            {
                 "core_method": "read_symbol_neighborhood_context_at_position_json",
                 "rpc_method": "arborist/read_symbol_neighborhood_context_at_position",
                 "request_id": 73,
@@ -1064,6 +1095,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     "max_depth": 2,
                     "max_nodes": 10,
                     "index_db_path": "symbols.db",
+                    "timeout_ms": 37,
                 },
                 "payload": helper_context_graph,
                 "expected_call": (
@@ -1076,6 +1108,7 @@ class GatewaySymbolRouteTests(GatewaySemanticFixtureMixin, GatewayProtocolTestCa
                     10,
                     None,
                     "symbols.db",
+                    37,
                 ),
                 "check": lambda result: (
                     self.assertEqual(

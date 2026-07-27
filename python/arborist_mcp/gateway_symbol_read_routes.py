@@ -113,9 +113,25 @@ class GatewaySymbolReadRoutes:
         index_db_path = self._optional_string(params, "index_db_path")
         file_path = self._optional_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._require_file_path_for_source(source, file_path)
         core = self._require_core()
         if source is not None:
+            payload = self._call_with_optional_timeout(
+                core.read_symbol_neighborhood_context_json,
+                (
+                    workspace_root,
+                    symbol_path,
+                    direction,
+                    max_depth,
+                    max_nodes,
+                    index_db_path,
+                    file_path,
+                    source,
+                ),
+                timeout_ms,
+            )
+        elif timeout_ms is not None:
             payload = core.read_symbol_neighborhood_context_json(
                 workspace_root,
                 symbol_path,
@@ -123,8 +139,9 @@ class GatewaySymbolReadRoutes:
                 max_depth,
                 max_nodes,
                 index_db_path,
-                file_path,
-                source,
+                None,
+                None,
+                timeout_ms,
             )
         else:
             payload = core.read_symbol_neighborhood_context_json(
@@ -153,16 +170,21 @@ class GatewaySymbolReadRoutes:
         max_nodes = self._optional_positive_int(params, "max_nodes", default=64)
         source = self._optional_string(params, "source", allow_empty=True)
         index_db_path = self._optional_string(params, "index_db_path")
-        payload = self._require_core().read_symbol_neighborhood_context_at_position_json(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            direction,
-            max_depth,
-            max_nodes,
-            source,
-            index_db_path,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().read_symbol_neighborhood_context_at_position_json,
+            (
+                workspace_root,
+                file_path,
+                row,
+                column,
+                direction,
+                max_depth,
+                max_nodes,
+                source,
+                index_db_path,
+            ),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 

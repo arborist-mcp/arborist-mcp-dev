@@ -242,12 +242,11 @@ points.
 
 The `list_symbols*` and `search_symbols*` families use the same structured
 symbol shape as skeleton, trace, and patch flows. All four `list_symbols*`
-tools, the base `search_symbols` tool, `search_symbols_context`, and
+tools, the base `search_symbols` tool, `search_symbols_context`,
 `search_symbols_neighborhood_context`, and `search_symbols_discovery_context`
-accept an optional cooperative
-`timeout_ms` budget capped at `300000` milliseconds; omitting it preserves the
-existing behavior. Search matches are case-insensitive and can include
-matched-field metadata for ranking.
+accept an optional cooperative `timeout_ms` budget capped at `300000`
+milliseconds; omitting it preserves the existing behavior. Search matches are
+case-insensitive and can include matched-field metadata for ranking.
 
 ## Source Overlays
 
@@ -337,7 +336,11 @@ non-preemptible.
 
 `read_symbol_context`, `read_symbol_neighborhood_context`, and
 `read_symbol_discovery_context` combine source reads with trace and neighborhood
-data to reduce multi-call orchestration.
+data to reduce multi-call orchestration. Both direct neighborhood-context read
+tools accept the same optional `timeout_ms` budget as neighborhood traces. The
+budget covers workspace or persisted-index loading, bounded graph expansion,
+and per-node source reads; source-overlay parsing remains a non-preemptible
+boundary.
 
 `validate_patch_with_trace_context` runs patch validation, traces the patched
 symbol with the updated file held in memory, and returns the trace-backed
