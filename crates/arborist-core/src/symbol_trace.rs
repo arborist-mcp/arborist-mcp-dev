@@ -52,10 +52,7 @@ impl TraceQueryDeadline {
         let Some(deadline) = self.deadline else {
             return Ok(None);
         };
-        let remaining_ms = deadline
-            .saturating_duration_since(Instant::now())
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64;
+        let remaining_ms = ceil_duration_millis(deadline.saturating_duration_since(Instant::now()));
         if remaining_ms == 0 {
             return Err(anyhow!(
                 "trace timeout exceeded during {phase}: timeout_ms={}",
@@ -64,6 +61,14 @@ impl TraceQueryDeadline {
         }
         Ok(Some(remaining_ms))
     }
+}
+
+fn ceil_duration_millis(duration: Duration) -> u64 {
+    duration
+        .as_micros()
+        .saturating_add(999)
+        .saturating_div(1_000)
+        .min(u128::from(u64::MAX)) as u64
 }
 
 pub(crate) use graph::{trace_from_symbol, trace_from_symbol_with_timeout};
@@ -115,6 +120,13 @@ mod tests {
             .remaining_timeout_ms("override loading")
             .expect_err("expired remaining budgets should fail");
         assert!(error.to_string().contains("override loading"));
+    }
+
+    #[test]
+    fn rounds_remaining_trace_budget_up_to_milliseconds() {
+        assert_eq!(super::ceil_duration_millis(Duration::from_micros(1)), 1);
+        assert_eq!(super::ceil_duration_millis(Duration::from_millis(1)), 1);
+        assert_eq!(super::ceil_duration_millis(Duration::from_micros(1_001)), 2);
     }
 
     #[test]
