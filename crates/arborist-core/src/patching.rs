@@ -31,20 +31,29 @@ pub(crate) use reference_validation::{
 pub(super) use reference_validation::{
     is_python_class_header_expression, is_python_default_parameter_value,
 };
-pub(crate) use result_builder::{build_patch_result, splice_source};
-pub(crate) use syntax_validation::collect_syntax_errors;
-pub(crate) use target_resolution::{prepare_patch_replacement, semantic_target_at_position};
+pub(crate) use result_builder::{
+    PatchBuildInput, build_patch_result, build_patch_result_with_deadline, splice_source,
+};
+pub(crate) use syntax_validation::{collect_syntax_errors, collect_syntax_errors_with_deadline};
+pub(crate) use target_resolution::{
+    prepare_patch_replacement, prepare_patch_replacement_with_deadline,
+    semantic_target_at_position, semantic_target_at_position_with_deadline,
+};
 
 pub(crate) use api::unified_diff;
 pub use api::{
     patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
     patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
-    preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
+    preview_patch_ast_node_at_position_from_path,
+    preview_patch_ast_node_at_position_from_path_with_timeout,
+    preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path,
+    preview_patch_ast_node_from_path_with_timeout, preview_patch_ast_node_with_timeout,
 };
 
 use anyhow::{Result, bail};
 
 pub const MAX_PATCH_REPLACEMENT_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_PATCH_PREVIEW_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_BYPASS_REASON_BYTES: usize = 4 * 1024;
 
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {

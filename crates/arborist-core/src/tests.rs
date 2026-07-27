@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    DEFAULT_TREE_QUERY_MAX_BYTES, MAX_SEMANTIC_SKELETON_TIMEOUT_MS, Position, TraceDirection,
-    VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
+    DEFAULT_TREE_QUERY_MAX_BYTES, MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_SEMANTIC_SKELETON_TIMEOUT_MS,
+    Position, TraceDirection, VirtualFileSystem, execute_tree_query, execute_tree_query_from_path,
     execute_tree_query_with_limit, export_patch_diagnostics_sarif, get_semantic_skeleton,
     get_semantic_skeleton_from_path, get_semantic_skeleton_from_path_with_timeout,
     get_semantic_skeleton_with_timeout, list_symbols, list_symbols_context,
@@ -11,8 +11,10 @@ use super::{
     list_symbols_discovery_context_from_index, list_symbols_filtered, list_symbols_from_index,
     list_symbols_from_index_filtered, list_symbols_neighborhood_context,
     list_symbols_neighborhood_context_from_index, patch_ast_node, patch_ast_node_at_position,
-    patch_ast_node_from_path, preview_patch_ast_node_from_path, read_symbol,
-    read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
+    patch_ast_node_from_path, preview_patch_ast_node_at_position_from_path_with_timeout,
+    preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path,
+    preview_patch_ast_node_from_path_with_timeout, preview_patch_ast_node_with_timeout,
+    read_symbol, read_symbol_at_position, read_symbol_at_position_from_index, read_symbol_context,
     read_symbol_context_from_index, read_symbol_discovery_context,
     read_symbol_discovery_context_at_position,
     read_symbol_discovery_context_at_position_from_index,
@@ -45,6 +47,7 @@ mod c_symbol_graph;
 mod index_refresh;
 mod language_invariants;
 mod patch_bindings;
+mod patch_preview_timeout;
 mod patch_replay;
 mod path_entrypoints;
 mod persisted_index;

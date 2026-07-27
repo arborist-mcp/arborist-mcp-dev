@@ -46,16 +46,21 @@ pub(crate) fn get_semantic_skeleton_with_deadline(
     }
 }
 
-pub fn find_semantic_node<'tree>(
+pub(crate) fn find_semantic_node_with_deadline<'tree>(
     language_id: LanguageId,
     path: &Path,
     tree: &'tree Tree,
     source: &str,
     target_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
     match language_id {
-        LanguageId::Python => python::find_python_semantic_node(tree, source, target_path),
-        LanguageId::C | LanguageId::Cpp => c::find_c_semantic_node(path, tree, source, target_path),
+        LanguageId::Python => {
+            python::find_python_semantic_node(tree, source, target_path, deadline)
+        }
+        LanguageId::C | LanguageId::Cpp => {
+            c::find_c_semantic_node(path, tree, source, target_path, deadline)
+        }
     }
 }
 

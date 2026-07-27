@@ -11,14 +11,24 @@ pub(in super::super) fn collect_c_local_definitions(
     source: &str,
     names: &mut BTreeSet<String>,
 ) -> Result<()> {
-    collect_c_local_definitions_in_node(node, source, names)?;
-    collect_cpp_template_parameter_definitions(node, source, names)
+    collect_c_local_definitions_with_deadline(node, source, names, None)
+}
+
+pub(in super::super) fn collect_c_local_definitions_with_deadline(
+    node: Node<'_>,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    collect_c_local_definitions_in_node(node, source, names, deadline)?;
+    collect_cpp_template_parameter_definitions(node, source, names, deadline)
 }
 
 fn collect_c_local_definitions_in_node(
     node: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut callback = |candidate: Node<'_>| {
         if let Some(parent) = candidate.parent()
@@ -39,7 +49,10 @@ fn collect_c_local_definitions_in_node(
             let _ = node_text(candidate, source).map(|text| names.insert(text.trim().to_string()));
         }
     };
-    visit_tree(node, &mut callback);
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(node, &mut callback, deadline)?,
+        None => visit_tree(node, &mut callback),
+    }
     Ok(())
 }
 
@@ -47,14 +60,18 @@ fn collect_cpp_template_parameter_definitions(
     node: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut current = node.parent();
     while let Some(candidate) = current {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting C/C++ template parameters")?;
+        }
         if candidate.kind() == "template_declaration" {
             let mut cursor = candidate.walk();
             for child in candidate.named_children(&mut cursor) {
                 if child.kind() == "template_parameter_list" {
-                    collect_c_local_definitions_in_node(child, source, names)?;
+                    collect_c_local_definitions_in_node(child, source, names, deadline)?;
                 }
             }
         }
@@ -79,6 +96,15 @@ pub(crate) fn collect_c_graph_references(
     collect_c_references_with_options(node, source, references, true, None)
 }
 
+pub(crate) fn collect_c_references_with_deadline(
+    node: Node<'_>,
+    source: &str,
+    references: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    collect_c_references_with_options(node, source, references, false, deadline)
+}
+
 pub(crate) fn collect_c_graph_references_with_deadline(
     node: Node<'_>,
     source: &str,
@@ -96,7 +122,7 @@ fn collect_c_references_with_options(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let mut template_parameters = BTreeSet::new();
-    collect_cpp_template_parameter_definitions(node, source, &mut template_parameters)?;
+    collect_cpp_template_parameter_definitions(node, source, &mut template_parameters, deadline)?;
     let mut callback = |candidate: Node<'_>| {
         if candidate.kind() == "identifier"
             && !is_c_enumerator_name(candidate)

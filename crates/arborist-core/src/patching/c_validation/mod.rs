@@ -15,14 +15,20 @@ use super::{
     ReferenceValidation, ambiguous_binding_decision, resolved_binding_decision,
     unresolved_binding_decision,
 };
+use crate::deadline::DeadlineCheck;
 use crate::language::ParsedDocument;
 use crate::model::{ValidationAmbiguity, ValidationBinding};
 
 use accessibility::{
-    c_binding_candidates_for_name, collect_c_accessible_names, collect_c_accessible_symbols,
+    c_binding_candidates_for_name, collect_c_accessible_names,
+    collect_c_accessible_names_with_deadline, collect_c_accessible_symbols,
+    collect_c_accessible_symbols_with_deadline,
 };
 use ambiguity::{ambiguity_disambiguation_context, ambiguity_reason};
-use references::collect_c_local_definitions;
+use references::{
+    collect_c_local_definitions, collect_c_local_definitions_with_deadline,
+    collect_c_references_with_deadline,
+};
 
 pub(crate) fn collect_c_reference_validation(
     path: &Path,
@@ -30,19 +36,63 @@ pub(crate) fn collect_c_reference_validation(
     source: &str,
     symbol_node: Node<'_>,
 ) -> Result<ReferenceValidation> {
+    collect_c_reference_validation_with_deadline(path, document, source, symbol_node, None)
+}
+
+pub(crate) fn collect_c_reference_validation_with_deadline(
+    path: &Path,
+    document: &ParsedDocument,
+    source: &str,
+    symbol_node: Node<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<ReferenceValidation> {
     let mut accessible = BTreeSet::new();
     let mut visited = BTreeSet::new();
-    collect_c_accessible_names(path, document, source, &mut accessible, &mut visited)?;
+    match deadline {
+        Some(deadline) => collect_c_accessible_names_with_deadline(
+            path,
+            document,
+            source,
+            &mut accessible,
+            &mut visited,
+            Some(deadline),
+        )?,
+        None => collect_c_accessible_names(path, document, source, &mut accessible, &mut visited)?,
+    }
     let mut local_definitions = BTreeSet::new();
-    collect_c_local_definitions(symbol_node, source, &mut local_definitions)?;
+    match deadline {
+        Some(deadline) => collect_c_local_definitions_with_deadline(
+            symbol_node,
+            source,
+            &mut local_definitions,
+            Some(deadline),
+        )?,
+        None => collect_c_local_definitions(symbol_node, source, &mut local_definitions)?,
+    }
 
     let mut references = BTreeSet::new();
-    references::collect_c_references(symbol_node, source, &mut references)?;
+    match deadline {
+        Some(deadline) => collect_c_references_with_deadline(
+            symbol_node,
+            source,
+            &mut references,
+            Some(deadline),
+        )?,
+        None => references::collect_c_references(symbol_node, source, &mut references)?,
+    }
 
-    let accessible_symbols = collect_c_accessible_symbols(path, document, source)?;
+    let accessible_symbols = match deadline {
+        Some(deadline) => {
+            collect_c_accessible_symbols_with_deadline(path, document, source, Some(deadline))?
+        }
+        None => collect_c_accessible_symbols(path, document, source)?,
+    };
     let mut validation = ReferenceValidation::default();
 
     for name in references {
+        if let Some(deadline) = deadline {
+            deadline.check("validating C/C++ references")?;
+        }
         if local_definitions.contains(&name) {
             continue;
         }

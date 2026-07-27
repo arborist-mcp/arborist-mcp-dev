@@ -3,7 +3,11 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{c_validation::collect_c_reference_validation, python_references};
+use super::{
+    c_validation::{collect_c_reference_validation, collect_c_reference_validation_with_deadline},
+    python_references,
+};
+use crate::deadline::DeadlineCheck;
 use crate::language::{ParsedDocument, contains_node};
 use crate::model::{
     LanguageId, SymbolSummary, ValidationAmbiguity, ValidationBinding, ValidationBindingDecision,
@@ -23,13 +27,38 @@ pub(super) fn collect_reference_validation(
     source: &str,
     symbol_node: Node<'_>,
 ) -> Result<ReferenceValidation> {
+    collect_reference_validation_with_deadline(path, document, source, symbol_node, None)
+}
+
+pub(super) fn collect_reference_validation_with_deadline(
+    path: &Path,
+    document: &ParsedDocument,
+    source: &str,
+    symbol_node: Node<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<ReferenceValidation> {
     match document.language_id {
-        LanguageId::Python => {
-            python_references::collect_python_reference_validation(path, source, symbol_node)
-        }
-        LanguageId::C | LanguageId::Cpp => {
-            collect_c_reference_validation(path, document, source, symbol_node)
-        }
+        LanguageId::Python => match deadline {
+            Some(deadline) => python_references::collect_python_reference_validation_with_deadline(
+                path,
+                source,
+                symbol_node,
+                Some(deadline),
+            ),
+            None => {
+                python_references::collect_python_reference_validation(path, source, symbol_node)
+            }
+        },
+        LanguageId::C | LanguageId::Cpp => match deadline {
+            Some(deadline) => collect_c_reference_validation_with_deadline(
+                path,
+                document,
+                source,
+                symbol_node,
+                Some(deadline),
+            ),
+            None => collect_c_reference_validation(path, document, source, symbol_node),
+        },
     }
 }
 

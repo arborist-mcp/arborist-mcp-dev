@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, c_companion_source_path, c_include_targets, first_identifier, node_text,
     normalize_path, parse_document, read_source, resolve_local_c_include,
@@ -11,7 +12,7 @@ use crate::language::{
 use crate::model::{SymbolSummary, SymbolSummaryInit};
 use crate::semantic::{
     c_is_callable_declaration, c_is_scoped_enumerator, c_named_node_name, c_parameters,
-    c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes,
+    c_return_type, c_semantic_path, c_symbol_id_for_node, c_symbol_nodes_with_deadline,
     c_template_instantiation_name, c_using_declaration_name, has_c_internal_linkage,
     semantic_parent_path,
 };
@@ -23,6 +24,7 @@ pub(super) struct CAccessibleSymbol {
     rank: usize,
 }
 
+#[derive(Clone, Copy)]
 struct CAccessibleCollection<'a> {
     base_rank: usize,
     origin_type: &'a str,
@@ -41,8 +43,10 @@ fn collect_c_top_level_names(
     root: Node<'_>,
     source: &str,
     names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
-    for child in c_symbol_nodes(path, root, source)? {
+    for child in c_symbol_nodes_with_deadline(path, root, source, deadline)? {
+        check_deadline(deadline, "collecting accessible C/C++ names")?;
         match child.kind() {
             "type_definition" | "function_definition" => {
                 if let Some(name) = first_identifier(child, source)? {
@@ -93,25 +97,40 @@ pub(super) fn collect_c_accessible_names(
     names: &mut BTreeSet<String>,
     visited: &mut BTreeSet<String>,
 ) -> Result<()> {
+    collect_c_accessible_names_with_deadline(path, document, source, names, visited, None)
+}
+
+pub(super) fn collect_c_accessible_names_with_deadline(
+    path: &Path,
+    document: &ParsedDocument,
+    source: &str,
+    names: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    check_deadline(deadline, "collecting accessible C/C++ names")?;
     let normalized = normalize_path(path);
     if !visited.insert(normalized) {
         return Ok(());
     }
 
-    collect_c_top_level_names(path, document.tree.root_node(), source, names)?;
+    collect_c_top_level_names(path, document.tree.root_node(), source, names, deadline)?;
 
     for include_target in c_include_targets(document.tree.root_node(), source)? {
+        check_deadline(deadline, "resolving C/C++ includes")?;
         let Some(include_path) = resolve_local_c_include(path, &include_target) else {
             continue;
         };
         let include_source = read_source(&include_path)?;
+        check_deadline(deadline, "parsing C/C++ includes")?;
         let include_document = parse_document(&include_path, &include_source)?;
-        collect_c_accessible_names(
+        collect_c_accessible_names_with_deadline(
             &include_path,
             &include_document,
             &include_source,
             names,
             visited,
+            deadline,
         )?;
     }
 
@@ -123,6 +142,16 @@ pub(super) fn collect_c_accessible_symbols(
     document: &ParsedDocument,
     source: &str,
 ) -> Result<Vec<CAccessibleSymbol>> {
+    collect_c_accessible_symbols_with_deadline(path, document, source, None)
+}
+
+pub(super) fn collect_c_accessible_symbols_with_deadline(
+    path: &Path,
+    document: &ParsedDocument,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<CAccessibleSymbol>> {
+    check_deadline(deadline, "collecting accessible C/C++ symbols")?;
     let mut symbols = Vec::new();
     let mut visited_files = BTreeSet::new();
     let mut visited_companion_sources = BTreeSet::new();
@@ -143,10 +172,12 @@ pub(super) fn collect_c_accessible_symbols(
             context_file: &context_file,
         },
         &mut state,
+        deadline,
     )?;
 
     let mut deduped = BTreeMap::new();
     for symbol in symbols {
+        check_deadline(deadline, "deduplicating accessible C/C++ symbols")?;
         deduped
             .entry(symbol.summary.symbol_id.clone())
             .and_modify(|existing: &mut CAccessibleSymbol| {
@@ -166,7 +197,9 @@ fn collect_c_accessible_symbols_from_document(
     source: &str,
     collection: CAccessibleCollection<'_>,
     state: &mut CAccessibleState<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    check_deadline(deadline, "collecting accessible C/C++ symbols")?;
     let normalized = normalize_path(path);
     if !state.visited_files.insert(normalized.clone()) {
         return Ok(());
@@ -176,18 +209,19 @@ fn collect_c_accessible_symbols_from_document(
         path,
         document.tree.root_node(),
         source,
-        collection.base_rank,
-        collection.origin_type,
-        collection.context_file,
+        collection,
         state.symbols,
+        deadline,
     )?;
 
     for include_target in c_include_targets(document.tree.root_node(), source)? {
+        check_deadline(deadline, "resolving C/C++ includes")?;
         let Some(include_path) = resolve_local_c_include(path, &include_target) else {
             continue;
         };
 
         let include_source = read_source(&include_path)?;
+        check_deadline(deadline, "parsing C/C++ includes")?;
         let include_document = parse_document(&include_path, &include_source)?;
         collect_c_accessible_symbols_from_document(
             &include_path,
@@ -200,6 +234,7 @@ fn collect_c_accessible_symbols_from_document(
                 context_file: collection.context_file,
             },
             state,
+            deadline,
         )?;
 
         if collection.allow_companion_sources
@@ -208,15 +243,20 @@ fn collect_c_accessible_symbols_from_document(
             let normalized_companion = normalize_path(&companion_source_path);
             if state.visited_companion_sources.insert(normalized_companion) {
                 let companion_source = read_source(&companion_source_path)?;
+                check_deadline(deadline, "parsing C/C++ companion sources")?;
                 let companion_document = parse_document(&companion_source_path, &companion_source)?;
                 collect_c_symbol_candidates_from_root(
                     &companion_source_path,
                     companion_document.tree.root_node(),
                     &companion_source,
-                    600,
-                    "companion_source",
-                    collection.context_file,
+                    CAccessibleCollection {
+                        base_rank: 600,
+                        origin_type: "companion_source",
+                        allow_companion_sources: false,
+                        context_file: collection.context_file,
+                    },
                     state.symbols,
+                    deadline,
                 )?;
             }
         }
@@ -229,20 +269,20 @@ fn collect_c_symbol_candidates_from_root(
     path: &Path,
     root: Node<'_>,
     source: &str,
-    base_rank: usize,
-    origin_type: &str,
-    context_file: &str,
+    collection: CAccessibleCollection<'_>,
     symbols: &mut Vec<CAccessibleSymbol>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     let normalized_path = normalize_path(path);
-    for child in c_symbol_nodes(path, root, source)? {
+    for child in c_symbol_nodes_with_deadline(path, root, source, deadline)? {
+        check_deadline(deadline, "collecting C/C++ symbol candidates")?;
         let Some(name) = c_candidate_name(child, source)? else {
             continue;
         };
         let Some(semantic_path) = c_semantic_path(path, child, source)? else {
             continue;
         };
-        if normalized_path != context_file && has_c_internal_linkage(child, source) {
+        if normalized_path != collection.context_file && has_c_internal_linkage(child, source) {
             continue;
         }
         let Some(symbol_id) = c_symbol_id_for_node(path, child, source)? else {
@@ -258,17 +298,24 @@ fn collect_c_symbol_candidates_from_root(
                 scope_path,
                 file_path: normalized_path.clone(),
                 node_kind: child.kind().to_string(),
-                origin_type: origin_type.to_string(),
+                origin_type: collection.origin_type.to_string(),
                 byte_range: (child.start_byte(), child.end_byte()),
                 signature: c_candidate_signature(child, source)?,
                 parameters: c_parameters(child, source)?,
                 return_type: c_return_type(child, source)?,
                 docstring: None,
             }),
-            rank: base_rank + c_candidate_node_rank(child.kind()),
+            rank: collection.base_rank + c_candidate_node_rank(child.kind()),
         });
     }
 
+    Ok(())
+}
+
+fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
     Ok(())
 }
 

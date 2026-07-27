@@ -15,6 +15,7 @@ use super::super::{
     resolve_local_python_imported_symbol,
 };
 use super::{PythonReferenceTarget, python_nearest_scope_node};
+use crate::deadline::DeadlineCheck;
 use crate::language::normalize_path;
 
 pub(super) fn python_binding_candidates_for_reference(
@@ -23,9 +24,27 @@ pub(super) fn python_binding_candidates_for_reference(
     normalized_path: &str,
     reference_target: &PythonReferenceTarget<'_>,
 ) -> Result<Vec<PythonAccessibleSymbol>> {
+    python_binding_candidates_for_reference_with_deadline(
+        path,
+        source,
+        normalized_path,
+        reference_target,
+        None,
+    )
+}
+
+pub(super) fn python_binding_candidates_for_reference_with_deadline(
+    path: &Path,
+    source: &str,
+    normalized_path: &str,
+    reference_target: &PythonReferenceTarget<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<Vec<PythonAccessibleSymbol>> {
+    check_deadline(deadline, "resolving Python binding candidates")?;
     if let Some((module_name, symbol_name)) = &reference_target.imported_symbol
         && let Some(summary) = resolve_local_python_imported_symbol(path, module_name, symbol_name)?
     {
+        check_deadline(deadline, "resolving imported Python symbols")?;
         return Ok(vec![PythonAccessibleSymbol {
             name: reference_target.name.clone(),
             summary,
@@ -41,8 +60,13 @@ pub(super) fn python_binding_candidates_for_reference(
             imported_symbol: None,
             import_fallback_name: None,
         };
-        let fallback_candidates =
-            python_binding_candidates_for_reference(path, source, normalized_path, &fallback)?;
+        let fallback_candidates = python_binding_candidates_for_reference_with_deadline(
+            path,
+            source,
+            normalized_path,
+            &fallback,
+            deadline,
+        )?;
         if !fallback_candidates.is_empty() {
             return Ok(fallback_candidates);
         }
@@ -65,6 +89,7 @@ pub(super) fn python_binding_candidates_for_reference(
     let skip_current_class_scope = is_python_class_header_expression(reference_target.node);
 
     while let Some(node) = current {
+        check_deadline(deadline, "resolving Python binding scopes")?;
         let include_scope = if force_module_scope {
             node.kind() == "module"
         } else {
@@ -105,7 +130,7 @@ pub(super) fn python_binding_candidates_for_reference(
                 normalized_path,
                 scope_rank,
                 &mut candidates,
-                None,
+                deadline,
             )?;
             scope_rank = scope_rank.saturating_sub(1_000_000);
         }
@@ -113,6 +138,7 @@ pub(super) fn python_binding_candidates_for_reference(
         current = node.parent();
     }
 
+    check_deadline(deadline, "filtering Python binding candidates")?;
     candidates.retain(|candidate| candidate.name == name);
     let mut resolving_candidates = candidates
         .iter()
@@ -253,6 +279,13 @@ fn is_python_decorator_expression(node: Node<'_>) -> bool {
     }
 
     false
+}
+
+fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
+    Ok(())
 }
 
 fn python_reference_is_global_declared(node: Node<'_>, source: &str, name: &str) -> bool {

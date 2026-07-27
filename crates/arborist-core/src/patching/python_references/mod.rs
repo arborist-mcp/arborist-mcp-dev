@@ -22,7 +22,9 @@ use crate::deadline::DeadlineCheck;
 use crate::language::normalize_path;
 use crate::model::{DisambiguationContext, ValidationAmbiguity, ValidationBinding};
 
-use self::candidates::python_binding_candidates_for_reference;
+use self::candidates::{
+    python_binding_candidates_for_reference, python_binding_candidates_for_reference_with_deadline,
+};
 pub(super) use self::filters::{
     is_python_parameter_symbol_name, is_python_with_target_name, python_enclosing_except_clause,
     python_nearest_scope_node,
@@ -30,7 +32,7 @@ pub(super) use self::filters::{
 use self::targets::{
     collect_python_instance_type_bindings, collect_python_instance_type_bindings_with_deadline,
     collect_python_reference_entries, collect_python_reference_entries_with_deadline,
-    collect_python_reference_targets,
+    collect_python_reference_targets, collect_python_reference_targets_with_deadline,
 };
 
 pub(super) fn collect_python_reference_validation(
@@ -38,23 +40,65 @@ pub(super) fn collect_python_reference_validation(
     source: &str,
     symbol_node: Node<'_>,
 ) -> Result<ReferenceValidation> {
-    let bindings = collect_visible_python_import_bindings(path, symbol_node, source)?;
-    let reference_targets = collect_python_reference_targets(symbol_node, source, &bindings)?;
+    collect_python_reference_validation_with_deadline(path, source, symbol_node, None)
+}
+
+pub(super) fn collect_python_reference_validation_with_deadline(
+    path: &Path,
+    source: &str,
+    symbol_node: Node<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<ReferenceValidation> {
+    let bindings = match deadline {
+        Some(deadline) => collect_visible_python_import_bindings_with_deadline(
+            path,
+            symbol_node,
+            source,
+            Some(deadline),
+        )?,
+        None => collect_visible_python_import_bindings(path, symbol_node, source)?,
+    };
+    let reference_targets = match deadline {
+        Some(deadline) => {
+            let mut targets = Vec::new();
+            collect_python_reference_targets_with_deadline(
+                symbol_node,
+                source,
+                &bindings,
+                &mut targets,
+                Some(deadline),
+            )?;
+            targets
+        }
+        None => collect_python_reference_targets(symbol_node, source, &bindings)?,
+    };
     let normalized_path = normalize_path(path);
     let mut validation = ReferenceValidation::default();
 
     for reference_target in reference_targets {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Python references")?;
+        }
         let name = reference_target.name.clone();
         if PYTHON_BUILTINS.contains(&name.as_str()) {
             continue;
         }
 
-        let candidates = python_binding_candidates_for_reference(
-            path,
-            source,
-            &normalized_path,
-            &reference_target,
-        )?;
+        let candidates = match deadline {
+            Some(deadline) => python_binding_candidates_for_reference_with_deadline(
+                path,
+                source,
+                &normalized_path,
+                &reference_target,
+                Some(deadline),
+            )?,
+            None => python_binding_candidates_for_reference(
+                path,
+                source,
+                &normalized_path,
+                &reference_target,
+            )?,
+        };
         match candidates.as_slice() {
             [] => {
                 validation

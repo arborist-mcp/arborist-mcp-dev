@@ -3,14 +3,26 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{normalize_path, parse_document};
 use crate::model::{
     PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
 
 use super::{
-    collect_syntax_errors, evaluate_patch_commit_gate, reference_validation, target_resolution,
+    collect_syntax_errors_with_deadline, evaluate_patch_commit_gate, reference_validation,
+    target_resolution,
 };
+
+pub(crate) struct PatchBuildInput<'a> {
+    pub(crate) path: &'a Path,
+    pub(crate) semantic_target: &'a str,
+    pub(crate) updated_source: String,
+    pub(crate) bypass_reason: Option<&'a str>,
+    pub(crate) patch_start: usize,
+    pub(crate) replacement_len: usize,
+    pub(crate) preflight_issues: Vec<ValidationIssue>,
+}
 
 pub(crate) fn build_patch_result(
     path: &Path,
@@ -19,11 +31,43 @@ pub(crate) fn build_patch_result(
     bypass_reason: Option<&str>,
     patch_start: usize,
     replacement_len: usize,
-    mut preflight_issues: Vec<ValidationIssue>,
+    preflight_issues: Vec<ValidationIssue>,
 ) -> Result<PatchAstNodeResult> {
+    build_patch_result_with_deadline(
+        PatchBuildInput {
+            path,
+            semantic_target,
+            updated_source,
+            bypass_reason,
+            patch_start,
+            replacement_len,
+            preflight_issues,
+        },
+        None,
+    )
+}
+
+pub(crate) fn build_patch_result_with_deadline(
+    input: PatchBuildInput<'_>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<PatchAstNodeResult> {
+    let PatchBuildInput {
+        path,
+        semantic_target,
+        updated_source,
+        bypass_reason,
+        patch_start,
+        replacement_len,
+        mut preflight_issues,
+    } = input;
+    check_deadline(deadline, "updated source parse")?;
     let virtual_document = parse_document(path, &updated_source)?;
-    let mut syntax_errors =
-        collect_syntax_errors(virtual_document.tree.root_node(), &updated_source);
+    check_deadline(deadline, "syntax validation")?;
+    let mut syntax_errors = collect_syntax_errors_with_deadline(
+        virtual_document.tree.root_node(),
+        &updated_source,
+        deadline,
+    )?;
     syntax_errors.append(&mut preflight_issues);
 
     let mut validation = PatchValidationReport {
@@ -45,22 +89,34 @@ pub(crate) fn build_patch_result(
     if validation.syntax_errors.is_empty()
         && let Some(symbol_node) = patched_symbol
     {
-        let reference_validation = reference_validation::collect_reference_validation(
-            path,
-            &virtual_document,
-            &updated_source,
-            symbol_node,
-        )?;
+        check_deadline(deadline, "reference validation")?;
+        let reference_validation = match deadline {
+            Some(deadline) => reference_validation::collect_reference_validation_with_deadline(
+                path,
+                &virtual_document,
+                &updated_source,
+                symbol_node,
+                Some(deadline),
+            )?,
+            None => reference_validation::collect_reference_validation(
+                path,
+                &virtual_document,
+                &updated_source,
+                symbol_node,
+            )?,
+        };
         validation.unresolved_identifiers = reference_validation.unresolved_identifiers;
         validation.resolved_identifiers = reference_validation.resolved_identifiers;
         validation.ambiguous_identifiers = reference_validation.ambiguous_identifiers;
         validation.binding_decisions = reference_validation.binding_decisions;
     }
 
+    check_deadline(deadline, "patch commit gate")?;
     validation.commit_gate = evaluate_patch_commit_gate(&validation, bypass_reason);
     let applied = validation.commit_gate.allowed;
     let bypass_applied = validation.commit_gate.status == "allowed_with_bypass";
 
+    check_deadline(deadline, "patched symbol resolution")?;
     let resolved_path = patched_symbol
         .map(|node| {
             target_resolution::resolve_symbol_path(
@@ -84,6 +140,7 @@ pub(crate) fn build_patch_result(
         .transpose()?
         .unwrap_or_else(|| resolved_path.clone());
 
+    check_deadline(deadline, "patch result validation")?;
     let result = PatchAstNodeResult {
         file: normalize_path(path),
         target_path: semantic_target.to_string(),
@@ -96,6 +153,13 @@ pub(crate) fn build_patch_result(
     };
     result.validate_public_output()?;
     Ok(result)
+}
+
+fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn splice_source(source: &str, range: Range<usize>, replacement: &str) -> String {

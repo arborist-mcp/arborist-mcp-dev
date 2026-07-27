@@ -60,10 +60,13 @@ pub(crate) use api::{
 pub use api_patch_validation::export_patch_diagnostics_sarif;
 pub use language::{MAX_SOURCE_FILE_BYTES, read_source, supported_languages};
 pub use patching::{
-    MAX_BYPASS_REASON_BYTES, MAX_PATCH_REPLACEMENT_BYTES, patch_ast_node,
-    patch_ast_node_at_position, patch_ast_node_at_position_from_path, patch_ast_node_from_path,
-    preview_patch_ast_node, preview_patch_ast_node_at_position,
-    preview_patch_ast_node_at_position_from_path, preview_patch_ast_node_from_path,
+    MAX_BYPASS_REASON_BYTES, MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_PATCH_REPLACEMENT_BYTES,
+    patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
+    patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
+    preview_patch_ast_node_at_position_from_path,
+    preview_patch_ast_node_at_position_from_path_with_timeout,
+    preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path,
+    preview_patch_ast_node_from_path_with_timeout, preview_patch_ast_node_with_timeout,
 };
 pub use query::{
     DEFAULT_TREE_QUERY_MAX_BYTES, DEFAULT_TREE_QUERY_MAX_CAPTURES, MAX_TREE_QUERY_CAPTURES,

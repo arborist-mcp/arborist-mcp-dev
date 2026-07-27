@@ -191,15 +191,20 @@ pub(super) fn find_python_semantic_node<'tree>(
     tree: &'tree Tree,
     source: &str,
     target_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
-    search_python_symbol(tree.root_node(), source, target_path)
+    search_python_symbol(tree.root_node(), source, target_path, deadline)
 }
 
 fn search_python_symbol<'tree>(
     node: Node<'tree>,
     source: &str,
     target_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving Python semantic target")?;
+    }
     if matches!(node.kind(), "class_definition" | "function_definition")
         && semantic_path(node, source)? == target_path
     {
@@ -209,7 +214,7 @@ fn search_python_symbol<'tree>(
     let child_count = node.child_count();
     for index in 0..child_count {
         if let Some(child) = node.child(index)
-            && let Some(found) = search_python_symbol(child, source, target_path)?
+            && let Some(found) = search_python_symbol(child, source, target_path, deadline)?
         {
             return Ok(Some(found));
         }

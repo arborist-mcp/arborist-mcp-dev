@@ -1,9 +1,19 @@
 use tree_sitter::Node;
 
-use crate::language::{position_from, visit_tree};
+use crate::deadline::DeadlineCheck;
+use crate::language::{position_from, visit_tree, visit_tree_with_deadline};
 use crate::model::{Position, ValidationIssue};
 
 pub(crate) fn collect_syntax_errors(root: Node<'_>, source: &str) -> Vec<ValidationIssue> {
+    collect_syntax_errors_with_deadline(root, source, None)
+        .expect("deadline-free syntax validation cannot fail")
+}
+
+pub(crate) fn collect_syntax_errors_with_deadline(
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> anyhow::Result<Vec<ValidationIssue>> {
     let mut issues = Vec::new();
     let mut callback = |node: Node<'_>| {
         if node.is_error() || node.is_missing() {
@@ -35,19 +45,28 @@ pub(crate) fn collect_syntax_errors(root: Node<'_>, source: &str) -> Vec<Validat
         }
     };
 
-    visit_tree(root, &mut callback);
-    if root.kind() == "module" {
-        issues.extend(collect_python_indentation_issues(source));
+    match deadline {
+        Some(deadline) => visit_tree_with_deadline(root, &mut callback, deadline)?,
+        None => visit_tree(root, &mut callback),
     }
-    issues
+    if root.kind() == "module" {
+        issues.extend(collect_python_indentation_issues(source, deadline)?);
+    }
+    Ok(issues)
 }
 
-fn collect_python_indentation_issues(source: &str) -> Vec<ValidationIssue> {
+fn collect_python_indentation_issues(
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> anyhow::Result<Vec<ValidationIssue>> {
     let mut issues = Vec::new();
     let mut pending_block: Option<(usize, usize, usize)> = None;
     let mut byte_start = 0usize;
 
     for (row, line) in source.split_inclusive('\n').enumerate() {
+        if let Some(deadline) = deadline {
+            deadline.check("validating Python indentation")?;
+        }
         let content = line.trim_end_matches(['\r', '\n']);
         let trimmed = content.trim();
         let indent = leading_indent_len(content);
@@ -84,7 +103,7 @@ fn collect_python_indentation_issues(source: &str) -> Vec<ValidationIssue> {
         byte_start += line.len();
     }
 
-    issues
+    Ok(issues)
 }
 
 fn leading_indent_len(line: &str) -> usize {
@@ -92,4 +111,30 @@ fn leading_indent_len(line: &str) -> usize {
         .iter()
         .take_while(|byte| **byte == b' ' || **byte == b'\t')
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::collect_syntax_errors_with_deadline;
+    use crate::deadline::CooperativeDeadline;
+    use crate::language::parse_document;
+
+    #[test]
+    fn syntax_validation_checks_expired_patch_preview_deadlines() {
+        let source = "def sample():\n    return 1\n";
+        let document = parse_document(Path::new("sample.py"), source).expect("source should parse");
+        let deadline = CooperativeDeadline::expired_for_tests(1, "patch preview");
+
+        let error =
+            collect_syntax_errors_with_deadline(document.tree.root_node(), source, Some(&deadline))
+                .expect_err("expired syntax validation should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("patch preview timeout exceeded during walking syntax tree")
+        );
+    }
 }

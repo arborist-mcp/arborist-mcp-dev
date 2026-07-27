@@ -9,8 +9,8 @@ use super::identity::cpp_callable_symbol_id;
 use super::{
     c_function_declarator, c_function_declarator_name, c_function_display_node, c_function_header,
     c_is_callable_declaration, c_named_node_name, c_operator_cast_name, c_parameters,
-    c_return_type, c_semantic_path, c_symbol_nodes, c_symbol_nodes_with_deadline,
-    c_template_instantiation_name, c_using_declaration_name, is_c_callable_node,
+    c_return_type, c_semantic_path, c_symbol_nodes_with_deadline, c_template_instantiation_name,
+    c_using_declaration_name, is_c_callable_node,
 };
 use crate::deadline::DeadlineCheck;
 use crate::language::{
@@ -185,6 +185,7 @@ pub(crate) fn find_c_semantic_node<'tree>(
     tree: &'tree Tree,
     source: &str,
     target_path: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
     let root = tree.root_node();
     let target_requires_symbol_id = target_path.contains("::")
@@ -194,7 +195,10 @@ pub(crate) fn find_c_semantic_node<'tree>(
     let mut best_match = None;
     let mut best_rank = 0usize;
 
-    for child in c_symbol_nodes(path, root, source)? {
+    for child in c_symbol_nodes_with_deadline(path, root, source, deadline)? {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving C/C++ semantic target")?;
+        }
         let symbol = c_semantic_path(path, child, source)?;
         let base_name = c_symbol_base_name(child, source)?;
         let symbol_id = if target_requires_symbol_id {

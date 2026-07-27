@@ -6,12 +6,14 @@ use tree_sitter::Node;
 use super::python_replacement::{
     normalize_python_replacement_indentation, python_replacement_starts_with_decorator,
 };
+use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, normalize_absolute_path, offset_for_position, parse_document, position_from,
 };
 use crate::model::{LanguageId, Position, ValidationIssue};
 use crate::semantic::{
-    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node, semantic_path,
+    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node_with_deadline,
+    semantic_path,
 };
 
 pub(crate) struct PreparedPatchReplacement {
@@ -35,8 +37,19 @@ pub(crate) fn semantic_target_at_position(
     source: &str,
     position: &Position,
 ) -> Result<String> {
+    semantic_target_at_position_with_deadline(path, source, position, None)
+}
+
+pub(crate) fn semantic_target_at_position_with_deadline(
+    path: &Path,
+    source: &str,
+    position: &Position,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<String> {
     let path = normalize_absolute_path(path)?;
+    check_deadline(deadline, "position target parse")?;
     let document = parse_document(&path, source)?;
+    check_deadline(deadline, "position target lookup")?;
     let byte_offset = offset_for_position(source, position)?;
     let node =
         node_at_byte_offset(document.tree.root_node(), source, byte_offset).ok_or_else(|| {
@@ -56,6 +69,7 @@ pub(crate) fn semantic_target_at_position(
         )
     })?;
 
+    check_deadline(deadline, "position target resolution")?;
     match document.language_id {
         LanguageId::Python => semantic_path(symbol_node, source),
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
@@ -69,7 +83,18 @@ pub(crate) fn prepare_patch_replacement(
     semantic_target: &str,
     new_code: &str,
 ) -> Result<PreparedPatchReplacement> {
-    let target = semantic_target_info(path, source, semantic_target)?;
+    prepare_patch_replacement_with_deadline(path, source, semantic_target, new_code, None)
+}
+
+pub(crate) fn prepare_patch_replacement_with_deadline(
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<PreparedPatchReplacement> {
+    let target = semantic_target_info(path, source, semantic_target, deadline)?;
+    check_deadline(deadline, "patch replacement preparation")?;
     let replacement = match target.language_id {
         LanguageId::Python => normalize_python_replacement_indentation(
             source,
@@ -94,6 +119,7 @@ pub(crate) fn prepare_patch_replacement(
         });
     }
 
+    check_deadline(deadline, "patch replacement validation")?;
     Ok(PreparedPatchReplacement {
         start_byte: target.start_byte,
         end_byte: target.end_byte,
@@ -146,15 +172,19 @@ fn semantic_target_info(
     path: &Path,
     source: &str,
     semantic_target: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticTargetInfo> {
     validate_semantic_target(semantic_target)?;
+    check_deadline(deadline, "semantic target parse")?;
     let document = parse_document(path, source)?;
-    let target_node = find_semantic_node(
+    check_deadline(deadline, "semantic target lookup")?;
+    let target_node = find_semantic_node_with_deadline(
         document.language_id,
         path,
         &document.tree,
         source,
         semantic_target,
+        deadline,
     )?
     .ok_or_else(|| anyhow!("semantic path not found: {semantic_target}"))?;
     let target_node = python_symbol_replacement_node(document.language_id, target_node);
@@ -167,6 +197,13 @@ fn semantic_target_info(
         start_point: position_from(target_node.start_position()),
         end_point: position_from(target_node.end_position()),
     })
+}
+
+fn check_deadline(deadline: Option<&dyn DeadlineCheck>, phase: &str) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
+    Ok(())
 }
 
 fn validate_semantic_target(semantic_target: &str) -> Result<()> {
