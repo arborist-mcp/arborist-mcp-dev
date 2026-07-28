@@ -207,11 +207,15 @@ the prior buffer when it expires before persistence. Once an atomic disk write
 starts, the operation reports the write/index-sync outcome rather than a timeout
 after the source may already have changed.
 
-`commit_virtual_file` accepts the same optional timeout cap. Its budget covers
-path validation, virtual-file loading and clean-buffer refresh, and a final
-pre-persistence gate. Expiration at that gate leaves an existing dirty buffer
-and the disk source unchanged. After atomic persistence starts, the request
-reports the write/index-sync outcome instead of a late timeout.
+`commit_virtual_file`, `discard_virtual_file`, and `did_close` accept the same
+optional timeout cap. Commit budgets cover path validation, virtual-file loading
+and clean-buffer refresh, and a final pre-persistence gate. Discard budgets add
+disk reads and parsing before the buffered source is replaced. Expiration before
+the final mutation preserves an existing dirty entry and leaves the disk source
+unchanged. `did_close` follows the commit path when `persist=true` and the
+discard path otherwise; a timeout leaves the entry open. After persistence or
+buffer replacement starts, these operations report their final outcome instead
+of a late timeout.
 
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input

@@ -372,16 +372,21 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
                 patch_timeout["properties"]["timeout_ms"]["maximum"],
                 gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
             )
-        virtual_commit_timeout = by_name["arborist/commit_virtual_file"]["inputSchema"]
-        self.assertNotIn("timeout_ms", virtual_commit_timeout["required"])
-        self.assertEqual(
-            virtual_commit_timeout["properties"]["timeout_ms"]["minimum"],
-            1,
-        )
-        self.assertEqual(
-            virtual_commit_timeout["properties"]["timeout_ms"]["maximum"],
-            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
-        )
+        for lifecycle_tool_name in (
+            "arborist/commit_virtual_file",
+            "arborist/discard_virtual_file",
+            "arborist/did_close",
+        ):
+            lifecycle_timeout = by_name[lifecycle_tool_name]["inputSchema"]
+            self.assertNotIn("timeout_ms", lifecycle_timeout["required"])
+            self.assertEqual(
+                lifecycle_timeout["properties"]["timeout_ms"]["minimum"],
+                1,
+            )
+            self.assertEqual(
+                lifecycle_timeout["properties"]["timeout_ms"]["maximum"],
+                gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+            )
         patch_result = patch["outputSchema"]["properties"]["result"]
         self.assertEqual(patch_result["additionalProperties"], False)
         self.assertIn("validation", patch_result["required"])

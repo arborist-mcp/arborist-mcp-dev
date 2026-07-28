@@ -416,6 +416,19 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {
+                "core_method": "close_virtual_file_json",
+                "rpc_method": "arborist/did_close",
+                "request_id": 130,
+                "params": {
+                    "file_path": "sample.py",
+                    "persist": True,
+                    "timeout_ms": 37,
+                },
+                "payload": {},
+                "expected_call": ("sample.py", True, 37),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
                 "core_method": "list_virtual_files_json",
                 "rpc_method": "arborist/list_virtual_files",
                 "request_id": 111,
@@ -496,6 +509,18 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 },
                 "payload": {},
                 "expected_call": ("sample.py",),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
+                "core_method": "discard_virtual_file_json",
+                "rpc_method": "arborist/discard_virtual_file",
+                "request_id": 131,
+                "params": {
+                    "file_path": "sample.py",
+                    "timeout_ms": 37,
+                },
+                "payload": {},
+                "expected_call": ("sample.py", 37),
                 "check": lambda result: self.assertEqual(result, {}),
             },
         ]
