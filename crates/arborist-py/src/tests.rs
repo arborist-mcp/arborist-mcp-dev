@@ -3,7 +3,7 @@ use super::{
 };
 use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
 use arborist_core::{
-    MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS,
+    MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS,
     MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS, PositionEdit,
 };
 use serde_json::Value;
@@ -791,6 +791,93 @@ fn virtual_read_bindings_forward_timeouts_and_preserve_defaults() {
     )
     .expect("legacy virtual listing result should be valid JSON");
     assert_eq!(legacy.as_array().unwrap().len(), 1);
+
+    fs::remove_dir_all(workspace).unwrap();
+}
+
+#[test]
+fn virtual_edit_bindings_forward_timeouts_and_preserve_defaults() {
+    prepare_python();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "arborist-py-virtual-edit-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    let file = workspace.join("sample.py");
+    fs::write(&file, "value = 12\n").unwrap();
+    let file_path = file.to_string_lossy();
+    let core = ArboristCore::new();
+
+    let byte_zero = core
+        .apply_buffer_edit_json_impl(&file_path, 8, 9, "3", Some(0))
+        .expect_err("zero byte-edit timeout should reach core validation");
+    assert!(
+        byte_zero
+            .to_string()
+            .contains("invalid virtual buffer edit timeout_ms: value must be greater than zero")
+    );
+    let position_zero = core
+        .apply_position_edits_json_impl(&file_path, "[]", Some(0))
+        .expect_err("zero position-edit timeout should reach core validation");
+    assert!(
+        position_zero
+            .to_string()
+            .contains("invalid virtual position edits timeout_ms: value must be greater than zero")
+    );
+
+    let byte: Value = serde_json::from_str(
+        &core
+            .apply_buffer_edit_json_impl(
+                &file_path,
+                8,
+                9,
+                "3",
+                Some(MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS),
+            )
+            .expect("timed byte edit should succeed"),
+    )
+    .expect("timed byte-edit result should be valid JSON");
+    assert_eq!(byte["source"], "value = 32\n");
+    assert_eq!(byte["version"], 1);
+
+    let position: Value = serde_json::from_str(
+        &core
+            .apply_position_edits_json_impl(
+                &file_path,
+                r#"[{"start":{"row":0,"column":9},"end":{"row":0,"column":10},"new_text":"4"}]"#,
+                Some(MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS),
+            )
+            .expect("timed position edit should succeed"),
+    )
+    .expect("timed position-edit result should be valid JSON");
+    assert_eq!(position["source"], "value = 34\n");
+    assert_eq!(position["version"], 2);
+
+    let legacy_byte: Value = serde_json::from_str(
+        &core
+            .apply_buffer_edit_json_impl(&file_path, 8, 10, "56", None)
+            .expect("byte edit without a timeout should remain supported"),
+    )
+    .expect("legacy byte-edit result should be valid JSON");
+    assert_eq!(legacy_byte["source"], "value = 56\n");
+
+    let legacy_position: Value = serde_json::from_str(
+        &core
+            .apply_position_edits_json_impl(
+                &file_path,
+                r#"[{"start":{"row":0,"column":8},"end":{"row":0,"column":9},"new_text":"7"}]"#,
+                None,
+            )
+            .expect("position edit without a timeout should remain supported"),
+    )
+    .expect("legacy position-edit result should be valid JSON");
+    assert_eq!(legacy_position["source"], "value = 76\n");
+    assert_eq!(legacy_position["version"], 4);
 
     fs::remove_dir_all(workspace).unwrap();
 }
