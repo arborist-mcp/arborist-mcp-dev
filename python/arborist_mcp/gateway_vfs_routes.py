@@ -63,8 +63,13 @@ class GatewayVfsRoutes:
 
     def _commit_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         self._ensure_write_path_inside_server_workspace(file_path)
-        payload = self._require_core().commit_virtual_file_json(file_path)
+        payload = self._call_with_optional_timeout(
+            self._require_core().commit_virtual_file_json,
+            (file_path,),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _discard_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:

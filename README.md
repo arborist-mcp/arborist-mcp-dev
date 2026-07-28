@@ -207,6 +207,12 @@ the prior buffer when it expires before persistence. Once an atomic disk write
 starts, the operation reports the write/index-sync outcome rather than a timeout
 after the source may already have changed.
 
+`commit_virtual_file` accepts the same optional timeout cap. Its budget covers
+path validation, virtual-file loading and clean-buffer refresh, and a final
+pre-persistence gate. Expiration at that gate leaves an existing dirty buffer
+and the disk source unchanged. After atomic persistence starts, the request
+reports the write/index-sync outcome instead of a late timeout.
+
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input
 schemas, output schemas, defaults, and categories.

@@ -151,6 +151,14 @@ later timeout check can turn a persisted change into a timeout response;
 registered-index synchronization completes or reports its own error instead.
 Blocking source reads and parses remain non-preemptible.
 
+`commit_virtual_file` accepts the same optional `timeout_ms` cap. The budget
+covers virtual path validation, loading, clean-buffer refresh, and a final gate
+immediately before persistence. Expiration before persistence preserves an
+existing dirty buffer, its version, and the disk source. Once the atomic write
+starts, no later deadline check can return a timeout after the source may have
+changed; registered-index synchronization completes or reports its own error.
+A single blocking read, parse, write, or index operation remains non-preemptible.
+
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during
 workspace traversal, per-file indexing, C include dependency expansion, and

@@ -280,6 +280,15 @@ Use the VFS methods (`did_open`, `did_change`, `patch_virtual_ast_node`,
 Snapshot and list-status outputs have precise MCP schemas for file path, source,
 dirty state, version, and syntax error counts.
 
+`commit_virtual_file` accepts an optional cooperative `timeout_ms` budget capped
+at `300000` milliseconds. It covers path validation, virtual-file loading,
+clean-buffer refresh, and a final gate immediately before persistence. If the
+budget expires before persistence, an existing dirty buffer, its version, and
+the disk source remain unchanged. Once the atomic write begins, Arborist does
+not perform another deadline check; registered-index synchronization completes
+or reports its own error. Individual blocking reads, parses, writes, and index
+operations remain non-preemptible.
+
 ## Patch And Preview Tools
 
 `preview_patch_ast_node` and `preview_patch_ast_node_at_position` run the same

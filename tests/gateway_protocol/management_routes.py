@@ -476,6 +476,18 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {
+                "core_method": "commit_virtual_file_json",
+                "rpc_method": "arborist/commit_virtual_file",
+                "request_id": 129,
+                "params": {
+                    "file_path": "sample.py",
+                    "timeout_ms": 37,
+                },
+                "payload": {},
+                "expected_call": ("sample.py", 37),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
                 "core_method": "discard_virtual_file_json",
                 "rpc_method": "arborist/discard_virtual_file",
                 "request_id": 115,
