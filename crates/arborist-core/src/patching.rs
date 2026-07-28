@@ -43,7 +43,9 @@ pub(crate) use target_resolution::{
 pub(crate) use api::unified_diff;
 pub use api::{
     patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
-    patch_ast_node_from_path, preview_patch_ast_node, preview_patch_ast_node_at_position,
+    patch_ast_node_at_position_from_path_with_timeout, patch_ast_node_at_position_with_timeout,
+    patch_ast_node_from_path, patch_ast_node_from_path_with_timeout, patch_ast_node_with_timeout,
+    preview_patch_ast_node, preview_patch_ast_node_at_position,
     preview_patch_ast_node_at_position_from_path,
     preview_patch_ast_node_at_position_from_path_with_timeout,
     preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path,
@@ -53,6 +55,7 @@ pub use api::{
 use anyhow::{Result, bail};
 
 pub const MAX_PATCH_REPLACEMENT_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_PATCH_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_PATCH_PREVIEW_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_BYPASS_REASON_BYTES: usize = 4 * 1024;
 

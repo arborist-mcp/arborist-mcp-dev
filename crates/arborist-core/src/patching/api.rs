@@ -10,11 +10,10 @@ use crate::language::{
 use crate::model::{PatchAstNodeResult, PatchPreviewResult, Position};
 
 use super::{
-    MAX_PATCH_PREVIEW_TIMEOUT_MS, PatchBuildInput, build_patch_result,
+    MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_PATCH_TIMEOUT_MS, PatchBuildInput, build_patch_result,
     build_patch_result_with_deadline, prepare_patch_replacement,
-    prepare_patch_replacement_with_deadline, semantic_target_at_position,
-    semantic_target_at_position_with_deadline, splice_source, validate_bypass_reason,
-    validate_patch_replacement,
+    prepare_patch_replacement_with_deadline, semantic_target_at_position_with_deadline,
+    splice_source, validate_bypass_reason, validate_patch_replacement,
 };
 
 pub fn patch_ast_node_from_path(
@@ -23,21 +22,32 @@ pub fn patch_ast_node_from_path(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
+    patch_ast_node_from_path_with_timeout(path, semantic_target, new_code, bypass_reason, None)
+}
+
+pub fn patch_ast_node_from_path_with_timeout(
+    path: &Path,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<PatchAstNodeResult> {
+    let deadline = patch_deadline(timeout_ms)?;
+    deadline.check("path validation")?;
     let path = normalize_absolute_path(path)?;
+    deadline.check("source read")?;
     let disk_source = read_source(&path)?;
-    let result = patch_ast_node(
+    deadline.check("patch validation")?;
+    let result = patch_ast_node_with_deadline(
         &path,
         &disk_source,
         semantic_target,
         new_code,
         bypass_reason,
+        Some(&deadline),
     )?;
 
-    if result.applied {
-        write_source_atomic(&path, &result.updated_source)
-            .with_context(|| format!("failed to write patched source to {}", path.display()))?;
-    }
-
+    write_applied_patch_result(&path, &result, &deadline)?;
     Ok(result)
 }
 
@@ -47,17 +57,48 @@ pub fn patch_ast_node_at_position_from_path(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
-    let path = normalize_absolute_path(path)?;
-    let disk_source = read_source(&path)?;
-    let result =
-        patch_ast_node_at_position(&path, &disk_source, position, new_code, bypass_reason)?;
+    patch_ast_node_at_position_from_path_with_timeout(path, position, new_code, bypass_reason, None)
+}
 
-    if result.applied {
-        write_source_atomic(&path, &result.updated_source)
-            .with_context(|| format!("failed to write patched source to {}", path.display()))?;
+pub fn patch_ast_node_at_position_from_path_with_timeout(
+    path: &Path,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<PatchAstNodeResult> {
+    let deadline = patch_deadline(timeout_ms)?;
+    deadline.check("path validation")?;
+    let path = normalize_absolute_path(path)?;
+    deadline.check("source read")?;
+    let disk_source = read_source(&path)?;
+    deadline.check("position patch validation")?;
+    let result = patch_ast_node_at_position_with_deadline(
+        &path,
+        &disk_source,
+        position,
+        new_code,
+        bypass_reason,
+        Some(&deadline),
+    )?;
+
+    write_applied_patch_result(&path, &result, &deadline)?;
+    Ok(result)
+}
+
+fn write_applied_patch_result(
+    path: &Path,
+    result: &PatchAstNodeResult,
+    deadline: &CooperativeDeadline,
+) -> Result<()> {
+    if !result.applied {
+        return Ok(());
     }
 
-    Ok(result)
+    deadline.check("source write")?;
+    // Once persistence starts, report its outcome instead of a timeout after the source changed.
+    write_source_atomic(path, &result.updated_source)
+        .with_context(|| format!("failed to write patched source to {}", path.display()))
 }
 
 pub fn preview_patch_ast_node_from_path(
@@ -141,7 +182,26 @@ pub fn patch_ast_node(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
-    patch_ast_node_with_deadline(path, source, semantic_target, new_code, bypass_reason, None)
+    patch_ast_node_with_timeout(path, source, semantic_target, new_code, bypass_reason, None)
+}
+
+pub fn patch_ast_node_with_timeout(
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<PatchAstNodeResult> {
+    let deadline = patch_deadline(timeout_ms)?;
+    patch_ast_node_with_deadline(
+        path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        Some(&deadline),
+    )
 }
 
 fn patch_ast_node_with_deadline(
@@ -267,9 +327,48 @@ pub fn patch_ast_node_at_position(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
+    patch_ast_node_at_position_with_timeout(path, source, position, new_code, bypass_reason, None)
+}
+
+pub fn patch_ast_node_at_position_with_timeout(
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<PatchAstNodeResult> {
+    let deadline = patch_deadline(timeout_ms)?;
+    patch_ast_node_at_position_with_deadline(
+        path,
+        source,
+        position,
+        new_code,
+        bypass_reason,
+        Some(&deadline),
+    )
+}
+
+fn patch_ast_node_at_position_with_deadline(
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<PatchAstNodeResult> {
+    check_deadline(deadline, "position target resolution")?;
     let path = normalize_absolute_path(path)?;
-    let semantic_target = semantic_target_at_position(&path, source, position)?;
-    patch_ast_node(&path, source, &semantic_target, new_code, bypass_reason)
+    let semantic_target =
+        semantic_target_at_position_with_deadline(&path, source, position, deadline)?;
+    patch_ast_node_with_deadline(
+        &path,
+        source,
+        &semantic_target,
+        new_code,
+        bypass_reason,
+        deadline,
+    )
 }
 
 pub fn preview_patch_ast_node_at_position(
@@ -414,6 +513,10 @@ fn unified_diff_with_deadline(
         diff.push('\n');
     }
     Ok(diff)
+}
+
+fn patch_deadline(timeout_ms: Option<u64>) -> Result<CooperativeDeadline> {
+    CooperativeDeadline::new(timeout_ms, MAX_PATCH_TIMEOUT_MS, "patch")
 }
 
 fn patch_preview_deadline(timeout_ms: Option<u64>) -> Result<CooperativeDeadline> {
