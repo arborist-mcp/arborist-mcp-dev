@@ -2,9 +2,11 @@ use super::{
     ArboristCore, NeighborhoodBounds, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg,
 };
 use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
-use arborist_core::PositionEdit;
+use arborist_core::{MAX_PATCH_TIMEOUT_MS, PositionEdit};
 use serde_json::Value;
+use std::fs;
 use std::sync::Once;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn prepare_python() {
     static PREPARE: Once = Once::new();
@@ -444,6 +446,74 @@ fn patch_preview_bindings_forward_zero_timeout_before_path_work() {
 }
 
 #[test]
+fn patch_bindings_forward_zero_timeout_before_path_or_vfs_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let source = Some("def target():\n    return 1\n".to_string());
+    let replacement = "def target():\n    return 2\n";
+    let errors = [
+        core.patch_ast_node_json_impl("", "target", replacement, source.clone(), None, Some(0))
+            .expect_err("source semantic patch should reject zero timeout"),
+        core.patch_ast_node_json_impl("", "target", replacement, None, None, Some(0))
+            .expect_err("committed semantic patch should reject zero timeout"),
+        core.patch_ast_node_at_position_json_impl("", 0, 4, replacement, source, None, Some(0))
+            .expect_err("source position patch should reject zero timeout"),
+        core.patch_ast_node_at_position_json_impl("", 0, 4, replacement, None, None, Some(0))
+            .expect_err("committed position patch should reject zero timeout"),
+        core.patch_virtual_ast_node_json_impl("", "target", replacement, None, Some(0))
+            .expect_err("virtual semantic patch should reject zero timeout"),
+        core.patch_virtual_ast_node_at_position_json_impl("", 0, 4, replacement, None, Some(0))
+            .expect_err("virtual position patch should reject zero timeout"),
+    ];
+
+    for error in errors {
+        assert!(
+            error
+                .to_string()
+                .contains("invalid patch timeout_ms: value must be greater than zero")
+        );
+    }
+}
+
+#[test]
+fn committed_patch_binding_writes_with_shared_timeout_budget() {
+    prepare_python();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace =
+        std::env::temp_dir().join(format!("arborist-py-patch-{}-{suffix}", std::process::id()));
+    fs::create_dir_all(&workspace).unwrap();
+    let file = workspace.join("sample.py");
+    fs::write(&file, "def target():\n    return 1\n").unwrap();
+    let core = ArboristCore::new();
+
+    let result: Value = serde_json::from_str(
+        &core
+            .patch_ast_node_json_impl(
+                &file.to_string_lossy(),
+                "target",
+                "def target():\n    return 2\n",
+                None,
+                None,
+                Some(MAX_PATCH_TIMEOUT_MS),
+            )
+            .expect("committed patch binding should succeed"),
+    )
+    .expect("committed patch result should be valid JSON");
+
+    assert_eq!(result["applied"], true);
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        result["updated_source"].as_str().unwrap()
+    );
+    fs::remove_dir_all(workspace).unwrap();
+}
+
+#[test]
 fn virtual_file_and_source_preview_dispatch_preserve_results() {
     prepare_python();
 
@@ -459,7 +529,13 @@ fn virtual_file_and_source_preview_dispatch_preserve_results() {
     .expect("virtual file result should be valid JSON");
     let patched: Value = serde_json::from_str(
         &core
-            .patch_virtual_ast_node_json_impl("memory.py", "target", replacement, None)
+            .patch_virtual_ast_node_json_impl(
+                "memory.py",
+                "target",
+                replacement,
+                None,
+                Some(MAX_PATCH_TIMEOUT_MS),
+            )
             .expect("virtual patch should apply"),
     )
     .expect("virtual patch result should be valid JSON");
