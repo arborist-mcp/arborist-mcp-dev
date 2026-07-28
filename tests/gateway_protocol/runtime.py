@@ -359,6 +359,19 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             patch["inputSchema"]["properties"]["bypass_reason"]["maxLength"],
             gateway_module.BYPASS_REASON_MAX_LENGTH,
         )
+        for patch_name in (
+            "arborist/patch_ast_node",
+            "arborist/patch_ast_node_at_position",
+            "arborist/patch_virtual_ast_node",
+            "arborist/patch_virtual_ast_node_at_position",
+        ):
+            patch_timeout = by_name[patch_name]["inputSchema"]
+            self.assertNotIn("timeout_ms", patch_timeout["required"])
+            self.assertEqual(patch_timeout["properties"]["timeout_ms"]["minimum"], 1)
+            self.assertEqual(
+                patch_timeout["properties"]["timeout_ms"]["maximum"],
+                gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+            )
         patch_result = patch["outputSchema"]["properties"]["result"]
         self.assertEqual(patch_result["additionalProperties"], False)
         self.assertIn("validation", patch_result["required"])

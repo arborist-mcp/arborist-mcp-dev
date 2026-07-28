@@ -311,6 +311,20 @@ source read or parse remains non-preemptible.
 with validation. Patch responses include `resolved_symbol_id`, `resolved_path`,
 `updated_source`, and `validation`.
 
+Both write tools, plus `patch_virtual_ast_node` and
+`patch_virtual_ast_node_at_position`, accept an optional cooperative
+`timeout_ms` budget capped at `300000` milliseconds. It spans path and source
+setup, semantic or position target resolution, replacement preparation, updated
+source parsing, syntax/reference validation, commit-gate evaluation, result
+validation, and the VFS edit up to the final pre-write gate. File-backed write
+tools preserve an already-open dirty VFS buffer and restore that exact entry if
+the budget expires before persistence; blocked patches also leave both the
+buffer and disk unchanged. Once the atomic source write starts, Arborist no
+longer returns a timeout for that request, avoiding an "error after successful
+write" result. Registered-index synchronization then completes or reports its
+own error; a synchronization failure leaves the persisted source marked for a
+later retry. A single blocking source read or parse remains non-preemptible.
+
 For C, patch selectors may be a plain name such as `helper` or a precise
 `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both
 a forward declaration and a definition for the same symbol, Arborist prefers the

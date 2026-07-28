@@ -250,6 +250,7 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                         "source": "def top_level() -> int:\n    return 1\n",
                         "semantic_path": "top_level",
                         "new_code": "def top_level() -> int:\n    return 2\n",
+                        "timeout_ms": 300000,
                     },
                     request_id=47,
                 ),
@@ -452,6 +453,134 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             ),
         )
 
+    def test_patch_apply_timeouts_reach_final_core_parameters(self) -> None:
+        class StubCore:
+            def patch_ast_node_json(self, *args: object) -> str:
+                self.semantic_args = args
+                return "{}"
+
+            def patch_ast_node_at_position_json(self, *args: object) -> str:
+                self.position_args = args
+                return "{}"
+
+            def patch_virtual_ast_node_json(self, *args: object) -> str:
+                self.virtual_semantic_args = args
+                return "{}"
+
+            def patch_virtual_ast_node_at_position_json(self, *args: object) -> str:
+                self.virtual_position_args = args
+                return "{}"
+
+        core = StubCore()
+        gateway = self.make_gateway(core)
+        cases = (
+            (
+                "arborist/patch_ast_node",
+                {
+                    "file_path": "sample.py",
+                    "semantic_path": "sample",
+                    "new_code": "def sample():\n    return 2\n",
+                    "source": "def sample():\n    return 1\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 37,
+                },
+                125,
+            ),
+            (
+                "arborist/patch_ast_node_at_position",
+                {
+                    "file_path": "sample.py",
+                    "position": {"row": 0, "column": 4},
+                    "new_code": "def sample():\n    return 2\n",
+                    "source": "def sample():\n    return 1\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 41,
+                },
+                126,
+            ),
+            (
+                "arborist/patch_virtual_ast_node",
+                {
+                    "file_path": "sample.py",
+                    "semantic_path": "sample",
+                    "new_code": "def sample():\n    return 2\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 43,
+                },
+                127,
+            ),
+            (
+                "arborist/patch_virtual_ast_node_at_position",
+                {
+                    "file_path": "sample.py",
+                    "position": {"row": 0, "column": 4},
+                    "new_code": "def sample():\n    return 2\n",
+                    "bypass_reason": "approved",
+                    "timeout_ms": 47,
+                },
+                128,
+            ),
+        )
+        for method, params, request_id in cases:
+            with self.subTest(method=method):
+                self.assertEqual(
+                    self.assert_jsonrpc_ok(
+                        self.call_gateway(
+                            gateway,
+                            method,
+                            params,
+                            request_id=request_id,
+                        ),
+                        request_id=request_id,
+                    ),
+                    {},
+                )
+
+        self.assertEqual(
+            core.semantic_args,
+            (
+                "sample.py",
+                "sample",
+                "def sample():\n    return 2\n",
+                "def sample():\n    return 1\n",
+                "approved",
+                37,
+            ),
+        )
+        self.assertEqual(
+            core.position_args,
+            (
+                "sample.py",
+                0,
+                4,
+                "def sample():\n    return 2\n",
+                "def sample():\n    return 1\n",
+                "approved",
+                41,
+            ),
+        )
+        self.assertEqual(
+            core.virtual_semantic_args,
+            (
+                "sample.py",
+                "sample",
+                "def sample():\n    return 2\n",
+                "approved",
+                43,
+            ),
+        )
+        self.assertEqual(
+            core.virtual_position_args,
+            (
+                "sample.py",
+                0,
+                4,
+                "def sample():\n    return 2\n",
+                "approved",
+                47,
+            ),
+        )
+
     def test_preview_patch_ast_node_returns_diff_without_writing_disk(self) -> None:
         with self.temp_workspace() as workspace:
             file_path = workspace.joinpath("sample.py")
@@ -497,6 +626,7 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
                         ),
                         "position": {"row": 3, "column": 1},
                         "new_code": "@decorator\ndef helper() -> int:\n    return 2\n",
+                        "timeout_ms": 300000,
                     },
                     request_id=102,
                 ),

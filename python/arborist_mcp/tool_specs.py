@@ -25,10 +25,10 @@ TOOL_SPECS = (
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes", "timeout_ms"), "read", "semantic_skeleton"),
     ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),
     ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),
-    ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason"), "write", "patch_ast_node"),
-    ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason"), "write", "patch_ast_node"),
-    ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
-    ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason"), "vfs", "patch_ast_node"),
+    ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason", "timeout_ms"), "write", "patch_ast_node"),
+    ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason", "timeout_ms"), "write", "patch_ast_node"),
+    ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason", "timeout_ms"), "vfs", "patch_ast_node"),
+    ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason", "timeout_ms"), "vfs", "patch_ast_node"),
     ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "registered_symbol_index"),
     ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats"),
     ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root",), "index", "boolean"),
@@ -436,7 +436,7 @@ TOOL_PARAM_SPECS = {
     "timeout_ms": ToolParamSpec(
         _schema(
             "integer",
-            "Optional cooperative timeout for workspace scanning, indexing, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+            "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
             minimum=1,
             maximum=MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         ),

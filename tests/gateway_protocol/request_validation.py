@@ -1794,6 +1794,50 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     self.assertEqual(response["error"]["code"], -32602)
                     self.assertIn("timeout_ms", response["error"]["message"])
 
+    def test_rejects_invalid_patch_apply_timeout_bounds(self) -> None:
+        cases = (
+            (
+                "arborist/patch_ast_node",
+                {
+                    "semantic_path": "sample",
+                    "source": "def sample():\n    return 1\n",
+                },
+            ),
+            (
+                "arborist/patch_ast_node_at_position",
+                {
+                    "position": {"row": 0, "column": 4},
+                    "source": "def sample():\n    return 1\n",
+                },
+            ),
+            (
+                "arborist/patch_virtual_ast_node",
+                {"semantic_path": "sample"},
+            ),
+            (
+                "arborist/patch_virtual_ast_node_at_position",
+                {"position": {"row": 0, "column": 4}},
+            ),
+        )
+        for method, target_params in cases:
+            for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+                with self.subTest(method=method, timeout_ms=timeout_ms):
+                    response = self.make_gateway().handle_request(
+                        self.request(
+                            method,
+                            {
+                                "file_path": "sample.py",
+                                "new_code": "def sample():\n    return 2\n",
+                                "timeout_ms": timeout_ms,
+                                **target_params,
+                            },
+                            request_id=87 + timeout_ms,
+                        )
+                    )
+
+                    self.assertEqual(response["error"]["code"], -32602)
+                    self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_workspace_edit_preview_timeout_bounds(self) -> None:
         for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
             with self.subTest(timeout_ms=timeout_ms):

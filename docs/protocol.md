@@ -141,6 +141,16 @@ source parsing, syntax and reference validation, commit-gate evaluation, diff
 generation, and result validation. A single blocking source read or parse
 remains non-preemptible.
 
+`patch_ast_node`, `patch_ast_node_at_position`, `patch_virtual_ast_node`, and
+`patch_virtual_ast_node_at_position` accept the same optional cap for patch
+application. The budget covers source setup, target resolution, validation, and
+VFS mutation through a final gate immediately before persistence. If it expires
+before that gate, any patch mutation is rolled back to the exact prior virtual
+file entry, including an existing dirty buffer. Once an atomic write begins, no
+later timeout check can turn a persisted change into a timeout response;
+registered-index synchronization completes or reports its own error instead.
+Blocking source reads and parses remain non-preemptible.
+
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during
 workspace traversal, per-file indexing, C include dependency expansion, and

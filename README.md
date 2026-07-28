@@ -200,6 +200,13 @@ The MCP catalog currently returns 58 tools:
   rebuild, workspace refresh, and file refresh for persisted symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
+The two write patch tools and the two VFS-only patch tools accept an optional
+cooperative `timeout_ms` budget capped at `300000` milliseconds. The budget
+covers target resolution and patch validation, and VFS-backed writes restore
+the prior buffer when it expires before persistence. Once an atomic disk write
+starts, the operation reports the write/index-sync outcome rather than a timeout
+after the source may already have changed.
+
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input
 schemas, output schemas, defaults, and categories.

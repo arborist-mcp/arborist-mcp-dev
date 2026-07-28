@@ -38,14 +38,13 @@ class GatewayPatchApplyRoutes:
         new_code = self._require_string(params, "new_code")
         source = self._optional_string(params, "source", allow_empty=True)
         bypass_reason = self._optional_string(params, "bypass_reason")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         if source is None:
             self._ensure_write_path_inside_server_workspace(file_path)
-        payload = self._require_core().patch_ast_node_json(
-            file_path,
-            semantic_path,
-            new_code,
-            source,
-            bypass_reason,
+        payload = self._call_with_optional_timeout(
+            self._require_core().patch_ast_node_json,
+            (file_path, semantic_path, new_code, source, bypass_reason),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -55,15 +54,13 @@ class GatewayPatchApplyRoutes:
         new_code = self._require_string(params, "new_code")
         source = self._optional_string(params, "source", allow_empty=True)
         bypass_reason = self._optional_string(params, "bypass_reason")
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         if source is None:
             self._ensure_write_path_inside_server_workspace(file_path)
-        payload = self._require_core().patch_ast_node_at_position_json(
-            file_path,
-            row,
-            column,
-            new_code,
-            source,
-            bypass_reason,
+        payload = self._call_with_optional_timeout(
+            self._require_core().patch_ast_node_at_position_json,
+            (file_path, row, column, new_code, source, bypass_reason),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -72,11 +69,11 @@ class GatewayPatchApplyRoutes:
         semantic_path = self._require_string(params, "semantic_path")
         new_code = self._require_string(params, "new_code")
         bypass_reason = self._optional_string(params, "bypass_reason")
-        payload = self._require_core().patch_virtual_ast_node_json(
-            file_path,
-            semantic_path,
-            new_code,
-            bypass_reason,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().patch_virtual_ast_node_json,
+            (file_path, semantic_path, new_code, bypass_reason),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -85,11 +82,10 @@ class GatewayPatchApplyRoutes:
         row, column = self._require_position(params, "position")
         new_code = self._require_string(params, "new_code")
         bypass_reason = self._optional_string(params, "bypass_reason")
-        payload = self._require_core().patch_virtual_ast_node_at_position_json(
-            file_path,
-            row,
-            column,
-            new_code,
-            bypass_reason,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().patch_virtual_ast_node_at_position_json,
+            (file_path, row, column, new_code, bypass_reason),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
