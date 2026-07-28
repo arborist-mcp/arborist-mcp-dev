@@ -159,6 +159,14 @@ entry loaded only for the failed request. Listing refreshes loaded files in
 normalized path order, checks the budget between files and result items, and
 rolls all refreshed entries back when the request fails.
 
+`apply_buffer_edit` and `did_change` accept the same optional cap. Their shared
+request budget covers loading and clean-buffer refresh, range or position
+validation, source splicing, incremental parsing, syntax diagnostics, result
+validation, and a final gate before each virtual mutation. A failure restores
+the exact pre-request entry or removes one loaded only for that request;
+sequential `did_change` edits are therefore atomic as a batch. A single source
+splice, position scan, parse, or tree traversal remains non-preemptible.
+
 `commit_virtual_file`, `discard_virtual_file`, and `did_close` use the same cap.
 Commit retains a final gate immediately before persistence. Discard covers the
 current disk-source read and parse, result validation, and a final gate before

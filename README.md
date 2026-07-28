@@ -207,16 +207,20 @@ the prior buffer when it expires before persistence. Once an atomic disk write
 starts, the operation reports the write/index-sync outcome rather than a timeout
 after the source may already have changed.
 
-`did_open`, `read_virtual_file`, `list_virtual_files`,
-`commit_virtual_file`, `discard_virtual_file`, and `did_close` accept the same
-optional timeout cap. Open and read budgets cover loading, parsing, clean-buffer
-refresh, and result validation; a timeout restores the exact prior entry or
-removes one loaded only for the failed request. Listing refreshes loaded entries
-in deterministic order and rolls all refreshes back if its budget expires.
-Commit and discard retain their final pre-mutation gates, while `did_close`
-follows the commit path when `persist=true` and the discard path otherwise.
-After persistence or buffer replacement starts, these operations report their
-final outcome instead of a late timeout.
+`did_open`, `did_change`, `read_virtual_file`, `list_virtual_files`,
+`apply_buffer_edit`, `commit_virtual_file`, `discard_virtual_file`, and
+`did_close` accept the same optional timeout cap. Open and read budgets cover
+loading, parsing, clean-buffer refresh, and result validation; a timeout restores
+the exact prior entry or removes one loaded only for the failed request. Listing
+refreshes loaded entries in deterministic order and rolls all refreshes back if
+its budget expires. Byte and position edits share one request budget across
+loading, range and position validation, source splicing, incremental parsing,
+syntax collection, and result validation. They stage each edit before a final
+mutation gate, and a failed batch restores the exact prior buffer. Commit and
+discard retain their final pre-mutation gates, while `did_close` follows the
+commit path when `persist=true` and the discard path otherwise. After persistence
+or buffer replacement starts, these operations report their final outcome
+instead of a late timeout.
 
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input

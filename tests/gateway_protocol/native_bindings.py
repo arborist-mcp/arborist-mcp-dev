@@ -125,6 +125,39 @@ class NativeBindingsTests(unittest.TestCase):
         self.assertFalse(result["changed"])
         self.assertEqual(result["files"][0]["source"], "value = 1\n")
 
+    def test_virtual_edit_timeouts_reach_native_parameters(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "sample.py"
+            file_path.write_bytes(b"value = 12\n")
+
+            byte_result = gateway._apply_buffer_edit(
+                {
+                    "file_path": str(file_path),
+                    "start_byte": 8,
+                    "old_end_byte": 9,
+                    "new_text": "3",
+                    "timeout_ms": 300000,
+                }
+            )
+            position_result = gateway._did_change(
+                {
+                    "file_path": str(file_path),
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 9},
+                            "end": {"row": 0, "column": 10},
+                            "new_text": "4",
+                        }
+                    ],
+                    "timeout_ms": 300000,
+                }
+            )
+
+        self.assertEqual(byte_result["source"], "value = 32\n")
+        self.assertEqual(position_result["source"], "value = 34\n")
+        self.assertEqual(position_result["version"], 2)
+
     def test_trace_context_patch_timeouts_reach_native_timeout_parameter(self) -> None:
         gateway = gateway_module.ArboristGateway()
         source = "def target() -> int:\n    return 1\n"

@@ -24,9 +24,11 @@ class GatewayVfsRoutes:
             raise JsonRpcError(-32602, "missing required list param: edits")
         self._validate_position_edits(edits)
         edits_json = self._encode_json_param(edits, "edits")
-        payload = self._require_core().apply_position_edits_json(
-            file_path,
-            edits_json,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().apply_position_edits_json,
+            (file_path, edits_json),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -73,11 +75,11 @@ class GatewayVfsRoutes:
                 "invalid buffer edit range: start_byte is after old_end_byte",
             )
         new_text = self._require_string(params, "new_text", allow_empty=True)
-        payload = self._require_core().apply_buffer_edit_json(
-            file_path,
-            start_byte,
-            old_end_byte,
-            new_text,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().apply_buffer_edit_json,
+            (file_path, start_byte, old_end_byte, new_text),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 

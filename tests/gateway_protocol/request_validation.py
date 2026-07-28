@@ -1842,11 +1842,21 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     self.assertEqual(response["error"]["code"], -32602)
                     self.assertIn("timeout_ms", response["error"]["message"])
 
-    def test_rejects_invalid_virtual_lifecycle_timeout_bounds(self) -> None:
+    def test_rejects_invalid_virtual_operation_timeout_bounds(self) -> None:
         cases = (
             ("arborist/did_open", {"file_path": "sample.py"}),
+            ("arborist/did_change", {"file_path": "sample.py", "edits": []}),
             ("arborist/read_virtual_file", {"file_path": "sample.py"}),
             ("arborist/list_virtual_files", {}),
+            (
+                "arborist/apply_buffer_edit",
+                {
+                    "file_path": "sample.py",
+                    "start_byte": 0,
+                    "old_end_byte": 0,
+                    "new_text": "x",
+                },
+            ),
             ("arborist/commit_virtual_file", {"file_path": "sample.py"}),
             ("arborist/discard_virtual_file", {"file_path": "sample.py"}),
             ("arborist/did_close", {"file_path": "sample.py"}),

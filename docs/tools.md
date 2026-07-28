@@ -291,6 +291,17 @@ Listing processes loaded paths in deterministic order and covers per-file
 refresh, syntax-error collection, sorting, and result validation. A failed timed
 listing rolls every refreshed entry back to the pre-request state.
 
+`apply_buffer_edit` and `did_change` accept the same optional budget. The byte
+edit path covers source loading and refresh, range and size validation, source
+splicing, incremental parsing, syntax collection, result validation, and a final
+gate before replacing the entry. `did_change` applies its sequential position
+edits under one shared deadline, checking between position resolution and each
+staged edit. Any timeout or error restores the exact pre-request entry, including
+its tree, dirty state, and version, or removes an entry loaded only for the
+failed request. A position-edit batch therefore never leaves a partial update.
+Individual source splices, parses, position scans, and syntax-tree traversals
+remain non-preemptible.
+
 `commit_virtual_file`, `discard_virtual_file`, and `did_close` accept the same
 budget. Commit retains a final gate immediately before persistence. Discard
 covers the latest disk-source read and parse plus a final gate before replacing

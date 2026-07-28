@@ -374,8 +374,10 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             )
         for lifecycle_tool_name in (
             "arborist/did_open",
+            "arborist/did_change",
             "arborist/read_virtual_file",
             "arborist/list_virtual_files",
+            "arborist/apply_buffer_edit",
             "arborist/commit_virtual_file",
             "arborist/discard_virtual_file",
             "arborist/did_close",

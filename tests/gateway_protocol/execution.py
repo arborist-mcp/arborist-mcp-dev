@@ -132,6 +132,45 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
             response, request_id=27, code=-32602, contains="start_byte"
         )
 
+    def test_passes_buffer_edit_timeout_to_core(self) -> None:
+        class StubCore:
+            def apply_buffer_edit_json(
+                self,
+                file_path: str,
+                start_byte: int,
+                old_end_byte: int,
+                new_text: str,
+                timeout_ms: int,
+            ) -> str:
+                self.args = (
+                    file_path,
+                    start_byte,
+                    old_end_byte,
+                    new_text,
+                    timeout_ms,
+                )
+                return "{}"
+
+        core = StubCore()
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "arborist/apply_buffer_edit",
+                {
+                    "file_path": "sample.py",
+                    "start_byte": 0,
+                    "old_end_byte": 0,
+                    "new_text": "x",
+                    "timeout_ms": 37,
+                },
+                request_id=47,
+            ),
+            request_id=47,
+        )
+
+        self.assertEqual(result, {})
+        self.assertEqual(core.args, ("sample.py", 0, 0, "x", 37))
+
     def test_passes_typed_optional_defaults_to_core(self) -> None:
         class StubCore:
             def get_semantic_skeleton_json(
@@ -845,6 +884,40 @@ class GatewayExecutionTests(GatewayProtocolTestCase):
         self.assertEqual(result, {})
         self.assertEqual(core.args[0], "sample.py")
         self.assertIn('"new_text": "x"', core.args[1])
+
+    def test_passes_position_edit_timeout_to_core(self) -> None:
+        class StubCore:
+            def apply_position_edits_json(
+                self, file_path: str, edits_json: str, timeout_ms: int
+            ) -> str:
+                self.args = (file_path, edits_json, timeout_ms)
+                return "{}"
+
+        core = StubCore()
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "arborist/did_change",
+                {
+                    "file_path": "sample.py",
+                    "edits": [
+                        {
+                            "start": {"row": 0, "column": 0},
+                            "end": {"row": 0, "column": 0},
+                            "new_text": "x",
+                        }
+                    ],
+                    "timeout_ms": 37,
+                },
+                request_id=48,
+            ),
+            request_id=48,
+        )
+
+        self.assertEqual(result, {})
+        self.assertEqual(core.args[0], "sample.py")
+        self.assertIn('"new_text": "x"', core.args[1])
+        self.assertEqual(core.args[2], 37)
 
     def test_rejects_non_json_serializable_patch_object_as_invalid_params(self) -> None:
         response = self.call_gateway(

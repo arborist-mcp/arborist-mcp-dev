@@ -37,11 +37,11 @@ TOOL_SPECS = (
     ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path", "timeout_ms"), "index", "symbol_index_health"),
     ToolSpec("arborist/migrate_symbol_index", "_migrate_symbol_index", ("db_path",), "index", "symbol_index_health"),
     ToolSpec("arborist/did_open", "_did_open", ("file_path", "source", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits"), "vfs", "virtual_edit"),
+    ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits", "timeout_ms"), "vfs", "virtual_edit"),
     ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist", "timeout_ms"), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/list_virtual_files", "_list_virtual_files", ("dirty_only", "timeout_ms"), "vfs", "virtual_file_status_array"),
     ToolSpec("arborist/read_virtual_file", "_read_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text"), "vfs", "virtual_edit"),
+    ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text", "timeout_ms"), "vfs", "virtual_edit"),
     ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
     ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats"),
@@ -436,7 +436,7 @@ TOOL_PARAM_SPECS = {
     "timeout_ms": ToolParamSpec(
         _schema(
             "integer",
-            "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file lifecycle operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+            "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
             minimum=1,
             maximum=MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         ),
