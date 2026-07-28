@@ -10,6 +10,8 @@ mod status;
 
 use self::state::VirtualFileEntry;
 
+pub const MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
+
 #[derive(Default)]
 pub struct VirtualFileSystem {
     entries: HashMap<String, VirtualFileEntry>,

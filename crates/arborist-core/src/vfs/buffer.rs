@@ -4,11 +4,12 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 use tree_sitter::InputEdit;
 
-use super::VirtualFileSystem;
 use super::state::{
     VirtualFileEntry, normalized_virtual_path, read_virtual_disk_source, snapshot_from_entry,
     validate_edit_range,
 };
+use super::{MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, VirtualFileSystem};
+use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
     parser_for_language, path_is_inside_workspace, point_for_offset, validate_source_length,
@@ -198,9 +199,34 @@ impl VirtualFileSystem {
     }
 
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
+        self.commit_file_with_timeout(path, None)
+    }
+
+    pub fn commit_file_with_timeout(
+        &mut self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+    ) -> Result<VirtualFileSnapshot> {
+        let deadline = CooperativeDeadline::new(
+            timeout_ms,
+            MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS,
+            "virtual file commit",
+        )?;
+        self.commit_file_with_deadline(path, &deadline)
+    }
+
+    pub(super) fn commit_file_with_deadline(
+        &mut self,
+        path: &Path,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        deadline.check("virtual path validation")?;
         let (path, normalized) = normalized_virtual_path(path)?;
+        deadline.check("virtual source load")?;
         self.ensure_loaded(&path, None)?;
+        deadline.check("virtual source refresh")?;
         let source_changed = self.refresh_if_clean(&normalized)?;
+        deadline.check("commit persistence")?;
         self.commit_loaded_file(&normalized, source_changed)
     }
 

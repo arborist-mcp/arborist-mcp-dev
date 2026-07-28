@@ -9,6 +9,7 @@ pub(super) use crate::{Position, PositionEdit, TraceDirection, trace_symbol_grap
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+mod commit_timeout;
 mod cpp_trace;
 mod edits;
 mod lifecycle;

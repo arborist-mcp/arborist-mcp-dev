@@ -143,7 +143,7 @@ pub use symbols::{
     trace_symbol_neighborhood_at_position_with_timeout, trace_symbol_neighborhood_from_index,
     trace_symbol_neighborhood_from_index_with_timeout, trace_symbol_neighborhood_with_timeout,
 };
-pub use vfs::VirtualFileSystem;
+pub use vfs::{MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, VirtualFileSystem};
 pub use workspace_edit_preview::{
     preview_workspace_position_edits, preview_workspace_position_edits_with_timeout,
 };
