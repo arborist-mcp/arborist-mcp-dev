@@ -2,7 +2,10 @@ use super::{
     ArboristCore, NeighborhoodBounds, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg,
 };
 use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
-use arborist_core::{MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, PositionEdit};
+use arborist_core::{
+    MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS,
+    MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS, PositionEdit,
+};
 use serde_json::Value;
 use std::fs;
 use std::sync::Once;
@@ -615,6 +618,91 @@ fn virtual_commit_binding_forwards_timeout_and_preserves_legacy_default() {
     .expect("legacy virtual commit result should be valid JSON");
     assert_eq!(legacy["dirty"], false);
     assert_eq!(fs::read_to_string(&file).unwrap(), "value = 3\n");
+
+    fs::remove_dir_all(workspace).unwrap();
+}
+
+#[test]
+fn virtual_discard_and_close_bindings_forward_timeouts_and_preserve_defaults() {
+    prepare_python();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "arborist-py-virtual-lifecycle-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    let file = workspace.join("sample.py");
+    fs::write(&file, "value = 1\n").unwrap();
+    let file_path = file.to_string_lossy();
+    let core = ArboristCore::new();
+
+    let discard_zero = core
+        .discard_virtual_file_json_impl(&file_path, Some(0))
+        .expect_err("zero discard timeout should reach core validation");
+    assert!(
+        discard_zero
+            .to_string()
+            .contains("invalid virtual file discard timeout_ms: value must be greater than zero")
+    );
+    let close_zero = core
+        .close_virtual_file_json_impl(&file_path, true, Some(0))
+        .expect_err("zero close timeout should reach core validation");
+    assert!(
+        close_zero
+            .to_string()
+            .contains("invalid virtual file close timeout_ms: value must be greater than zero")
+    );
+
+    core.open_virtual_file_json_impl(&file_path, Some("value = 2\n".to_string()))
+        .expect("virtual file should open with a dirty source");
+    let discarded: Value = serde_json::from_str(
+        &core
+            .discard_virtual_file_json_impl(&file_path, Some(MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS))
+            .expect("timed virtual discard should succeed"),
+    )
+    .expect("timed virtual discard result should be valid JSON");
+    assert_eq!(discarded["dirty"], false);
+    assert_eq!(discarded["source"], "value = 1\n");
+    assert_eq!(fs::read_to_string(&file).unwrap(), "value = 1\n");
+
+    core.open_virtual_file_json_impl(&file_path, Some("value = 3\n".to_string()))
+        .expect("virtual file should reopen with a dirty source");
+    let persisted: Value = serde_json::from_str(
+        &core
+            .close_virtual_file_json_impl(
+                &file_path,
+                true,
+                Some(MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS),
+            )
+            .expect("timed persisted close should succeed"),
+    )
+    .expect("timed persisted close result should be valid JSON");
+    assert_eq!(persisted["dirty"], false);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "value = 3\n");
+
+    core.open_virtual_file_json_impl(&file_path, Some("value = 4\n".to_string()))
+        .expect("virtual file should reopen for legacy close");
+    let legacy: Value = serde_json::from_str(
+        &core
+            .close_virtual_file_json_impl(&file_path, false, None)
+            .expect("close without a timeout should remain supported"),
+    )
+    .expect("legacy close result should be valid JSON");
+    assert_eq!(legacy["dirty"], false);
+    assert_eq!(legacy["source"], "value = 3\n");
+    assert_eq!(fs::read_to_string(&file).unwrap(), "value = 3\n");
+
+    let statuses: Value = serde_json::from_str(
+        &core
+            .list_virtual_files_json_impl(false)
+            .expect("virtual file status list should serialize"),
+    )
+    .expect("virtual file status list should be valid JSON");
+    assert_eq!(statuses, Value::Array(Vec::new()));
 
     fs::remove_dir_all(workspace).unwrap();
 }

@@ -42,13 +42,23 @@ impl ArboristCore {
         self.commit_virtual_file_json_impl(file_path, timeout_ms)
     }
 
-    fn discard_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
-        self.discard_virtual_file_json_impl(file_path)
+    #[pyo3(signature = (file_path, timeout_ms=None))]
+    fn discard_virtual_file_json(
+        &self,
+        file_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.discard_virtual_file_json_impl(file_path, timeout_ms)
     }
 
-    #[pyo3(signature = (file_path, persist=false))]
-    fn close_virtual_file_json(&self, file_path: &str, persist: bool) -> PyResult<String> {
-        self.close_virtual_file_json_impl(file_path, persist)
+    #[pyo3(signature = (file_path, persist=false, timeout_ms=None))]
+    fn close_virtual_file_json(
+        &self,
+        file_path: &str,
+        persist: bool,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.close_virtual_file_json_impl(file_path, persist, timeout_ms)
     }
 }
 
@@ -131,11 +141,15 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
-    pub(super) fn discard_virtual_file_json_impl(&self, file_path: &str) -> PyResult<String> {
+    pub(super) fn discard_virtual_file_json_impl(
+        &self,
+        file_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow_mut()
-            .discard_file(Path::new(file_path))
+            .discard_file_with_timeout(Path::new(file_path), timeout_ms)
             .map_err(to_py_error)?;
 
         to_json_result(&result)
@@ -145,11 +159,12 @@ impl ArboristCore {
         &self,
         file_path: &str,
         persist: bool,
+        timeout_ms: Option<u64>,
     ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow_mut()
-            .close_file(Path::new(file_path), persist)
+            .close_file_with_timeout(Path::new(file_path), persist, timeout_ms)
             .map_err(to_py_error)?;
 
         to_json_result(&result)
