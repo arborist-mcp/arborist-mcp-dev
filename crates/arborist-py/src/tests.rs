@@ -2,7 +2,7 @@ use super::{
     ArboristCore, NeighborhoodBounds, PatchAstNodeResult, TraceSymbolGraphResult, parse_json_arg,
 };
 use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
-use arborist_core::{MAX_PATCH_TIMEOUT_MS, PositionEdit};
+use arborist_core::{MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, PositionEdit};
 use serde_json::Value;
 use std::fs;
 use std::sync::Once;
@@ -566,6 +566,57 @@ fn virtual_file_and_source_preview_dispatch_preserve_results() {
     assert_eq!(preview["changed"], true);
     assert_eq!(preview["patch"]["applied"], true);
     assert_eq!(preview["patch"]["updated_source"], expected_virtual_source);
+}
+
+#[test]
+fn virtual_commit_binding_forwards_timeout_and_preserves_legacy_default() {
+    prepare_python();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "arborist-py-virtual-commit-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    let file = workspace.join("sample.py");
+    fs::write(&file, "value = 1\n").unwrap();
+    let file_path = file.to_string_lossy();
+    let core = ArboristCore::new();
+
+    let zero = core
+        .commit_virtual_file_json_impl(&file_path, Some(0))
+        .expect_err("zero timeout should reach core validation");
+    assert!(
+        zero.to_string()
+            .contains("invalid virtual file commit timeout_ms: value must be greater than zero")
+    );
+
+    core.open_virtual_file_json_impl(&file_path, Some("value = 2\n".to_string()))
+        .expect("virtual file should open with a dirty source");
+    let timed: Value = serde_json::from_str(
+        &core
+            .commit_virtual_file_json_impl(&file_path, Some(MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS))
+            .expect("timed virtual commit should succeed"),
+    )
+    .expect("timed virtual commit result should be valid JSON");
+    assert_eq!(timed["dirty"], false);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "value = 2\n");
+
+    core.open_virtual_file_json_impl(&file_path, Some("value = 3\n".to_string()))
+        .expect("virtual file should reopen with another dirty source");
+    let legacy: Value = serde_json::from_str(
+        &core
+            .commit_virtual_file_json_impl(&file_path, None)
+            .expect("commit without a timeout should remain supported"),
+    )
+    .expect("legacy virtual commit result should be valid JSON");
+    assert_eq!(legacy["dirty"], false);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "value = 3\n");
+
+    fs::remove_dir_all(workspace).unwrap();
 }
 
 #[test]

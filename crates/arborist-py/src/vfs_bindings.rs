@@ -33,8 +33,13 @@ impl ArboristCore {
         self.apply_position_edits_json_impl(file_path, edits_json)
     }
 
-    fn commit_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
-        self.commit_virtual_file_json_impl(file_path)
+    #[pyo3(signature = (file_path, timeout_ms=None))]
+    fn commit_virtual_file_json(
+        &self,
+        file_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.commit_virtual_file_json_impl(file_path, timeout_ms)
     }
 
     fn discard_virtual_file_json(&self, file_path: &str) -> PyResult<String> {
@@ -112,11 +117,15 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
-    pub(super) fn commit_virtual_file_json_impl(&self, file_path: &str) -> PyResult<String> {
+    pub(super) fn commit_virtual_file_json_impl(
+        &self,
+        file_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow_mut()
-            .commit_file(Path::new(file_path))
+            .commit_file_with_timeout(Path::new(file_path), timeout_ms)
             .map_err(to_py_error)?;
 
         to_json_result(&result)
