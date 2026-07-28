@@ -17,6 +17,7 @@ mod lifecycle_timeout;
 mod misc;
 mod patch;
 mod patch_timeout;
+mod read_timeout;
 
 pub(crate) fn temp_file(contents: &str) -> std::path::PathBuf {
     let suffix = format!(

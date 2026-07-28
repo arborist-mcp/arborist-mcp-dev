@@ -23,6 +23,16 @@ use crate::patching::{MAX_PATCH_REPLACEMENT_BYTES, collect_syntax_errors, splice
 use crate::symbols::refresh_symbol_index_for_file;
 use crate::workspace_scan::should_skip_index_path;
 
+pub(super) fn check_optional_deadline(
+    deadline: Option<&dyn DeadlineCheck>,
+    phase: &str,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
+    Ok(())
+}
+
 impl VirtualFileSystem {
     pub fn new() -> Self {
         Self::default()
@@ -30,18 +40,96 @@ impl VirtualFileSystem {
 
     pub fn open_file(&mut self, path: &Path, source: Option<&str>) -> Result<VirtualFileSnapshot> {
         let (path, normalized) = normalized_virtual_path(path)?;
-        self.ensure_loaded(&path, source)?;
-        self.refresh_if_clean(&normalized)?;
+        self.open_file_inner(&path, &normalized, source, None)
+    }
+
+    pub fn open_file_with_timeout(
+        &mut self,
+        path: &Path,
+        source: Option<&str>,
+        timeout_ms: Option<u64>,
+    ) -> Result<VirtualFileSnapshot> {
+        let Some(timeout_ms) = timeout_ms else {
+            return self.open_file(path, source);
+        };
+        let deadline = CooperativeDeadline::new(
+            Some(timeout_ms),
+            MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS,
+            "virtual file open",
+        )?;
+        self.open_file_with_deadline(path, source, &deadline)
+    }
+
+    pub(super) fn open_file_with_deadline(
+        &mut self,
+        path: &Path,
+        source: Option<&str>,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        deadline.check("virtual path validation")?;
+        let (path, normalized) = normalized_virtual_path(path)?;
+        let previous = self.entries.get(&normalized).cloned();
+        let result = self.open_file_inner(&path, &normalized, source, Some(deadline));
+        if result.is_err() {
+            match previous {
+                Some(previous) => {
+                    self.entries.insert(normalized, previous);
+                }
+                None => {
+                    self.entries.remove(&normalized);
+                }
+            }
+        }
+        result
+    }
+
+    fn open_file_inner(
+        &mut self,
+        path: &Path,
+        normalized: &str,
+        source: Option<&str>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<VirtualFileSnapshot> {
+        check_optional_deadline(deadline, "virtual source load")?;
+        self.ensure_loaded_inner(path, source, deadline)?;
+        check_optional_deadline(deadline, "virtual source refresh")?;
+        self.refresh_if_clean_inner(normalized, deadline)?;
 
         let entry = self
             .entries
-            .get(&normalized)
+            .get(normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-        snapshot_from_entry(&normalized, entry)
+        let snapshot = snapshot_from_entry(normalized, entry)?;
+        check_optional_deadline(deadline, "virtual file result validation")?;
+        Ok(snapshot)
     }
 
     pub fn read_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
         self.open_file(path, None)
+    }
+
+    pub fn read_file_with_timeout(
+        &mut self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+    ) -> Result<VirtualFileSnapshot> {
+        let Some(timeout_ms) = timeout_ms else {
+            return self.read_file(path);
+        };
+        let deadline = CooperativeDeadline::new(
+            Some(timeout_ms),
+            MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS,
+            "virtual file read",
+        )?;
+        self.read_file_with_deadline(path, &deadline)
+    }
+
+    pub(super) fn read_file_with_deadline(
+        &mut self,
+        path: &Path,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        self.open_file_with_deadline(path, None, deadline)
     }
 
     pub fn apply_edit(
@@ -394,12 +482,24 @@ impl VirtualFileSystem {
         path: &Path,
         source_override: Option<&str>,
     ) -> Result<()> {
+        self.ensure_loaded_inner(path, source_override, None)
+    }
+
+    fn ensure_loaded_inner(
+        &mut self,
+        path: &Path,
+        source_override: Option<&str>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<()> {
         let (path, normalized) = normalized_virtual_path(path)?;
         match self.entries.get_mut(&normalized) {
             Some(entry) => {
                 if let Some(source_override) = source_override {
+                    check_optional_deadline(deadline, "virtual disk source read")?;
                     let disk_source = read_virtual_disk_source(&path)?;
+                    check_optional_deadline(deadline, "virtual source parse")?;
                     let document = parse_document(&path, source_override)?;
+                    check_optional_deadline(deadline, "virtual source replacement")?;
                     entry.path = path;
                     entry.language_id = document.language_id;
                     entry.disk_source = disk_source;
@@ -410,10 +510,13 @@ impl VirtualFileSystem {
                 }
             }
             None => {
+                check_optional_deadline(deadline, "virtual disk source read")?;
                 let disk_source = read_virtual_disk_source(&path)?;
                 let initial_source = source_override.unwrap_or(&disk_source).to_string();
+                check_optional_deadline(deadline, "virtual source parse")?;
                 let document = parse_document(&path, &initial_source)?;
                 let dirty = initial_source != disk_source;
+                check_optional_deadline(deadline, "virtual source insertion")?;
                 self.entries.insert(
                     normalized,
                     VirtualFileEntry {
@@ -433,6 +536,22 @@ impl VirtualFileSystem {
     }
 
     pub(super) fn refresh_if_clean(&mut self, normalized: &str) -> Result<bool> {
+        self.refresh_if_clean_inner(normalized, None)
+    }
+
+    pub(super) fn refresh_if_clean_with_deadline(
+        &mut self,
+        normalized: &str,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<bool> {
+        self.refresh_if_clean_inner(normalized, Some(deadline))
+    }
+
+    fn refresh_if_clean_inner(
+        &mut self,
+        normalized: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<bool> {
         let Some(entry) = self.entries.get_mut(normalized) else {
             return Ok(false);
         };
@@ -440,12 +559,16 @@ impl VirtualFileSystem {
             return Ok(false);
         }
 
+        check_optional_deadline(deadline, "virtual disk source read")?;
         let disk_source = read_virtual_disk_source(&entry.path)?;
+        check_optional_deadline(deadline, "virtual disk source comparison")?;
         if disk_source == entry.disk_source {
             return Ok(false);
         }
 
+        check_optional_deadline(deadline, "virtual source parse")?;
         let document = parse_document(&entry.path, &disk_source)?;
+        check_optional_deadline(deadline, "virtual source replacement")?;
         entry.language_id = document.language_id;
         entry.disk_source = disk_source.clone();
         entry.source = disk_source;
