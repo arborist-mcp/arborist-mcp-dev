@@ -151,20 +151,24 @@ later timeout check can turn a persisted change into a timeout response;
 registered-index synchronization completes or reports its own error instead.
 Blocking source reads and parses remain non-preemptible.
 
-`commit_virtual_file`, `discard_virtual_file`, and `did_close` accept the same
-optional `timeout_ms` cap. Commit covers virtual path validation, loading,
-clean-buffer refresh, and a final gate immediately before persistence. Discard
-covers path validation, loading, the current disk-source read and parse, result
-validation, and a final gate before replacing buffered state. A pre-mutation
-discard failure restores the exact prior entry, including its dirty source and
-version, or removes an entry loaded only for that failed request.
+`did_open`, `read_virtual_file`, and `list_virtual_files` accept the same
+optional `timeout_ms` cap. Open and read cover path validation, source loading,
+disk reads, parsing, clean-buffer refresh, response construction, and result
+validation. A failure restores the exact prior virtual entry, or removes an
+entry loaded only for the failed request. Listing refreshes loaded files in
+normalized path order, checks the budget between files and result items, and
+rolls all refreshed entries back when the request fails.
 
-`did_close` follows the commit path when `persist=true` and the discard path
-otherwise. A timeout leaves the virtual entry open. Once persistence or buffer
-replacement starts, no later deadline check can return a timeout after state may
-have changed. A post-persistence index-sync error leaves the clean entry open so
-a later commit or close can retry synchronization. A single blocking read,
-parse, write, or index operation remains non-preemptible.
+`commit_virtual_file`, `discard_virtual_file`, and `did_close` use the same cap.
+Commit retains a final gate immediately before persistence. Discard covers the
+current disk-source read and parse, result validation, and a final gate before
+replacing buffered state. `did_close` follows the commit path when `persist=true`
+and the discard path otherwise; a timeout leaves the entry open. Once
+persistence or buffer replacement starts, no later deadline check can return a
+timeout after state may have changed. A post-persistence index-sync error leaves
+the clean entry open so a later commit or close can retry synchronization. A
+single blocking read, parse, tree traversal, write, or index operation remains
+non-preemptible.
 
 Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
 budget capped at `300000`. The budget is cooperative: the core checks it during

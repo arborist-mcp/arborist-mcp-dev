@@ -404,6 +404,23 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "check": lambda result: self.assertEqual(result, {}),
             },
             {
+                "core_method": "open_virtual_file_json",
+                "rpc_method": "arborist/did_open",
+                "request_id": 132,
+                "params": {
+                    "file_path": "sample.py",
+                    "source": "def helper() -> int:\n    return 1\n",
+                    "timeout_ms": 37,
+                },
+                "payload": {},
+                "expected_call": (
+                    "sample.py",
+                    "def helper() -> int:\n    return 1\n",
+                    37,
+                ),
+                "check": lambda result: self.assertEqual(result, {}),
+            },
+            {
                 "core_method": "close_virtual_file_json",
                 "rpc_method": "arborist/did_close",
                 "request_id": 110,
@@ -440,6 +457,18 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                 "check": lambda result: self.assertEqual(result, []),
             },
             {
+                "core_method": "list_virtual_files_json",
+                "rpc_method": "arborist/list_virtual_files",
+                "request_id": 133,
+                "params": {
+                    "dirty_only": True,
+                    "timeout_ms": 37,
+                },
+                "payload": [],
+                "expected_call": (True, 37),
+                "check": lambda result: self.assertEqual(result, []),
+            },
+            {
                 "core_method": "read_virtual_file_json",
                 "rpc_method": "arborist/read_virtual_file",
                 "request_id": 112,
@@ -453,6 +482,26 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
                     "dirty": True,
                 },
                 "expected_call": ("sample.py",),
+                "check": lambda result: (
+                    self.assertEqual(result["file_path"], "sample.py"),
+                    self.assertTrue(result["dirty"]),
+                ),
+            },
+            {
+                "core_method": "read_virtual_file_json",
+                "rpc_method": "arborist/read_virtual_file",
+                "request_id": 134,
+                "params": {
+                    "file_path": "sample.py",
+                    "timeout_ms": 37,
+                },
+                "payload": {
+                    "file_path": "sample.py",
+                    "current_source": "def helper() -> int:\n    return 1\n",
+                    "disk_source": None,
+                    "dirty": True,
+                },
+                "expected_call": ("sample.py", 37),
                 "check": lambda result: (
                     self.assertEqual(result["file_path"], "sample.py"),
                     self.assertTrue(result["dirty"]),

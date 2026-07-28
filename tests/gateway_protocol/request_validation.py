@@ -36,6 +36,7 @@ COVERED_TOOLS = (
     "arborist/commit_virtual_file",
     "arborist/did_change",
     "arborist/did_close",
+    "arborist/did_open",
     "arborist/discard_virtual_file",
     "arborist/get_semantic_skeleton",
     "arborist/list_symbol_indexes",
@@ -45,6 +46,7 @@ COVERED_TOOLS = (
     "arborist/list_virtual_files",
     "arborist/patch_ast_node_at_position",
     "arborist/patch_virtual_ast_node_at_position",
+    "arborist/read_virtual_file",
     "arborist/read_symbol_at_position",
     "arborist/read_symbol_context",
     "arborist/read_symbol_context_at_position",
@@ -1841,20 +1843,21 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     self.assertIn("timeout_ms", response["error"]["message"])
 
     def test_rejects_invalid_virtual_lifecycle_timeout_bounds(self) -> None:
-        for method in (
-            "arborist/commit_virtual_file",
-            "arborist/discard_virtual_file",
-            "arborist/did_close",
-        ):
+        cases = (
+            ("arborist/did_open", {"file_path": "sample.py"}),
+            ("arborist/read_virtual_file", {"file_path": "sample.py"}),
+            ("arborist/list_virtual_files", {}),
+            ("arborist/commit_virtual_file", {"file_path": "sample.py"}),
+            ("arborist/discard_virtual_file", {"file_path": "sample.py"}),
+            ("arborist/did_close", {"file_path": "sample.py"}),
+        )
+        for method, base_params in cases:
             for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
                 with self.subTest(method=method, timeout_ms=timeout_ms):
                     response = self.make_gateway().handle_request(
                         self.request(
                             method,
-                            {
-                                "file_path": "sample.py",
-                                "timeout_ms": timeout_ms,
-                            },
+                            {**base_params, "timeout_ms": timeout_ms},
                             request_id=89 + timeout_ms,
                         )
                     )

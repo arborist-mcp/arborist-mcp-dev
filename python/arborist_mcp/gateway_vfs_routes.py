@@ -9,7 +9,12 @@ class GatewayVfsRoutes:
     def _did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
         source = self._optional_string(params, "source", allow_empty=True)
-        payload = self._require_core().open_virtual_file_json(file_path, source)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().open_virtual_file_json,
+            (file_path, source),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _did_change(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -40,12 +45,22 @@ class GatewayVfsRoutes:
 
     def _list_virtual_files(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         dirty_only = self._optional_bool(params, "dirty_only", default=False)
-        payload = self._require_core().list_virtual_files_json(dirty_only)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().list_virtual_files_json,
+            (dirty_only,),
+            timeout_ms,
+        )
         return self._decode_core_object_array(payload)
 
     def _read_virtual_file(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")
-        payload = self._require_core().read_virtual_file_json(file_path)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().read_virtual_file_json,
+            (file_path,),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _apply_buffer_edit(self, params: dict[str, Any]) -> dict[str, Any]:

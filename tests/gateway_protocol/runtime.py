@@ -373,6 +373,9 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
                 gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
             )
         for lifecycle_tool_name in (
+            "arborist/did_open",
+            "arborist/read_virtual_file",
+            "arborist/list_virtual_files",
             "arborist/commit_virtual_file",
             "arborist/discard_virtual_file",
             "arborist/did_close",

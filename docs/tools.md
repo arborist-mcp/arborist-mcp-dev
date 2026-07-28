@@ -274,27 +274,33 @@ workspace directories (such as `.venv` or `node_modules`). Invalid overlay paths
 are rejected rather than silently omitted. VFS buffers in those locations remain
 excluded from workspace analysis.
 
-Use the VFS methods (`did_open`, `did_change`, `patch_virtual_ast_node`,
+Use the VFS methods (`did_open`, `did_change`, `did_close`,
+`list_virtual_files`, `read_virtual_file`, `patch_virtual_ast_node`,
 `patch_virtual_ast_node_at_position`, `commit_virtual_file`, and
 `discard_virtual_file`) when the caller wants a longer-lived editor session.
 Snapshot and list-status outputs have precise MCP schemas for file path, source,
 dirty state, version, and syntax error counts.
 
-`commit_virtual_file`, `discard_virtual_file`, and `did_close` accept an
-optional cooperative `timeout_ms` budget capped at `300000` milliseconds.
-Commit covers path validation, virtual-file loading, clean-buffer refresh, and
-a final gate immediately before persistence. Discard covers path validation,
-loading, the latest disk-source read and parse, result validation, and a final
-gate before replacing the virtual entry. A pre-mutation discard failure restores
-the exact prior entry, or removes an entry loaded only for the failed request.
+`did_open`, `read_virtual_file`, and `list_virtual_files` accept an optional
+cooperative `timeout_ms` budget capped at `300000` milliseconds. Open and read
+cover path validation, source loading, disk reads, parsing, clean-buffer refresh,
+syntax-result construction, and final result validation. If they fail or time
+out, Arborist restores the exact prior entry, including its source, tree, dirty
+state, and version, or removes an entry loaded only for that failed request.
+Listing processes loaded paths in deterministic order and covers per-file
+refresh, syntax-error collection, sorting, and result validation. A failed timed
+listing rolls every refreshed entry back to the pre-request state.
 
-`did_close` uses the commit budget when `persist=true` and the discard budget
-otherwise. A timeout leaves the virtual entry open. Once an atomic write or
+`commit_virtual_file`, `discard_virtual_file`, and `did_close` accept the same
+budget. Commit retains a final gate immediately before persistence. Discard
+covers the latest disk-source read and parse plus a final gate before replacing
+the virtual entry. `did_close` uses the commit path when `persist=true` and the
+discard path otherwise; a timeout leaves the entry open. Once an atomic write or
 buffer replacement begins, Arborist performs no later deadline check. A
 registered-index synchronization failure after persistence also leaves the clean
 entry open with a pending retry instead of losing synchronization state.
-Individual blocking reads, parses, writes, and index operations remain
-non-preemptible.
+Individual blocking reads, parses, tree traversals, writes, and index operations
+remain non-preemptible.
 
 ## Patch And Preview Tools
 
