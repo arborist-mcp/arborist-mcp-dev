@@ -13,6 +13,7 @@ mod commit_timeout;
 mod cpp_trace;
 mod edits;
 mod lifecycle;
+mod lifecycle_timeout;
 mod misc;
 mod patch;
 mod patch_timeout;

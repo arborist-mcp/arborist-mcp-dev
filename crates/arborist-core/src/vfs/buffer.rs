@@ -8,7 +8,9 @@ use super::state::{
     VirtualFileEntry, normalized_virtual_path, read_virtual_disk_source, snapshot_from_entry,
     validate_edit_range,
 };
-use super::{MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, VirtualFileSystem};
+use super::{
+    MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS, VirtualFileSystem,
+};
 use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 use crate::language::{
     normalize_absolute_path, normalize_path, offset_for_position, parse_document,
@@ -277,34 +279,111 @@ impl VirtualFileSystem {
     }
 
     pub fn discard_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
+        self.discard_file_with_timeout(path, None)
+    }
+
+    pub fn discard_file_with_timeout(
+        &mut self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+    ) -> Result<VirtualFileSnapshot> {
+        let deadline = CooperativeDeadline::new(
+            timeout_ms,
+            MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS,
+            "virtual file discard",
+        )?;
+        self.discard_file_with_deadline(path, &deadline)
+    }
+
+    pub(super) fn discard_file_with_deadline(
+        &mut self,
+        path: &Path,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        deadline.check("virtual path validation")?;
         let (path, normalized) = normalized_virtual_path(path)?;
-        self.ensure_loaded(&path, None)?;
-
-        let entry = self
-            .entries
-            .get_mut(&normalized)
-            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-
-        let disk_source = read_virtual_disk_source(&entry.path)?;
-        if entry.source == disk_source && entry.disk_source == disk_source {
-            return snapshot_from_entry(&normalized, entry);
+        let previous = self.entries.get(&normalized).cloned();
+        let result = self.discard_file_inner(&path, &normalized, deadline);
+        if result.is_err() {
+            match previous {
+                Some(previous) => {
+                    self.entries.insert(normalized, previous);
+                }
+                None => {
+                    self.entries.remove(&normalized);
+                }
+            }
         }
-        let document = parse_document(&entry.path, &disk_source)?;
-        entry.language_id = document.language_id;
-        entry.disk_source = disk_source.clone();
-        entry.source = disk_source;
-        entry.tree = document.tree;
-        entry.version += 1;
-        entry.dirty = false;
+        result
+    }
 
-        snapshot_from_entry(&normalized, entry)
+    fn discard_file_inner(
+        &mut self,
+        path: &Path,
+        normalized: &str,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        deadline.check("virtual source load")?;
+        self.ensure_loaded(path, None)?;
+        deadline.check("disk source read")?;
+
+        let current = self
+            .entries
+            .get(normalized)
+            .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
+            .clone();
+        let disk_source = read_virtual_disk_source(&current.path)?;
+        deadline.check("disk source comparison")?;
+        if current.source == disk_source && current.disk_source == disk_source {
+            let snapshot = snapshot_from_entry(normalized, &current)?;
+            deadline.check("discard result validation")?;
+            return Ok(snapshot);
+        }
+
+        deadline.check("disk source parse")?;
+        let document = parse_document(&current.path, &disk_source)?;
+        let mut updated = current;
+        updated.language_id = document.language_id;
+        updated.disk_source = disk_source.clone();
+        updated.source = disk_source;
+        updated.tree = document.tree;
+        updated.version += 1;
+        updated.dirty = false;
+        let snapshot = snapshot_from_entry(normalized, &updated)?;
+        deadline.check("virtual source replacement")?;
+        self.entries.insert(normalized.to_string(), updated);
+        Ok(snapshot)
     }
 
     pub fn close_file(&mut self, path: &Path, persist: bool) -> Result<VirtualFileSnapshot> {
+        self.close_file_with_timeout(path, persist, None)
+    }
+
+    pub fn close_file_with_timeout(
+        &mut self,
+        path: &Path,
+        persist: bool,
+        timeout_ms: Option<u64>,
+    ) -> Result<VirtualFileSnapshot> {
+        let deadline = CooperativeDeadline::new(
+            timeout_ms,
+            MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS,
+            "virtual file close",
+        )?;
+        self.close_file_with_deadline(path, persist, &deadline)
+    }
+
+    pub(super) fn close_file_with_deadline(
+        &mut self,
+        path: &Path,
+        persist: bool,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<VirtualFileSnapshot> {
+        deadline.check("virtual close dispatch")?;
         let snapshot = if persist {
-            self.commit_file(path)?
+            self.commit_file_with_deadline(path, deadline)?
         } else {
-            self.discard_file(path)?
+            self.discard_file_with_deadline(path, deadline)?
         };
         self.entries.remove(&snapshot.file);
         Ok(snapshot)
