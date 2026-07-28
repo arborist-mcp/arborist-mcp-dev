@@ -10,8 +10,8 @@ use crate::language::{
 use crate::model::{PatchAstNodeResult, PatchPreviewResult, Position};
 
 use super::{
-    MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_PATCH_TIMEOUT_MS, PatchBuildInput, build_patch_result,
-    build_patch_result_with_deadline, prepare_patch_replacement,
+    MAX_PATCH_PREVIEW_TIMEOUT_MS, PatchBuildInput, build_patch_result,
+    build_patch_result_with_deadline, patch_deadline, prepare_patch_replacement,
     prepare_patch_replacement_with_deadline, semantic_target_at_position_with_deadline,
     splice_source, validate_bypass_reason, validate_patch_replacement,
 };
@@ -513,10 +513,6 @@ fn unified_diff_with_deadline(
         diff.push('\n');
     }
     Ok(diff)
-}
-
-fn patch_deadline(timeout_ms: Option<u64>) -> Result<CooperativeDeadline> {
-    CooperativeDeadline::new(timeout_ms, MAX_PATCH_TIMEOUT_MS, "patch")
 }
 
 fn patch_preview_deadline(timeout_ms: Option<u64>) -> Result<CooperativeDeadline> {

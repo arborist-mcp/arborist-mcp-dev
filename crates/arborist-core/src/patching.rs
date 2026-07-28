@@ -59,6 +59,12 @@ pub const MAX_PATCH_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_PATCH_PREVIEW_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_BYPASS_REASON_BYTES: usize = 4 * 1024;
 
+pub(crate) fn patch_deadline(
+    timeout_ms: Option<u64>,
+) -> Result<crate::deadline::CooperativeDeadline> {
+    crate::deadline::CooperativeDeadline::new(timeout_ms, MAX_PATCH_TIMEOUT_MS, "patch")
+}
+
 pub(crate) fn validate_bypass_reason(bypass_reason: Option<&str>) -> Result<()> {
     if bypass_reason.is_some_and(|reason| reason.trim().is_empty()) {
         bail!("invalid bypass_reason: reason must not be blank");

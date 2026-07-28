@@ -14,6 +14,7 @@ mod edits;
 mod lifecycle;
 mod misc;
 mod patch;
+mod patch_timeout;
 
 pub(crate) fn temp_file(contents: &str) -> std::path::PathBuf {
     let suffix = format!(
