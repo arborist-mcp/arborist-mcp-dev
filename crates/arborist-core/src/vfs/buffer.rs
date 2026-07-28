@@ -48,19 +48,31 @@ impl VirtualFileSystem {
         old_end_byte: usize,
         new_text: &str,
     ) -> Result<VirtualEditResult> {
+        let (path, normalized) = normalized_virtual_path(path)?;
+        self.ensure_loaded(&path, None)?;
+        self.refresh_if_clean(&normalized)?;
+
+        self.apply_loaded_edit(&path, &normalized, start_byte, old_end_byte, new_text)
+    }
+
+    pub(super) fn apply_loaded_edit(
+        &mut self,
+        path: &Path,
+        normalized: &str,
+        start_byte: usize,
+        old_end_byte: usize,
+        new_text: &str,
+    ) -> Result<VirtualEditResult> {
         if new_text.len() > MAX_PATCH_REPLACEMENT_BYTES {
             return Err(anyhow!(
                 "invalid new_text: edit exceeds max bytes ({})",
                 MAX_PATCH_REPLACEMENT_BYTES
             ));
         }
-        let (path, normalized) = normalized_virtual_path(path)?;
-        self.ensure_loaded(&path, None)?;
-        self.refresh_if_clean(&normalized)?;
 
         let entry = self
             .entries
-            .get_mut(&normalized)
+            .get_mut(normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
         validate_edit_range(&entry.source, start_byte, old_end_byte)?;
@@ -70,7 +82,7 @@ impl VirtualFileSystem {
             .checked_sub(old_end_byte - start_byte)
             .and_then(|length| length.checked_add(new_text.len()))
             .ok_or_else(|| anyhow!("updated source size overflowed"))?;
-        validate_source_length(&path, result_len)?;
+        validate_source_length(path, result_len)?;
         let updated_source = splice_source(&entry.source, start_byte..old_end_byte, new_text);
 
         let edit = InputEdit {
@@ -82,10 +94,11 @@ impl VirtualFileSystem {
             new_end_position: point_for_offset(&updated_source, start_byte + new_text.len())?,
         };
 
-        entry.tree.edit(&edit);
+        let mut edited_tree = entry.tree.clone();
+        edited_tree.edit(&edit);
         let mut parser = parser_for_language(entry.language_id)?;
         let new_tree = parser
-            .parse(&updated_source, Some(&entry.tree))
+            .parse(&updated_source, Some(&edited_tree))
             .ok_or_else(|| anyhow!("incremental parse failed for {}", entry.path.display()))?;
 
         let syntax_errors = collect_syntax_errors(new_tree.root_node(), &updated_source);
@@ -95,7 +108,7 @@ impl VirtualFileSystem {
         entry.dirty = entry.source != entry.disk_source;
 
         let result = VirtualEditResult {
-            file: normalized,
+            file: normalized.to_string(),
             source: updated_source,
             dirty: entry.dirty,
             version: entry.version,
@@ -187,12 +200,19 @@ impl VirtualFileSystem {
     pub fn commit_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
         let (path, normalized) = normalized_virtual_path(path)?;
         self.ensure_loaded(&path, None)?;
-        let mut source_changed = self.refresh_if_clean(&normalized)?;
+        let source_changed = self.refresh_if_clean(&normalized)?;
+        self.commit_loaded_file(&normalized, source_changed)
+    }
 
+    pub(super) fn commit_loaded_file(
+        &mut self,
+        normalized: &str,
+        mut source_changed: bool,
+    ) -> Result<VirtualFileSnapshot> {
         let committed_path = {
             let entry = self
                 .entries
-                .get_mut(&normalized)
+                .get_mut(normalized)
                 .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
 
             if entry.dirty {
@@ -208,26 +228,26 @@ impl VirtualFileSystem {
 
         let index_sync_pending = self
             .entries
-            .get(&normalized)
+            .get(normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
             .index_sync_pending;
         if source_changed || index_sync_pending {
             self.entries
-                .get_mut(&normalized)
+                .get_mut(normalized)
                 .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
                 .index_sync_pending = true;
             self.sync_registered_indexes(&committed_path)?;
             self.entries
-                .get_mut(&normalized)
+                .get_mut(normalized)
                 .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?
                 .index_sync_pending = false;
         }
 
         let entry = self
             .entries
-            .get(&normalized)
+            .get(normalized)
             .ok_or_else(|| anyhow!("virtual file not loaded: {normalized}"))?;
-        snapshot_from_entry(&normalized, entry)
+        snapshot_from_entry(normalized, entry)
     }
 
     pub fn discard_file(&mut self, path: &Path) -> Result<VirtualFileSnapshot> {
