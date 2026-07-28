@@ -12,6 +12,7 @@ use self::state::VirtualFileEntry;
 
 pub const MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS: u64 = MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS;
+pub const MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS: u64 = MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS;
 
 #[derive(Default)]
 pub struct VirtualFileSystem {
