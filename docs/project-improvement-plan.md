@@ -82,6 +82,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split PyO3 public bindings by VFS, index, patch, validation, source-query,
   and symbol-query domains, and add a native registration contract test for all
   gateway-referenced core methods.
+- [x] Split PyO3 patch-validation bindings into focused `trace`, `graph`,
+  `neighborhood`, and `discovery` modules while retaining a registration-only
+  `patch_validation.rs` facade and the existing semantic/position method surface.
 
 ### P2: Core Architecture Improvements
 
