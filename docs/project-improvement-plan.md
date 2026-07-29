@@ -544,6 +544,10 @@ completed item can land in its own commit unless two changes are inseparable.
   understood.
 - [x] Add cross-platform smoke coverage for repo-root gateway startup and
   package-installed gateway startup.
+- [x] Reuse prepared live and persisted symbol graphs in the high-cardinality
+  C++ auto-constructor receiver regression, preserving every expected edge
+  assertion while reducing the cached exact-test runtime from roughly 356
+  seconds to 14 seconds locally.
 - [x] Group indexed `std::expected` tuple access regression tests behind a
   dedicated module boundary for clearer future category-level splits.
 - [x] Group direct indexed tuple access regression tests behind a dedicated
