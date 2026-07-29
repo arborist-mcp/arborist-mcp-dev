@@ -602,6 +602,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway initialization, MCP capability, tool-schema, and resource
   catalog contract tests into a dedicated runtime catalog mixin while
   preserving the complete runtime suite.
+- [x] Split gateway tools-call, batch, core-payload, and tree-query regressions
+  into dedicated runtime mixins, leaving the suite metadata entrypoint at
+  roughly thirty lines while preserving all 68 runtime tests.
 
 ## Suggested Commit Sequence
 
