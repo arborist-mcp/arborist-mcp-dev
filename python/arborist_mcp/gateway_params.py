@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 from typing import Any
 
 from .mcp_validation import reject_unexpected_params
@@ -17,6 +18,29 @@ from .tool_specs import (
 
 
 class GatewayParameterValidation:
+    @staticmethod
+    def _require_file_path_for_source(
+        source: str | None,
+        file_path: str | None,
+    ) -> None:
+        if source is not None and file_path is None:
+            raise JsonRpcError(
+                -32602,
+                "invalid params: file_path is required when source is provided",
+            )
+
+    @staticmethod
+    def _ensure_write_path_inside_server_workspace(file_path: str) -> None:
+        workspace = Path.cwd().resolve()
+        candidate = Path(file_path).resolve(strict=False)
+        try:
+            candidate.relative_to(workspace)
+        except ValueError as exc:
+            raise JsonRpcError(
+                -32602,
+                f"invalid params: file_path is outside server workspace: {file_path}",
+            ) from exc
+
     @staticmethod
     def _require_string(
         params: dict[str, Any],

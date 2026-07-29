@@ -120,6 +120,25 @@ class GatewayMetadataRequestValidationMixin:
             gateway_module.GatewaySymbolRoutes.__dict__,
         )
 
+    def test_path_validation_helpers_are_composed_from_parameter_mixin(self) -> None:
+        parameter_mixin = gateway_module.GatewayParameterValidation
+        self.assertIs(ArboristGateway.__bases__[-1], parameter_mixin)
+        helper_names = (
+            "_require_file_path_for_source",
+            "_ensure_write_path_inside_server_workspace",
+        )
+        for helper_name in helper_names:
+            with self.subTest(helper_name=helper_name):
+                self.assertNotIn(helper_name, ArboristGateway.__dict__)
+                self.assertIsInstance(
+                    parameter_mixin.__dict__[helper_name],
+                    staticmethod,
+                )
+                self.assertIs(
+                    getattr(ArboristGateway, helper_name),
+                    getattr(parameter_mixin, helper_name),
+                )
+
     def test_domain_result_schemas_do_not_eagerly_load_tool_registry(self) -> None:
         module_names = (
             "tool_result_schema_common",

@@ -204,29 +204,6 @@ class ArboristGateway(
         except Exception as exc:  # noqa: BLE001
             return error_response(response_id, -32000, str(exc))
 
-    @staticmethod
-    def _require_file_path_for_source(
-        source: str | None,
-        file_path: str | None,
-    ) -> None:
-        if source is not None and file_path is None:
-            raise JsonRpcError(
-                -32602,
-                "invalid params: file_path is required when source is provided",
-            )
-
-    @staticmethod
-    def _ensure_write_path_inside_server_workspace(file_path: str) -> None:
-        workspace = Path.cwd().resolve()
-        candidate = Path(file_path).resolve(strict=False)
-        try:
-            candidate.relative_to(workspace)
-        except ValueError as exc:
-            raise JsonRpcError(
-                -32602,
-                f"invalid params: file_path is outside server workspace: {file_path}",
-            ) from exc
-
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         return initialize(
             params,
