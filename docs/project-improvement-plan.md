@@ -587,6 +587,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway scalar type, integer-bound, and string validation into a
   dedicated parameter mixin, reducing the root request-validation module to
   roughly 550 lines while retaining all 125 tests.
+- [x] Split gateway trace direction and neighborhood-bound validation into
+  a dedicated mixin, leaving the root request-validation module focused on
+  JSON-RPC envelope and top-level parameter handling at under 400 lines.
 
 ## Suggested Commit Sequence
 
