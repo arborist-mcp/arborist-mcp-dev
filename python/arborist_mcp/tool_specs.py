@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from .tool_definitions import (
+    TOOL_CATEGORIES,
+    TOOL_HANDLERS,
+    TOOL_NAMES,
+    TOOL_PARAM_NAMES,
+    TOOL_SPECS,
+    TOOL_SPECS_BY_NAME,
+)
 from .tool_spec_models import ToolParamSpec, ToolSpec, _schema
 from .tool_param_specs import (
     _SOURCE_ANCHORED_FILE_PATH_TOOLS,
@@ -37,73 +45,6 @@ from .tool_param_specs import (
     TOOL_PARAM_DEFAULTS,
     STRING_PARAM_MAX_LENGTHS,
 )
-
-
-TOOL_SPECS = (
-    ToolSpec("arborist/batch", "_batch", ("calls", "timeout_ms"), "read", "batch"),
-    ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes", "timeout_ms"), "read", "semantic_skeleton"),
-    ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),
-    ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),
-    ToolSpec("arborist/patch_ast_node", "_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason", "timeout_ms"), "write", "patch_ast_node"),
-    ToolSpec("arborist/patch_ast_node_at_position", "_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason", "timeout_ms"), "write", "patch_ast_node"),
-    ToolSpec("arborist/patch_virtual_ast_node", "_patch_virtual_ast_node", ("file_path", "semantic_path", "new_code", "bypass_reason", "timeout_ms"), "vfs", "patch_ast_node"),
-    ToolSpec("arborist/patch_virtual_ast_node_at_position", "_patch_virtual_ast_node_at_position", ("file_path", "position", "new_code", "bypass_reason", "timeout_ms"), "vfs", "patch_ast_node"),
-    ToolSpec("arborist/register_symbol_index", "_register_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "registered_symbol_index"),
-    ToolSpec("arborist/refresh_symbol_index_for_file", "_refresh_symbol_index_for_file", ("workspace_root", "db_path", "file_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats"),
-    ToolSpec("arborist/unregister_symbol_index", "_unregister_symbol_index", ("workspace_root", "timeout_ms"), "index", "boolean"),
-    ToolSpec("arborist/list_symbol_indexes", "_list_symbol_indexes", ("timeout_ms",), "index", "registered_symbol_index_array"),
-    ToolSpec("arborist/refresh_registered_symbol_indexes", "_refresh_registered_symbol_indexes", ("max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats_array"),
-    ToolSpec("arborist/inspect_symbol_index", "_inspect_symbol_index", ("db_path", "timeout_ms"), "index", "symbol_index_health"),
-    ToolSpec("arborist/migrate_symbol_index", "_migrate_symbol_index", ("db_path", "timeout_ms"), "index", "symbol_index_health"),
-    ToolSpec("arborist/did_open", "_did_open", ("file_path", "source", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/did_change", "_did_change", ("file_path", "edits", "timeout_ms"), "vfs", "virtual_edit"),
-    ToolSpec("arborist/did_close", "_did_close", ("file_path", "persist", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/list_virtual_files", "_list_virtual_files", ("dirty_only", "timeout_ms"), "vfs", "virtual_file_status_array"),
-    ToolSpec("arborist/read_virtual_file", "_read_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/apply_buffer_edit", "_apply_buffer_edit", ("file_path", "start_byte", "old_end_byte", "new_text", "timeout_ms"), "vfs", "virtual_edit"),
-    ToolSpec("arborist/commit_virtual_file", "_commit_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/discard_virtual_file", "_discard_virtual_file", ("file_path", "timeout_ms"), "vfs", "virtual_file_snapshot"),
-    ToolSpec("arborist/rebuild_symbol_index", "_rebuild_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats"),
-    ToolSpec("arborist/refresh_symbol_index", "_refresh_symbol_index", ("workspace_root", "db_path", "max_files", "max_file_bytes", "timeout_ms"), "index", "symbol_index_stats"),
-    ToolSpec("arborist/trace_symbol_graph", "_trace_symbol_graph", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source", "timeout_ms"), "trace", "trace_symbol_graph"),
-    ToolSpec("arborist/trace_symbol_neighborhood", "_trace_symbol_neighborhood", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source", "timeout_ms"), "trace", "trace_symbol_neighborhood"),
-    ToolSpec("arborist/trace_symbol_graph_at_position", "_trace_symbol_graph_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path", "timeout_ms"), "trace", "trace_symbol_graph"),
-    ToolSpec("arborist/trace_symbol_neighborhood_at_position", "_trace_symbol_neighborhood_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path", "timeout_ms"), "trace", "trace_symbol_neighborhood"),
-    ToolSpec("arborist/read_symbol", "_read_symbol", ("workspace_root", "symbol_path", "index_db_path", "file_path", "source", "timeout_ms"), "read", "symbol_read"),
-    ToolSpec("arborist/read_symbol_at_position", "_read_symbol_at_position", ("workspace_root", "file_path", "position", "source", "index_db_path", "timeout_ms"), "read", "symbol_read"),
-    ToolSpec("arborist/read_symbol_context", "_read_symbol_context", ("workspace_root", "symbol_path", "direction", "index_db_path", "file_path", "source", "timeout_ms"), "read", "symbol_context"),
-    ToolSpec("arborist/read_symbol_context_at_position", "_read_symbol_context_at_position", ("workspace_root", "file_path", "position", "direction", "source", "index_db_path", "timeout_ms"), "read", "symbol_context"),
-    ToolSpec("arborist/read_symbol_neighborhood_context", "_read_symbol_neighborhood_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source", "timeout_ms"), "read", "symbol_neighborhood_context"),
-    ToolSpec("arborist/read_symbol_neighborhood_context_at_position", "_read_symbol_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path", "timeout_ms"), "read", "symbol_neighborhood_context"),
-    ToolSpec("arborist/read_symbol_discovery_context", "_read_symbol_discovery_context", ("workspace_root", "symbol_path", "direction", "max_depth", "max_nodes", "index_db_path", "file_path", "source", "timeout_ms"), "read", "symbol_discovery_context"),
-    ToolSpec("arborist/read_symbol_discovery_context_at_position", "_read_symbol_discovery_context_at_position", ("workspace_root", "file_path", "position", "direction", "max_depth", "max_nodes", "source", "index_db_path", "timeout_ms"), "read", "symbol_discovery_context"),
-    ToolSpec("arborist/list_symbols", "_list_symbols", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_list"),
-    ToolSpec("arborist/list_symbols_context", "_list_symbols_context", ("workspace_root", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_list_context"),
-    ToolSpec("arborist/list_symbols_neighborhood_context", "_list_symbols_neighborhood_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_list_neighborhood_context"),
-    ToolSpec("arborist/list_symbols_discovery_context", "_list_symbols_discovery_context", ("workspace_root", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_list_discovery_context"),
-    ToolSpec("arborist/search_symbols", "_search_symbols", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_search"),
-    ToolSpec("arborist/search_symbols_context", "_search_symbols_context", ("workspace_root", "query", "limit", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_search_context"),
-    ToolSpec("arborist/search_symbols_neighborhood_context", "_search_symbols_neighborhood_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_search_neighborhood_context"),
-    ToolSpec("arborist/search_symbols_discovery_context", "_search_symbols_discovery_context", ("workspace_root", "query", "limit", "direction", "max_depth", "max_nodes", "index_db_path", "file_path_contains", "node_kind", "file_path", "source", "timeout_ms"), "read", "symbol_search_discovery_context"),
-    ToolSpec("arborist/replay_patch_evidence_against_trace", "_replay_patch_evidence_against_trace", ("patch", "trace", "timeout_ms"), "trace", "trace_patch_evidence_replay"),
-    ToolSpec("arborist/export_patch_diagnostics_sarif", "_export_patch_diagnostics_sarif", ("patch", "timeout_ms"), "read", "sarif"),
-    ToolSpec("arborist/preview_workspace_position_edits", "_preview_workspace_position_edits", ("files", "timeout_ms"), "read", "workspace_edit_preview"),
-    ToolSpec("arborist/validate_patch_commit_with_trace", "_validate_patch_commit_with_trace", ("patch", "trace", "timeout_ms"), "trace", "patch_trace_validation"),
-    ToolSpec("arborist/validate_patch_with_trace_context", "_validate_patch_with_trace_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "index_db_path", "timeout_ms"), "trace", "trace_backed_patch"),
-    ToolSpec("arborist/validate_patch_with_trace_context_at_position", "_validate_patch_with_trace_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "index_db_path", "timeout_ms"), "trace", "trace_backed_patch"),
-    ToolSpec("arborist/validate_patch_with_graph_context", "_validate_patch_with_graph_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "graph_backed_patch"),
-    ToolSpec("arborist/validate_patch_with_graph_context_at_position", "_validate_patch_with_graph_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "graph_backed_patch"),
-    ToolSpec("arborist/validate_patch_with_neighborhood_context", "_validate_patch_with_neighborhood_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "neighborhood_context_patch"),
-    ToolSpec("arborist/validate_patch_with_neighborhood_context_at_position", "_validate_patch_with_neighborhood_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "neighborhood_context_patch"),
-    ToolSpec("arborist/validate_patch_with_discovery_context", "_validate_patch_with_discovery_context", ("workspace_root", "file_path", "semantic_path", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "discovery_context_patch"),
-    ToolSpec("arborist/validate_patch_with_discovery_context_at_position", "_validate_patch_with_discovery_context_at_position", ("workspace_root", "file_path", "position", "new_code", "source", "bypass_reason", "direction", "max_depth", "max_nodes", "index_db_path", "timeout_ms"), "read", "discovery_context_patch"),
-    ToolSpec("arborist/execute_tree_query", "_execute_tree_query", ("file_path", "query", "source", "max_captures", "timeout_ms"), "read", "query_capture_array"),
-)
-TOOL_NAMES = tuple(spec.name for spec in TOOL_SPECS)
-TOOL_SPECS_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
-TOOL_HANDLERS = {spec.name: spec.handler for spec in TOOL_SPECS}
-TOOL_PARAM_NAMES = {spec.name: spec.params for spec in TOOL_SPECS}
-TOOL_CATEGORIES = {spec.name: spec.category for spec in TOOL_SPECS}
 
 
 MCP_PROTOCOL_VERSION = "2025-06-18"

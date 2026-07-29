@@ -13,6 +13,7 @@ from unittest import mock
 
 import arborist_mcp
 from arborist_mcp import gateway as gateway_module
+from arborist_mcp import tool_definitions as tool_definitions_module
 from arborist_mcp import tool_spec_models as tool_spec_models_module
 from arborist_mcp import tool_specs as tool_specs_module
 from arborist_mcp import _version as version_module
@@ -113,6 +114,39 @@ class GatewayMetadataRequestValidationMixin:
                 )
 
                 self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_tool_definitions_preserve_registry_identity(self) -> None:
+        registry_names = (
+            "TOOL_SPECS",
+            "TOOL_NAMES",
+            "TOOL_SPECS_BY_NAME",
+            "TOOL_HANDLERS",
+            "TOOL_PARAM_NAMES",
+            "TOOL_CATEGORIES",
+        )
+        for name in registry_names:
+            with self.subTest(name=name):
+                self.assertIs(
+                    getattr(tool_specs_module, name),
+                    getattr(tool_definitions_module, name),
+                )
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "import arborist_mcp.tool_definitions; "
+                    "assert 'arborist_mcp.tool_specs' not in sys.modules; "
+                    "assert 'arborist_mcp.tool_param_specs' not in sys.modules"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_tool_spec_models_preserve_compatibility_identity(self) -> None:
         model_types = (
