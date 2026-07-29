@@ -123,9 +123,9 @@ completed item can land in its own commit unless two changes are inseparable.
   as a thin facade.
 - [x] Split `references/receivers` into nested modules: `binding_lookup`
   (visible/addressable/temporary/this), `sequence` (sequence/subscript
-  element receivers), and `wrappers` (optional/expected/smart-pointer
-  receiver helpers), keeping the main member-receiver dispatcher in
-  `receivers/mod.rs`.
+  element receivers), `wrappers` (optional/expected/smart-pointer receiver
+  helpers), and `dispatcher` (ordered member-receiver selection), keeping
+  `receivers/mod.rs` as a thin module/re-export facade.
 - [x] Split `symbol_dependency/resolution` helpers into nested modules:
   `path_groups` (qualified/unqualified path expansion, using/namespace
   alias), `type_alias` (alias target chase/constructor paths), and
