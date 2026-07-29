@@ -1,27 +1,23 @@
 use arborist_core::{
-    read_symbol_discovery_context_at_position_from_index_with_source_and_timeout,
-    read_symbol_discovery_context_at_position_from_index_with_timeout,
-    read_symbol_discovery_context_at_position_with_source_and_timeout,
-    read_symbol_discovery_context_from_index_with_source_and_timeout,
-    read_symbol_discovery_context_from_index_with_timeout,
-    read_symbol_discovery_context_with_source_and_timeout,
+    read_symbol_neighborhood_context_at_position_from_index_with_source_and_timeout,
+    read_symbol_neighborhood_context_at_position_from_index_with_timeout,
+    read_symbol_neighborhood_context_at_position_with_source_and_timeout,
+    read_symbol_neighborhood_context_from_index_with_source_and_timeout,
+    read_symbol_neighborhood_context_from_index_with_timeout,
+    read_symbol_neighborhood_context_with_source_and_timeout,
 };
 use pyo3::prelude::*;
 
-use super::SymbolQueryContext;
+use super::super::SymbolQueryContext;
 use crate::{
     ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
-
-mod basic;
-mod context;
-mod neighborhood;
 
 #[pymethods]
 impl ArboristCore {
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", max_depth=2, max_nodes=64, index_db_path=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
-    fn read_symbol_discovery_context_json(
+    fn read_symbol_neighborhood_context_json(
         &self,
         workspace_root: &str,
         symbol_path: &str,
@@ -33,7 +29,7 @@ impl ArboristCore {
         source: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.read_symbol_discovery_context_json_impl(
+        self.read_symbol_neighborhood_context_json_impl(
             workspace_root,
             symbol_path,
             direction,
@@ -47,7 +43,7 @@ impl ArboristCore {
 
     #[pyo3(signature = (workspace_root, file_path, row, column, direction="both", max_depth=2, max_nodes=64, source=None, index_db_path=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
-    fn read_symbol_discovery_context_at_position_json(
+    fn read_symbol_neighborhood_context_at_position_json(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -60,7 +56,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.read_symbol_discovery_context_at_position_json_impl(
+        self.read_symbol_neighborhood_context_at_position_json_impl(
             workspace_root,
             file_path,
             row,
@@ -76,7 +72,7 @@ impl ArboristCore {
 
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn read_symbol_discovery_context_json_impl(
+    pub(crate) fn read_symbol_neighborhood_context_json_impl(
         &self,
         workspace_root: &str,
         symbol_path: &str,
@@ -91,7 +87,7 @@ impl ArboristCore {
         let direction = parse_direction(direction)?;
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                read_symbol_discovery_context_from_index_with_source_and_timeout(
+                read_symbol_neighborhood_context_from_index_with_source_and_timeout(
                     index_db_path,
                     context.source_file_path()?,
                     source,
@@ -102,7 +98,7 @@ impl ArboristCore {
                     timeout_ms,
                 )
             }
-            (Some(source), None) => read_symbol_discovery_context_with_source_and_timeout(
+            (Some(source), None) => read_symbol_neighborhood_context_with_source_and_timeout(
                 context.workspace_root(),
                 context.source_file_path()?,
                 source,
@@ -112,18 +108,20 @@ impl ArboristCore {
                 bounds.max_nodes,
                 timeout_ms,
             ),
-            (None, Some(index_db_path)) => read_symbol_discovery_context_from_index_with_timeout(
-                index_db_path,
-                symbol_path,
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                timeout_ms,
-            ),
+            (None, Some(index_db_path)) => {
+                read_symbol_neighborhood_context_from_index_with_timeout(
+                    index_db_path,
+                    symbol_path,
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    timeout_ms,
+                )
+            }
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .read_symbol_discovery_context_with_timeout(
+                .read_symbol_neighborhood_context_with_timeout(
                     context.workspace_root(),
                     symbol_path,
                     direction,
@@ -138,7 +136,7 @@ impl ArboristCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn read_symbol_discovery_context_at_position_json_impl(
+    pub(crate) fn read_symbol_neighborhood_context_at_position_json_impl(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -160,7 +158,7 @@ impl ArboristCore {
         let position = source_position(row, column);
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                read_symbol_discovery_context_at_position_from_index_with_source_and_timeout(
+                read_symbol_neighborhood_context_at_position_from_index_with_source_and_timeout(
                     index_db_path,
                     context.position_file_path()?,
                     source,
@@ -172,7 +170,7 @@ impl ArboristCore {
                 )
             }
             (Some(source), None) => {
-                read_symbol_discovery_context_at_position_with_source_and_timeout(
+                read_symbol_neighborhood_context_at_position_with_source_and_timeout(
                     context.workspace_root(),
                     context.position_file_path()?,
                     source,
@@ -184,7 +182,7 @@ impl ArboristCore {
                 )
             }
             (None, Some(index_db_path)) => {
-                read_symbol_discovery_context_at_position_from_index_with_timeout(
+                read_symbol_neighborhood_context_at_position_from_index_with_timeout(
                     index_db_path,
                     context.position_file_path()?,
                     &position,
@@ -197,7 +195,7 @@ impl ArboristCore {
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .read_symbol_discovery_context_at_position_with_timeout(
+                .read_symbol_neighborhood_context_at_position_with_timeout(
                     context.workspace_root(),
                     context.position_file_path()?,
                     &position,
