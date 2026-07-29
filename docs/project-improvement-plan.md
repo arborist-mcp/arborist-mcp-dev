@@ -554,6 +554,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Reuse prepared graphs across the complete typed C++ `std::get` test
   module, preserving positive and negative trace assertions while reducing the
   six-test module runtime from roughly 70 seconds to 17 seconds locally.
+- [x] Reuse prepared graphs across expected-member and nested optional/expected
+  wrapper regressions, preserving all edge assertions while reducing their
+  cached module runtimes from roughly 59 to 5 seconds and 148 to 13 seconds.
 - [x] Group indexed `std::expected` tuple access regression tests behind a
   dedicated module boundary for clearer future category-level splits.
 - [x] Group direct indexed tuple access regression tests behind a dedicated
