@@ -578,6 +578,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway source/index-path compatibility and position-entrypoint
   validation into a dedicated mixin, reducing the root request-validation
   module by more than 800 lines without changing its 125 discovered tests.
+- [x] Split gateway timeout-bound validation across semantic, index, patch,
+  VFS, trace, and search entrypoints into a dedicated mixin while preserving
+  all suite and discovery results.
 
 ## Suggested Commit Sequence
 
