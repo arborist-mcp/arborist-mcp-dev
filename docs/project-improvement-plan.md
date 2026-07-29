@@ -584,6 +584,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway edit, byte-budget, and workspace-preview payload
   validation into a dedicated mixin, reducing the root request-validation
   module to roughly one thousand lines with no discovery changes.
+- [x] Split gateway scalar type, integer-bound, and string validation into a
+  dedicated parameter mixin, reducing the root request-validation module to
+  roughly 550 lines while retaining all 125 tests.
 
 ## Suggested Commit Sequence
 
