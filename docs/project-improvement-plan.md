@@ -141,11 +141,11 @@ completed item can land in its own commit unless two changes are inseparable.
   element receivers), `wrappers` (optional/expected/smart-pointer receiver
   helpers), and `dispatcher` (ordered member-receiver selection), keeping
   `receivers/mod.rs` as a thin module/re-export facade.
-- [x] Split `symbol_dependency/resolution` helpers into nested modules:
-  `path_groups` (qualified/unqualified path expansion, using/namespace
-  alias), `type_alias` (alias target chase/constructor paths), and
-  `python` (module-hint lookup), keeping core dependency resolution in
-  `resolution.rs`.
+- [x] Split `symbol_dependency/resolution` into focused nested modules for
+  path expansion, type aliases, Python lookup, index construction, template
+  fallback, ranking, symbol IDs, graph materialization, and per-reference
+  candidate resolution, keeping `resolution.rs` as a thin re-export and
+  symbol-ID adapter facade.
 - [x] Split `tests/c_symbol_graph/wrappers` into nested modules:
   `expected`, `optional`, `pointers`, and `indexed_get`.
 - [x] Share strict JSON loads (reject NaN/Infinity and duplicate keys)
@@ -395,6 +395,12 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Isolate C/C++/Python symbol ID assignment in
   `symbol_dependency/resolution/symbol_ids.rs`, keeping the public assignment
   entrypoint stable.
+- [x] Isolate dependency/reference graph materialization in
+  `symbol_dependency/resolution/graph.rs`, preserving dependency ordering,
+  reverse-reference construction, deadline checks, and public result shapes.
+- [x] Isolate per-symbol and per-reference candidate resolution in
+  `symbol_dependency/resolution/references.rs`, preserving C/C++ overload,
+  receiver, include, alias, template, and Python module-hint behavior.
 - [x] Isolate VFS patch result/context assembly in
   `vfs/patch_context/results.rs`, keeping patch entrypoints and result
   validation behavior stable.
