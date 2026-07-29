@@ -1,3 +1,4 @@
+use super::super::support::PreparedSymbolGraph;
 use super::*;
 
 #[test]
@@ -65,8 +66,9 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
             "api::Counter::adjust(int) const &",
         ),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -79,8 +81,9 @@ fn resolves_cpp_typed_get_standard_value_calls_across_live_and_persisted_queries
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -127,8 +130,9 @@ fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queri
         ),
         ("api::const_pointer_caller", "api::Counter::adjust(int) &"),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -141,8 +145,9 @@ fn resolves_cpp_typed_get_top_level_cv_spellings_across_live_and_persisted_queri
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -218,8 +223,9 @@ fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queri
             "api::Counter::adjust(int) const &",
         ),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -232,8 +238,9 @@ fn resolves_cpp_typed_get_expected_wrapper_calls_across_live_and_persisted_queri
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -262,8 +269,9 @@ fn binds_cpp_typed_get_expected_optional_wrappers_across_live_and_persisted_quer
         ("api::smart_caller", "api::Counter::adjust(int) const &"),
         ("api::reference_caller", "api::Counter::adjust(int) const &"),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -276,8 +284,9 @@ fn binds_cpp_typed_get_expected_optional_wrappers_across_live_and_persisted_quer
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -337,8 +346,9 @@ fn preserves_cpp_decltype_auto_typed_get_receiver_categories_across_live_and_per
             "api::Counter::adjust(int) const &",
         ),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -351,8 +361,9 @@ fn preserves_cpp_decltype_auto_typed_get_receiver_categories_across_live_and_per
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -376,20 +387,22 @@ fn does_not_resolve_invalid_cpp_typed_get_bindings() {
     )
     .unwrap();
 
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for caller in [
         "api::missing_auto_caller",
         "api::duplicate_decltype_auto_caller",
     ] {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert!(trace.callees.is_empty(), "{caller}");
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for caller in [
         "api::missing_auto_caller",
         "api::duplicate_decltype_auto_caller",
     ] {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert!(trace.callees.is_empty(), "{caller}");
     }
 }
