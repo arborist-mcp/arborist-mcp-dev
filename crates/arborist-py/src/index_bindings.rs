@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use arborist_core::{
-    WorkspaceScanLimits, inspect_symbol_index_with_timeout, migrate_symbol_index,
+    WorkspaceScanLimits, inspect_symbol_index_with_timeout, migrate_symbol_index_with_timeout,
     rebuild_symbol_index_with_limits, refresh_symbol_index_for_file_with_limits,
     refresh_symbol_index_with_limits,
 };
@@ -54,8 +54,13 @@ impl ArboristCore {
         self.inspect_symbol_index_json_impl(db_path, timeout_ms)
     }
 
-    fn migrate_symbol_index_json(&self, db_path: &str) -> PyResult<String> {
-        self.migrate_symbol_index_json_impl(db_path)
+    #[pyo3(signature = (db_path, timeout_ms=None))]
+    fn migrate_symbol_index_json(
+        &self,
+        db_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        self.migrate_symbol_index_json_impl(db_path, timeout_ms)
     }
 
     #[pyo3(signature = (workspace_root, db_path, max_files=20_000, max_file_bytes=None, timeout_ms=None))]
@@ -165,8 +170,13 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
-    pub(super) fn migrate_symbol_index_json_impl(&self, db_path: &str) -> PyResult<String> {
-        let result = migrate_symbol_index(Path::new(db_path)).map_err(to_py_error)?;
+    pub(super) fn migrate_symbol_index_json_impl(
+        &self,
+        db_path: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
+        let result = migrate_symbol_index_with_timeout(Path::new(db_path), timeout_ms)
+            .map_err(to_py_error)?;
 
         to_json_result(&result)
     }

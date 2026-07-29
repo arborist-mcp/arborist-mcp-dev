@@ -102,6 +102,22 @@ fn semantic_skeleton_binding_forwards_zero_timeout_before_path_work() {
 }
 
 #[test]
+fn index_migration_binding_forwards_zero_timeout_before_path_work() {
+    prepare_python();
+
+    let core = ArboristCore::new();
+    let error = core
+        .migrate_symbol_index_json_impl("", Some(0))
+        .expect_err("zero timeout should reach index migration before path validation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid workspace scan timeout_ms: value must be greater than zero")
+    );
+}
+
+#[test]
 fn workspace_edit_preview_binding_forwards_zero_timeout() {
     prepare_python();
 
