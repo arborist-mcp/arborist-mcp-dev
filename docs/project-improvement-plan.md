@@ -572,6 +572,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway context direction and node-bound validation regressions
   into a dedicated mixin while preserving the request-validation suite identity,
   native-extension requirements, and all 125 discovered tests.
+- [x] Split gateway version, tool-catalog, and suite-manifest contract tests
+  into a dedicated metadata mixin while preserving all request-validation test
+  identities and full Python discovery coverage.
 
 ## Suggested Commit Sequence
 
