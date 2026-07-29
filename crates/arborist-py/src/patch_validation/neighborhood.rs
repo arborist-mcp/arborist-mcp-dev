@@ -1,10 +1,10 @@
 use arborist_core::{
-    validate_patch_with_discovery_context_at_position_from_index_path_with_timeout,
-    validate_patch_with_discovery_context_at_position_from_index_with_timeout,
-    validate_patch_with_discovery_context_at_position_with_timeout,
-    validate_patch_with_discovery_context_from_index_path_with_timeout,
-    validate_patch_with_discovery_context_from_index_with_timeout,
-    validate_patch_with_discovery_context_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_from_index_path_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_from_index_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_with_timeout,
+    validate_patch_with_neighborhood_context_from_index_path_with_timeout,
+    validate_patch_with_neighborhood_context_from_index_with_timeout,
+    validate_patch_with_neighborhood_context_with_timeout,
 };
 use pyo3::prelude::*;
 
@@ -13,15 +13,11 @@ use crate::{
     ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
 
-mod graph;
-mod neighborhood;
-mod trace;
-
 #[pymethods]
 impl ArboristCore {
     #[pyo3(signature = (workspace_root, file_path, semantic_path, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
-    fn validate_patch_with_discovery_context_json(
+    fn validate_patch_with_neighborhood_context_json(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -35,7 +31,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.validate_patch_with_discovery_context_json_impl(
+        self.validate_patch_with_neighborhood_context_json_impl(
             workspace_root,
             file_path,
             semantic_path,
@@ -51,7 +47,7 @@ impl ArboristCore {
 
     #[pyo3(signature = (workspace_root, file_path, row, column, new_code, source=None, bypass_reason=None, direction="both", max_depth=2, max_nodes=64, index_db_path=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
-    fn validate_patch_with_discovery_context_at_position_json(
+    fn validate_patch_with_neighborhood_context_at_position_json(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -66,7 +62,7 @@ impl ArboristCore {
         index_db_path: Option<String>,
         timeout_ms: Option<u64>,
     ) -> PyResult<String> {
-        self.validate_patch_with_discovery_context_at_position_json_impl(
+        self.validate_patch_with_neighborhood_context_at_position_json_impl(
             workspace_root,
             file_path,
             row,
@@ -84,7 +80,7 @@ impl ArboristCore {
 
 impl ArboristCore {
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn validate_patch_with_discovery_context_json_impl(
+    pub(crate) fn validate_patch_with_neighborhood_context_json_impl(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -106,7 +102,7 @@ impl ArboristCore {
         let direction = parse_direction(direction)?;
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                validate_patch_with_discovery_context_from_index_with_timeout(
+                validate_patch_with_neighborhood_context_from_index_with_timeout(
                     index_db_path,
                     context.required_file_path()?,
                     source,
@@ -119,7 +115,7 @@ impl ArboristCore {
                     timeout_ms,
                 )
             }
-            (Some(source), None) => validate_patch_with_discovery_context_with_timeout(
+            (Some(source), None) => validate_patch_with_neighborhood_context_with_timeout(
                 context.workspace_root(),
                 context.required_file_path()?,
                 source,
@@ -132,7 +128,7 @@ impl ArboristCore {
                 timeout_ms,
             ),
             (None, Some(index_db_path)) => {
-                validate_patch_with_discovery_context_from_index_path_with_timeout(
+                validate_patch_with_neighborhood_context_from_index_path_with_timeout(
                     index_db_path,
                     context.required_file_path()?,
                     semantic_path,
@@ -147,7 +143,7 @@ impl ArboristCore {
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .validate_patch_with_discovery_context_with_timeout(
+                .validate_patch_with_neighborhood_context_with_timeout(
                     context.workspace_root(),
                     context.required_file_path()?,
                     semantic_path,
@@ -163,8 +159,9 @@ impl ArboristCore {
 
         to_json_result(&result)
     }
+
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn validate_patch_with_discovery_context_at_position_json_impl(
+    pub(crate) fn validate_patch_with_neighborhood_context_at_position_json_impl(
         &self,
         workspace_root: &str,
         file_path: &str,
@@ -188,7 +185,7 @@ impl ArboristCore {
         let position = source_position(row, column);
         let result = match (context.source(), context.index_db_path()) {
             (Some(source), Some(index_db_path)) => {
-                validate_patch_with_discovery_context_at_position_from_index_with_timeout(
+                validate_patch_with_neighborhood_context_at_position_from_index_with_timeout(
                     index_db_path,
                     context.position_file_path()?,
                     source,
@@ -201,20 +198,22 @@ impl ArboristCore {
                     timeout_ms,
                 )
             }
-            (Some(source), None) => validate_patch_with_discovery_context_at_position_with_timeout(
-                context.workspace_root(),
-                context.position_file_path()?,
-                source,
-                &position,
-                new_code,
-                bypass_reason.as_deref(),
-                direction,
-                bounds.max_depth,
-                bounds.max_nodes,
-                timeout_ms,
-            ),
+            (Some(source), None) => {
+                validate_patch_with_neighborhood_context_at_position_with_timeout(
+                    context.workspace_root(),
+                    context.position_file_path()?,
+                    source,
+                    &position,
+                    new_code,
+                    bypass_reason.as_deref(),
+                    direction,
+                    bounds.max_depth,
+                    bounds.max_nodes,
+                    timeout_ms,
+                )
+            }
             (None, Some(index_db_path)) => {
-                validate_patch_with_discovery_context_at_position_from_index_path_with_timeout(
+                validate_patch_with_neighborhood_context_at_position_from_index_path_with_timeout(
                     index_db_path,
                     context.position_file_path()?,
                     &position,
@@ -229,7 +228,7 @@ impl ArboristCore {
             (None, None) => self
                 .vfs
                 .borrow_mut()
-                .validate_patch_with_discovery_context_at_position_with_timeout(
+                .validate_patch_with_neighborhood_context_at_position_with_timeout(
                     context.workspace_root(),
                     context.position_file_path()?,
                     &position,
