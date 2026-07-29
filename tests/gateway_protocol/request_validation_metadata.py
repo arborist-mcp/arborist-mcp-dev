@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import io
 import json
@@ -14,6 +15,7 @@ from unittest import mock
 import arborist_mcp
 from arborist_mcp import gateway as gateway_module
 from arborist_mcp import tool_definitions as tool_definitions_module
+from arborist_mcp import tool_manifest as tool_manifest_module
 from arborist_mcp import tool_spec_models as tool_spec_models_module
 from arborist_mcp import tool_specs as tool_specs_module
 from arborist_mcp import _version as version_module
@@ -250,6 +252,101 @@ class GatewayMetadataRequestValidationMixin:
                 for tool_name in spec.source_anchored_optional_tools
             ),
         )
+
+    def test_route_runtime_defaults_match_tool_manifest(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        route_methods: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        calls_by_method: dict[str, set[str]] = {}
+        default_calls: list[tuple[str, str, object, int]] = []
+
+        gateway_package = repo_root.joinpath("python", "arborist_mcp")
+        gateway_paths = (
+            gateway_package.joinpath("gateway.py"),
+            *sorted(gateway_package.glob("gateway*_routes.py")),
+        )
+        for route_path in gateway_paths:
+            tree = ast.parse(
+                route_path.read_text(encoding="utf-8"),
+                filename=str(route_path),
+            )
+            for class_node in tree.body:
+                if not isinstance(class_node, ast.ClassDef):
+                    continue
+                for method in class_node.body:
+                    if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    self.assertNotIn(method.name, route_methods)
+                    route_methods[method.name] = method
+                    calls_by_method[method.name] = {
+                        call.func.attr
+                        for call in ast.walk(method)
+                        if isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id == "self"
+                    }
+                    for call in ast.walk(method):
+                        if (
+                            not isinstance(call, ast.Call)
+                            or not isinstance(call.func, ast.Attribute)
+                            or not call.func.attr.startswith("_optional_")
+                        ):
+                            continue
+                        default_keyword = next(
+                            (keyword for keyword in call.keywords if keyword.arg == "default"),
+                            None,
+                        )
+                        if default_keyword is None:
+                            continue
+                        self.assertGreaterEqual(len(call.args), 2)
+                        param_node = call.args[1]
+                        self.assertIsInstance(param_node, ast.Constant)
+                        self.assertIsInstance(param_node.value, str)
+                        try:
+                            runtime_default = ast.literal_eval(default_keyword.value)
+                        except (ValueError, TypeError) as error:
+                            self.fail(
+                                f"{route_path.name}:{call.lineno} has a non-literal "
+                                f"runtime default: {error}"
+                            )
+                        default_calls.append(
+                            (method.name, param_node.value, runtime_default, call.lineno)
+                        )
+
+        tools_by_method: dict[str, set[str]] = {}
+        for tool_name, handler_name in gateway_module.TOOL_HANDLERS.items():
+            tools_by_method.setdefault(handler_name, set()).add(tool_name)
+        changed = True
+        while changed:
+            changed = False
+            for caller_name, called_methods in calls_by_method.items():
+                caller_tools = tools_by_method.get(caller_name, set())
+                for called_method in called_methods & route_methods.keys():
+                    inherited_tools = tools_by_method.setdefault(called_method, set())
+                    previous_count = len(inherited_tools)
+                    inherited_tools.update(caller_tools)
+                    changed = changed or len(inherited_tools) != previous_count
+
+        self.assertGreaterEqual(len(default_calls), 90)
+        for method_name, param_name, runtime_default, line_number in default_calls:
+            tool_names = tools_by_method.get(method_name, set())
+            self.assertTrue(
+                tool_names,
+                msg=(
+                    f"route method {method_name} has a literal runtime default at "
+                    f"line {line_number} but is not reachable from an advertised tool"
+                ),
+            )
+            for tool_name in sorted(tool_names):
+                with self.subTest(tool=tool_name, param=param_name):
+                    self.assertIn(
+                        param_name,
+                        gateway_module.TOOL_PARAM_NAMES[tool_name],
+                    )
+                    self.assertEqual(
+                        runtime_default,
+                        tool_manifest_module.tool_param_default(tool_name, param_name),
+                    )
 
     def test_generated_tool_catalog_matches_gateway_specs(self) -> None:
         catalog = gateway_module.build_tool_catalog()

@@ -12,6 +12,7 @@ from arborist_mcp.index_watch import (
     _positive_float,
     IndexWatchError,
     IndexWatchTarget,
+    build_parser,
     check_watch_targets,
     load_watch_config,
     reconcile_index,
@@ -19,6 +20,7 @@ from arborist_mcp.index_watch import (
     run_watch,
     run_watch_targets,
 )
+from arborist_mcp.tool_manifest import tool_param_default
 
 
 def health_payload(
@@ -75,6 +77,23 @@ class StubCore:
 
 
 class IndexWatchTests(unittest.TestCase):
+    def test_cli_scan_defaults_match_tool_manifest(self) -> None:
+        args = build_parser().parse_args(["--db-path", "symbols.db"])
+
+        for tool_name in (
+            "arborist/rebuild_symbol_index",
+            "arborist/refresh_symbol_index",
+        ):
+            with self.subTest(tool=tool_name):
+                self.assertEqual(
+                    args.workspace_root,
+                    Path(tool_param_default(tool_name, "workspace_root")),
+                )
+                self.assertEqual(
+                    args.max_files,
+                    tool_param_default(tool_name, "max_files"),
+                )
+
     def test_positive_float_rejects_non_finite_values(self) -> None:
         for value in ("nan", "inf", "-inf", "0"):
             with self.assertRaisesRegex(argparse.ArgumentTypeError, "finite number"):
