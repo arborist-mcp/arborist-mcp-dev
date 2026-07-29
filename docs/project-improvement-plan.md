@@ -605,6 +605,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway tools-call, batch, core-payload, and tree-query regressions
   into dedicated runtime mixins, leaving the suite metadata entrypoint at
   roughly thirty lines while preserving all 68 runtime tests.
+- [x] Deep-copy generated tool input and output schemas so caller mutation of
+  one catalog response cannot corrupt global templates or later MCP tools/list
+  results.
 
 ## Suggested Commit Sequence
 
