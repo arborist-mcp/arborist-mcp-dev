@@ -590,6 +590,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway trace direction and neighborhood-bound validation into
   a dedicated mixin, leaving the root request-validation module focused on
   JSON-RPC envelope and top-level parameter handling at under 400 lines.
+- [x] Replace dynamic symbol-route native-test extraction with explicit
+  shared fixture and live-test mixins, preserving the 11 pure and 17 native
+  tests while reducing the main route module by more than one thousand lines.
 
 ## Suggested Commit Sequence
 
