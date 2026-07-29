@@ -387,7 +387,7 @@ class CheckWorkflowTests(unittest.TestCase):
         workflow = (self.repo_root / ".github" / "workflows" / "wheels.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("actions/cache@v4", workflow)
+        self.assertIn("actions/cache@v6", workflow)
         self.assertIn("~/.cargo/registry", workflow)
         self.assertIn("~/.cargo/git", workflow)
         self.assertIn("target", workflow)
