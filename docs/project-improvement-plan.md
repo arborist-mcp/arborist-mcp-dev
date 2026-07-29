@@ -623,6 +623,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Include unreadable-file counts in index-watch health summaries so
   emitted reconciliation and CI diagnostics cover every persisted-index file
   freshness category.
+- [x] Extract static tool declarations and their derived lookup tables into a
+  lightweight definitions module, reducing the compatibility registry to under
+  one hundred lines without changing object identity or catalog output.
 
 ## Suggested Commit Sequence
 
