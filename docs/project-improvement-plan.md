@@ -614,6 +614,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split common and semantic/symbol/trace result schemas out of the
   1,100-line gateway schema registry, reducing the aggregation module to about
   725 lines while preserving its public imports and byte-identical catalog.
+- [x] Finish the result-schema domain split for patching, queries, VFS, and
+  indexes, leaving a roughly 160-line registry while preserving all public
+  names, shared-schema identities, batch variants, and catalog bytes.
 
 ## Suggested Commit Sequence
 
