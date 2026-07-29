@@ -599,6 +599,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway lazy-core, stdio, one-shot CLI, JSON framing, and response
   serialization regressions into a dedicated runtime transport mixin while
   preserving all 68 runtime tests.
+- [x] Split gateway initialization, MCP capability, tool-schema, and resource
+  catalog contract tests into a dedicated runtime catalog mixin while
+  preserving the complete runtime suite.
 
 ## Suggested Commit Sequence
 
