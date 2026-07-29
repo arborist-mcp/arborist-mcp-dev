@@ -566,6 +566,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Upgrade first-party GitHub Actions to Node.js 24-compatible major
   versions across check and wheel workflows, removing Node.js 20 runtime
   deprecation warnings on GitHub-hosted runners.
+- [x] Guard all first-party Action references in check and wheel workflows
+  with one Node.js 24 major-version contract test, while keeping cache behavior
+  assertions independent from the selected Action release.
 
 ## Suggested Commit Sequence
 
