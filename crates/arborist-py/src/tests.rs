@@ -4,7 +4,8 @@ use super::{
 use crate::json_args::{MAX_JSON_ARG_BYTES, MAX_JSON_ARG_DEPTH};
 use arborist_core::{
     MAX_PATCH_TIMEOUT_MS, MAX_VIRTUAL_FILE_COMMIT_TIMEOUT_MS, MAX_VIRTUAL_FILE_EDIT_TIMEOUT_MS,
-    MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS, PositionEdit,
+    MAX_VIRTUAL_FILE_LIFECYCLE_TIMEOUT_MS, PositionEdit, TraceDirection, patch_ast_node_from_path,
+    trace_symbol_graph,
 };
 use serde_json::Value;
 use std::fs;
@@ -953,6 +954,66 @@ fn parse_json_arg_rejects_missing_nested_patch_fields() {
     .expect_err("patch payloads should reject missing nested validation fields");
 
     assert!(error.to_string().contains("missing field"));
+}
+
+#[test]
+fn offline_patch_analysis_bindings_forward_zero_timeout() {
+    prepare_python();
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "arborist-py-offline-analysis-{}-{suffix}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+    let file = workspace.join("sample.py");
+    fs::write(&file, "def target() -> int:\n    return 1\n").unwrap();
+
+    let patch = patch_ast_node_from_path(
+        &file,
+        "target",
+        "def target() -> int:\n    return 2\n",
+        None,
+    )
+    .unwrap();
+    let trace = trace_symbol_graph(&workspace, "target", TraceDirection::Both).unwrap();
+    let patch_json = serde_json::to_string(&patch).unwrap();
+    let trace_json = serde_json::to_string(&trace).unwrap();
+    let core = ArboristCore::new();
+
+    let errors = [
+        core.replay_patch_evidence_against_trace_json_with_timeout_impl(
+            &patch_json,
+            &trace_json,
+            Some(0),
+        )
+        .expect_err("zero replay timeout should reach core"),
+        core.validate_patch_commit_with_trace_json_with_timeout_impl(
+            &patch_json,
+            &trace_json,
+            Some(0),
+        )
+        .expect_err("zero trace validation timeout should reach core"),
+        core.export_patch_diagnostics_sarif_json_with_timeout_impl(&patch_json, Some(0))
+            .expect_err("zero SARIF timeout should reach core"),
+    ];
+
+    for (error, operation) in errors.into_iter().zip([
+        "patch evidence replay",
+        "patch trace validation",
+        "SARIF export",
+    ]) {
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("invalid {operation} timeout_ms"))
+        );
+    }
+
+    fs::remove_dir_all(workspace).unwrap();
 }
 
 #[test]
