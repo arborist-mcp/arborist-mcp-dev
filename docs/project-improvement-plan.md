@@ -581,6 +581,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway timeout-bound validation across semantic, index, patch,
   VFS, trace, and search entrypoints into a dedicated mixin while preserving
   all suite and discovery results.
+- [x] Split gateway edit, byte-budget, and workspace-preview payload
+  validation into a dedicated mixin, reducing the root request-validation
+  module to roughly one thousand lines with no discovery changes.
 
 ## Suggested Commit Sequence
 
