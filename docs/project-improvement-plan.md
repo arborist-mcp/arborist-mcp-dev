@@ -629,6 +629,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Guard literal gateway handler defaults, shared route-helper defaults, and
   index-watch scan defaults against the generated tool manifest so runtime and
   advertised parameter behavior cannot drift silently.
+- [x] Extract semantic-skeleton and raw tree-query handlers into a focused
+  source-query route mixin, reducing the gateway facade below three hundred
+  lines while preserving handler identity, validation, and response behavior.
 
 ## Suggested Commit Sequence
 
