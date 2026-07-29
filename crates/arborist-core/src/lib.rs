@@ -57,7 +57,9 @@ pub(crate) use api::{
     validate_neighborhood_context_patch_result, validate_patch_trace_validation_result,
     validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
 };
-pub use api_patch_validation::export_patch_diagnostics_sarif;
+pub use api_patch_validation::{
+    export_patch_diagnostics_sarif, export_patch_diagnostics_sarif_with_timeout,
+};
 pub use language::{MAX_SOURCE_FILE_BYTES, read_source, supported_languages};
 pub use patching::{
     MAX_BYPASS_REASON_BYTES, MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_PATCH_REPLACEMENT_BYTES,

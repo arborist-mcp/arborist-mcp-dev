@@ -4,12 +4,37 @@ use serde_json::{Value, json};
 use crate::model::PatchAstNodeResult;
 
 pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Value> {
-    super::validate_replay_patch_payload(patch)?;
+    export_patch_diagnostics_sarif_inner(patch, None)
+}
+
+pub fn export_patch_diagnostics_sarif_with_timeout(
+    patch: &PatchAstNodeResult,
+    timeout_ms: Option<u64>,
+) -> Result<Value> {
+    let deadline = super::patch_analysis_deadline(timeout_ms, "SARIF export")?;
+    export_patch_diagnostics_sarif_inner(patch, Some(&deadline))
+}
+
+#[cfg(test)]
+pub(crate) fn export_patch_diagnostics_sarif_with_deadline(
+    patch: &PatchAstNodeResult,
+    deadline: &dyn crate::deadline::DeadlineCheck,
+) -> Result<Value> {
+    export_patch_diagnostics_sarif_inner(patch, Some(deadline))
+}
+
+fn export_patch_diagnostics_sarif_inner(
+    patch: &PatchAstNodeResult,
+    deadline: Option<&dyn crate::deadline::DeadlineCheck>,
+) -> Result<Value> {
+    super::validate_replay_patch_payload_with_deadline(patch, deadline)?;
+    check_deadline(deadline, "encoding SARIF artifact URI")?;
     let artifact_uri = sarif_artifact_uri(&patch.file);
 
     let mut rules = std::collections::BTreeMap::new();
     let mut results = Vec::new();
     for issue in &patch.validation.syntax_errors {
+        check_deadline(deadline, "exporting SARIF syntax diagnostics")?;
         let rule_id = format!("arborist.syntax.{}", issue.kind);
         rules.entry(rule_id.clone()).or_insert_with(|| {
             json!({
@@ -37,6 +62,7 @@ pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Valu
     }
 
     for decision in &patch.validation.binding_decisions {
+        check_deadline(deadline, "exporting SARIF binding diagnostics")?;
         let (rule_id, level) = match decision.status.as_str() {
             "unresolved" => ("arborist.binding.unresolved", "error"),
             "ambiguous" => ("arborist.binding.ambiguous", "warning"),
@@ -56,6 +82,7 @@ pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Valu
         }));
     }
 
+    check_deadline(deadline, "exporting SARIF patch gate diagnostic")?;
     if patch.validation.commit_gate.status != "allowed" {
         let level = if patch.validation.commit_gate.allowed {
             "warning"
@@ -78,7 +105,8 @@ pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Valu
         }));
     }
 
-    Ok(json!({
+    check_deadline(deadline, "building SARIF result")?;
+    let result = json!({
         "version": "2.1.0",
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "runs": [{
@@ -91,7 +119,19 @@ pub fn export_patch_diagnostics_sarif(patch: &PatchAstNodeResult) -> Result<Valu
             "columnKind": "utf8CodeUnits",
             "results": results,
         }],
-    }))
+    });
+    check_deadline(deadline, "finishing SARIF export")?;
+    Ok(result)
+}
+
+fn check_deadline(
+    deadline: Option<&dyn crate::deadline::DeadlineCheck>,
+    phase: &str,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(phase)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn sarif_artifact_uri(path: &str) -> String {

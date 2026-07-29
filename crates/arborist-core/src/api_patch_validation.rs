@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use anyhow::Result;
+
+use crate::deadline::CooperativeDeadline;
 use crate::model::{SymbolSummary, TracePatchImpactSummary, TraceSymbolGraphResult};
 
 mod path_index_context;
@@ -11,17 +14,36 @@ mod tests;
 mod workspace_context;
 
 pub use path_index_context::*;
-pub use replay::{replay_patch_evidence_against_trace, validate_patch_commit_with_trace};
-pub(crate) use replay::{validate_replay_patch_payload, validate_replay_trace_target};
+pub use replay::{
+    replay_patch_evidence_against_trace, replay_patch_evidence_against_trace_with_timeout,
+    validate_patch_commit_with_trace, validate_patch_commit_with_trace_with_timeout,
+};
+#[cfg(test)]
+pub(crate) use replay::{
+    replay_patch_evidence_against_trace_with_deadline,
+    validate_patch_commit_with_trace_with_deadline,
+};
+pub(crate) use replay::{
+    validate_replay_patch_payload_with_deadline, validate_replay_trace_target,
+};
 pub(crate) use result_validation::{
     validate_discovery_context_patch_result, validate_graph_backed_patch_result,
     validate_neighborhood_context_patch_result, validate_patch_trace_validation_result,
     validate_trace_backed_patch_result, validate_trace_patch_evidence_replay_result,
 };
-pub use sarif::export_patch_diagnostics_sarif;
+pub use sarif::{export_patch_diagnostics_sarif, export_patch_diagnostics_sarif_with_timeout};
 #[cfg(test)]
-pub(crate) use sarif::sarif_artifact_uri;
+pub(crate) use sarif::{export_patch_diagnostics_sarif_with_deadline, sarif_artifact_uri};
 pub use workspace_context::*;
+
+pub const MAX_PATCH_ANALYSIS_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
+
+pub(crate) fn patch_analysis_deadline(
+    timeout_ms: Option<u64>,
+    operation: &'static str,
+) -> Result<CooperativeDeadline> {
+    CooperativeDeadline::new(timeout_ms, MAX_PATCH_ANALYSIS_TIMEOUT_MS, operation)
+}
 
 pub(crate) fn trace_patch_impact_summary(
     before: &TraceSymbolGraphResult,
