@@ -596,6 +596,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split the remaining pure symbol-route cases into read/search and
   patch/context mixins, leaving the suite metadata entrypoint at fewer than
   sixty lines while preserving all route-forwarding assertions.
+- [x] Split gateway lazy-core, stdio, one-shot CLI, JSON framing, and response
+  serialization regressions into a dedicated runtime transport mixin while
+  preserving all 68 runtime tests.
 
 ## Suggested Commit Sequence
 
