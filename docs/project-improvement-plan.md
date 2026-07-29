@@ -563,6 +563,9 @@ completed item can land in its own commit unless two changes are inseparable.
   module boundary for clearer receiver-focused maintenance.
 - [x] Group indexed sequence tuple access regression tests behind a dedicated
   module boundary for clearer sequence-specific maintenance.
+- [x] Upgrade first-party GitHub Actions to Node.js 24-compatible major
+  versions across check and wheel workflows, removing Node.js 20 runtime
+  deprecation warnings on GitHub-hosted runners.
 
 ## Suggested Commit Sequence
 
