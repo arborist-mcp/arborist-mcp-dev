@@ -593,6 +593,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Replace dynamic symbol-route native-test extraction with explicit
   shared fixture and live-test mixins, preserving the 11 pure and 17 native
   tests while reducing the main route module by more than one thousand lines.
+- [x] Split the remaining pure symbol-route cases into read/search and
+  patch/context mixins, leaving the suite metadata entrypoint at fewer than
+  sixty lines while preserving all route-forwarding assertions.
 
 ## Suggested Commit Sequence
 
