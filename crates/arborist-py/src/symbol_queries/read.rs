@@ -1,7 +1,4 @@
 use arborist_core::{
-    read_symbol_at_position_from_index_with_source_and_timeout,
-    read_symbol_at_position_from_index_with_timeout,
-    read_symbol_at_position_with_source_and_timeout,
     read_symbol_context_at_position_from_index_with_source_and_timeout,
     read_symbol_context_at_position_from_index_with_timeout,
     read_symbol_context_at_position_with_source_and_timeout,
@@ -13,13 +10,12 @@ use arborist_core::{
     read_symbol_discovery_context_from_index_with_source_and_timeout,
     read_symbol_discovery_context_from_index_with_timeout,
     read_symbol_discovery_context_with_source_and_timeout,
-    read_symbol_from_index_with_source_and_timeout, read_symbol_from_index_with_timeout,
     read_symbol_neighborhood_context_at_position_from_index_with_source_and_timeout,
     read_symbol_neighborhood_context_at_position_from_index_with_timeout,
     read_symbol_neighborhood_context_at_position_with_source_and_timeout,
     read_symbol_neighborhood_context_from_index_with_source_and_timeout,
     read_symbol_neighborhood_context_from_index_with_timeout,
-    read_symbol_neighborhood_context_with_source_and_timeout, read_symbol_with_source_and_timeout,
+    read_symbol_neighborhood_context_with_source_and_timeout,
 };
 use pyo3::prelude::*;
 
@@ -28,51 +24,10 @@ use crate::{
     ArboristCore, NeighborhoodBounds, parse_direction, source_position, to_json_result, to_py_error,
 };
 
+mod basic;
+
 #[pymethods]
 impl ArboristCore {
-    #[pyo3(signature = (workspace_root, symbol_path, index_db_path=None, file_path=None, source=None, timeout_ms=None))]
-    fn read_symbol_json(
-        &self,
-        workspace_root: &str,
-        symbol_path: &str,
-        index_db_path: Option<String>,
-        file_path: Option<String>,
-        source: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<String> {
-        self.read_symbol_json_impl(
-            workspace_root,
-            symbol_path,
-            index_db_path,
-            file_path,
-            source,
-            timeout_ms,
-        )
-    }
-
-    #[pyo3(signature = (workspace_root, file_path, row, column, source=None, index_db_path=None, timeout_ms=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn read_symbol_at_position_json(
-        &self,
-        workspace_root: &str,
-        file_path: &str,
-        row: usize,
-        column: usize,
-        source: Option<String>,
-        index_db_path: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<String> {
-        self.read_symbol_at_position_json_impl(
-            workspace_root,
-            file_path,
-            row,
-            column,
-            source,
-            index_db_path,
-            timeout_ms,
-        )
-    }
-
     #[pyo3(signature = (workspace_root, symbol_path, direction="both", index_db_path=None, file_path=None, source=None, timeout_ms=None))]
     #[allow(clippy::too_many_arguments)]
     fn read_symbol_context_json(
@@ -231,97 +186,6 @@ impl ArboristCore {
 }
 
 impl ArboristCore {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn read_symbol_json_impl(
-        &self,
-        workspace_root: &str,
-        symbol_path: &str,
-        index_db_path: Option<String>,
-        file_path: Option<String>,
-        source: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<String> {
-        let context = SymbolQueryContext::new(workspace_root, index_db_path, file_path, source);
-        let result = match (context.source(), context.index_db_path()) {
-            (Some(source), Some(index_db_path)) => read_symbol_from_index_with_source_and_timeout(
-                index_db_path,
-                context.source_file_path()?,
-                source,
-                symbol_path,
-                timeout_ms,
-            ),
-            (Some(source), None) => read_symbol_with_source_and_timeout(
-                context.workspace_root(),
-                context.source_file_path()?,
-                source,
-                symbol_path,
-                timeout_ms,
-            ),
-            (None, Some(index_db_path)) => {
-                read_symbol_from_index_with_timeout(index_db_path, symbol_path, timeout_ms)
-            }
-            (None, None) => self.vfs.borrow_mut().read_symbol_with_timeout(
-                context.workspace_root(),
-                symbol_path,
-                timeout_ms,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn read_symbol_at_position_json_impl(
-        &self,
-        workspace_root: &str,
-        file_path: &str,
-        row: usize,
-        column: usize,
-        source: Option<String>,
-        index_db_path: Option<String>,
-        timeout_ms: Option<u64>,
-    ) -> PyResult<String> {
-        let context = SymbolQueryContext::new(
-            workspace_root,
-            index_db_path,
-            Some(file_path.to_string()),
-            source,
-        );
-        let position = source_position(row, column);
-        let result = match (context.source(), context.index_db_path()) {
-            (Some(source), Some(index_db_path)) => {
-                read_symbol_at_position_from_index_with_source_and_timeout(
-                    index_db_path,
-                    context.position_file_path()?,
-                    source,
-                    &position,
-                    timeout_ms,
-                )
-            }
-            (Some(source), None) => read_symbol_at_position_with_source_and_timeout(
-                context.workspace_root(),
-                context.position_file_path()?,
-                source,
-                &position,
-                timeout_ms,
-            ),
-            (None, Some(index_db_path)) => read_symbol_at_position_from_index_with_timeout(
-                index_db_path,
-                context.position_file_path()?,
-                &position,
-                timeout_ms,
-            ),
-            (None, None) => self.vfs.borrow_mut().read_symbol_at_position_with_timeout(
-                context.workspace_root(),
-                context.position_file_path()?,
-                &position,
-                timeout_ms,
-            ),
-        }
-        .map_err(to_py_error)?;
-
-        to_json_result(&result)
-    }
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn read_symbol_context_json_impl(
         &self,
