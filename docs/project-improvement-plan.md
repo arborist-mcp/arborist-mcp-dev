@@ -179,6 +179,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split `vfs/tests/cpp_trace` into nested modules: `edits`,
   `constructors`, `this_receivers`, `local_params`, `aliases`,
   `headers`, and `guards`.
+- [x] Split `vfs/buffer.rs` into focused `buffer/edits.rs` and
+  `buffer/loading.rs` submodules while preserving lifecycle deadlines, atomic
+  edit rollback, clean-buffer refresh, and workspace overlay behavior.
 - [x] Split `tests/patch_replay` into focused `replay` and `context`
   modules while preserving the existing patch-validation regression coverage.
 - [x] Split `tests/index_refresh` into focused `dependencies` and `validation`
