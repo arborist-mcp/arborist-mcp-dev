@@ -103,6 +103,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split PyO3 symbol-trace bindings into focused `graph` and `neighborhood`
   modules while retaining a registration-only facade and both symbol-path and
   position-based source/index/VFS dispatch behavior.
+- [x] Split the PyO3 binding regression suite into focused JSON argument,
+  core/index, patch application, patch validation, symbol query, VFS, and
+  replay-validation modules while retaining shared setup helpers and exact
+  test behavior.
 
 ### P2: Core Architecture Improvements
 
