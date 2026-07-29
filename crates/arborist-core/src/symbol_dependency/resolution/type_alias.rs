@@ -10,7 +10,7 @@ use super::path_groups::{
     cpp_lexical_qualified_reference_paths, cpp_qualified_reference_path_group,
     cpp_qualified_reference_path_groups, cpp_symbol_is_visible_before,
 };
-use super::{
+use super::template_paths::{
     cpp_template_argument_closes, cpp_template_base_path,
     symbol_indexes_for_paths_with_template_fallback,
 };
