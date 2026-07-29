@@ -608,6 +608,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Deep-copy generated tool input and output schemas so caller mutation of
   one catalog response cannot corrupt global templates or later MCP tools/list
   results.
+- [x] Expand generated schema cloning to break internal mutable aliases, so
+  mutating one property in a single tool descriptor cannot silently alter a
+  sibling property that reused the same schema template.
 
 ## Suggested Commit Sequence
 
