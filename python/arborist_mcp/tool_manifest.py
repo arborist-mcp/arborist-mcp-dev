@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from .tool_result_schemas import OBJECT_RESULT_SCHEMA, TOOL_RESULT_SCHEMAS
@@ -59,7 +58,7 @@ def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "result": deepcopy(result_schema),
+            "result": _clone_json_value(result_schema),
         },
         "required": ["result"],
         "additionalProperties": False,
@@ -69,10 +68,10 @@ def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
 def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     for param_name in tool_spec(tool_name).params:
-        param_schema = deepcopy(tool_param_spec(param_name).schema)
+        param_schema = _clone_json_value(tool_param_spec(param_name).schema)
         default = tool_param_default(tool_name, param_name)
         if default is not None:
-            param_schema["default"] = default
+            param_schema["default"] = _clone_json_value(default)
         properties[param_name] = param_schema
 
     return {
@@ -104,6 +103,14 @@ def tool_param_default(tool_name: str, param_name: str) -> Any:
             return default["search"]
         return None
     return default
+
+
+def _clone_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _clone_json_value(child) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_clone_json_value(child) for child in value]
+    return value
 
 
 def _tool_title(tool_name: str) -> str:

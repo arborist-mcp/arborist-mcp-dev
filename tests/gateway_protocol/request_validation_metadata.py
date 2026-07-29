@@ -237,6 +237,42 @@ class GatewayMetadataRequestValidationMixin:
             output_schema.pop("callerMutation", None)
             position_schema["properties"]["row"]["minimum"] = original_minimum
 
+    def test_generated_tool_descriptors_have_no_shared_mutable_containers(
+        self,
+    ) -> None:
+        def collect_container_paths(
+            value: object,
+            path: tuple[str, ...] = (),
+        ) -> list[tuple[int, tuple[str, ...]]]:
+            containers: list[tuple[int, tuple[str, ...]]] = []
+            if isinstance(value, dict):
+                containers.append((id(value), path))
+                for key, child in value.items():
+                    containers.extend(
+                        collect_container_paths(child, (*path, str(key)))
+                    )
+            elif isinstance(value, list):
+                containers.append((id(value), path))
+                for index, child in enumerate(value):
+                    containers.extend(
+                        collect_container_paths(child, (*path, str(index)))
+                    )
+            return containers
+
+        for tool in gateway_module.build_tool_catalog():
+            with self.subTest(tool=tool["name"]):
+                seen_paths: dict[int, tuple[str, ...]] = {}
+                for object_id, path in collect_container_paths(tool):
+                    self.assertNotIn(
+                        object_id,
+                        seen_paths,
+                        msg=(
+                            f"shared mutable schema container at {seen_paths.get(object_id)} "
+                            f"and {path}"
+                        ),
+                    )
+                    seen_paths[object_id] = path
+
     def test_tool_catalog_script_and_snapshot_match_generated_catalog(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         script_path = repo_root / "scripts" / "tool_catalog.py"
