@@ -88,6 +88,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split PyO3 symbol-read bindings into focused `basic`, `context`,
   `neighborhood`, and `discovery` modules while retaining a registration-only
   `symbol_queries/read.rs` facade and source/index/VFS query parity.
+- [x] Split PyO3 symbol-list and symbol-search bindings into focused `basic`,
+  `context`, `neighborhood`, and `discovery` modules, retaining registration-only
+  facades and the existing filter/source/index/VFS dispatch behavior.
 
 ### P2: Core Architecture Improvements
 
