@@ -626,6 +626,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract static tool declarations and their derived lookup tables into a
   lightweight definitions module, reducing the compatibility registry to under
   one hundred lines without changing object identity or catalog output.
+- [x] Guard literal gateway handler defaults, shared route-helper defaults, and
+  index-watch scan defaults against the generated tool manifest so runtime and
+  advertised parameter behavior cannot drift silently.
 
 ## Suggested Commit Sequence
 
