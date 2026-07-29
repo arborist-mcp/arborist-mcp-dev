@@ -12,6 +12,7 @@ from .gateway_cli import (
     run_stdio as _run_stdio,
 )
 from .batch_tools import batch_tools
+from .gateway_core_helpers import GatewayCoreHelpers
 from .gateway_index_routes import GatewayIndexRoutes
 from .gateway_patch_routes import GatewayPatchRoutes
 from .gateway_source_query_routes import GatewaySourceQueryRoutes
@@ -125,6 +126,7 @@ def _load_core_class() -> type[Any]:
 
 
 class ArboristGateway(
+    GatewayCoreHelpers,
     GatewaySourceQueryRoutes,
     GatewayIndexRoutes,
     GatewayPatchRoutes,
@@ -256,38 +258,6 @@ class ArboristGateway(
         timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
         return batch_tools(params, self._execute_tool, timeout_ms)
 
-    @staticmethod
-    def _decode_core_payload(payload: str) -> Any:
-        try:
-            return loads_strict(payload)
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise JsonRpcError(-32000, f"invalid JSON from arborist core: {exc}") from exc
-
-    @staticmethod
-    def _decode_core_object(payload: str) -> dict[str, Any]:
-        value = ArboristGateway._decode_core_payload(payload)
-        if not isinstance(value, dict):
-            raise JsonRpcError(
-                -32000,
-                "invalid JSON from arborist core: expected object payload",
-            )
-        return value
-
-    @staticmethod
-    def _decode_core_object_array(payload: str) -> list[dict[str, Any]]:
-        value = ArboristGateway._decode_core_payload(payload)
-        if not isinstance(value, list):
-            raise JsonRpcError(
-                -32000,
-                "invalid JSON from arborist core: expected array payload",
-            )
-        for index, item in enumerate(value):
-            if not isinstance(item, dict):
-                raise JsonRpcError(
-                    -32000,
-                    f"invalid JSON from arborist core: expected object item at index {index}",
-                )
-        return value
 
 if __name__ == "__main__":
     raise SystemExit(main())

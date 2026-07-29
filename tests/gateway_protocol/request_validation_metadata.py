@@ -20,6 +20,7 @@ from arborist_mcp import tool_spec_models as tool_spec_models_module
 from arborist_mcp import tool_specs as tool_specs_module
 from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
+from arborist_mcp.gateway_core_helpers import GatewayCoreHelpers
 from arborist_mcp.gateway_source_query_routes import GatewaySourceQueryRoutes
 
 from tests.gateway_protocol import (
@@ -98,6 +99,26 @@ class GatewayMetadataRequestValidationMixin:
                     getattr(ArboristGateway, handler_name),
                     getattr(GatewaySourceQueryRoutes, handler_name),
                 )
+
+    def test_shared_core_helpers_are_composed_from_dedicated_mixin(self) -> None:
+        self.assertTrue(issubclass(ArboristGateway, GatewayCoreHelpers))
+        helper_names = (
+            "_call_with_optional_timeout",
+            "_decode_core_payload",
+            "_decode_core_object",
+            "_decode_core_object_array",
+        )
+        for helper_name in helper_names:
+            with self.subTest(helper_name=helper_name):
+                self.assertNotIn(helper_name, ArboristGateway.__dict__)
+                self.assertIs(
+                    getattr(ArboristGateway, helper_name),
+                    getattr(GatewayCoreHelpers, helper_name),
+                )
+        self.assertNotIn(
+            "_call_with_optional_timeout",
+            gateway_module.GatewaySymbolRoutes.__dict__,
+        )
 
     def test_domain_result_schemas_do_not_eagerly_load_tool_registry(self) -> None:
         module_names = (
