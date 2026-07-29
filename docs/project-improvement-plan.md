@@ -620,6 +620,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split tool parameter schemas and shared spec models out of the
   547-line tool registry, reducing it to roughly 155 lines while preserving
   public names, pickle identity, mutable-schema aliases, and catalog bytes.
+- [x] Include unreadable-file counts in index-watch health summaries so
+  emitted reconciliation and CI diagnostics cover every persisted-index file
+  freshness category.
 
 ## Suggested Commit Sequence
 

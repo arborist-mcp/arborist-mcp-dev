@@ -301,7 +301,8 @@ reconciliation scans as well as refresh indexing work.
 index. `--check` performs that no-write inspection once and returns a nonzero
 exit status unless every target is healthy, which is useful for CI and
 deployment checks. `--check` is mutually exclusive with `--once` and cannot be
-combined with `--dry-run` or a non-default `--interval-seconds`.
+combined with `--dry-run` or a non-default `--interval-seconds`. Emitted health
+summaries include issue, stale, missing, unreadable, and unindexed file counts.
 
 To watch several registered workspace/index pairs, provide a JSON manifest:
 

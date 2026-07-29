@@ -261,7 +261,8 @@ cooperative traversal, and per-file indexing work.
 `--check` runs that no-write decision path once and exits nonzero unless every
 configured target is healthy, while still emitting the target diagnostics.
 It is mutually exclusive with `--once` and cannot be combined with `--dry-run`
-or a non-default `--interval-seconds`.
+or a non-default `--interval-seconds`. Emitted health summaries include issue,
+stale, missing, unreadable, and unindexed file counts.
 
 ## Lightweight Benchmarks
 
