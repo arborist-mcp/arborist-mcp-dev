@@ -20,6 +20,7 @@ from arborist_mcp import tool_spec_models as tool_spec_models_module
 from arborist_mcp import tool_specs as tool_specs_module
 from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
+from arborist_mcp.gateway_source_query_routes import GatewaySourceQueryRoutes
 
 from tests.gateway_protocol import (
     GROUP_MODULES,
@@ -87,6 +88,16 @@ class GatewayMetadataRequestValidationMixin:
         for handler_name in gateway_module.TOOL_HANDLERS.values():
             with self.subTest(handler_name=handler_name):
                 self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
+
+    def test_source_query_handlers_are_composed_from_route_mixin(self) -> None:
+        self.assertTrue(issubclass(ArboristGateway, GatewaySourceQueryRoutes))
+        for handler_name in ("_get_semantic_skeleton", "_execute_tree_query"):
+            with self.subTest(handler_name=handler_name):
+                self.assertNotIn(handler_name, ArboristGateway.__dict__)
+                self.assertIs(
+                    getattr(ArboristGateway, handler_name),
+                    getattr(GatewaySourceQueryRoutes, handler_name),
+                )
 
     def test_domain_result_schemas_do_not_eagerly_load_tool_registry(self) -> None:
         module_names = (
