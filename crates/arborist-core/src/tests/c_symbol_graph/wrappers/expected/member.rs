@@ -1,3 +1,4 @@
+use super::super::super::support::PreparedSymbolGraph;
 use super::*;
 
 #[test]
@@ -101,8 +102,9 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
         ),
         ("api::auto_caller", "api::Counter::adjust(int) &"),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -115,8 +117,9 @@ fn resolves_cpp_expected_member_calls_across_live_and_persisted_queries() {
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -154,8 +157,9 @@ fn resolves_cpp_expected_error_member_calls_across_live_and_persisted_queries() 
         ),
         ("api::auto_error_caller", "api::Failure::adjust(int) &"),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -168,8 +172,9 @@ fn resolves_cpp_expected_error_member_calls_across_live_and_persisted_queries() 
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -208,8 +213,9 @@ fn resolves_cpp_expected_error_alias_member_calls_across_live_and_persisted_quer
             "api::Failure::adjust(int) &",
         ),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -222,8 +228,9 @@ fn resolves_cpp_expected_error_alias_member_calls_across_live_and_persisted_quer
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
