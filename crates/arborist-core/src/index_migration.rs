@@ -1,7 +1,7 @@
 mod execute;
 mod plan;
 
-pub(crate) use execute::migrate_symbol_index;
+pub(crate) use execute::{migrate_symbol_index, migrate_symbol_index_with_deadline};
 pub(crate) use plan::{
     failed_health_checks, healthy_index, incomplete_or_foreign_database,
     is_migratable_symbol_index_schema_version, missing_index, missing_schema_version,

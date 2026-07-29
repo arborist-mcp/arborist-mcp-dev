@@ -1,4 +1,111 @@
 use super::*;
+use std::time::{Duration, Instant};
+
+use crate::symbol_index_state::migrate_symbol_index_with_deadline;
+use crate::workspace_scan::WorkspaceScanDeadline;
+
+#[test]
+fn migration_rejects_invalid_timeouts_before_path_work() {
+    let zero = migrate_symbol_index_with_timeout(std::path::Path::new(""), Some(0))
+        .expect_err("zero migration timeout should fail before path validation");
+    assert!(
+        zero.to_string()
+            .contains("invalid workspace scan timeout_ms: value must be greater than zero")
+    );
+
+    let excessive = migrate_symbol_index_with_timeout(
+        std::path::Path::new("symbols.db"),
+        Some(MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1),
+    )
+    .expect_err("excessive migration timeout should fail before file work");
+    assert!(
+        excessive
+            .to_string()
+            .contains(&format!("must not exceed {MAX_WORKSPACE_SCAN_TIMEOUT_MS}"))
+    );
+}
+
+#[test]
+fn expired_migration_deadline_leaves_legacy_schema_unchanged() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+    let deadline = WorkspaceScanDeadline {
+        deadline: Some(Instant::now() - Duration::from_millis(1)),
+        timeout_ms: Some(1),
+    };
+
+    let error = migrate_symbol_index_with_deadline(&db_path, &deadline)
+        .expect_err("expired migration should fail before schema mutation");
+
+    assert!(
+        error
+            .to_string()
+            .contains("workspace scan timeout exceeded")
+    );
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "1");
+    assert!(
+        !symbol_table_columns(&connection).contains(&"reference_call_arities_json".to_string())
+    );
+}
+
+#[test]
+fn timed_migration_upgrades_legacy_schema_and_rebuilds_index() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v2(&connection);
+    connection
+        .execute("DROP INDEX idx_symbols_file_path", [])
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE metadata SET value = '1' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let migrated = migrate_symbol_index_with_timeout(&db_path, Some(MAX_WORKSPACE_SCAN_TIMEOUT_MS))
+        .expect("timed migration should succeed");
+
+    assert!(migrated.ok, "{:#?}", migrated.issues);
+    assert_eq!(migrated.schema_version.as_deref(), Some("4"));
+    assert_eq!(
+        read_symbol_from_index(&db_path, "helper")
+            .unwrap()
+            .symbol
+            .semantic_path,
+        "helper"
+    );
+}
 
 #[test]
 fn trace_rejects_missing_metadata_before_legacy_migration() {

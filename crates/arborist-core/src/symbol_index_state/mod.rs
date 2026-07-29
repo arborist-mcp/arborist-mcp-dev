@@ -4,7 +4,9 @@ pub(crate) use loading::{
     load_symbol_index, load_symbol_index_with_overrides,
     load_symbol_index_with_overrides_with_timeout, load_symbol_index_with_timeout,
 };
-pub use migration::migrate_symbol_index;
+#[cfg(test)]
+pub(crate) use migration::migrate_symbol_index_with_deadline;
+pub use migration::{migrate_symbol_index, migrate_symbol_index_with_timeout};
 
 mod fingerprints;
 mod freshness;

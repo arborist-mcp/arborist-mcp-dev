@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, Row, types::Type};
 use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 
+use crate::deadline::DeadlineCheck;
 use crate::index_schema::load_indexed_files_metadata_with_deadline;
 use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::semantic::semantic_parent_path;
@@ -40,13 +41,21 @@ pub(crate) fn load_indexed_symbols_grouped_by_file_with_deadline(
 }
 
 pub(crate) fn validate_legacy_indexed_symbols(connection: &Connection) -> Result<()> {
-    load_indexed_symbols_grouped_by_file_with_query(
+    validate_legacy_indexed_symbols_with_deadline(connection, None)
+}
+
+pub(crate) fn validate_legacy_indexed_symbols_with_deadline(
+    connection: &Connection,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
                 '{}' AS reference_call_arities_json
          FROM symbols
          ORDER BY file_path, semantic_path",
+        deadline,
     )
     .context("invalid persisted legacy symbol row")?;
     Ok(())
@@ -62,7 +71,7 @@ fn load_indexed_symbols_grouped_by_file_with_query(
 fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
     connection: &Connection,
     query: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeMap<String, Vec<IndexedSymbol>>> {
     let mut statement = connection.prepare(query)?;
     let rows = statement.query_map([], |row| {

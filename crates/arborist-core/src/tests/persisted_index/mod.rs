@@ -12,10 +12,10 @@ pub(super) use super::support::{
 pub(super) use crate::language::normalize_path;
 pub(super) use crate::{
     MAX_WORKSPACE_SCAN_TIMEOUT_MS, TraceDirection, WorkspaceScanLimits, inspect_symbol_index,
-    inspect_symbol_index_with_timeout, migrate_symbol_index, read_symbol_from_index,
-    rebuild_symbol_index, rebuild_symbol_index_with_limits, refresh_symbol_index_for_file,
-    refresh_symbol_index_for_file_with_limits, search_symbols_from_index,
-    trace_symbol_graph_from_index,
+    inspect_symbol_index_with_timeout, migrate_symbol_index, migrate_symbol_index_with_timeout,
+    read_symbol_from_index, rebuild_symbol_index, rebuild_symbol_index_with_limits,
+    refresh_symbol_index_for_file, refresh_symbol_index_for_file_with_limits,
+    search_symbols_from_index, trace_symbol_graph_from_index,
 };
 
 mod inspect;
