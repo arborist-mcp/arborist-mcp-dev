@@ -133,6 +133,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `patching/c_validation/references/call_arities.rs`.
 - [x] Extract C++ type-qualifier and declarator-suffix helpers into
   `patching/c_validation/references/type_qualifiers.rs`.
+- [x] Split `patching/c_validation/cpp_wrappers` into focused `extraction`,
+  `template_arguments`, and `type_normalization` modules with colocated tests,
+  retaining the existing C-validation-scoped wrapper helper surface.
 - [x] Extract C/C++ local-definition and reference-name collection into
   `patching/c_validation/references/name_collection.rs`.
 - [x] Extract C++ local-binding construction into
