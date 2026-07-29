@@ -183,6 +183,10 @@ completed item can land in its own commit unless two changes are inseparable.
   `buffer/loading.rs`, and `buffer/lifecycle.rs` submodules while preserving
   lifecycle deadlines, atomic edit rollback, clean-buffer refresh, index sync,
   and workspace overlay behavior.
+- [x] Split `vfs/patch_context.rs` into `patch_context/apply.rs`,
+  `patch_context/validation.rs`, and `patch_context/results.rs` while preserving
+  semantic/position dispatch, deadline rollback, trace-context validation, and
+  live-VFS overlay behavior.
 - [x] Split `tests/patch_replay` into focused `replay` and `context`
   modules while preserving the existing patch-validation regression coverage.
 - [x] Split `tests/index_refresh` into focused `dependencies` and `validation`

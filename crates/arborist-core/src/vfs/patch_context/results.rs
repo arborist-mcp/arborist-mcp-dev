@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::VirtualFileSystem;
+use super::super::VirtualFileSystem;
 use crate::model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
     PatchAstNodeResult, TraceBackedPatchResult, TraceDirection,
