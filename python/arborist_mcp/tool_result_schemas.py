@@ -82,7 +82,8 @@ from .tool_result_schema_vfs import (
     VIRTUAL_FILE_STATUS_RESULT_SCHEMA,
     VIRTUAL_FILE_STATUS_ARRAY_RESULT_SCHEMA,
 )
-from .tool_specs import BATCH_ALLOWED_TOOLS, TOOL_NAMES, TOOL_SPECS, _schema
+from .tool_spec_models import _schema
+from .tool_specs import BATCH_ALLOWED_TOOLS, TOOL_NAMES, TOOL_SPECS
 
 
 BATCH_CALL_RESULT_SCHEMA = {

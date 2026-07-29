@@ -4,7 +4,7 @@ from .tool_result_schema_common import (
     NULLABLE_STRING_RESULT_SCHEMA,
     POSITION_RESULT_SCHEMA,
 )
-from .tool_specs import _schema
+from .tool_spec_models import _schema
 
 
 QUERY_CAPTURE_RESULT_SCHEMA = {

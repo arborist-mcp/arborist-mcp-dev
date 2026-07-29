@@ -6,7 +6,7 @@ from .tool_result_schema_common import (
     POSITION_RESULT_SCHEMA,
     STRING_ARRAY_RESULT_SCHEMA,
 )
-from .tool_specs import _schema
+from .tool_spec_models import _schema
 
 
 SEMANTIC_SKELETON_SYMBOL_RESULT_SCHEMA = {

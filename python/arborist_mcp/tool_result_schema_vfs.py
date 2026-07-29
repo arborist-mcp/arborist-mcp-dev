@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .tool_result_schema_patching import PATCH_VALIDATION_RESULT_SCHEMA
-from .tool_specs import _schema
+from .tool_spec_models import _schema
 
 
 VIRTUAL_EDIT_RESULT_SCHEMA = {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .tool_specs import _schema
+from .tool_spec_models import _schema
 
 
 OBJECT_RESULT_SCHEMA = {

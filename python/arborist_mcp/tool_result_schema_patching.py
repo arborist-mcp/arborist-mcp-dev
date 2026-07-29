@@ -13,7 +13,7 @@ from .tool_result_schema_symbols import (
     TRACE_SYMBOL_GRAPH_RESULT_SCHEMA,
     TRACE_SYMBOL_NEIGHBORHOOD_RESULT_SCHEMA,
 )
-from .tool_specs import _schema
+from .tool_spec_models import _schema
 
 
 VALIDATION_ISSUE_RESULT_SCHEMA = {

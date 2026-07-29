@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import pickle
 from pathlib import Path
 import re
 import subprocess
@@ -12,6 +13,8 @@ from unittest import mock
 
 import arborist_mcp
 from arborist_mcp import gateway as gateway_module
+from arborist_mcp import tool_spec_models as tool_spec_models_module
+from arborist_mcp import tool_specs as tool_specs_module
 from arborist_mcp import _version as version_module
 from arborist_mcp.gateway import ArboristGateway
 
@@ -81,6 +84,56 @@ class GatewayMetadataRequestValidationMixin:
         for handler_name in gateway_module.TOOL_HANDLERS.values():
             with self.subTest(handler_name=handler_name):
                 self.assertTrue(callable(getattr(ArboristGateway, handler_name, None)))
+
+    def test_domain_result_schemas_do_not_eagerly_load_tool_registry(self) -> None:
+        module_names = (
+            "tool_result_schema_common",
+            "tool_result_schema_symbols",
+            "tool_result_schema_patching",
+            "tool_result_schema_query",
+            "tool_result_schema_vfs",
+            "tool_result_schema_index",
+        )
+
+        for module_name in module_names:
+            with self.subTest(module_name=module_name):
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import importlib, sys; "
+                            f"importlib.import_module('arborist_mcp.{module_name}'); "
+                            "assert 'arborist_mcp.tool_specs' not in sys.modules"
+                        ),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_tool_spec_models_preserve_compatibility_identity(self) -> None:
+        model_types = (
+            (tool_specs_module.ToolSpec, tool_spec_models_module.ToolSpec),
+            (tool_specs_module.ToolParamSpec, tool_spec_models_module.ToolParamSpec),
+        )
+        for exported_type, model_type in model_types:
+            with self.subTest(model_type=model_type.__name__):
+                self.assertIs(exported_type, model_type)
+                self.assertEqual(model_type.__module__, "arborist_mcp.tool_specs")
+                self.assertIs(pickle.loads(pickle.dumps(exported_type)), exported_type)
+
+        values = (
+            tool_specs_module.ToolSpec("tool", "handler", (), "read"),
+            tool_specs_module.ToolParamSpec({"type": "string"}),
+        )
+        for value in values:
+            with self.subTest(value_type=type(value).__name__):
+                restored = pickle.loads(pickle.dumps(value))
+                self.assertIs(type(restored), type(value))
+                self.assertEqual(restored, value)
 
     def test_tool_specs_are_the_catalog_source_of_truth(self) -> None:
         specs = gateway_module.TOOL_SPECS
