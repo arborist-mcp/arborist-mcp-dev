@@ -85,6 +85,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split PyO3 patch-validation bindings into focused `trace`, `graph`,
   `neighborhood`, and `discovery` modules while retaining a registration-only
   `patch_validation.rs` facade and the existing semantic/position method surface.
+- [x] Split PyO3 symbol-read bindings into focused `basic`, `context`,
+  `neighborhood`, and `discovery` modules while retaining a registration-only
+  `symbol_queries/read.rs` facade and source/index/VFS query parity.
 
 ### P2: Core Architecture Improvements
 
