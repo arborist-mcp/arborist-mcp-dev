@@ -9,7 +9,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - Public protocol metadata is healthy: `python scripts/tool_catalog.py --check`
   passes and the checked-in catalog matches the generated manifest.
 - Version metadata is healthy: `python scripts/version_consistency.py` passes.
-- The gateway facade is now about 300 lines after symbol-query, patch,
+- The gateway facade is now about 260 lines after symbol-query, patch,
   and trace route mixins join the earlier index/VFS/parameter helpers. The
   PyO3 root facade remains a thin registration surface over domain bindings.
 - The remaining strategic gaps are deeper Rust module splits, fuller C++
@@ -632,6 +632,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract semantic-skeleton and raw tree-query handlers into a focused
   source-query route mixin, reducing the gateway facade below three hundred
   lines while preserving handler identity, validation, and response behavior.
+- [x] Centralize shared native-core timeout invocation and strict JSON payload
+  decoding in a dedicated helper mixin, removing the cross-domain dependency on
+  symbol routes and reducing the gateway facade to roughly 260 lines.
 
 ## Suggested Commit Sequence
 
