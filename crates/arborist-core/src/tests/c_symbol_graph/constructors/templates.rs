@@ -1,3 +1,4 @@
+use super::super::support::PreparedSymbolGraph;
 use super::*;
 
 #[test]
@@ -442,8 +443,9 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
         ),
         ("api::factory_caller", "api::make_counter()"),
     ];
+    let live_graph = PreparedSymbolGraph::from_workspace(&dir).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Both).unwrap();
+        let trace = live_graph.trace(caller).unwrap();
         assert_eq!(
             trace
                 .callees
@@ -456,9 +458,9 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
     }
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_graph = PreparedSymbolGraph::from_index(&db_path).unwrap();
     for (caller, expected_callee) in expected_callees {
-        let persisted_trace =
-            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Both).unwrap();
+        let persisted_trace = persisted_graph.trace(caller).unwrap();
         assert_eq!(
             persisted_trace
                 .callees
@@ -470,13 +472,15 @@ fn resolves_cpp_auto_constructor_member_calls_across_live_and_persisted_queries(
         );
     }
     assert!(
-        trace_symbol_graph(&dir, "api::copy_list_caller", TraceDirection::Both)
+        live_graph
+            .trace("api::copy_list_caller")
             .unwrap()
             .callees
             .is_empty()
     );
     assert!(
-        trace_symbol_graph_from_index(&db_path, "api::copy_list_caller", TraceDirection::Both)
+        persisted_graph
+            .trace("api::copy_list_caller")
             .unwrap()
             .callees
             .is_empty()
