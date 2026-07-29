@@ -231,6 +231,13 @@ health inspection and returns their actual outcome rather than a late timeout.
 Individual SQLite queries, source reads, the schema transaction, and rebuild
 persistence remain non-preemptible.
 
+The offline `replay_patch_evidence_against_trace`,
+`validate_patch_commit_with_trace`, and `export_patch_diagnostics_sarif` tools
+accept the same timeout cap. Their cooperative native budgets cover validated
+patch/trace traversal and result construction after strict JSON decoding;
+individual decodes, source parses, model-validation calls, and serialization
+steps remain non-preemptible.
+
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input
 schemas, output schemas, defaults, and categories.

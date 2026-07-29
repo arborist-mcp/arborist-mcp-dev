@@ -54446,6 +54446,12 @@
           "type": "object",
           "description": "JSON object returned by a prior Arborist patch or trace call.",
           "additionalProperties": true
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
         }
       },
       "required": [
@@ -54570,6 +54576,12 @@
           "type": "object",
           "description": "JSON object returned by a prior Arborist patch or trace call.",
           "additionalProperties": true
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
         }
       },
       "required": [
@@ -55715,6 +55727,12 @@
           "type": "object",
           "description": "JSON object returned by a prior Arborist patch or trace call.",
           "additionalProperties": true
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
         }
       },
       "required": [

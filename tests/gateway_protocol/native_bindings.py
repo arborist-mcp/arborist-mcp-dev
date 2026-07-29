@@ -90,6 +90,28 @@ class NativeBindingsTests(unittest.TestCase):
                     }
                 )
 
+    def test_offline_patch_analysis_timeouts_reach_native_parameters(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        cases = (
+            (
+                gateway._replay_patch_evidence_against_trace,
+                {"patch": {}, "trace": {}, "timeout_ms": 300000},
+            ),
+            (
+                gateway._validate_patch_commit_with_trace,
+                {"patch": {}, "trace": {}, "timeout_ms": 300000},
+            ),
+            (
+                gateway._export_patch_diagnostics_sarif,
+                {"patch": {}, "timeout_ms": 300000},
+            ),
+        )
+
+        for handler, params in cases:
+            with self.subTest(handler=handler.__name__):
+                with self.assertRaisesRegex(Exception, "missing field"):
+                    handler(params)
+
     def test_patch_preview_timeouts_reach_native_parameters(self) -> None:
         gateway = gateway_module.ArboristGateway()
         source = "def sample():\n    return 1\n"

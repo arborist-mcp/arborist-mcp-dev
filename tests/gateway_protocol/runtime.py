@@ -426,6 +426,21 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         preview_result = preview["outputSchema"]["properties"]["result"]
         self.assertEqual(preview_result["required"], ["patch", "unified_diff", "changed"])
         self.assertEqual(preview_result["properties"]["patch"], patch_result)
+        for offline_analysis_name in (
+            "arborist/replay_patch_evidence_against_trace",
+            "arborist/validate_patch_commit_with_trace",
+            "arborist/export_patch_diagnostics_sarif",
+        ):
+            offline_analysis_timeout = by_name[offline_analysis_name]["inputSchema"]
+            self.assertNotIn("timeout_ms", offline_analysis_timeout["required"])
+            self.assertEqual(
+                offline_analysis_timeout["properties"]["timeout_ms"]["minimum"],
+                1,
+            )
+            self.assertEqual(
+                offline_analysis_timeout["properties"]["timeout_ms"]["maximum"],
+                gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+            )
         replay = by_name["arborist/replay_patch_evidence_against_trace"]["outputSchema"][
             "properties"
         ]["result"]

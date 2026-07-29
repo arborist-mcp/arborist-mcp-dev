@@ -66,6 +66,56 @@ class GatewayManagementRouteTests(GatewayProtocolTestCase):
             check_result=lambda result: self.assertFalse(result["changed"]),
         )
 
+    def test_offline_patch_analysis_timeouts_reach_final_core_parameter(self) -> None:
+        cases = (
+            (
+                "replay_patch_evidence_against_trace_json",
+                "arborist/replay_patch_evidence_against_trace",
+                {"patch": {}, "trace": {}, "timeout_ms": 5000},
+                {"consistent": True, "matched_items": 0, "blocked_items": 0, "items": []},
+                ("{}", "{}", 5000),
+            ),
+            (
+                "validate_patch_commit_with_trace_json",
+                "arborist/validate_patch_commit_with_trace",
+                {"patch": {}, "trace": {}, "timeout_ms": 5000},
+                {
+                    "allowed": True,
+                    "status": "allowed",
+                    "reason": "accepted",
+                    "patch_gate_status": "allowed",
+                    "replay_status": "matched",
+                    "replay": {
+                        "consistent": True,
+                        "matched_items": 0,
+                        "blocked_items": 0,
+                        "items": [],
+                    },
+                },
+                ("{}", "{}", 5000),
+            ),
+            (
+                "export_patch_diagnostics_sarif_json",
+                "arborist/export_patch_diagnostics_sarif",
+                {"patch": {}, "timeout_ms": 5000},
+                {"version": "2.1.0", "runs": []},
+                ("{}", 5000),
+            ),
+        )
+
+        for request_id, case in enumerate(cases, start=131):
+            core_method, rpc_method, params, payload, expected_call = case
+            with self.subTest(rpc_method=rpc_method):
+                self.assert_routed_json(
+                    core_method=core_method,
+                    rpc_method=rpc_method,
+                    params=params,
+                    payload=payload,
+                    request_id=request_id,
+                    expected_call=expected_call,
+                    check_result=lambda result: self.assertIsInstance(result, dict),
+                )
+
     def test_symbol_index_management_routes_params_to_core(self) -> None:
         cases = [
             {

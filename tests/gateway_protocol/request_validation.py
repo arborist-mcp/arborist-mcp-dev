@@ -1788,6 +1788,35 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     self.assertEqual(response["error"]["code"], -32602)
                     self.assertIn("timeout_ms", response["error"]["message"])
 
+    def test_rejects_invalid_offline_patch_analysis_timeout_bounds(self) -> None:
+        cases = (
+            (
+                "arborist/replay_patch_evidence_against_trace",
+                {"patch": {}, "trace": {}},
+            ),
+            (
+                "arborist/validate_patch_commit_with_trace",
+                {"patch": {}, "trace": {}},
+            ),
+            (
+                "arborist/export_patch_diagnostics_sarif",
+                {"patch": {}},
+            ),
+        )
+        for method, base_params in cases:
+            for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+                with self.subTest(method=method, timeout_ms=timeout_ms):
+                    response = self.make_gateway().handle_request(
+                        self.request(
+                            method,
+                            {**base_params, "timeout_ms": timeout_ms},
+                            request_id=84 + timeout_ms,
+                        )
+                    )
+
+                    self.assertEqual(response["error"]["code"], -32602)
+                    self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_patch_preview_timeout_bounds(self) -> None:
         cases = (
             (

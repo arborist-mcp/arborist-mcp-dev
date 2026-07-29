@@ -211,6 +211,15 @@ validation, the updated trace, bounded graph or source-context expansion, and
 result validation. A single blocking source read or parse remains a
 non-preemptible boundary.
 
+`replay_patch_evidence_against_trace`, `validate_patch_commit_with_trace`, and
+`export_patch_diagnostics_sarif` also accept an optional cooperative
+`timeout_ms` capped at `300000`. Their native budgets begin after strict JSON
+deserialization and cover patch/trace validation boundaries, updated-source
+parse boundaries, syntax traversal, evidence or diagnostic collection, and
+final result validation. A single JSON decode, source parse, model-validation
+call, artifact-URI encoding, result construction, or response serialization
+remains non-preemptible.
+
 `preview_workspace_position_edits` accepts the same optional budget across file
 validation, source reads, sequential edit application, updated-source parsing,
 diff generation, syntax diagnostics, and result validation. A single blocking

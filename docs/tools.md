@@ -431,7 +431,13 @@ snippets for reachable symbols. `*_at_position` variants resolve the target from
 
 `replay_patch_evidence_against_trace` compares patch evidence invariants against
 trace graph evidence. `validate_patch_commit_with_trace` turns that replay into
-a single allowed/status/reason decision.
+a single allowed/status/reason decision. Both accept an optional cooperative
+`timeout_ms` budget capped at `300000` milliseconds. The shared native budget
+covers patch and trace validation boundaries, updated-source parsing boundaries,
+syntax-tree traversal, evidence-key collection and normalization, invariant
+replay, status summarization, and final result validation. The strict JSON decode,
+a single source parse or model-validation call, and result serialization remain
+non-preemptible.
 
 ## Symbol Index Tools
 
@@ -520,7 +526,11 @@ health report returned by `inspect_symbol_index` after the attempted migration.
 `export_patch_diagnostics_sarif` converts a prior `patch_ast_node` result into
 a SARIF 2.1.0 log for CI systems. Syntax issues retain UTF-8 byte-column source
 locations; unresolved or ambiguous bindings and non-allowed commit-gate states
-are emitted as Arborist rules in the SARIF run.
+are emitted as Arborist rules in the SARIF run. It accepts the same optional
+`timeout_ms` cap for patch validation, updated-source parse boundaries,
+syntax-tree traversal, diagnostic collection, and final SARIF construction.
+Strict JSON decoding, a single parse or model-validation call, artifact-URI
+encoding, and result serialization remain non-preemptible.
 
 Persisted trace reads and single-file refreshes fail closed on missing indexes,
 non-index databases, incomplete schema, missing or unsupported schema versions,

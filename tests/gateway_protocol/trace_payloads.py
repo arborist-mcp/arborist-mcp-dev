@@ -148,6 +148,34 @@ class GatewayTracePayloadTests(GatewaySemanticFixtureMixin, GatewayProtocolTestC
                     contains=contains,
                 )
 
+    def test_offline_patch_analysis_timeout_preserves_successful_results(self) -> None:
+        params = self.minimal_params()
+        params["timeout_ms"] = 300000
+
+        replay = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.gateway,
+                "arborist/replay_patch_evidence_against_trace",
+                params,
+                request_id=47,
+            ),
+            request_id=47,
+        )
+        validation = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.gateway,
+                "arborist/validate_patch_commit_with_trace",
+                params,
+                request_id=48,
+            ),
+            request_id=48,
+        )
+
+        self.assertTrue(replay["consistent"])
+        self.assertEqual(replay["items"], [])
+        self.assertTrue(validation["allowed"])
+        self.assertEqual(validation["replay_status"], "matched")
+
     def test_rejects_malformed_patch_trace_payloads_as_invalid_params(self) -> None:
         params = {
             "patch": {"file": "sample.py"},

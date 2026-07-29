@@ -18,9 +18,11 @@ class GatewayPatchValidationRoutes:
             raise JsonRpcError(-32602, "missing required object param: trace")
         patch_json = self._encode_json_param(patch, "patch")
         trace_json = self._encode_json_param(trace, "trace")
-        payload = self._require_core().replay_patch_evidence_against_trace_json(
-            patch_json,
-            trace_json,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().replay_patch_evidence_against_trace_json,
+            (patch_json, trace_json),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
@@ -29,7 +31,12 @@ class GatewayPatchValidationRoutes:
         if not isinstance(patch, dict):
             raise JsonRpcError(-32602, "missing required object param: patch")
         patch_json = self._encode_json_param(patch, "patch")
-        payload = self._require_core().export_patch_diagnostics_sarif_json(patch_json)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().export_patch_diagnostics_sarif_json,
+            (patch_json,),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _preview_workspace_position_edits(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -107,9 +114,11 @@ class GatewayPatchValidationRoutes:
             raise JsonRpcError(-32602, "missing required object param: trace")
         patch_json = self._encode_json_param(patch, "patch")
         trace_json = self._encode_json_param(trace, "trace")
-        payload = self._require_core().validate_patch_commit_with_trace_json(
-            patch_json,
-            trace_json,
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().validate_patch_commit_with_trace_json,
+            (patch_json, trace_json),
+            timeout_ms,
         )
         return self._decode_core_object(payload)
 
