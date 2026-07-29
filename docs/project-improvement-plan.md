@@ -569,6 +569,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Guard all first-party Action references in check and wheel workflows
   with one Node.js 24 major-version contract test, while keeping cache behavior
   assertions independent from the selected Action release.
+- [x] Split gateway context direction and node-bound validation regressions
+  into a dedicated mixin while preserving the request-validation suite identity,
+  native-extension requirements, and all 125 discovered tests.
 
 ## Suggested Commit Sequence
 
