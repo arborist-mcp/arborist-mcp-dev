@@ -150,6 +150,9 @@ completed item can land in its own commit unless two changes are inseparable.
   lock and `std::ref`/`std::cref` factory receivers) and `nested`
   (optional/expected/smart-pointer unwrap receivers), with a thin re-export
   facade in `wrappers/mod.rs`.
+- [x] Split `receivers/wrappers/nested.rs` into focused `expected`, `helpers`,
+  `optional`, and `smart_pointers` submodules while retaining reference-wrapper
+  routing and the existing references-scoped re-export surface on the facade.
 - [x] Split `references/bindings/auto` into nested modules: `constructor`
   (decltype(auto)/auto constructor binding), `alias` (address/reference-alias
   helpers), and `copy` (standard-wrapper copy/alias helpers internal to auto).
