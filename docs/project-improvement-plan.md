@@ -617,6 +617,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Finish the result-schema domain split for patching, queries, VFS, and
   indexes, leaving a roughly 160-line registry while preserving all public
   names, shared-schema identities, batch variants, and catalog bytes.
+- [x] Split tool parameter schemas and shared spec models out of the
+  547-line tool registry, reducing it to roughly 155 lines while preserving
+  public names, pickle identity, mutable-schema aliases, and catalog bytes.
 
 ## Suggested Commit Sequence
 
