@@ -177,6 +177,9 @@ def _health_summary(health: dict[str, Any]) -> dict[str, Any]:
         "missing_files": len(health.get("missing_files", []))
         if isinstance(health.get("missing_files"), list)
         else None,
+        "unreadable_files": len(health.get("unreadable_files", []))
+        if isinstance(health.get("unreadable_files"), list)
+        else None,
         "unindexed_files": len(health.get("unindexed_files", []))
         if isinstance(health.get("unindexed_files"), list)
         else None,

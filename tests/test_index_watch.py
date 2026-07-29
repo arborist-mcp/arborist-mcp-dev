@@ -21,7 +21,13 @@ from arborist_mcp.index_watch import (
 )
 
 
-def health_payload(*, ok: bool, action: str, reason: str = "current") -> str:
+def health_payload(
+    *,
+    ok: bool,
+    action: str,
+    reason: str = "current",
+    unreadable_files: tuple[str, ...] = (),
+) -> str:
     return json.dumps(
         {
             "ok": ok,
@@ -31,6 +37,7 @@ def health_payload(*, ok: bool, action: str, reason: str = "current") -> str:
             "issues": [] if ok else [reason],
             "stale_files": [],
             "missing_files": [],
+            "unreadable_files": list(unreadable_files),
             "unindexed_files": [],
             "migration": {"action": action, "reason": reason},
         }
@@ -87,6 +94,28 @@ class IndexWatchTests(unittest.TestCase):
         self.assertEqual(event["status"], "healthy")
         self.assertEqual(core.inspect_calls, ["symbols.db"])
         self.assertEqual(core.refresh_calls, [])
+
+    def test_reconcile_reports_unreadable_file_count(self) -> None:
+        core = StubCore(
+            health_payload(
+                ok=False,
+                action="rebuild",
+                reason="indexed file is unreadable",
+                unreadable_files=("locked.py", "denied.py"),
+            )
+        )
+
+        event = reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+            dry_run=True,
+        )
+
+        self.assertEqual(event["status"], "would_refresh")
+        self.assertEqual(event["health"]["unreadable_files"], 2)
 
     def test_reconcile_refreshes_rebuildable_index(self) -> None:
         core = StubCore(
