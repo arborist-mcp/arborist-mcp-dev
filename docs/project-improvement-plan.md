@@ -611,6 +611,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Expand generated schema cloning to break internal mutable aliases, so
   mutating one property in a single tool descriptor cannot silently alter a
   sibling property that reused the same schema template.
+- [x] Split common and semantic/symbol/trace result schemas out of the
+  1,100-line gateway schema registry, reducing the aggregation module to about
+  725 lines while preserving its public imports and byte-identical catalog.
 
 ## Suggested Commit Sequence
 
