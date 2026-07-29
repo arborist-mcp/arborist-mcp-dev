@@ -551,6 +551,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Reuse the same prepared graphs in the C++ `std::get_if` pointer-binding
   regression, retaining all live/persisted edge assertions while reducing its
   cached exact-test runtime from roughly 66 seconds to 13 seconds locally.
+- [x] Reuse prepared graphs across the complete typed C++ `std::get` test
+  module, preserving positive and negative trace assertions while reducing the
+  six-test module runtime from roughly 70 seconds to 17 seconds locally.
 - [x] Group indexed `std::expected` tuple access regression tests behind a
   dedicated module boundary for clearer future category-level splits.
 - [x] Group direct indexed tuple access regression tests behind a dedicated
