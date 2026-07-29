@@ -119,12 +119,18 @@ impl ArboristCore {
         )
     }
 
-    fn unregister_symbol_index_json(&self, workspace_root: &str) -> PyResult<bool> {
-        self.unregister_symbol_index_json_impl(workspace_root)
+    #[pyo3(signature = (workspace_root, timeout_ms=None))]
+    fn unregister_symbol_index_json(
+        &self,
+        workspace_root: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<bool> {
+        self.unregister_symbol_index_json_impl(workspace_root, timeout_ms)
     }
 
-    fn list_symbol_indexes_json(&self) -> PyResult<String> {
-        self.list_symbol_indexes_json_impl()
+    #[pyo3(signature = (timeout_ms=None))]
+    fn list_symbol_indexes_json(&self, timeout_ms: Option<u64>) -> PyResult<String> {
+        self.list_symbol_indexes_json_impl(timeout_ms)
     }
 
     #[pyo3(signature = (max_files=20_000, max_file_bytes=None, timeout_ms=None))]
@@ -247,18 +253,25 @@ impl ArboristCore {
         to_json_result(&result)
     }
 
-    pub(super) fn unregister_symbol_index_json_impl(&self, workspace_root: &str) -> PyResult<bool> {
+    pub(super) fn unregister_symbol_index_json_impl(
+        &self,
+        workspace_root: &str,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<bool> {
         self.vfs
             .borrow_mut()
-            .unregister_symbol_index(Path::new(workspace_root))
+            .unregister_symbol_index_with_timeout(Path::new(workspace_root), timeout_ms)
             .map_err(to_py_error)
     }
 
-    pub(super) fn list_symbol_indexes_json_impl(&self) -> PyResult<String> {
+    pub(super) fn list_symbol_indexes_json_impl(
+        &self,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<String> {
         let result = self
             .vfs
             .borrow()
-            .registered_symbol_indexes_checked()
+            .registered_symbol_indexes_checked_with_timeout(timeout_ms)
             .map_err(to_py_error)?;
         to_json_result(&result)
     }
