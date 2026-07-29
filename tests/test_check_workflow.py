@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -383,11 +384,38 @@ class CheckWorkflowTests(unittest.TestCase):
             workflow,
         )
 
+    def test_workflows_use_current_node24_first_party_actions(self) -> None:
+        expected_versions = {
+            "actions/cache": "v6",
+            "actions/checkout": "v7",
+            "actions/setup-python": "v7",
+            "actions/upload-artifact": "v7",
+        }
+        observed_actions: set[str] = set()
+
+        for workflow_name in ("check.yml", "wheels.yml"):
+            workflow = (
+                self.repo_root / ".github" / "workflows" / workflow_name
+            ).read_text(encoding="utf-8")
+            references = re.findall(
+                r"^\s*uses:\s+(actions/[A-Za-z0-9_-]+)@(\S+)\s*$",
+                workflow,
+                flags=re.MULTILINE,
+            )
+            self.assertTrue(references, f"no first-party actions found in {workflow_name}")
+            for action, version in references:
+                with self.subTest(workflow=workflow_name, action=action):
+                    self.assertIn(action, expected_versions)
+                    self.assertEqual(version, expected_versions[action])
+                    observed_actions.add(action)
+
+        self.assertEqual(observed_actions, set(expected_versions))
+
     def test_wheels_workflow_caches_cargo_builds_per_runner_and_lockfile(self) -> None:
         workflow = (self.repo_root / ".github" / "workflows" / "wheels.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn("actions/cache@v6", workflow)
+        self.assertIn("uses: actions/cache@", workflow)
         self.assertIn("~/.cargo/registry", workflow)
         self.assertIn("~/.cargo/git", workflow)
         self.assertIn("target", workflow)
