@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from .tool_result_schemas import OBJECT_RESULT_SCHEMA, TOOL_RESULT_SCHEMAS
@@ -58,7 +59,7 @@ def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "result": result_schema,
+            "result": deepcopy(result_schema),
         },
         "required": ["result"],
         "additionalProperties": False,
@@ -68,7 +69,7 @@ def build_tool_output_schema_for_tool(tool_name: str) -> dict[str, Any]:
 def build_tool_input_schema(tool_name: str) -> dict[str, Any]:
     properties: dict[str, Any] = {}
     for param_name in tool_spec(tool_name).params:
-        param_schema = dict(tool_param_spec(param_name).schema)
+        param_schema = deepcopy(tool_param_spec(param_name).schema)
         default = tool_param_default(tool_name, param_name)
         if default is not None:
             param_schema["default"] = default

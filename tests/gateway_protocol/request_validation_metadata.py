@@ -200,6 +200,43 @@ class GatewayMetadataRequestValidationMixin:
                     expected_result_schema,
                 )
 
+    def test_generated_tool_catalog_isolated_from_caller_mutation(self) -> None:
+        first_catalog = {
+            tool["name"]: tool for tool in gateway_module.build_tool_catalog()
+        }
+        output_schema = first_catalog["arborist/get_semantic_skeleton"][
+            "outputSchema"
+        ]["properties"]["result"]
+        position_schema = first_catalog["arborist/patch_ast_node_at_position"][
+            "inputSchema"
+        ]["properties"]["position"]
+        original_minimum = position_schema["properties"]["row"]["minimum"]
+
+        try:
+            output_schema["callerMutation"] = True
+            position_schema["properties"]["row"]["minimum"] = 99
+
+            second_catalog = {
+                tool["name"]: tool for tool in gateway_module.build_tool_catalog()
+            }
+            second_output_schema = second_catalog["arborist/get_semantic_skeleton"][
+                "outputSchema"
+            ]["properties"]["result"]
+            second_position_schema = second_catalog[
+                "arborist/patch_ast_node_at_position"
+            ]["inputSchema"]["properties"]["position"]
+
+            self.assertIsNot(output_schema, second_output_schema)
+            self.assertNotIn("callerMutation", second_output_schema)
+            self.assertIsNot(position_schema, second_position_schema)
+            self.assertEqual(
+                second_position_schema["properties"]["row"]["minimum"],
+                original_minimum,
+            )
+        finally:
+            output_schema.pop("callerMutation", None)
+            position_schema["properties"]["row"]["minimum"] = original_minimum
+
     def test_tool_catalog_script_and_snapshot_match_generated_catalog(self) -> None:
         repo_root = Path(__file__).resolve().parents[2]
         script_path = repo_root / "scripts" / "tool_catalog.py"
