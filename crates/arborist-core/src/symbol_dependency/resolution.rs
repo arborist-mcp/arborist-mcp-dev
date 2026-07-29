@@ -1,4 +1,5 @@
 mod cpp_callables;
+mod graph;
 mod indexes;
 mod path_groups;
 mod python;
@@ -14,7 +15,7 @@ use anyhow::Result;
 
 use super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use crate::language::detect_language;
-use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
+use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
 use crate::symbol_index_model::{
     CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
@@ -29,6 +30,10 @@ use crate::workspace_scan::WorkspaceScanDeadline;
 use cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
+};
+pub(crate) use graph::{
+    resolve_symbol_dependencies, resolve_symbol_dependencies_with_overrides,
+    resolve_symbol_dependencies_with_overrides_with_deadline,
 };
 pub(super) use indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
 use path_groups::{cpp_qualified_reference_path_groups, cpp_unqualified_call_candidate_groups};
@@ -85,145 +90,6 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     deadline: &WorkspaceScanDeadline,
 ) -> Result<()> {
     symbol_ids::assign_symbol_ids_with_deadline(raw_symbols, Some(deadline))
-}
-
-pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta> {
-    resolve_symbol_dependencies_with_overrides(raw_symbols, None)
-}
-
-pub(crate) fn resolve_symbol_dependencies_with_overrides(
-    raw_symbols: &[IndexedSymbol],
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Vec<SymbolMeta> {
-    let name_index = build_name_index(raw_symbols);
-    let semantic_path_index = build_semantic_path_index(raw_symbols);
-    let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
-    let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut languages_by_file = HashMap::new();
-    let mut include_contexts_by_file = HashMap::new();
-
-    for (symbol_id, indexes) in &symbol_indexes {
-        let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
-        for index in indexes {
-            dependencies.extend(resolve_dependencies_for_symbol(
-                &raw_symbols[*index],
-                raw_symbols,
-                &name_index,
-                &semantic_path_index,
-                file_overrides,
-                &mut languages_by_file,
-                &mut include_contexts_by_file,
-            ));
-        }
-    }
-
-    let mut reference_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (caller, callees) in &dependency_map {
-        for callee in callees {
-            reference_map
-                .entry(callee.clone())
-                .or_default()
-                .insert(caller.clone());
-        }
-    }
-
-    raw_symbols
-        .iter()
-        .map(|symbol| {
-            SymbolMeta::new(SymbolMetaInit {
-                symbol_id: symbol.symbol_id.clone(),
-                semantic_path: symbol.semantic_path.clone(),
-                scope_path: symbol.scope_path.clone(),
-                file_path: symbol.file_path.clone(),
-                node_kind: symbol.node_kind.clone(),
-                origin_type: "workspace_symbol".to_string(),
-                byte_range: symbol.byte_range,
-                signature: symbol.signature.clone(),
-                parameters: symbol.parameters.clone(),
-                return_type: symbol.return_type.clone(),
-                docstring: symbol.docstring.clone(),
-                dependencies: dependency_map
-                    .get(&symbol.symbol_id)
-                    .map(|dependencies| dependencies.iter().cloned().collect())
-                    .unwrap_or_default(),
-                references: reference_map
-                    .get(&symbol.symbol_id)
-                    .map(|references| references.iter().cloned().collect())
-                    .unwrap_or_default(),
-            })
-        })
-        .collect()
-}
-
-pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
-    raw_symbols: &[IndexedSymbol],
-    file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: &WorkspaceScanDeadline,
-) -> Result<Vec<SymbolMeta>> {
-    deadline.check("resolving symbol dependencies")?;
-    let name_index = build_name_index(raw_symbols);
-    let semantic_path_index = build_semantic_path_index(raw_symbols);
-    let symbol_indexes = raw_symbol_indexes_by_id(raw_symbols);
-    let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    let mut languages_by_file = HashMap::new();
-    let mut include_contexts_by_file = HashMap::new();
-
-    for (symbol_id, indexes) in &symbol_indexes {
-        deadline.check("resolving symbol dependencies")?;
-        let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
-        for index in indexes {
-            dependencies.extend(resolve_dependencies_for_symbol_with_deadline(
-                &raw_symbols[*index],
-                raw_symbols,
-                &name_index,
-                &semantic_path_index,
-                file_overrides,
-                &mut languages_by_file,
-                &mut include_contexts_by_file,
-                Some(deadline),
-            )?);
-            deadline.check("resolving symbol dependencies")?;
-        }
-    }
-
-    let mut reference_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (caller, callees) in &dependency_map {
-        deadline.check("building symbol references")?;
-        for callee in callees {
-            reference_map
-                .entry(callee.clone())
-                .or_default()
-                .insert(caller.clone());
-        }
-    }
-
-    let mut resolved_symbols = Vec::with_capacity(raw_symbols.len());
-    for symbol in raw_symbols {
-        deadline.check("materializing resolved symbols")?;
-        resolved_symbols.push(SymbolMeta::new(SymbolMetaInit {
-            symbol_id: symbol.symbol_id.clone(),
-            semantic_path: symbol.semantic_path.clone(),
-            scope_path: symbol.scope_path.clone(),
-            file_path: symbol.file_path.clone(),
-            node_kind: symbol.node_kind.clone(),
-            origin_type: "workspace_symbol".to_string(),
-            byte_range: symbol.byte_range,
-            signature: symbol.signature.clone(),
-            parameters: symbol.parameters.clone(),
-            return_type: symbol.return_type.clone(),
-            docstring: symbol.docstring.clone(),
-            dependencies: dependency_map
-                .get(&symbol.symbol_id)
-                .map(|dependencies| dependencies.iter().cloned().collect())
-                .unwrap_or_default(),
-            references: reference_map
-                .get(&symbol.symbol_id)
-                .map(|references| references.iter().cloned().collect())
-                .unwrap_or_default(),
-        }));
-    }
-
-    Ok(resolved_symbols)
 }
 
 pub(super) fn resolve_dependencies_for_symbol<'a>(
