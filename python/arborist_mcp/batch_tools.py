@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from .mcp_tools import ToolExecutor
@@ -8,12 +11,79 @@ from .tool_result_schemas import JsonRpcError
 from .tool_specs import (
     BATCH_ALLOWED_TOOLS,
     MAX_BATCH_CALLS,
+    MAX_WORKSPACE_SCAN_TIMEOUT_MS,
     TOOL_SPECS_BY_NAME,
     tool_spec,
 )
 
 
-def batch_tools(params: dict[str, Any], execute_tool: ToolExecutor) -> list[dict[str, Any]]:
+_NANOSECONDS_PER_MILLISECOND = 1_000_000
+
+
+@dataclass(frozen=True)
+class _ValidatedBatchCall:
+    name: str
+    arguments: dict[str, Any]
+    timeout_ms: int | None
+
+
+class _BatchDeadline:
+    def __init__(
+        self,
+        timeout_ms: int,
+        monotonic_ns: Callable[[], int],
+    ) -> None:
+        self._monotonic_ns = monotonic_ns
+        self._deadline_ns = (
+            monotonic_ns() + timeout_ms * _NANOSECONDS_PER_MILLISECOND
+        )
+
+    def remaining_timeout_ms(self, call_index: int, phase: str) -> int:
+        remaining_ns = self._deadline_ns - self._monotonic_ns()
+        if remaining_ns <= 0:
+            raise JsonRpcError(
+                -32000,
+                f"batch timeout exceeded {phase} calls[{call_index}]",
+            )
+        return (
+            remaining_ns + _NANOSECONDS_PER_MILLISECOND - 1
+        ) // _NANOSECONDS_PER_MILLISECOND
+
+
+def batch_tools(
+    params: dict[str, Any],
+    execute_tool: ToolExecutor,
+    timeout_ms: int | None = None,
+    *,
+    monotonic_ns: Callable[[], int] = time.monotonic_ns,
+) -> list[dict[str, Any]]:
+    deadline = (
+        _BatchDeadline(timeout_ms, monotonic_ns) if timeout_ms is not None else None
+    )
+    calls = _validate_batch_calls(params)
+
+    results: list[dict[str, Any]] = []
+    for index, call in enumerate(calls):
+        arguments = call.arguments
+        if deadline is not None:
+            remaining_timeout_ms = deadline.remaining_timeout_ms(index, "before")
+            if "timeout_ms" in tool_spec(call.name).params:
+                arguments = dict(arguments)
+                arguments["timeout_ms"] = (
+                    remaining_timeout_ms
+                    if call.timeout_ms is None
+                    else min(call.timeout_ms, remaining_timeout_ms)
+                )
+
+        result = execute_tool(call.name, arguments)
+        if deadline is not None:
+            deadline.remaining_timeout_ms(index, "after")
+        results.append({"name": call.name, "result": result})
+
+    return results
+
+
+def _validate_batch_calls(params: dict[str, Any]) -> list[_ValidatedBatchCall]:
     calls = params.get("calls")
     if not isinstance(calls, list):
         raise JsonRpcError(-32602, "missing required array param: calls")
@@ -25,7 +95,7 @@ def batch_tools(params: dict[str, Any], execute_tool: ToolExecutor) -> list[dict
             f"invalid params: calls must contain at most {MAX_BATCH_CALLS} entries",
         )
 
-    results: list[dict[str, Any]] = []
+    validated_calls: list[_ValidatedBatchCall] = []
     for index, call in enumerate(calls):
         if not isinstance(call, dict):
             raise JsonRpcError(
@@ -57,6 +127,30 @@ def batch_tools(params: dict[str, Any], execute_tool: ToolExecutor) -> list[dict
             )
         spec = tool_spec(tool_name)
         reject_unexpected_params(arguments, spec.params)
-        results.append({"name": tool_name, "result": execute_tool(tool_name, arguments)})
+        timeout_ms = _validate_inner_timeout_ms(arguments, index, spec.params)
+        validated_calls.append(_ValidatedBatchCall(tool_name, arguments, timeout_ms))
 
-    return results
+    return validated_calls
+
+
+def _validate_inner_timeout_ms(
+    arguments: dict[str, Any],
+    call_index: int,
+    param_names: tuple[str, ...],
+) -> int | None:
+    if "timeout_ms" not in param_names or "timeout_ms" not in arguments:
+        return None
+
+    timeout_ms = arguments["timeout_ms"]
+    param_path = f"calls[{call_index}].arguments.timeout_ms"
+    if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool):
+        raise JsonRpcError(-32602, f"invalid int param: {param_path}")
+    if timeout_ms <= 0:
+        raise JsonRpcError(-32602, f"invalid positive int param: {param_path}")
+    if timeout_ms > MAX_WORKSPACE_SCAN_TIMEOUT_MS:
+        raise JsonRpcError(
+            -32602,
+            f"invalid int param: {param_path} exceeds maximum "
+            f"{MAX_WORKSPACE_SCAN_TIMEOUT_MS}",
+        )
+    return timeout_ms

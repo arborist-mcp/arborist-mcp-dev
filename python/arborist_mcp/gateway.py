@@ -251,7 +251,8 @@ class ArboristGateway(
         return handler(params)
 
     def _batch(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        return batch_tools(params, self._execute_tool)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        return batch_tools(params, self._execute_tool, timeout_ms)
 
     def _get_semantic_skeleton(self, params: dict[str, Any]) -> dict[str, Any]:
         file_path = self._require_string(params, "file_path")

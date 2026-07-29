@@ -21,7 +21,7 @@ class ToolParamSpec(NamedTuple):
 
 
 TOOL_SPECS = (
-    ToolSpec("arborist/batch", "_batch", ("calls",), "read", "batch"),
+    ToolSpec("arborist/batch", "_batch", ("calls", "timeout_ms"), "read", "batch"),
     ToolSpec("arborist/get_semantic_skeleton", "_get_semantic_skeleton", ("file_path", "depth_limit", "source", "expand_nodes", "timeout_ms"), "read", "semantic_skeleton"),
     ToolSpec("arborist/preview_patch_ast_node", "_preview_patch_ast_node", ("file_path", "semantic_path", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),
     ToolSpec("arborist/preview_patch_ast_node_at_position", "_preview_patch_ast_node_at_position", ("file_path", "position", "new_code", "source", "bypass_reason", "timeout_ms"), "read", "patch_preview"),

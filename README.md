@@ -200,6 +200,17 @@ The MCP catalog currently returns 58 tools:
   rebuild, workspace refresh, and file refresh for persisted symbol indexes.
 - Trace tools: 8, covering graph/neighborhood traces plus trace-backed replay and validation.
 
+`batch` runs up to 32 read-only Arborist calls in order and accepts an optional
+shared `timeout_ms` budget capped at `300000` milliseconds. Before execution,
+the gateway validates every inner call's structure and any explicit inner
+timeout. For timeout-aware inner tools, it forwards the smaller of the caller's
+explicit inner timeout and the batch's remaining budget, or injects the
+remaining budget when none was supplied. `list_symbol_indexes` is gated before
+and after execution because it has no cooperative timeout parameter; one
+blocking inner operation therefore remains non-preemptible. Expiration fails
+the whole batch without returning partial results, and input argument objects
+are not modified.
+
 The two write patch tools and the two VFS-only patch tools accept an optional
 cooperative `timeout_ms` budget capped at `300000` milliseconds. The budget
 covers target resolution and patch validation, and VFS-backed writes restore

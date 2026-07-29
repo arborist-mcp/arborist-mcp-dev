@@ -4,7 +4,9 @@ import io
 from unittest import mock
 
 from arborist_mcp import gateway as gateway_module
+from arborist_mcp.batch_tools import batch_tools
 from arborist_mcp.mcp_tools import tools_call
+from arborist_mcp.tool_result_schemas import JsonRpcError
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase, make_recording_json_core
 
@@ -159,6 +161,12 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         self.assertEqual(
             batch["inputSchema"]["properties"]["calls"]["maxItems"],
             gateway_module.MAX_BATCH_CALLS,
+        )
+        batch_timeout_schema = batch["inputSchema"]["properties"]["timeout_ms"]
+        self.assertEqual(batch_timeout_schema["minimum"], 1)
+        self.assertEqual(
+            batch_timeout_schema["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         )
         self.assertEqual(batch["outputSchema"]["properties"]["result"]["type"], "array")
         batch_item_schema = batch["outputSchema"]["properties"]["result"]["items"]
@@ -859,6 +867,127 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             core.calls_for("trace_symbol_graph_json"),
             [(".", "top_level", "both", None, None, None, None)],
         )
+
+    def test_tools_call_propagates_batch_timeout_to_inner_tool(self) -> None:
+        core = make_recording_json_core(get_semantic_skeleton_json={"kind": "module"})
+
+        result = self.assert_jsonrpc_ok(
+            self.call_gateway(
+                self.make_gateway(core),
+                "tools/call",
+                {
+                    "name": "arborist/batch",
+                    "arguments": {
+                        "calls": [
+                            {
+                                "name": "arborist/get_semantic_skeleton",
+                                "arguments": {"file_path": "sample.py"},
+                            }
+                        ],
+                        "timeout_ms": 5000,
+                    },
+                },
+                request_id=117,
+            ),
+            request_id=117,
+        )
+
+        assert isinstance(result, dict)
+        self.assertFalse(result["isError"])
+        timeout_ms = core.calls_for("get_semantic_skeleton_json")[0][-1]
+        self.assertIsInstance(timeout_ms, int)
+        self.assertGreater(timeout_ms, 0)
+        self.assertLessEqual(timeout_ms, 5000)
+
+    def test_batch_shared_timeout_propagates_remaining_budget(self) -> None:
+        calls = {
+            "calls": [
+                {
+                    "name": "arborist/get_semantic_skeleton",
+                    "arguments": {"file_path": "sample.py"},
+                },
+                {
+                    "name": "arborist/trace_symbol_graph",
+                    "arguments": {
+                        "workspace_root": ".",
+                        "symbol_path": "top_level",
+                        "timeout_ms": 3,
+                    },
+                },
+                {"name": "arborist/list_symbol_indexes", "arguments": {}},
+            ]
+        }
+        observed: list[tuple[str, dict[str, object]]] = []
+        clock_values = iter(
+            (0, 1_100_000, 2_000_000, 3_000_000, 4_000_000, 5_000_000, 6_000_000)
+        )
+
+        result = batch_tools(
+            calls,
+            lambda name, arguments: observed.append((name, arguments))
+            or {"ok": True},
+            timeout_ms=10,
+            monotonic_ns=lambda: next(clock_values),
+        )
+
+        self.assertEqual(
+            [entry["name"] for entry in result],
+            [call["name"] for call in calls["calls"]],
+        )
+        self.assertEqual(observed[0][1]["timeout_ms"], 9)
+        self.assertEqual(observed[1][1]["timeout_ms"], 3)
+        self.assertEqual(observed[2][1], {})
+        self.assertNotIn("timeout_ms", calls["calls"][0]["arguments"])
+        self.assertEqual(calls["calls"][1]["arguments"]["timeout_ms"], 3)
+
+    def test_batch_shared_timeout_stops_before_next_call(self) -> None:
+        observed: list[str] = []
+        clock_values = iter((0, 0, 4_000_000, 5_000_000))
+
+        with self.assertRaises(JsonRpcError) as context:
+            batch_tools(
+                {
+                    "calls": [
+                        {"name": "arborist/list_symbol_indexes"},
+                        {"name": "arborist/list_symbol_indexes"},
+                    ]
+                },
+                lambda name, _arguments: observed.append(name) or [],
+                timeout_ms=5,
+                monotonic_ns=lambda: next(clock_values),
+            )
+
+        self.assertEqual(context.exception.code, -32000)
+        self.assertIn("before calls[1]", str(context.exception))
+        self.assertEqual(observed, ["arborist/list_symbol_indexes"])
+
+    def test_batch_validates_inner_timeout_before_execution(self) -> None:
+        observed: list[str] = []
+
+        with self.assertRaises(JsonRpcError) as context:
+            batch_tools(
+                {
+                    "calls": [
+                        {"name": "arborist/list_symbol_indexes"},
+                        {
+                            "name": "arborist/get_semantic_skeleton",
+                            "arguments": {
+                                "file_path": "sample.py",
+                                "timeout_ms": (
+                                    gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1
+                                ),
+                            },
+                        },
+                    ]
+                },
+                lambda name, _arguments: observed.append(name),
+                timeout_ms=5,
+                monotonic_ns=lambda: 0,
+            )
+
+        self.assertEqual(context.exception.code, -32602)
+        self.assertIn("calls[1].arguments.timeout_ms", str(context.exception))
+        self.assertEqual(observed, [])
 
     def test_batch_rejects_write_tool(self) -> None:
         result = self.assert_jsonrpc_ok(

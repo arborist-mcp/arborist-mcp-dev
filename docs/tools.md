@@ -213,6 +213,17 @@ paths such as `api::Vector<int>` and `api::increment<int>`.
 
 ## Read And Discovery Tools
 
+`batch` runs up to 32 read-only Arborist calls in order and accepts an optional
+shared `timeout_ms` budget capped at `300000` milliseconds. Before execution,
+the gateway validates every inner call's structure and any explicit inner
+timeout. For timeout-aware inner tools, it forwards the smaller of the caller's
+explicit inner timeout and the batch's remaining budget, or injects the
+remaining budget when none was supplied. `list_symbol_indexes` is gated before
+and after execution because it has no cooperative timeout parameter; one
+blocking inner operation therefore remains non-preemptible. Expiration fails
+the whole batch without returning partial results, and input argument objects
+are not modified.
+
 `get_semantic_skeleton` returns both `available_paths` and
 `available_symbols`. Each symbol includes stable `symbol_id`, `semantic_path`,
 optional `scope_path`, `node_kind`, `byte_range`, structured `parameters`,
