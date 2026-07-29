@@ -575,6 +575,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Split gateway version, tool-catalog, and suite-manifest contract tests
   into a dedicated metadata mixin while preserving all request-validation test
   identities and full Python discovery coverage.
+- [x] Split gateway source/index-path compatibility and position-entrypoint
+  validation into a dedicated mixin, reducing the root request-validation
+  module by more than 800 lines without changing its 125 discovered tests.
 
 ## Suggested Commit Sequence
 
