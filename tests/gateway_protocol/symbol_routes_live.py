@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from tests.gateway_protocol.helpers import GatewayProtocolTestCase
-from tests.gateway_protocol.symbol_routes import LIVE_CORE_TESTS
+from tests.gateway_protocol.semantic_fixtures import GatewaySemanticFixtureMixin
+from tests.gateway_protocol.symbol_route_fixtures import GatewaySymbolRouteFixtureMixin
+from tests.gateway_protocol.symbol_route_live_cases import (
+    GatewaySymbolRouteLiveTestsMixin,
+)
 
 SUITE_NAME = "gateway-symbol-routes-native"
 REQUIRES_EXTENSION = True
@@ -20,12 +24,10 @@ COVERED_TOOLS = (
 )
 
 
-class GatewaySymbolRouteNativeTests(GatewayProtocolTestCase):
+class GatewaySymbolRouteNativeTests(
+    GatewaySymbolRouteLiveTestsMixin,
+    GatewaySymbolRouteFixtureMixin,
+    GatewaySemanticFixtureMixin,
+    GatewayProtocolTestCase,
+):
     pass
-
-
-for _test_name, _test in LIVE_CORE_TESTS.items():
-    setattr(GatewaySymbolRouteNativeTests, _test_name, _test)
-
-del _test_name
-del _test
