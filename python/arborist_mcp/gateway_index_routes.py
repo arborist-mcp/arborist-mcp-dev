@@ -119,11 +119,20 @@ class GatewayIndexRoutes:
 
     def _unregister_symbol_index(self, params: dict[str, Any]) -> bool:
         workspace_root = self._optional_string(params, "workspace_root", default=".")
-        return self._require_core().unregister_symbol_index_json(workspace_root)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        return self._call_with_optional_timeout(
+            self._require_core().unregister_symbol_index_json,
+            (workspace_root,),
+            timeout_ms,
+        )
 
     def _list_symbol_indexes(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        del params
-        payload = self._require_core().list_symbol_indexes_json()
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().list_symbol_indexes_json,
+            (),
+            timeout_ms,
+        )
         return self._decode_core_object_array(payload)
 
     def _refresh_registered_symbol_indexes(self, params: dict[str, Any]) -> list[dict[str, Any]]:

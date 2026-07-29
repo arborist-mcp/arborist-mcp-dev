@@ -153,6 +153,15 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             [spec.name for spec in gateway_module.TOOL_SPECS if spec.result_schema == "object"],
             [],
         )
+        self.assertEqual(
+            [
+                spec.name
+                for spec in gateway_module.TOOL_SPECS
+                if "timeout_ms" not in spec.params
+            ],
+            [],
+        )
+        self.assertTrue(gateway_module.TOOL_PARAM_SPECS["timeout_ms"].optional)
         batch = by_name["arborist/batch"]
         self.assertEqual(batch["metadata"]["category"], "read")
         self.assertTrue(batch["annotations"]["readOnlyHint"])
@@ -215,6 +224,8 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             skeleton["inputSchema"]["properties"]["file_path"]["description"],
         )
         list_indexes = by_name["arborist/list_symbol_indexes"]
+        self.assertEqual(list_indexes["inputSchema"]["required"], [])
+        self.assertIn("timeout_ms", list_indexes["inputSchema"]["properties"])
         self.assertEqual(list_indexes["outputSchema"]["properties"]["result"]["type"], "array")
         rebuild_index = by_name["arborist/rebuild_symbol_index"]
         self.assertNotIn("max_files", rebuild_index["inputSchema"]["required"])
@@ -936,7 +947,7 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
         )
         self.assertEqual(observed[0][1]["timeout_ms"], 9)
         self.assertEqual(observed[1][1]["timeout_ms"], 3)
-        self.assertEqual(observed[2][1], {})
+        self.assertEqual(observed[2][1]["timeout_ms"], 5)
         self.assertNotIn("timeout_ms", calls["calls"][0]["arguments"])
         self.assertEqual(calls["calls"][1]["arguments"]["timeout_ms"], 3)
 

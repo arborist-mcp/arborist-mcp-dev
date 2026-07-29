@@ -411,6 +411,9 @@ completed item can land in its own commit unless two changes are inseparable.
   the existing default.
 - [x] Add cooperative timeout coverage to persisted index health freshness and
   unindexed-file scans.
+- [x] Add shared batch deadlines and optional timeout coverage to the remaining
+  index registry list/unregister tools so every public tool exposes a bounded
+  cooperative budget.
 - [x] Add benchmark baselines for index rebuild, refresh, trace, list, search,
   and patch validation.
 

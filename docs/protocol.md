@@ -130,13 +130,12 @@ capped at 64 MiB before parsing.
 
 `arborist/batch` accepts an optional shared `timeout_ms` budget capped at
 `300000`. The gateway validates all inner call envelopes and explicit inner
-timeouts before execution. Each timeout-aware inner call receives the smaller
-of its explicit timeout and the remaining batch budget; when it omits a timeout,
-the gateway injects the remaining budget. The non-cooperative
-`list_symbol_indexes` call is checked immediately before and after execution, so
-a single blocking registry read cannot be interrupted. Expiration uses JSON-RPC
-code `-32000` for legacy calls, returns an MCP tool error through `tools/call`,
-and never returns a partial result array.
+timeouts before execution. Every batch-eligible tool accepts a cooperative
+timeout: each inner call receives the smaller of its explicit timeout and the
+remaining batch budget, or the remaining budget when it omitted one. A single
+blocking step inside an inner tool remains non-preemptible. Expiration uses
+JSON-RPC code `-32000` for legacy calls, returns an MCP tool error through
+`tools/call`, and never returns a partial result array.
 
 `get_semantic_skeleton` accepts an optional cooperative `timeout_ms` budget
 capped at `300000`. It covers path setup, file-backed source reads, parsing
@@ -188,8 +187,12 @@ the clean entry open so a later commit or close can retry synchronization. A
 single blocking read, parse, tree traversal, write, or index operation remains
 non-preemptible.
 
-Index registration, rebuild, and refresh tools accept an optional `timeout_ms`
-budget capped at `300000`. The budget is cooperative: the core checks it during
+Index registration, unregister, list, rebuild, and refresh tools accept an
+optional `timeout_ms` budget capped at `300000`. Registry listing checks the
+budget while collecting and validating entries and around deterministic sorting.
+Unregister keeps a final gate after path normalization and immediately before
+registry mutation; once removal begins, it returns the actual outcome rather
+than a late timeout. For scan-backed tools, the core checks the budget during
 workspace traversal, per-file indexing, C include dependency expansion, and
 before persistence, then fails without writing a new snapshot when the budget
 has expired. The direct graph and neighborhood trace tools accept the same

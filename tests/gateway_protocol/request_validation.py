@@ -1817,6 +1817,25 @@ class GatewayRequestValidationTests(GatewayProtocolTestCase):
                     self.assertEqual(response["error"]["code"], -32602)
                     self.assertIn("timeout_ms", response["error"]["message"])
 
+    def test_rejects_invalid_index_registry_timeout_bounds(self) -> None:
+        cases = (
+            ("arborist/unregister_symbol_index", {"workspace_root": "."}),
+            ("arborist/list_symbol_indexes", {}),
+        )
+        for method, base_params in cases:
+            for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
+                with self.subTest(method=method, timeout_ms=timeout_ms):
+                    response = self.make_gateway().handle_request(
+                        self.request(
+                            method,
+                            {**base_params, "timeout_ms": timeout_ms},
+                            request_id=83 + timeout_ms,
+                        )
+                    )
+
+                    self.assertEqual(response["error"]["code"], -32602)
+                    self.assertIn("timeout_ms", response["error"]["message"])
+
     def test_rejects_invalid_batch_timeout_bounds(self) -> None:
         for timeout_ms in (0, gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS + 1):
             with self.subTest(timeout_ms=timeout_ms):

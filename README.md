@@ -203,13 +203,12 @@ The MCP catalog currently returns 58 tools:
 `batch` runs up to 32 read-only Arborist calls in order and accepts an optional
 shared `timeout_ms` budget capped at `300000` milliseconds. Before execution,
 the gateway validates every inner call's structure and any explicit inner
-timeout. For timeout-aware inner tools, it forwards the smaller of the caller's
-explicit inner timeout and the batch's remaining budget, or injects the
-remaining budget when none was supplied. `list_symbol_indexes` is gated before
-and after execution because it has no cooperative timeout parameter; one
-blocking inner operation therefore remains non-preemptible. Expiration fails
-the whole batch without returning partial results, and input argument objects
-are not modified.
+timeout. Every batch-eligible tool accepts a cooperative timeout, so the gateway
+forwards the smaller of the caller's explicit inner timeout and the batch's
+remaining budget, or injects the remaining budget when none was supplied. A
+single blocking step inside an inner tool remains non-preemptible. Expiration
+fails the whole batch without returning partial results, and input argument
+objects are not modified.
 
 The two write patch tools and the two VFS-only patch tools accept an optional
 cooperative `timeout_ms` budget capped at `300000` milliseconds. The budget
@@ -232,6 +231,12 @@ discard retain their final pre-mutation gates, while `did_close` follows the
 commit path when `persist=true` and the discard path otherwise. After persistence
 or buffer replacement starts, these operations report their final outcome
 instead of a late timeout.
+
+`list_symbol_indexes` and `unregister_symbol_index` accept the same timeout cap.
+Listing checks it while collecting and validating registrations and around
+deterministic sorting. Unregister retains a final gate after path normalization
+and immediately before mutation; a timeout through that gate preserves the
+registration, while a started removal returns its actual outcome.
 
 `migrate_symbol_index` also accepts the `timeout_ms` cap. Its cooperative budget
 covers path and database setup, schema and workspace metadata checks, legacy row

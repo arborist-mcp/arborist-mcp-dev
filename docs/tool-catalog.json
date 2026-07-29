@@ -38173,6 +38173,12 @@
           "description": "Workspace root for index, trace, and symbol operations.",
           "default": ".",
           "minLength": 1
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
         }
       },
       "required": [],
@@ -38207,7 +38213,14 @@
     "description": "Build, refresh, register, or inspect persisted symbol indexes. Legacy JSON-RPC method: arborist/list_symbol_indexes.",
     "inputSchema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional cooperative timeout for workspace scanning, indexing, AST patching and previews, virtual-file operations, symbol queries, trace expansion, and raw Tree-sitter queries in milliseconds.",
+          "minimum": 1,
+          "maximum": 300000
+        }
+      },
       "required": [],
       "additionalProperties": false
     },

@@ -216,13 +216,12 @@ paths such as `api::Vector<int>` and `api::increment<int>`.
 `batch` runs up to 32 read-only Arborist calls in order and accepts an optional
 shared `timeout_ms` budget capped at `300000` milliseconds. Before execution,
 the gateway validates every inner call's structure and any explicit inner
-timeout. For timeout-aware inner tools, it forwards the smaller of the caller's
-explicit inner timeout and the batch's remaining budget, or injects the
-remaining budget when none was supplied. `list_symbol_indexes` is gated before
-and after execution because it has no cooperative timeout parameter; one
-blocking inner operation therefore remains non-preemptible. Expiration fails
-the whole batch without returning partial results, and input argument objects
-are not modified.
+timeout. Every batch-eligible tool accepts a cooperative timeout, so the gateway
+forwards the smaller of the caller's explicit inner timeout and the batch's
+remaining budget, or injects the remaining budget when none was supplied. A
+single blocking step inside an inner tool remains non-preemptible. Expiration
+fails the whole batch without returning partial results, and input argument
+objects are not modified.
 
 `get_semantic_skeleton` returns both `available_paths` and
 `available_symbols`. Each symbol includes stable `symbol_id`, `semantic_path`,
@@ -468,7 +467,12 @@ instead of scanning without bound. Rebuild and refresh calls can also provide
 `max_file_bytes` to reject oversized source files before indexing reads them;
 this optional limit is capped at `67108864`. Index registration, rebuild,
 and refresh `timeout_ms` values add an optional cooperative budget for directory
-traversal and per-file indexing, capped at `300000` milliseconds. `max_files` is
+traversal and per-file indexing, capped at `300000` milliseconds.
+`list_symbol_indexes` and `unregister_symbol_index` accept the same cap. Listing
+checks it while collecting entries, around deterministic sorting, and during
+result validation. Unregister checks after path normalization immediately before
+removing the registration, so a pre-mutation timeout preserves the entry and no
+late check can misreport a completed removal. `max_files` is
 capped at `200000`; symbol list/search `limit` values are capped at `10000`. When
 a scan budget expires, the operation returns an error before persisting a new
 index snapshot.
