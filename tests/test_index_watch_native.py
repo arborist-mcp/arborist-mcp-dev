@@ -221,6 +221,17 @@ class IndexWatchNativeTests(unittest.TestCase):
                     0,
                 )
 
+    def test_native_index_migration_timeout_rejects_zero_budget(self) -> None:
+        from arborist_mcp._arborist_core import ArboristCore
+
+        with temp_workspace({"helper.py": "def helper() -> int:\n    return 1\n"}) as workspace:
+            core = ArboristCore()
+            with self.assertRaisesRegex(Exception, "timeout_ms"):
+                core.migrate_symbol_index_json(
+                    str(workspace.joinpath("symbols.db")),
+                    0,
+                )
+
     def test_native_index_health_timeout_preserves_healthy_result(self) -> None:
         from arborist_mcp._arborist_core import ArboristCore
 

@@ -222,6 +222,15 @@ commit path when `persist=true` and the discard path otherwise. After persistenc
 or buffer replacement starts, these operations report their final outcome
 instead of a late timeout.
 
+`migrate_symbol_index` also accepts the `timeout_ms` cap. Its cooperative budget
+covers path and database setup, schema and workspace metadata checks, legacy row
+loading, persisted-path validation, and a final gate before the schema migration
+transaction. A timeout before that gate leaves the database unchanged. Once the
+transaction begins, Arborist completes the required source rebuild and final
+health inspection and returns their actual outcome rather than a late timeout.
+Individual SQLite queries, source reads, the schema transaction, and rebuild
+persistence remain non-preemptible.
+
 Use `python -m arborist_mcp.gateway --dump-tool-catalog` or read
 [`docs/tool-catalog.json`](docs/tool-catalog.json) for exact names, input
 schemas, output schemas, defaults, and categories.

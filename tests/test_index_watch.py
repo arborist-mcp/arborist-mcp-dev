@@ -49,7 +49,7 @@ class StubCore:
         self.migrate = migrate
         self.inspect_calls: list[str] = []
         self.refresh_calls: list[tuple[object, ...]] = []
-        self.migrate_calls: list[str] = []
+        self.migrate_calls: list[tuple[object, ...]] = []
 
     def inspect_symbol_index_json(
         self, db_path: str, timeout_ms: int | None = None
@@ -62,8 +62,8 @@ class StubCore:
         self.refresh_calls.append(args)
         return self.refresh
 
-    def migrate_symbol_index_json(self, db_path: str) -> str:
-        self.migrate_calls.append(db_path)
+    def migrate_symbol_index_json(self, *args: object) -> str:
+        self.migrate_calls.append(args)
         return self.migrate
 
 
@@ -162,9 +162,28 @@ class IndexWatchTests(unittest.TestCase):
         )
 
         self.assertEqual(event["status"], "migrated")
-        self.assertEqual(core.migrate_calls, ["symbols.db"])
+        self.assertEqual(core.migrate_calls, [("symbols.db",)])
         self.assertEqual(core.refresh_calls, [])
         self.assertEqual(event["migrated_health"]["ok"], True)
+
+    def test_reconcile_passes_optional_timeout_to_migration(self) -> None:
+        core = StubCore(
+            health_payload(ok=False, action="migrate", reason="schema v1 can migrate"),
+            migrate=health_payload(ok=True, action="none"),
+        )
+
+        reconcile_index(
+            core,
+            workspace_root="workspace",
+            db_path="symbols.db",
+            max_files=20,
+            max_file_bytes=None,
+            timeout_ms=5000,
+        )
+
+        self.assertEqual(core.inspect_timeout_ms, 5000)
+        self.assertEqual(core.migrate_calls, [("symbols.db", 5000)])
+        self.assertEqual(core.refresh_calls, [])
 
     def test_reconcile_dry_run_reports_migration_without_writing(self) -> None:
         core = StubCore(

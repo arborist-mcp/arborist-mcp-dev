@@ -78,6 +78,18 @@ class NativeBindingsTests(unittest.TestCase):
 
         self.assertIn("sample", result["available_paths"])
 
+    def test_index_migration_timeout_reaches_native_parameter(self) -> None:
+        gateway = gateway_module.ArboristGateway()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "missing.db"
+            with self.assertRaisesRegex(Exception, "does not exist"):
+                gateway._migrate_symbol_index(
+                    {
+                        "db_path": str(db_path),
+                        "timeout_ms": 300000,
+                    }
+                )
+
     def test_patch_preview_timeouts_reach_native_parameters(self) -> None:
         gateway = gateway_module.ArboristGateway()
         source = "def sample():\n    return 1\n"

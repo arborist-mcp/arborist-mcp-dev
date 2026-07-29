@@ -94,7 +94,7 @@ Minimal legacy messages:
 {"jsonrpc":"2.0","id":5,"method":"arborist/register_symbol_index","params":{"workspace_root":"tests/fixtures","db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":6,"method":"arborist/list_symbol_indexes","params":{}}
 {"jsonrpc":"2.0","id":7,"method":"arborist/inspect_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
-{"jsonrpc":"2.0","id":8,"method":"arborist/migrate_symbol_index","params":{"db_path":"tests/fixtures/symbols.db"}}
+{"jsonrpc":"2.0","id":8,"method":"arborist/migrate_symbol_index","params":{"db_path":"tests/fixtures/symbols.db","timeout_ms":5000}}
 {"jsonrpc":"2.0","id":9,"method":"arborist/trace_symbol_graph","params":{"workspace_root":"tests/fixtures","symbol_path":"orchestrate","direction":"both","index_db_path":"tests/fixtures/symbols.db"}}
 {"jsonrpc":"2.0","id":10,"method":"arborist/read_symbol","params":{"workspace_root":"tests/fixtures","symbol_path":"helper","index_db_path":"tests/fixtures/symbols.db","timeout_ms":5000}}
 {"jsonrpc":"2.0","id":11,"method":"arborist/search_symbols","params":{"workspace_root":"tests/fixtures","query":"helper","limit":5,"index_db_path":"tests/fixtures/symbols.db"}}
@@ -188,7 +188,13 @@ still a non-preemptible boundary.
 
 `inspect_symbol_index` also accepts the optional budget and fails closed when
 freshness or unindexed-file scanning exceeds it; its successful health response
-shape is unchanged.
+shape is unchanged. `migrate_symbol_index` uses the same cap for path/open,
+schema and metadata validation, legacy-row loading, persisted-path checks, and
+a final gate before schema mutation. A timeout through that gate leaves the
+index unchanged. After the schema transaction starts, no further deadline check
+runs; the required source rebuild and final health inspection complete and
+return their actual outcome. A single SQLite query, source read, schema
+transaction, or rebuild persistence step remains non-preemptible.
 
 The four `list_symbols*` tools, the four `search_symbols*` tools, and all eight
 `read_symbol*` tools also accept the optional `timeout_ms` budget. For direct

@@ -25,7 +25,9 @@ class IndexWatchCore(Protocol):
         self, db_path: str, timeout_ms: int | None = None
     ) -> str: ...
 
-    def migrate_symbol_index_json(self, db_path: str) -> str: ...
+    def migrate_symbol_index_json(
+        self, db_path: str, timeout_ms: int | None = None
+    ) -> str: ...
 
     def refresh_symbol_index_json(
         self,
@@ -227,8 +229,12 @@ def reconcile_index(
                 "health": _health_summary(health),
             }
         try:
+            if timeout_ms is None:
+                migration_payload = core.migrate_symbol_index_json(db_path)
+            else:
+                migration_payload = core.migrate_symbol_index_json(db_path, timeout_ms)
             migrated_health = _decode_object(
-                core.migrate_symbol_index_json(db_path), "migrate_symbol_index"
+                migration_payload, "migrate_symbol_index"
             )
         except IndexWatchError:
             raise

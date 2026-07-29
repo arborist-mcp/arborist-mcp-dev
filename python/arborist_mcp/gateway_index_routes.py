@@ -47,7 +47,12 @@ class GatewayIndexRoutes:
 
     def _migrate_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:
         db_path = self._require_string(params, "db_path")
-        payload = self._require_core().migrate_symbol_index_json(db_path)
+        timeout_ms = self._optional_positive_int_or_none(params, "timeout_ms")
+        payload = self._call_with_optional_timeout(
+            self._require_core().migrate_symbol_index_json,
+            (db_path,),
+            timeout_ms,
+        )
         return self._decode_core_object(payload)
 
     def _register_symbol_index(self, params: dict[str, Any]) -> dict[str, Any]:

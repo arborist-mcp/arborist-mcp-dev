@@ -336,6 +336,16 @@ class GatewayRuntimeTests(GatewayProtocolTestCase):
             inspect_index["inputSchema"]["properties"]["timeout_ms"]["maximum"],
             gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
         )
+        migrate_index = by_name["arborist/migrate_symbol_index"]
+        self.assertFalse(migrate_index["annotations"]["readOnlyHint"])
+        self.assertTrue(migrate_index["metadata"]["mutatesState"])
+        migrate_index_schema = migrate_index["inputSchema"]
+        self.assertNotIn("timeout_ms", migrate_index_schema["required"])
+        self.assertEqual(migrate_index_schema["properties"]["timeout_ms"]["minimum"], 1)
+        self.assertEqual(
+            migrate_index_schema["properties"]["timeout_ms"]["maximum"],
+            gateway_module.MAX_WORKSPACE_SCAN_TIMEOUT_MS,
+        )
         inspect_result = inspect_index["outputSchema"]["properties"]["result"]
         self.assertEqual(inspect_result["type"], "object")
         self.assertIn("response_schema_version", inspect_result["required"])

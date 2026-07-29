@@ -449,11 +449,12 @@ bounded by `max_files` (default `20000`) on rebuilds and missing-index refresh
 fallbacks so unexpectedly large workspaces fail with an actionable limit error
 instead of scanning without bound. Rebuild and refresh calls can also provide
 `max_file_bytes` to reject oversized source files before indexing reads them;
-this optional limit is capped at `67108864`. Index `timeout_ms` adds an
-optional cooperative budget for directory traversal and per-file indexing,
-capped at `300000` milliseconds. `max_files` is capped at `200000`; symbol list/search
-`limit` values are capped at `10000`. When a budget expires, the operation
-returns an error before persisting a new index snapshot.
+this optional limit is capped at `67108864`. Index registration, rebuild,
+and refresh `timeout_ms` values add an optional cooperative budget for directory
+traversal and per-file indexing, capped at `300000` milliseconds. `max_files` is
+capped at `200000`; symbol list/search `limit` values are capped at `10000`. When
+a scan budget expires, the operation returns an error before persisting a new
+index snapshot.
 
 `arborist-index-watch` is a polling console command for one index database or a
 JSON manifest of multiple registered workspace/index pairs. It uses
@@ -466,9 +467,11 @@ foreign, incomplete, and unknown schemas are reported and left unchanged.
 `would_refresh` or `would_migrate` without changing an index.
 `--check` runs this no-write pass once and exits nonzero when any target is not
 healthy, while emitting each target's status for CI diagnostics.
-`inspect_symbol_index` and the watch command accept the optional cooperative
-`timeout_ms` / `--timeout-ms` budget for indexed-file freshness reads and the
-unindexed workspace scan.
+`inspect_symbol_index`, `migrate_symbol_index`, and the watch command accept
+the optional cooperative `timeout_ms` / `--timeout-ms` budget. Inspection uses
+it for indexed-file freshness reads and the unindexed workspace scan; watch
+reconciliation forwards the same budget to inspection, migration preflight, or
+refresh as applicable.
 Manifest paths are resolved relative to the manifest file, targets are ordered
 by workspace root, and unknown fields, duplicate keys, empty target lists,
 duplicate workspace roots, or duplicate database paths are rejected before the
@@ -502,8 +505,17 @@ indexed workspace so persisted direct-call arity metadata and graph edges match
 the current sources. It updates `schema_version` in one SQLite transaction. It
 rejects missing databases,
 foreign or incomplete schemas, missing required metadata, current indexes, and
-unknown versions without rewriting them. Its result is the same complete health
-report returned by `inspect_symbol_index` after the attempted migration.
+unknown versions without rewriting them. Its optional cooperative `timeout_ms`
+budget, capped at `300000`, covers path and database setup, schema and workspace
+metadata checks, legacy file-state and symbol-row loading, persisted-path
+validation, and a final deadline gate immediately before the first schema
+mutation. A timeout through that gate leaves the database unchanged. Once the
+schema transaction starts, Arborist performs no further deadline checks: it
+finishes the required source rebuild and final health inspection and returns
+their actual outcome instead of reporting a timeout after the database may have
+changed. Individual SQLite queries, source reads, the schema transaction, and
+rebuild persistence remain non-preemptible. The result is the same complete
+health report returned by `inspect_symbol_index` after the attempted migration.
 
 `export_patch_diagnostics_sarif` converts a prior `patch_ast_node` result into
 a SARIF 2.1.0 log for CI systems. Syntax issues retain UTF-8 byte-column source
