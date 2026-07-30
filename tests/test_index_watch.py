@@ -5,10 +5,14 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 
 from arborist_mcp import __version__
+from arborist_mcp import index_watch as index_watch_module
+from arborist_mcp import index_watch_cli_args as index_watch_cli_args_module
 from arborist_mcp.index_watch import (
     _positive_float,
     IndexWatchError,
@@ -78,6 +82,40 @@ class StubCore:
 
 
 class IndexWatchTests(unittest.TestCase):
+    def test_cli_argument_helpers_are_reexported_from_index_watch(self) -> None:
+        helper_names = (
+            "_positive_int",
+            "_bounded_positive_int",
+            "_positive_float",
+            "build_parser",
+        )
+        for helper_name in helper_names:
+            with self.subTest(helper_name=helper_name):
+                self.assertIs(
+                    getattr(index_watch_module, helper_name),
+                    getattr(index_watch_cli_args_module, helper_name),
+                )
+
+    def test_cli_argument_module_does_not_load_index_watch_runtime(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "import arborist_mcp.index_watch_cli_args; "
+                    "raise SystemExit("
+                    "'index_watch runtime was imported' "
+                    "if 'arborist_mcp.index_watch' in sys.modules else 0)"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def test_cli_version_reports_package_version_without_watch_target(self) -> None:
         stdout = io.StringIO()
 
