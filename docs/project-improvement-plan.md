@@ -644,6 +644,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Extract index-watch argparse types, limits, and parser construction into
   a cold-importable CLI-arguments module, reducing the runtime module below
   five hundred lines while preserving its existing helper imports.
+- [x] Extract index-watch configuration parsing, target models, strict payload
+  decoding, and deterministic target ordering into a cold-importable support
+  module, reducing the runtime module below four hundred lines while preserving
+  its established import and pickle identities.
 
 ## Suggested Commit Sequence
 
