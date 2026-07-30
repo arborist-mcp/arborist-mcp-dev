@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, TextIO
 
+from ._version import __version__
 from .jsonrpc import loads_strict
 from .tool_specs import (
     MAX_INDEX_WATCH_CONFIG_BYTES,
@@ -430,6 +431,11 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Poll and incrementally refresh an Arborist SQLite symbol index."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--workspace-root",

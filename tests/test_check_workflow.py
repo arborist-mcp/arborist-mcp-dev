@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from scripts import json_strict
 
@@ -260,6 +261,23 @@ class CheckWorkflowTests(unittest.TestCase):
             text=True,
         )
         self.assertIn("Gateway smoke checks passed.", completed.stdout)
+
+    def test_gateway_smoke_checks_index_watch_version_for_each_launcher(self) -> None:
+        expected_commands = {
+            "module": [sys.executable, "-m", "arborist_mcp.index_watch", "--version"],
+            "console": ["arborist-index-watch", "--version"],
+        }
+
+        for launcher, expected_command in expected_commands.items():
+            with self.subTest(launcher=launcher):
+                with mock.patch.object(
+                    self.gateway_smoke_module.subprocess,
+                    "run",
+                ) as run:
+                    self.gateway_smoke_module.check_cli(sys.executable, launcher)
+
+                self.assertEqual(run.call_count, 3)
+                self.assertEqual(run.call_args_list[-1].args[0], expected_command)
 
     def test_gateway_smoke_load_json_rejects_duplicate_keys_and_nonstandard_constants(
         self,

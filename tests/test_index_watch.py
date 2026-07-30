@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from arborist_mcp import __version__
 from arborist_mcp.index_watch import (
     _positive_float,
     IndexWatchError,
@@ -77,6 +78,16 @@ class StubCore:
 
 
 class IndexWatchTests(unittest.TestCase):
+    def test_cli_version_reports_package_version_without_watch_target(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            with self.assertRaises(SystemExit) as context:
+                run_cli(["--version"])
+
+        self.assertEqual(context.exception.code, 0)
+        self.assertIn(__version__, stdout.getvalue())
+
     def test_cli_scan_defaults_match_tool_manifest(self) -> None:
         args = build_parser().parse_args(["--db-path", "symbols.db"])
 

@@ -40,6 +40,25 @@ def _run_gateway(
     )
 
 
+def _run_index_watch(
+    python: str,
+    launcher: str,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    command = (
+        [python, "-m", "arborist_mcp.index_watch", *arguments]
+        if launcher == "module"
+        else ["arborist-index-watch", *arguments]
+    )
+    return subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _load_json(payload: str, description: str) -> Any:
     try:
         return json_strict.loads(payload)
@@ -106,6 +125,7 @@ def _request_stdio(
 def check_cli(python: str, launcher: str) -> None:
     _run_gateway(python, launcher, "--help")
     _run_gateway(python, launcher, "--version")
+    _run_index_watch(python, launcher, "--version")
 
 
 def check_tool_catalog_dump(python: str, launcher: str) -> None:
@@ -195,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         default="module",
         help=(
             "Launch mode: 'module' runs python -m arborist_mcp.gateway; "
-            "'console' runs the installed arborist-mcp entry point."
+            "'console' runs the installed arborist-mcp and "
+            "arborist-index-watch entry points."
         ),
     )
     parser.add_argument(
