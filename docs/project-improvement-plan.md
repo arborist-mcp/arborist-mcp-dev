@@ -648,6 +648,10 @@ completed item can land in its own commit unless two changes are inseparable.
   decoding, and deterministic target ordering into a cold-importable support
   module, reducing the runtime module below four hundred lines while preserving
   its established import and pickle identities.
+- [x] Extract index reconciliation, health summaries, multi-target polling, and
+  check-mode coordination into a CLI-independent runtime module, reducing the
+  console facade below two hundred fifty lines while preserving its established
+  callable API, facade monkeypatch seams, protocol metadata, and pickle paths.
 
 ## Suggested Commit Sequence
 
