@@ -531,6 +531,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add direct caller/callee change summaries and distinct affected-symbol
   counts for live and persisted trace-backed patch validation.
 - [x] Add optional SARIF 2.1.0 diagnostics export for patch validation CI integrations.
+- [x] Normalize expanded decorated Python method replacements before re-indenting
+  them, preventing decorator/definition indentation drift, and explicitly reject
+  mismatched decorator-definition indentation before the commit gate.
 
 ### P4: Testing And Hardening
 
