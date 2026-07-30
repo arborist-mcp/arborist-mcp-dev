@@ -638,6 +638,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Move source/file-path compatibility and workspace write-boundary checks
   into the parameter-validation mixin, keeping route-facing error behavior
   unchanged while reducing the gateway facade to roughly 240 lines.
+- [x] Add an `arborist-index-watch --version` entrypoint that reports the
+  shared package version before required watch-target validation, matching the
+  main gateway CLI's installation-diagnostic ergonomics.
 
 ## Suggested Commit Sequence
 

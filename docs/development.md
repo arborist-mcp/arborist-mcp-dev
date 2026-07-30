@@ -137,6 +137,7 @@ python -m unittest tests.gateway_protocol.request_validation
 python -m unittest discover -s tests
 python -m arborist_mcp.gateway --help
 python -m arborist_mcp.gateway --version
+python -m arborist_mcp.index_watch --version
 python scripts\tool_catalog.py --check
 python scripts\gateway_suite_manifest.py --plan gateway-fast
 ```
@@ -221,14 +222,16 @@ current-schema freshness issues. It is suitable for a supervisor or editor
 integration that wants a simple no-dependency watch loop:
 
 ```powershell
+arborist-index-watch --version
 arborist-index-watch --workspace-root . --db-path .\symbols.db --interval-seconds 1
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once --dry-run
 arborist-index-watch --workspace-root . --db-path .\symbols.db --check
 ```
 
-For multiple registered workspace/index pairs, use a JSON manifest relative to
-the manifest file:
+`--version` prints the installed package version and exits before watch-target
+validation. For multiple registered workspace/index pairs, use a JSON
+manifest relative to the manifest file:
 
 ```json
 {

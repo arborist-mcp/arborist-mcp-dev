@@ -285,6 +285,7 @@ Use the polling watch command to keep one persisted index synchronized without
 rewriting it while it is healthy:
 
 ```powershell
+arborist-index-watch --version
 arborist-index-watch --workspace-root . --db-path .\symbols.db
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once
 arborist-index-watch --workspace-root . --db-path .\symbols.db --once --timeout-ms 5000
@@ -292,7 +293,9 @@ arborist-index-watch --workspace-root . --db-path .\symbols.db --once --dry-run
 arborist-index-watch --workspace-root . --db-path .\symbols.db --check
 ```
 
-The watcher refreshes missing indexes and current-schema freshness issues
+`--version` reports the installed Arborist package version without requiring a
+watch target. The watcher refreshes missing indexes and current-schema
+freshness issues
 through the incremental workspace refresh path. It exits without writing when
 inspection requires manual intervention, such as an unsupported or foreign
 SQLite schema. `--timeout-ms` bounds health freshness reads and workspace

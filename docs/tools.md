@@ -478,7 +478,8 @@ a scan budget expires, the operation returns an error before persisting a new
 index snapshot.
 
 `arborist-index-watch` is a polling console command for one index database or a
-JSON manifest of multiple registered workspace/index pairs. It uses
+JSON manifest of multiple registered workspace/index pairs. `--version` reports
+the installed Arborist package version without requiring a watch target. It uses
 `inspect_symbol_index` between refreshes, so healthy indexes do not incur
 SQLite writes. `--once` performs one inspect-and-reconcile pass for CI or a
 supervisor probe. The command refreshes only a missing index or a current-schema
