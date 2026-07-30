@@ -641,6 +641,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add an `arborist-index-watch --version` entrypoint that reports the
   shared package version before required watch-target validation, matching the
   main gateway CLI's installation-diagnostic ergonomics.
+- [x] Extract index-watch argparse types, limits, and parser construction into
+  a cold-importable CLI-arguments module, reducing the runtime module below
+  five hundred lines while preserving its existing helper imports.
 
 ## Suggested Commit Sequence
 
