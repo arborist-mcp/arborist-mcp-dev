@@ -42,6 +42,10 @@ pub(crate) fn collect_syntax_errors_with_deadline(
                 start_point: position_from(node.start_position()),
                 end_point: position_from(node.end_position()),
             });
+        } else if node.kind() == "decorated_definition"
+            && let Some(issue) = decorated_definition_indentation_issue(node)
+        {
+            issues.push(issue);
         }
     };
 
@@ -106,6 +110,30 @@ fn collect_python_indentation_issues(
     Ok(issues)
 }
 
+fn decorated_definition_indentation_issue(node: Node<'_>) -> Option<ValidationIssue> {
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    let definition = children
+        .iter()
+        .find(|child| matches!(child.kind(), "function_definition" | "class_definition"))?;
+    let definition_column = definition.start_position().column;
+    let decorator = children.iter().find(|child| {
+        child.kind() == "decorator" && child.start_position().column != definition_column
+    })?;
+
+    Some(ValidationIssue {
+        kind: "indentation".to_string(),
+        message: format!(
+            "Python indentation appears invalid: definition after decorator on line {} must use the same indentation",
+            decorator.start_position().row + 1
+        ),
+        start_byte: decorator.start_byte(),
+        end_byte: definition.end_byte(),
+        start_point: position_from(decorator.start_position()),
+        end_point: position_from(definition.end_position()),
+    })
+}
+
 fn leading_indent_len(line: &str) -> usize {
     line.as_bytes()
         .iter()
@@ -120,6 +148,62 @@ mod tests {
     use super::collect_syntax_errors_with_deadline;
     use crate::deadline::CooperativeDeadline;
     use crate::language::parse_document;
+
+    #[test]
+    fn syntax_validation_rejects_definition_indented_beyond_decorator() {
+        let source = "class Product:
+    @staticmethod
+        def normalize(value: int) -> int:
+            return value
+";
+        let document = parse_document(Path::new("sample.py"), source)
+            .expect("tree-sitter should produce a recoverable parse");
+
+        let issues = collect_syntax_errors_with_deadline(document.tree.root_node(), source, None)
+            .expect("syntax validation should complete");
+
+        assert!(issues.iter().any(|issue| {
+            issue.kind == "indentation" && issue.message.contains("definition after decorator")
+        }));
+    }
+
+    #[test]
+    fn syntax_validation_ignores_definition_text_inside_decorator_string() {
+        let source = r#"class Product:
+    @decorator("""
+    def example
+    """)
+    def normalize(value: int) -> int:
+        return value
+"#;
+        let document =
+            parse_document(Path::new("sample.py"), source).expect("decorator string should parse");
+
+        let issues = collect_syntax_errors_with_deadline(document.tree.root_node(), source, None)
+            .expect("syntax validation should complete");
+
+        assert!(!issues.iter().any(|issue| {
+            issue.kind == "indentation" && issue.message.contains("definition after decorator")
+        }));
+    }
+
+    #[test]
+    fn syntax_validation_checks_tab_separated_definition_tokens() {
+        let source = "class Product:
+	@staticmethod
+		def	normalize(value: int) -> int:
+			return value
+";
+        let document = parse_document(Path::new("sample.py"), source)
+            .expect("tree-sitter should produce a recoverable parse");
+
+        let issues = collect_syntax_errors_with_deadline(document.tree.root_node(), source, None)
+            .expect("syntax validation should complete");
+
+        assert!(issues.iter().any(|issue| {
+            issue.kind == "indentation" && issue.message.contains("definition after decorator")
+        }));
+    }
 
     #[test]
     fn syntax_validation_checks_expired_patch_preview_deadlines() {

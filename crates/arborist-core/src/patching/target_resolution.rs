@@ -100,6 +100,7 @@ pub(crate) fn prepare_patch_replacement_with_deadline(
             source,
             target.start_byte,
             target.end_byte,
+            target.node_kind == "decorated_definition",
             new_code,
         ),
         LanguageId::C | LanguageId::Cpp => new_code.to_string(),
