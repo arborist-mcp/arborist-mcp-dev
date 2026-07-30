@@ -10,11 +10,13 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from arborist_mcp import __version__
 from arborist_mcp import index_watch as index_watch_module
 from arborist_mcp import index_watch_cli_args as index_watch_cli_args_module
 from arborist_mcp import index_watch_config as index_watch_config_module
+from arborist_mcp import index_watch_runtime as index_watch_runtime_module
 from arborist_mcp.index_watch import (
     _positive_float,
     IndexWatchError,
@@ -130,6 +132,164 @@ class IndexWatchTests(unittest.TestCase):
                     "raise SystemExit("
                     "'index_watch runtime was imported' "
                     "if 'arborist_mcp.index_watch' in sys.modules else 0)"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_watch_facade_preserves_runtime_compatibility(self) -> None:
+        self.assertIs(
+            index_watch_module.IndexWatchCore,
+            index_watch_runtime_module.IndexWatchCore,
+        )
+        self.assertIs(
+            index_watch_module._health_summary,
+            index_watch_runtime_module._health_summary,
+        )
+
+        facade_callable_names = (
+            "_health_summary",
+            "reconcile_index",
+            "run_watch",
+            "run_watch_targets",
+            "check_watch_targets",
+        )
+        for callable_name in facade_callable_names:
+            with self.subTest(callable_name=callable_name):
+                exported = getattr(index_watch_module, callable_name)
+                self.assertEqual(exported.__module__, "arborist_mcp.index_watch")
+                self.assertIs(pickle.loads(pickle.dumps(exported)), exported)
+
+        protocol_method_names = (
+            "inspect_symbol_index_json",
+            "migrate_symbol_index_json",
+            "refresh_symbol_index_json",
+        )
+        for method_name in protocol_method_names:
+            with self.subTest(method_name=method_name):
+                method = getattr(index_watch_module.IndexWatchCore, method_name)
+                self.assertEqual(method.__module__, "arborist_mcp.index_watch")
+                self.assertIs(pickle.loads(pickle.dumps(method)), method)
+
+        self.assertIn("math", vars(index_watch_module))
+        self.assertIn("Protocol", vars(index_watch_module))
+
+    def test_watch_facade_functions_keep_facade_global_bindings(self) -> None:
+        facade_functions = (
+            reconcile_index,
+            run_watch,
+            run_watch_targets,
+            check_watch_targets,
+        )
+        for facade_function in facade_functions:
+            with self.subTest(facade_function=facade_function.__name__):
+                self.assertIs(
+                    facade_function.__globals__,
+                    vars(index_watch_module),
+                )
+
+        event = {"status": "healthy", "db_path": "symbols.db"}
+        emitted: list[dict[str, object]] = []
+        with patch.object(
+            index_watch_module,
+            "reconcile_index",
+            return_value=event,
+        ) as reconcile:
+            run_watch_targets(
+                object(),
+                targets=(IndexWatchTarget("workspace", "symbols.db"),),
+                interval_seconds=1.0,
+                max_files=10,
+                max_file_bytes=None,
+                once=True,
+                emit=emitted.append,
+            )
+
+        reconcile.assert_called_once()
+        self.assertEqual(emitted, [{**event, "workspace_root": "workspace"}])
+
+        with patch.object(index_watch_module, "run_watch_targets") as run_targets:
+            run_watch(
+                object(),
+                workspace_root="workspace",
+                db_path="symbols.db",
+                interval_seconds=1.0,
+                max_files=10,
+                max_file_bytes=None,
+                once=True,
+            )
+        run_targets.assert_called_once()
+
+    def test_watch_loop_observes_runtime_facade_rebinding(self) -> None:
+        first_reconcile = unittest.mock.Mock(
+            side_effect=lambda *_args, **_kwargs: {
+                "status": "healthy",
+                "db_path": "first.db",
+            }
+        )
+        second_reconcile = unittest.mock.Mock(
+            side_effect=lambda *_args, **_kwargs: {
+                "status": "healthy",
+                "db_path": "second.db",
+            }
+        )
+        sleep_calls = 0
+
+        def rebind_then_stop(_interval: float) -> None:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                index_watch_module.reconcile_index = second_reconcile
+                return
+            raise KeyboardInterrupt
+
+        try:
+            with patch.object(
+                index_watch_module,
+                "reconcile_index",
+                first_reconcile,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_watch_targets(
+                        object(),
+                        targets=(
+                            IndexWatchTarget("workspace", "symbols.db"),
+                        ),
+                        interval_seconds=1.0,
+                        max_files=10,
+                        max_file_bytes=None,
+                        once=False,
+                        sleep=rebind_then_stop,
+                        emit=lambda _event: None,
+                    )
+        finally:
+            index_watch_module.reconcile_index = reconcile_index
+
+        first_reconcile.assert_called_once()
+        second_reconcile.assert_called_once()
+
+    def test_watch_runtime_can_load_before_cli_facade(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import importlib, sys\n"
+                    "runtime = importlib.import_module("
+                    "'arborist_mcp.index_watch_runtime')\n"
+                    "if 'arborist_mcp.index_watch' in sys.modules:\n"
+                    "    raise SystemExit('index_watch facade was imported')\n"
+                    "if 'arborist_mcp.index_watch_cli_args' in sys.modules:\n"
+                    "    raise SystemExit('CLI arguments were imported')\n"
+                    "facade = importlib.import_module('arborist_mcp.index_watch')\n"
+                    "if facade.IndexWatchCore is not runtime.IndexWatchCore:\n"
+                    "    raise SystemExit('protocol identity changed')\n"
+                    "if facade._health_summary is not runtime._health_summary:\n"
+                    "    raise SystemExit('health helper identity changed')\n"
                 ),
             ],
             check=False,
