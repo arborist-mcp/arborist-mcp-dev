@@ -5,6 +5,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
+import pickle
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -13,6 +14,7 @@ import unittest
 from arborist_mcp import __version__
 from arborist_mcp import index_watch as index_watch_module
 from arborist_mcp import index_watch_cli_args as index_watch_cli_args_module
+from arborist_mcp import index_watch_config as index_watch_config_module
 from arborist_mcp.index_watch import (
     _positive_float,
     IndexWatchError,
@@ -95,6 +97,47 @@ class IndexWatchTests(unittest.TestCase):
                     getattr(index_watch_module, helper_name),
                     getattr(index_watch_cli_args_module, helper_name),
                 )
+
+    def test_config_support_is_reexported_with_compatibility_identity(self) -> None:
+        support_names = (
+            "IndexWatchError",
+            "IndexWatchTarget",
+            "_decode_object",
+            "_resolve_path",
+            "_target_sort_key",
+            "load_watch_config",
+            "_ordered_watch_targets",
+        )
+        for support_name in support_names:
+            with self.subTest(support_name=support_name):
+                exported = getattr(index_watch_module, support_name)
+                extracted = getattr(index_watch_config_module, support_name)
+                self.assertIs(exported, extracted)
+                self.assertEqual(extracted.__module__, "arborist_mcp.index_watch")
+                self.assertIs(pickle.loads(pickle.dumps(extracted)), exported)
+
+        target = IndexWatchTarget("workspace", "symbols.db")
+        self.assertEqual(pickle.loads(pickle.dumps(target)), target)
+
+    def test_config_module_does_not_load_index_watch_runtime(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; "
+                    "import arborist_mcp.index_watch_config; "
+                    "raise SystemExit("
+                    "'index_watch runtime was imported' "
+                    "if 'arborist_mcp.index_watch' in sys.modules else 0)"
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_cli_argument_module_does_not_load_index_watch_runtime(self) -> None:
         completed = subprocess.run(
