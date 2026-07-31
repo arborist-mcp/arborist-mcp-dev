@@ -171,6 +171,88 @@ if condition:
             return key
 "#;
 
+const WITH_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as typed_overload
+
+with context() as typed_overload, other_context() as (ignored, nested_overload):
+    class WithAliasDB:
+        @typed_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+
+with context() as (first, typed_overload):
+    class UnpackedWithAliasDB:
+        @typed_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+
+class AfterWithAliasDB:
+    @typed_overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+
+const STAR_IMPORT_OVERLOAD_SOURCE: &str = r#"overload = custom_overload
+
+class BeforeStarImportDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+from typing import *
+
+class TypingStarImportDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+from typing_extensions import *
+
+class ExtensionsStarImportDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+from custom_decorators import overload
+
+class CustomImportDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+def overload(value):
+    return value
+
+class FunctionReboundDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+from custom_decorators import *
+
+class UnknownStarImportDB:
+    @overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+
 const MATCH_CAPTURE_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as bare_overload
 from typing import overload as as_overload
 from typing import overload as keyword_overload
@@ -693,6 +775,157 @@ fn loop_target_rebindings_apply_before_decorated_definitions_in_the_loop_body() 
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "LoopAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn with_targets_rebind_overload_aliases_before_with_bodies_and_following_code() {
+    let dir = temporary_dir();
+    let source_path = dir.join("with_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, WITH_REBOUND_ALIASED_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::AfterWithAliasDB.get#definition[1]"),
+        format!("{source_anchor}::AfterWithAliasDB.get#definition[2]"),
+        format!("{source_anchor}::UnpackedWithAliasDB.get#definition[1]"),
+        format!("{source_anchor}::UnpackedWithAliasDB.get#definition[2]"),
+        format!("{source_anchor}::WithAliasDB.get#definition[1]"),
+        format!("{source_anchor}::WithAliasDB.get#definition[2]"),
+    ];
+
+    let skeleton =
+        get_semantic_skeleton(&source_path, WITH_REBOUND_ALIASED_OVERLOAD_SOURCE, 2, &[]).unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "WithAliasDB.get" | "UnpackedWithAliasDB.get" | "AfterWithAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "WithAliasDB.get" | "UnpackedWithAliasDB.get" | "AfterWithAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "WithAliasDB.get" | "UnpackedWithAliasDB.get" | "AfterWithAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn wildcard_and_bare_overload_rebindings_follow_import_origin() {
+    let dir = temporary_dir();
+    let source_path = dir.join("star_import_overload.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, STAR_IMPORT_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::BeforeStarImportDB.get#definition[1]"),
+        format!("{source_anchor}::BeforeStarImportDB.get#definition[2]"),
+        format!("{source_anchor}::CustomImportDB.get#definition[1]"),
+        format!("{source_anchor}::CustomImportDB.get#definition[2]"),
+        format!("{source_anchor}::ExtensionsStarImportDB.get#implementation"),
+        format!("{source_anchor}::ExtensionsStarImportDB.get#overload[1]"),
+        format!("{source_anchor}::FunctionReboundDB.get#definition[1]"),
+        format!("{source_anchor}::FunctionReboundDB.get#definition[2]"),
+        format!("{source_anchor}::TypingStarImportDB.get#implementation"),
+        format!("{source_anchor}::TypingStarImportDB.get#overload[1]"),
+        format!("{source_anchor}::UnknownStarImportDB.get#definition[1]"),
+        format!("{source_anchor}::UnknownStarImportDB.get#definition[2]"),
+    ];
+
+    let skeleton =
+        get_semantic_skeleton(&source_path, STAR_IMPORT_OVERLOAD_SOURCE, 2, &[]).unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeStarImportDB.get"
+                    | "TypingStarImportDB.get"
+                    | "ExtensionsStarImportDB.get"
+                    | "CustomImportDB.get"
+                    | "FunctionReboundDB.get"
+                    | "UnknownStarImportDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeStarImportDB.get"
+                    | "TypingStarImportDB.get"
+                    | "ExtensionsStarImportDB.get"
+                    | "CustomImportDB.get"
+                    | "FunctionReboundDB.get"
+                    | "UnknownStarImportDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeStarImportDB.get"
+                    | "TypingStarImportDB.get"
+                    | "ExtensionsStarImportDB.get"
+                    | "CustomImportDB.get"
+                    | "FunctionReboundDB.get"
+                    | "UnknownStarImportDB.get"
+            )
+        })
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();

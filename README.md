@@ -40,9 +40,11 @@ unique IDs for each declaration and implementation, such as
 `typing` and `typing_extensions` overload decorators, including directly
 imported aliases and module aliases declared before the decorated definition.
 Those aliases are tracked in source order through top-level control-flow bodies,
-including imports, loop targets, assignments, deletes, match captures, and other
-rebinding events; arbitrary decorators such as `custom.overload` are not treated
-as standard overloads. Non-unique Python
+including `typing` and `typing_extensions` wildcard imports, imports, loop targets,
+assignments, deletes, match captures, and other rebinding events; wildcard imports
+from unknown modules conservatively invalidate the bare `overload` name. Rebinding
+the bare `overload` name also invalidates later `@overload` decorators. Arbitrary
+decorators such as `custom.overload` are not treated as standard overloads. Non-unique Python
 semantic-path selectors are rejected with
 candidate IDs rather than silently selecting the first overload. Rebuild
 indexes created by older Arborist builds to materialize these identities.

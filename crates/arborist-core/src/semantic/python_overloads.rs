@@ -27,16 +27,18 @@ struct PythonModuleBinding {
 pub(crate) struct PythonOverloadNames(BTreeMap<String, Vec<PythonOverloadBinding>>);
 
 impl PythonOverloadNames {
+    fn binding_before(&self, name: &str, byte_offset: usize) -> Option<bool> {
+        self.0.get(name).and_then(|bindings| {
+            bindings
+                .iter()
+                .rev()
+                .find(|binding| binding.end_byte <= byte_offset)
+                .map(|binding| binding.active)
+        })
+    }
+
     fn contains_before(&self, name: &str, byte_offset: usize) -> bool {
-        self.0
-            .get(name)
-            .and_then(|bindings| {
-                bindings
-                    .iter()
-                    .rev()
-                    .find(|binding| binding.end_byte <= byte_offset)
-            })
-            .is_some_and(|binding| binding.active)
+        self.binding_before(name, byte_offset) == Some(true)
     }
 }
 
@@ -111,6 +113,15 @@ fn python_collect_import_bindings(
     for child in children {
         if let Some(deadline) = deadline {
             deadline.check(OVERLOAD_ALIAS_PHASE)?;
+        }
+        if child.kind() == "wildcard_import" {
+            bindings.push(PythonModuleBinding {
+                name: "overload".to_string(),
+                effective_byte: statement.end_byte(),
+                is_overload_import: module_is_typing,
+                is_overload_module_import: false,
+            });
+            continue;
         }
         let (binding, imported_name) = if child.kind() == "aliased_import" {
             let mut alias_cursor = child.walk();
@@ -406,6 +417,9 @@ fn python_typing_overload_import_aliases(
             "identifier" | "dotted_name" if node_text(imported, source)?.trim() == "overload" => {
                 aliases.insert("overload".to_string());
             }
+            "wildcard_import" => {
+                aliases.insert("overload".to_string());
+            }
             _ => {}
         }
     }
@@ -446,7 +460,7 @@ pub(crate) fn python_overload_names(
             if binding.is_overload_import {
                 tracked_names.insert(binding.name.clone());
             }
-            if tracked_names.contains(&binding.name) {
+            if binding.name == "overload" || tracked_names.contains(&binding.name) {
                 python_add_overload_binding(
                     &mut names,
                     binding.name.clone(),
@@ -498,7 +512,11 @@ pub(crate) fn python_is_overload(
                 .unwrap_or_default()
                 .trim_start();
             let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
-            name == "overload" || overload_names.contains_before(name, node.start_byte())
+            (name == "overload"
+                && overload_names
+                    .binding_before(name, node.start_byte())
+                    .unwrap_or(true))
+                || overload_names.contains_before(name, node.start_byte())
         });
         if is_overload {
             return Ok(true);
@@ -619,6 +637,28 @@ mod tests {
 
         let error = python_typing_overload_import_aliases(statement, source, Some(&deadline))
             .expect_err("each imported name must check the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+        assert_eq!(deadline.checks.get(), 2);
+    }
+
+    #[test]
+    fn overload_alias_import_scan_checks_deadlines_for_wildcard_import() {
+        let source = "from typing import *\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+        let statement = document
+            .tree
+            .root_node()
+            .named_child(0)
+            .expect("import statement should be present");
+        let deadline = RejectAfterChecks::new(1);
+
+        let error = python_typing_overload_import_aliases(statement, source, Some(&deadline))
+            .expect_err("wildcard import scanning must check the deadline");
 
         assert!(
             error

@@ -376,10 +376,12 @@ IDs. A standard `typing.overload` group uses IDs such as
 `@overload`, `@typing.overload`, or `@typing_extensions.overload` are recognized;
 `import typing as t` and `import typing_extensions as te` also enable
 `@t.overload` and `@te.overload`. Direct overload imports and module aliases are
-tracked in source order through top-level control-flow bodies, so later loop
-targets, assignments, deletes, match captures, and ordinary imports can invalidate
-them without retroactively changing earlier definitions. Arbitrary qualified
-names such as `@custom.overload` are not treated as standard overloads. Read,
+tracked in source order through top-level control-flow bodies, so `typing` and
+`typing_extensions` wildcard imports, later loop targets, assignments, deletes, match
+captures, and ordinary imports can invalidate them without retroactively changing earlier
+definitions. Wildcard imports from unknown modules conservatively invalidate the bare
+`overload` name, and rebinding it also invalidates later `@overload` decorators. Arbitrary
+qualified names such as `@custom.overload` are not treated as standard overloads. Read,
 trace, expansion, and patch callers may use those exact IDs. A
 non-unique semantic path such as `LokDB.get` is rejected with the candidate
 IDs instead of silently selecting the first declaration. Indexes created before
