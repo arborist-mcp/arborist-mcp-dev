@@ -6,6 +6,8 @@ use tree_sitter::Node;
 use crate::deadline::DeadlineCheck;
 use crate::language::node_text;
 
+const OVERLOAD_ALIAS_PHASE: &str = "collecting Python overload aliases";
+
 #[derive(Debug)]
 struct PythonOverloadBinding {
     end_byte: usize,
@@ -45,7 +47,11 @@ fn python_collect_pattern_bindings(
     node: Node<'_>,
     source: &str,
     bindings: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
     match node.kind() {
         "identifier" | "keyword_identifier" => {
             let name = node_text(node, source)?.trim();
@@ -57,33 +63,43 @@ fn python_collect_pattern_bindings(
         _ => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                python_collect_pattern_bindings(child, source, bindings)?;
+                python_collect_pattern_bindings(child, source, bindings, deadline)?;
             }
         }
     }
     Ok(())
 }
 
-fn python_module_binding_names(statement: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+fn python_module_binding_names(
+    statement: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
     let mut bindings = BTreeSet::new();
     match statement.kind() {
         "assignment" | "augmented_assignment" | "for_statement" => {
             if let Some(left) = statement.child_by_field_name("left") {
-                python_collect_pattern_bindings(left, source, &mut bindings)?;
+                python_collect_pattern_bindings(left, source, &mut bindings, deadline)?;
             }
         }
         "expression_statement" => {
             let mut cursor = statement.walk();
             for child in statement.named_children(&mut cursor) {
+                if let Some(deadline) = deadline {
+                    deadline.check(OVERLOAD_ALIAS_PHASE)?;
+                }
                 match child.kind() {
                     "assignment" | "augmented_assignment" => {
                         if let Some(left) = child.child_by_field_name("left") {
-                            python_collect_pattern_bindings(left, source, &mut bindings)?;
+                            python_collect_pattern_bindings(left, source, &mut bindings, deadline)?;
                         }
                     }
                     "named_expression" => {
                         if let Some(name) = child.child_by_field_name("name") {
-                            python_collect_pattern_bindings(name, source, &mut bindings)?;
+                            python_collect_pattern_bindings(name, source, &mut bindings, deadline)?;
                         }
                     }
                     _ => {}
@@ -93,7 +109,10 @@ fn python_module_binding_names(statement: Node<'_>, source: &str) -> Result<BTre
         "delete_statement" => {
             let mut cursor = statement.walk();
             for child in statement.named_children(&mut cursor) {
-                python_collect_pattern_bindings(child, source, &mut bindings)?;
+                if let Some(deadline) = deadline {
+                    deadline.check(OVERLOAD_ALIAS_PHASE)?;
+                }
+                python_collect_pattern_bindings(child, source, &mut bindings, deadline)?;
             }
         }
         "function_definition" | "class_definition" => {
@@ -110,14 +129,19 @@ fn python_module_binding_names(statement: Node<'_>, source: &str) -> Result<BTre
         }
         "type_alias_statement" => {
             if let Some(left) = statement.child_by_field_name("left") {
-                python_collect_pattern_bindings(left, source, &mut bindings)?;
+                python_collect_pattern_bindings(left, source, &mut bindings, deadline)?;
             }
         }
         "import_statement" | "import_from_statement" => {
             let mut cursor = statement.walk();
-            let children = statement.named_children(&mut cursor).collect::<Vec<_>>();
-            let import_start = usize::from(statement.kind() == "import_from_statement");
-            for child in children.into_iter().skip(import_start) {
+            let mut children = statement.named_children(&mut cursor);
+            if statement.kind() == "import_from_statement" {
+                let _ = children.next();
+            }
+            for child in children {
+                if let Some(deadline) = deadline {
+                    deadline.check(OVERLOAD_ALIAS_PHASE)?;
+                }
                 let binding = if child.kind() == "aliased_import" {
                     let mut alias_cursor = child.walk();
                     child
@@ -146,24 +170,31 @@ fn python_module_binding_names(statement: Node<'_>, source: &str) -> Result<BTre
 fn python_typing_overload_import_aliases(
     statement: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<BTreeSet<String>> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
     if statement.kind() != "import_from_statement" {
         return Ok(BTreeSet::new());
     }
     let mut cursor = statement.walk();
-    let children = statement.named_children(&mut cursor).collect::<Vec<_>>();
-    let Some(module) = children.first() else {
+    let mut children = statement.named_children(&mut cursor);
+    let Some(module) = children.next() else {
         return Ok(BTreeSet::new());
     };
     if !matches!(
-        node_text(*module, source)?.trim(),
+        node_text(module, source)?.trim(),
         "typing" | "typing_extensions"
     ) {
         return Ok(BTreeSet::new());
     }
 
     let mut aliases = BTreeSet::new();
-    for imported in children.into_iter().skip(1) {
+    for imported in children {
+        if let Some(deadline) = deadline {
+            deadline.check(OVERLOAD_ALIAS_PHASE)?;
+        }
         match imported.kind() {
             "aliased_import" => {
                 let mut alias_cursor = imported.walk();
@@ -196,12 +227,12 @@ pub(crate) fn python_overload_names(
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(deadline) = deadline {
-            deadline.check("collecting Python overload aliases")?;
+            deadline.check(OVERLOAD_ALIAS_PHASE)?;
         }
-        let aliases = python_typing_overload_import_aliases(statement, source)?;
+        let aliases = python_typing_overload_import_aliases(statement, source, deadline)?;
         for alias in &aliases {
             if let Some(deadline) = deadline {
-                deadline.check("collecting Python overload aliases")?;
+                deadline.check(OVERLOAD_ALIAS_PHASE)?;
             }
             tracked_names.insert(alias.clone());
             python_add_overload_binding(&mut names, alias.clone(), statement.end_byte(), true);
@@ -209,7 +240,7 @@ pub(crate) fn python_overload_names(
         if tracked_names.is_empty() {
             continue;
         }
-        for binding in python_module_binding_names(statement, source)? {
+        for binding in python_module_binding_names(statement, source, deadline)? {
             if tracked_names.contains(&binding) && !aliases.contains(&binding) {
                 python_add_overload_binding(&mut names, binding, statement.end_byte(), false);
             }
@@ -248,11 +279,14 @@ pub(crate) fn python_is_overload(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::path::Path;
 
     use anyhow::{Result, bail};
 
-    use super::python_overload_names;
+    use super::{
+        python_module_binding_names, python_overload_names, python_typing_overload_import_aliases,
+    };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
 
@@ -262,6 +296,75 @@ mod tests {
         fn check(&self, phase: &str) -> Result<()> {
             bail!("deadline check reached {phase}")
         }
+    }
+
+    struct RejectAfterChecks {
+        allowed_checks: usize,
+        checks: Cell<usize>,
+    }
+
+    impl RejectAfterChecks {
+        fn new(allowed_checks: usize) -> Self {
+            Self {
+                allowed_checks,
+                checks: Cell::new(0),
+            }
+        }
+    }
+
+    impl DeadlineCheck for RejectAfterChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            let checks = self.checks.get();
+            self.checks.set(checks + 1);
+            if checks >= self.allowed_checks {
+                bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn overload_alias_binding_scan_checks_deadlines_while_descending_patterns() {
+        let source = "typed_overload, ignored = values\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+        let statement = document
+            .tree
+            .root_node()
+            .named_child(0)
+            .expect("assignment statement should be present");
+        let deadline = RejectAfterChecks::new(2);
+
+        let error = python_module_binding_names(statement, source, Some(&deadline))
+            .expect_err("nested pattern collection must check the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+        assert_eq!(deadline.checks.get(), 3);
+    }
+
+    #[test]
+    fn overload_alias_import_scan_checks_deadlines_for_each_import() {
+        let source = "from typing import Any, overload as typed_overload\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+        let statement = document
+            .tree
+            .root_node()
+            .named_child(0)
+            .expect("import statement should be present");
+        let deadline = RejectAfterChecks::new(1);
+
+        let error = python_typing_overload_import_aliases(statement, source, Some(&deadline))
+            .expect_err("each imported name must check the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+        assert_eq!(deadline.checks.get(), 2);
     }
 
     #[test]
