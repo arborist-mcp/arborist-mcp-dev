@@ -544,8 +544,9 @@ completed item can land in its own commit unless two changes are inseparable.
   under a top-level alias declared before the decorated definition and not
   rebound by a later direct module-level binding when assigning Python overload
   identities across skeletons and live or persisted indexes.
-- [x] Check Python overload-alias collection against semantic and workspace-scan
-  deadlines throughout top-level import, rebinding, and nested pattern traversal.
+- [x] Check Python overload discovery against semantic and workspace-scan deadlines
+  throughout top-level import, rebinding, nested pattern traversal, and decorator
+  classification.
 - [x] Preserve patch-operation deadlines through Python position targeting and
   patched-symbol identity resolution, including overload-alias collection.
 - [x] Apply the remaining trace-backed patch-validation timeout budget to both

@@ -142,15 +142,15 @@ pub(super) fn build_python_skeleton(
         ));
     }
 
-    let identity_entries = collected_items
-        .iter()
-        .map(|(item, symbol)| PythonSymbolIdentity {
+    let mut identity_entries = Vec::with_capacity(collected_items.len());
+    for (item, symbol) in &collected_items {
+        identity_entries.push(PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: &symbol.semantic_path,
-            is_overload: python_is_overload(*item, source, &overload_names),
+            is_overload: python_is_overload(*item, source, &overload_names, deadline)?,
             byte_range: symbol.byte_range,
-        })
-        .collect::<Vec<_>>();
+        });
+    }
     let resolved_ids = python_symbol_ids(&identity_entries);
     drop(identity_entries);
     for ((_, symbol), resolved_id) in collected_items.iter_mut().zip(resolved_ids) {
@@ -258,17 +258,15 @@ pub(super) fn find_python_semantic_node<'tree>(
         ranges.push(python_display_byte_range(*node));
     }
     let normalized_file_path = normalize_path(path);
-    let entries = nodes
-        .iter()
-        .zip(paths.iter())
-        .zip(ranges.iter())
-        .map(|((node, path), byte_range)| PythonSymbolIdentity {
+    let mut entries = Vec::with_capacity(nodes.len());
+    for ((node, path), byte_range) in nodes.iter().zip(paths.iter()).zip(ranges.iter()) {
+        entries.push(PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: path,
-            is_overload: python_is_overload(*node, source, &overload_names),
+            is_overload: python_is_overload(*node, source, &overload_names, deadline)?,
             byte_range: *byte_range,
-        })
-        .collect::<Vec<_>>();
+        });
+    }
     let symbol_ids = python_symbol_ids(&entries);
 
     if let Some(index) = symbol_ids
@@ -331,7 +329,7 @@ pub(crate) fn python_symbol_id_for_node(
         entries.push(PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: path,
-            is_overload: python_is_overload(*candidate, source, &overload_names),
+            is_overload: python_is_overload(*candidate, source, &overload_names, deadline)?,
             byte_range: python_display_byte_range(*candidate),
         });
     }
@@ -367,4 +365,50 @@ fn collect_python_symbol_nodes<'tree>(
         pending.extend(children.into_iter().rev());
     }
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::{Result, bail};
+
+    use super::build_python_skeleton;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectOverloadDecoratorScan;
+
+    impl DeadlineCheck for RejectOverloadDecoratorScan {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == "classifying Python overload decorators" {
+                bail!("deadline check reached {phase}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn semantic_skeleton_forwards_deadline_to_overload_decorator_scans() {
+        let source = "@decorator\ndef function(): ...\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+
+        let error = build_python_skeleton(
+            Path::new("sample.py"),
+            source,
+            &document.tree,
+            2,
+            &[],
+            Some(&RejectOverloadDecoratorScan),
+        )
+        .expect_err(
+            "semantic skeleton generation must check overload decorators against the deadline",
+        );
+
+        assert!(
+            error
+                .to_string()
+                .contains("classifying Python overload decorators")
+        );
+    }
 }

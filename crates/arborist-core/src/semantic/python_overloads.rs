@@ -7,6 +7,7 @@ use crate::deadline::DeadlineCheck;
 use crate::language::node_text;
 
 const OVERLOAD_ALIAS_PHASE: &str = "collecting Python overload aliases";
+const OVERLOAD_DECORATOR_PHASE: &str = "classifying Python overload decorators";
 
 #[derive(Debug)]
 struct PythonOverloadBinding {
@@ -253,28 +254,41 @@ pub(crate) fn python_is_overload(
     node: Node<'_>,
     source: &str,
     overload_names: &PythonOverloadNames,
-) -> bool {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<bool> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_DECORATOR_PHASE)?;
+    }
     let Some(parent) = node
         .parent()
         .filter(|parent| parent.kind() == "decorated_definition")
     else {
-        return false;
+        return Ok(false);
     };
 
     let mut cursor = parent.walk();
-    parent.named_children(&mut cursor).any(|child| {
-        child.kind() == "decorator"
-            && node_text(child, source).ok().is_some_and(|text| {
-                let decorator = text
-                    .trim()
-                    .strip_prefix('@')
-                    .unwrap_or_default()
-                    .trim_start();
-                let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
-                name.rsplit('.').next() == Some("overload")
-                    || overload_names.contains_before(name, node.start_byte())
-            })
-    })
+    for child in parent.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check(OVERLOAD_DECORATOR_PHASE)?;
+        }
+        if child.kind() != "decorator" {
+            continue;
+        }
+        let is_overload = node_text(child, source).ok().is_some_and(|text| {
+            let decorator = text
+                .trim()
+                .strip_prefix('@')
+                .unwrap_or_default()
+                .trim_start();
+            let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
+            name.rsplit('.').next() == Some("overload")
+                || overload_names.contains_before(name, node.start_byte())
+        });
+        if is_overload {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -285,7 +299,8 @@ mod tests {
     use anyhow::{Result, bail};
 
     use super::{
-        python_module_binding_names, python_overload_names, python_typing_overload_import_aliases,
+        python_is_overload, python_module_binding_names, python_overload_names,
+        python_typing_overload_import_aliases,
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
@@ -321,6 +336,36 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[test]
+    fn overload_decorator_scan_checks_deadlines_before_traversing_decorators() {
+        let source = "@decorator\ndef function(): ...\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+        let decorated_definition = document
+            .tree
+            .root_node()
+            .named_child(0)
+            .expect("decorated definition should be present");
+        let function = decorated_definition
+            .child_by_field_name("definition")
+            .expect("decorated definition should contain a function");
+        let overload_names =
+            python_overload_names(document.tree.root_node(), source, None).unwrap();
+
+        let error = python_is_overload(
+            function,
+            source,
+            &overload_names,
+            Some(&RejectDeadlineChecks),
+        )
+        .expect_err("decorator traversal must check the deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("classifying Python overload decorators")
+        );
     }
 
     #[test]

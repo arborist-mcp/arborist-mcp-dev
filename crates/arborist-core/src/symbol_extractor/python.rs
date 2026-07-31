@@ -54,6 +54,18 @@ pub(super) fn index_python_symbols_with_deadline(
             extraction_error = Some(error);
             return;
         }
+        let is_overload = match python_is_overload(
+            node,
+            source,
+            &overload_names,
+            deadline.map(|deadline| deadline as &dyn DeadlineCheck),
+        ) {
+            Ok(is_overload) => is_overload,
+            Err(error) => {
+                extraction_error = Some(error);
+                return;
+            }
+        };
         let signature = python_display_header(node, source).ok();
         let path = match semantic_path(node, source) {
             Ok(path) => path,
@@ -73,7 +85,7 @@ pub(super) fn index_python_symbols_with_deadline(
             node_kind: node.kind().to_string(),
             byte_range: python_display_byte_range(node),
             signature,
-            is_overload: python_is_overload(node, source, &overload_names),
+            is_overload,
             parameters,
             return_type,
             docstring,
