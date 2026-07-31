@@ -443,6 +443,9 @@ pub(crate) fn python_overload_names(
             }
         }
         for binding in bindings {
+            if binding.is_overload_import {
+                tracked_names.insert(binding.name.clone());
+            }
             if tracked_names.contains(&binding.name) {
                 python_add_overload_binding(
                     &mut names,

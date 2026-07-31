@@ -120,6 +120,26 @@ while condition:
             return key
 "#;
 
+const CONTROL_FLOW_DIRECT_IMPORT_REBOUND_OVERLOAD_SOURCE: &str = r#"if condition:
+    from typing import overload as branch_overload
+
+    class BeforeBranchImportDB:
+        @branch_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+
+    branch_overload = not_an_overload
+
+    class AfterBranchImportDB:
+        @branch_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+"#;
+
 const LOOP_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as typed_overload
 
 for typed_overload in decorators:
@@ -554,6 +574,78 @@ fn control_flow_rebindings_preserve_definitions_before_ordered_alias_rebinds() {
             matches!(
                 symbol.semantic_path.as_str(),
                 "BeforeAliasDB.get" | "AfterAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn control_flow_direct_overload_imports_follow_binding_order() {
+    let dir = temporary_dir();
+    let source_path = dir.join("control_flow_direct_import_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        CONTROL_FLOW_DIRECT_IMPORT_REBOUND_OVERLOAD_SOURCE,
+    )
+    .unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::AfterBranchImportDB.get#definition[1]"),
+        format!("{source_anchor}::AfterBranchImportDB.get#definition[2]"),
+        format!("{source_anchor}::BeforeBranchImportDB.get#implementation"),
+        format!("{source_anchor}::BeforeBranchImportDB.get#overload[1]"),
+    ];
+
+    let skeleton = get_semantic_skeleton(
+        &source_path,
+        CONTROL_FLOW_DIRECT_IMPORT_REBOUND_OVERLOAD_SOURCE,
+        2,
+        &[],
+    )
+    .unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeBranchImportDB.get" | "AfterBranchImportDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeBranchImportDB.get" | "AfterBranchImportDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeBranchImportDB.get" | "AfterBranchImportDB.get"
             )
         })
         .map(|symbol| symbol.symbol_id)
