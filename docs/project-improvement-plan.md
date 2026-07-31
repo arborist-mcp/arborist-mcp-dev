@@ -542,8 +542,9 @@ completed item can land in its own commit unless two changes are inseparable.
   actionable candidate IDs.
 - [x] Recognize `typing` and `typing_extensions` overload decorators imported
   under a top-level alias declared before the decorated definition and not
-  rebound by a later direct module-level binding when assigning Python overload
-  identities across skeletons and live or persisted indexes.
+  rebound by a later direct module-level binding, including a loop target before
+  its body, when assigning Python overload identities across skeletons and live
+  or persisted indexes.
 - [x] Check Python overload discovery against semantic and workspace-scan deadlines
   throughout top-level import, rebinding, nested pattern traversal, and decorator
   classification.

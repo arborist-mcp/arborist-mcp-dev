@@ -37,6 +37,17 @@ const FORWARD_ALIASED_OVERLOAD_SOURCE: &str = r#"class ForwardAliasDB:
 from typing import overload as typing_overload
 "#;
 
+const LOOP_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as typed_overload
+
+for typed_overload in decorators:
+    class LoopAliasDB:
+        @typed_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+"#;
+
 const REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as reassigned_overload
 from typing import overload as deleted_overload
 from typing import overload as imported_overload
@@ -158,6 +169,51 @@ fn later_typing_overload_aliases_do_not_retroactively_mark_definitions() {
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "ForwardAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn loop_target_rebindings_apply_before_decorated_definitions_in_the_loop_body() {
+    let dir = temporary_dir();
+    let source_path = dir.join("loop_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, LOOP_REBOUND_ALIASED_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::LoopAliasDB.get#definition[1]"),
+        format!("{source_anchor}::LoopAliasDB.get#definition[2]"),
+    ];
+    let skeleton =
+        get_semantic_skeleton(&source_path, LOOP_REBOUND_ALIASED_OVERLOAD_SOURCE, 2, &[]).unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path == "LoopAliasDB.get")
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| symbol.semantic_path == "LoopAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| symbol.semantic_path == "LoopAliasDB.get")
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();

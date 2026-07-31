@@ -168,6 +168,15 @@ fn python_module_binding_names(
     Ok(bindings)
 }
 
+fn python_module_binding_effective_byte(statement: Node<'_>) -> usize {
+    if statement.kind() == "for_statement" {
+        return statement
+            .child_by_field_name("left")
+            .map_or(statement.start_byte(), |left| left.end_byte());
+    }
+    statement.end_byte()
+}
+
 fn python_typing_overload_import_aliases(
     statement: Node<'_>,
     source: &str,
@@ -241,9 +250,10 @@ pub(crate) fn python_overload_names(
         if tracked_names.is_empty() {
             continue;
         }
+        let binding_effective_byte = python_module_binding_effective_byte(statement);
         for binding in python_module_binding_names(statement, source, deadline)? {
             if tracked_names.contains(&binding) && !aliases.contains(&binding) {
-                python_add_overload_binding(&mut names, binding, statement.end_byte(), false);
+                python_add_overload_binding(&mut names, binding, binding_effective_byte, false);
             }
         }
     }
