@@ -537,6 +537,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Assign distinct Python overload declaration and implementation IDs, and
   reject ambiguous semantic-path reads, traces, expansions, and patches with
   actionable candidate IDs.
+- [x] Recognize `typing` and `typing_extensions` overload decorators imported
+  under a top-level alias when assigning Python overload identities across
+  skeletons and live or persisted indexes.
 
 ### P4: Testing And Hardening
 

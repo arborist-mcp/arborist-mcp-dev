@@ -23,7 +23,57 @@ pub(crate) fn python_display_byte_range(node: Node<'_>) -> (usize, usize) {
     (display_node.start_byte(), display_node.end_byte())
 }
 
-pub(crate) fn python_is_overload(node: Node<'_>, source: &str) -> bool {
+pub(crate) fn python_overload_names(root: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::from(["overload".to_string()]);
+    let mut cursor = root.walk();
+    for statement in root.named_children(&mut cursor) {
+        if statement.kind() != "import_from_statement" {
+            continue;
+        }
+        let mut statement_cursor = statement.walk();
+        let children = statement
+            .named_children(&mut statement_cursor)
+            .collect::<Vec<_>>();
+        let Some(module) = children.first() else {
+            continue;
+        };
+        if !matches!(
+            node_text(*module, source)?.trim(),
+            "typing" | "typing_extensions"
+        ) {
+            continue;
+        }
+        for imported in children.into_iter().skip(1) {
+            match imported.kind() {
+                "aliased_import" => {
+                    let mut alias_cursor = imported.walk();
+                    let alias_children = imported
+                        .named_children(&mut alias_cursor)
+                        .collect::<Vec<_>>();
+                    if alias_children.len() >= 2
+                        && node_text(alias_children[0], source)?.trim() == "overload"
+                        && let Some(alias) = alias_children.last()
+                    {
+                        names.insert(node_text(*alias, source)?.trim().to_string());
+                    }
+                }
+                "identifier" | "dotted_name"
+                    if node_text(imported, source)?.trim() == "overload" =>
+                {
+                    names.insert("overload".to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(names)
+}
+
+pub(crate) fn python_is_overload(
+    node: Node<'_>,
+    source: &str,
+    overload_names: &BTreeSet<String>,
+) -> bool {
     let Some(parent) = node
         .parent()
         .filter(|parent| parent.kind() == "decorated_definition")
@@ -41,7 +91,7 @@ pub(crate) fn python_is_overload(node: Node<'_>, source: &str) -> bool {
                     .unwrap_or_default()
                     .trim_start();
                 let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
-                name.rsplit('.').next() == Some("overload")
+                name.rsplit('.').next() == Some("overload") || overload_names.contains(name)
             })
     })
 }
@@ -122,6 +172,7 @@ pub(super) fn build_python_skeleton(
 
     let mut cursor = QueryCursor::new();
     let normalized_file_path = normalize_path(path);
+    let overload_names = python_overload_names(tree.root_node(), source)?;
     let mut collected_items = Vec::new();
     let mut expand_set: BTreeSet<String> = expand_nodes.iter().cloned().collect();
 
@@ -167,7 +218,7 @@ pub(super) fn build_python_skeleton(
         .map(|(item, symbol)| PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: &symbol.semantic_path,
-            is_overload: python_is_overload(*item, source),
+            is_overload: python_is_overload(*item, source, &overload_names),
             byte_range: symbol.byte_range,
         })
         .collect::<Vec<_>>();
@@ -267,6 +318,7 @@ pub(super) fn find_python_semantic_node<'tree>(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
     let nodes = collect_python_symbol_nodes(tree.root_node(), deadline)?;
+    let overload_names = python_overload_names(tree.root_node(), source)?;
     let mut paths = Vec::with_capacity(nodes.len());
     let mut ranges = Vec::with_capacity(nodes.len());
     for node in &nodes {
@@ -284,7 +336,7 @@ pub(super) fn find_python_semantic_node<'tree>(
         .map(|((node, path), byte_range)| PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: path,
-            is_overload: python_is_overload(*node, source),
+            is_overload: python_is_overload(*node, source, &overload_names),
             byte_range: *byte_range,
         })
         .collect::<Vec<_>>();
@@ -338,6 +390,7 @@ pub(crate) fn python_symbol_id_for_node(
     }
     let normalized_file_path = normalize_path(path);
     let nodes = collect_python_symbol_nodes(root, None)?;
+    let overload_names = python_overload_names(root, source)?;
     let mut entries = Vec::with_capacity(nodes.len());
     let mut paths = Vec::with_capacity(nodes.len());
     for candidate in &nodes {
@@ -348,7 +401,7 @@ pub(crate) fn python_symbol_id_for_node(
         entries.push(PythonSymbolIdentity {
             file_path: &normalized_file_path,
             semantic_path: path,
-            is_overload: python_is_overload(*candidate, source),
+            is_overload: python_is_overload(*candidate, source, &overload_names),
             byte_range: python_display_byte_range(*candidate),
         });
     }

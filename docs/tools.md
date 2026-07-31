@@ -372,12 +372,14 @@ For Python, repeated definitions that share one semantic path receive distinct
 IDs. A standard `typing.overload` group uses IDs such as
 `/repo/lokdb.py::LokDB.get#overload[1]`,
 `/repo/lokdb.py::LokDB.get#overload[2]`, and
-`/repo/lokdb.py::LokDB.get#implementation`. Read, trace, expansion, and patch callers may use
-those exact IDs. A non-unique semantic path such as `LokDB.get` is rejected
-with the candidate IDs instead of silently selecting the first declaration.
-Indexes created before this identity behavior should be rebuilt before using
-exact Python overload IDs. Incremental refreshes rewrite every affected file
-when a cross-file collision changes its ID.
+`/repo/lokdb.py::LokDB.get#implementation`. Overload decorators imported from
+`typing` or `typing_extensions` under an alias receive the same treatment.
+Read, trace, expansion, and patch callers may use those exact IDs. A
+non-unique semantic path such as `LokDB.get` is rejected with the candidate
+IDs instead of silently selecting the first declaration. Indexes created before
+this identity behavior should be rebuilt before using exact Python overload
+IDs. Incremental refreshes rewrite every affected file when a cross-file
+collision changes its ID.
 
 For C, patch selectors may be a plain name such as `helper` or a precise
 `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both

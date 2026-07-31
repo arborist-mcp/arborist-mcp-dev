@@ -25,7 +25,7 @@ pub(crate) use c::{c_parameters, c_return_type};
 pub(crate) use c::{c_symbol_nodes, c_symbol_nodes_with_deadline};
 pub(crate) use python::{
     python_display_byte_range, python_display_header, python_docstring, python_is_overload,
-    python_parameters, python_return_type, python_symbol_id_for_node,
+    python_overload_names, python_parameters, python_return_type, python_symbol_id_for_node,
 };
 pub(crate) use python_identity::{PythonSymbolIdentity, python_symbol_ids};
 

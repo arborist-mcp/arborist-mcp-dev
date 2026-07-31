@@ -8,7 +8,8 @@ use crate::language::{normalize_path, visit_tree, visit_tree_with_deadline};
 use crate::patching::{collect_python_references, collect_python_references_with_deadline};
 use crate::semantic::{
     python_display_byte_range, python_display_header, python_docstring, python_is_overload,
-    python_parameters, python_return_type, semantic_parent_path, semantic_path,
+    python_overload_names, python_parameters, python_return_type, semantic_parent_path,
+    semantic_path,
 };
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -21,6 +22,7 @@ pub(super) fn index_python_symbols_with_deadline(
 ) -> Result<Vec<IndexedSymbol>> {
     let mut symbols = Vec::new();
     let normalized_path = normalize_path(path);
+    let overload_names = python_overload_names(root, source)?;
     let mut extraction_error = None;
 
     let mut callback = |node: Node<'_>| {
@@ -66,7 +68,7 @@ pub(super) fn index_python_symbols_with_deadline(
             node_kind: node.kind().to_string(),
             byte_range: python_display_byte_range(node),
             signature,
-            is_overload: python_is_overload(node, source),
+            is_overload: python_is_overload(node, source, &overload_names),
             parameters,
             return_type,
             docstring,

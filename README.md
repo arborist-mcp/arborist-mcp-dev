@@ -36,11 +36,13 @@ is extension-based:
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
 `/repo/store.py::Store.get#overload[1]` and
-`/repo/store.py::Store.get#implementation`. Non-unique Python
-semantic-path selectors are rejected with candidate IDs rather than silently
-selecting the first overload. Rebuild indexes created by older Arborist builds
-to materialize these identities. Incremental refreshes rewrite every affected
-file when a cross-file collision changes its ID.
+`/repo/store.py::Store.get#implementation`. Arborist recognizes standard
+`typing` and `typing_extensions` overload decorators, including directly
+imported aliases. Non-unique Python semantic-path selectors are rejected with
+candidate IDs rather than silently selecting the first overload. Rebuild
+indexes created by older Arborist builds to materialize these identities.
+Incremental refreshes rewrite every affected file when a cross-file collision
+changes its ID.
 
 C++ files use the dedicated Tree-sitter C++ grammar. C-family indexing,
 tracing, query ownership, and patch targets support free functions in named
