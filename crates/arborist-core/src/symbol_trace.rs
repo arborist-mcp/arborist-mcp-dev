@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::deadline::CooperativeDeadline;
+use crate::deadline::{CooperativeDeadline, DeadlineCheck};
 
 mod graph;
 mod neighborhood;
@@ -26,8 +26,14 @@ impl TraceQueryDeadline {
     }
 
     #[cfg(test)]
-    fn expired_for_tests(timeout_ms: u64) -> Self {
+    pub(crate) fn expired_for_tests(timeout_ms: u64) -> Self {
         Self(CooperativeDeadline::expired_for_tests(timeout_ms, "trace"))
+    }
+}
+
+impl DeadlineCheck for TraceQueryDeadline {
+    fn check(&self, phase: &str) -> Result<()> {
+        TraceQueryDeadline::check(self, phase)
     }
 }
 

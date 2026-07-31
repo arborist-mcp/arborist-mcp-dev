@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use crate::symbol_trace::TraceQueryDeadline;
+
 use super::{
-    sarif_artifact_uri,
+    patch_ast_node_with_trace_deadline, sarif_artifact_uri,
     validate_patch_with_discovery_context_at_position_from_index_path_with_timeout,
     validate_patch_with_discovery_context_at_position_from_index_with_timeout,
     validate_patch_with_discovery_context_at_position_from_path_with_timeout,
@@ -520,4 +522,21 @@ fn discovery_context_timeout_variants_reject_zero_before_path_or_patch_work() {
                 .contains("invalid trace timeout_ms: value must be greater than zero")
         );
     }
+}
+
+#[test]
+fn patch_analysis_uses_remaining_trace_budget_before_patch_work() {
+    let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+    let error = patch_ast_node_with_trace_deadline(
+        &deadline,
+        Path::new("missing.py"),
+        "",
+        "target",
+        "replacement",
+        None,
+    )
+    .expect_err("expired trace budgets must reject patch work before parsing or validation");
+
+    assert!(error.to_string().contains("patch application"));
 }

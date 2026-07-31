@@ -37,7 +37,7 @@ pub(crate) use result_builder::{
 pub(crate) use syntax_validation::{collect_syntax_errors, collect_syntax_errors_with_deadline};
 pub(crate) use target_resolution::{
     prepare_patch_replacement, prepare_patch_replacement_with_deadline,
-    semantic_target_at_position, semantic_target_at_position_with_deadline,
+    semantic_target_at_position_with_deadline,
 };
 
 pub(crate) use api::unified_diff;

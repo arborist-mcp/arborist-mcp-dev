@@ -32,14 +32,6 @@ struct SemanticTargetInfo {
     end_point: Position,
 }
 
-pub(crate) fn semantic_target_at_position(
-    path: &Path,
-    source: &str,
-    position: &Position,
-) -> Result<String> {
-    semantic_target_at_position_with_deadline(path, source, position, None)
-}
-
 pub(crate) fn semantic_target_at_position_with_deadline(
     path: &Path,
     source: &str,

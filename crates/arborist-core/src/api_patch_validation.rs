@@ -1,9 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use anyhow::Result;
 
 use crate::deadline::CooperativeDeadline;
-use crate::model::{SymbolSummary, TracePatchImpactSummary, TraceSymbolGraphResult};
+use crate::model::{
+    PatchAstNodeResult, SymbolSummary, TracePatchImpactSummary, TraceSymbolGraphResult,
+};
+use crate::patching;
+use crate::symbol_trace::TraceQueryDeadline;
 
 mod path_index_context;
 mod replay;
@@ -43,6 +48,25 @@ pub(crate) fn patch_analysis_deadline(
     operation: &'static str,
 ) -> Result<CooperativeDeadline> {
     CooperativeDeadline::new(timeout_ms, MAX_PATCH_ANALYSIS_TIMEOUT_MS, operation)
+}
+
+pub(crate) fn patch_ast_node_with_trace_deadline(
+    deadline: &TraceQueryDeadline,
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+) -> Result<PatchAstNodeResult> {
+    let timeout_ms = deadline.remaining_timeout_ms("patch application")?;
+    patching::patch_ast_node_with_timeout(
+        path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        timeout_ms,
+    )
 }
 
 pub(crate) fn trace_patch_impact_summary(

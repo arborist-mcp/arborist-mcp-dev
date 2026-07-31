@@ -544,6 +544,9 @@ completed item can land in its own commit unless two changes are inseparable.
   deadlines before traversing top-level import declarations.
 - [x] Preserve patch-operation deadlines through Python position targeting and
   patched-symbol identity resolution, including overload-alias collection.
+- [x] Apply the remaining trace-backed patch-validation timeout budget to both
+  semantic-target selection and patch application across workspace and
+  persisted-index graph, trace, neighborhood, and discovery contexts.
 
 ### P4: Testing And Hardening
 

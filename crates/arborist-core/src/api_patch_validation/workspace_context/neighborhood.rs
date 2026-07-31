@@ -5,7 +5,6 @@ use anyhow::Result;
 
 use crate::language::{self, ensure_path_inside_workspace};
 use crate::model::*;
-use crate::patching::patch_ast_node;
 use crate::symbol_trace::TraceQueryDeadline;
 use crate::{patching, symbols};
 
@@ -56,7 +55,14 @@ pub fn validate_patch_with_neighborhood_context_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
 
     deadline.check("patch validation")?;
-    let patch = patch_ast_node(&path, source, semantic_target, new_code, bypass_reason)?;
+    let patch = super::super::patch_ast_node_with_trace_deadline(
+        &deadline,
+        &path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+    )?;
     let trace_target = patch.resolved_symbol_id.clone();
 
     if !patch.validation.syntax_errors.is_empty() {
@@ -170,7 +176,12 @@ pub fn validate_patch_with_neighborhood_context_at_position_with_timeout(
 ) -> Result<NeighborhoodContextPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("patch position resolution")?;
-    let semantic_target = patching::semantic_target_at_position(path, source, position)?;
+    let semantic_target = patching::semantic_target_at_position_with_deadline(
+        path,
+        source,
+        position,
+        Some(&deadline),
+    )?;
     let timeout_ms = deadline.remaining_timeout_ms("neighborhood-context patch validation")?;
     validate_patch_with_neighborhood_context_with_timeout(
         workspace_root,
