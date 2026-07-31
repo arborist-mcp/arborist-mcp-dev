@@ -3,13 +3,13 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use super::{choose_trace_symbol, read_symbol_from_meta, validate_trace_symbol_path};
+use super::{choose_trace_symbol_with_deadline, read_symbol_from_meta, validate_trace_symbol_path};
 use crate::model::{
     Position, SymbolContextResult, SymbolMeta, SymbolNeighborhoodContextResult,
     SymbolReadDiscoveryContextResult, SymbolReadResult, TraceDirection,
 };
 use crate::symbol_map::resolved_symbol_ref_map;
-use crate::symbol_position::resolve_symbol_at_position;
+use crate::symbol_position::resolve_symbol_at_position_with_deadline;
 use crate::symbol_read::read_symbol_result_from_meta_with_cache;
 use crate::symbol_trace::{
     TraceQueryDeadline, trace_from_symbol_with_timeout, trace_neighborhood_from_symbol_with_timeout,
@@ -178,7 +178,13 @@ pub(crate) fn read_symbol_at_position_from_symbols_with_timeout(
 ) -> Result<SymbolReadResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol position resolution")?;
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
     deadline.check("symbol position read")?;
     let result = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
     deadline.check("symbol position result")?;
@@ -197,7 +203,13 @@ pub(crate) fn read_symbol_context_at_position_from_symbols_with_timeout(
 ) -> Result<SymbolContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol context position resolution")?;
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol context")?;
     read_symbol_context_from_meta_with_timeout(
         resolved_symbols,
@@ -223,7 +235,13 @@ pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_tim
 ) -> Result<SymbolNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol neighborhood position resolution")?;
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
     read_symbol_neighborhood_context_from_meta_with_timeout(
         resolved_symbols,
@@ -251,7 +269,13 @@ pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_timeou
 ) -> Result<SymbolReadDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol discovery position resolution")?;
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol discovery context")?;
     read_symbol_discovery_context_from_meta_with_timeout(
         resolved_symbols,
@@ -276,7 +300,7 @@ pub(crate) fn read_symbol_from_symbols_with_timeout(
     validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol resolution")?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     deadline.check("symbol read")?;
     let result = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
@@ -296,7 +320,7 @@ pub(crate) fn read_symbol_context_from_symbols_with_timeout(
     validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol context resolution")?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol context")?;
     read_symbol_context_from_meta_with_timeout(
@@ -324,7 +348,7 @@ pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_timeout(
     validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol neighborhood resolution")?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
     read_symbol_neighborhood_context_from_meta_with_timeout(
@@ -354,7 +378,7 @@ pub(crate) fn read_symbol_discovery_context_from_symbols_with_timeout(
     validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol discovery resolution")?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     let timeout_ms = deadline.remaining_timeout_ms("symbol discovery context")?;
     read_symbol_discovery_context_from_meta_with_timeout(

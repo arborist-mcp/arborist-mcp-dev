@@ -7,7 +7,7 @@ use super::{choose_trace_symbol_with_deadline, validate_trace_symbol_path};
 use crate::model::{
     Position, SymbolMeta, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
 };
-use crate::symbol_position::resolve_symbol_at_position;
+use crate::symbol_position::resolve_symbol_at_position_with_deadline;
 use crate::symbol_trace::{
     TraceQueryDeadline, trace_from_symbol_with_timeout, trace_neighborhood_from_symbol_with_timeout,
 };
@@ -107,7 +107,16 @@ pub(crate) fn trace_symbol_graph_at_position_from_symbols_with_timeout(
     file_overrides: Option<&BTreeMap<String, String>>,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    deadline.check("resolving trace position")?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
+    let timeout_ms = deadline.remaining_timeout_ms("trace graph expansion")?;
     trace_from_symbol_with_timeout(
         resolved_symbols,
         indexed_files,
@@ -154,7 +163,16 @@ pub(crate) fn trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
     file_overrides: Option<&BTreeMap<String, String>>,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    let symbol = resolve_symbol_at_position(resolved_symbols, file_path, position, file_overrides)?;
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    deadline.check("resolving trace position")?;
+    let symbol = resolve_symbol_at_position_with_deadline(
+        resolved_symbols,
+        file_path,
+        position,
+        file_overrides,
+        Some(&deadline),
+    )?;
+    let timeout_ms = deadline.remaining_timeout_ms("trace neighborhood expansion")?;
     trace_neighborhood_from_symbol_with_timeout(
         resolved_symbols,
         indexed_files,

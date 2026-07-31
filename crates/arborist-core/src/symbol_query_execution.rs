@@ -58,13 +58,6 @@ fn validate_trace_symbol_path(symbol_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn choose_trace_symbol<'a>(
-    symbols: &'a [SymbolMeta],
-    symbol_path: &str,
-) -> Result<Option<&'a SymbolMeta>> {
-    choose_trace_symbol_with_deadline(symbols, symbol_path, None)
-}
-
 pub(crate) fn choose_trace_symbol_with_deadline<'a>(
     symbols: &'a [SymbolMeta],
     symbol_path: &str,
@@ -163,7 +156,7 @@ fn check_trace_selection_deadline(deadline: Option<&dyn DeadlineCheck>) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_trace_symbol, choose_trace_symbol_with_deadline};
+    use super::choose_trace_symbol_with_deadline;
     use crate::model::{SymbolMeta, SymbolMetaInit};
     use crate::symbol_trace::TraceQueryDeadline;
 
@@ -204,7 +197,7 @@ mod tests {
             symbol("b", "a.cpp", (10, 11)),
         ];
 
-        let selected = choose_trace_symbol(&symbols, "overloaded")
+        let selected = choose_trace_symbol_with_deadline(&symbols, "overloaded", None)
             .expect("selection should succeed")
             .expect("semantic path should select a candidate");
         assert_eq!(selected.symbol_id, "b");
@@ -217,7 +210,7 @@ mod tests {
             symbol("overloaded#implementation", "sample.py", (30, 40)),
         ];
 
-        let error = choose_trace_symbol(&symbols, "overloaded")
+        let error = choose_trace_symbol_with_deadline(&symbols, "overloaded", None)
             .expect_err("ambiguous Python overload paths should be rejected");
         assert!(error.to_string().contains("ambiguous Python semantic path"));
         assert!(error.to_string().contains("overloaded#overload[1]"));
