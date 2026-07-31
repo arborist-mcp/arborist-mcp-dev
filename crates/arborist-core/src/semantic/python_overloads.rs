@@ -33,6 +33,7 @@ enum PythonOverloadScopeKind {
 struct PythonOverloadScope {
     start_byte: usize,
     end_byte: usize,
+    parent: Option<usize>,
     bindings: BTreeMap<String, Vec<PythonOverloadBinding>>,
 }
 
@@ -77,24 +78,37 @@ impl PythonOverloadNames {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<bool>> {
         let byte_offset = node.start_byte();
-        for scope in &self.scopes {
+        let mut low = 0;
+        let mut high = self.scopes.len();
+        while low < high {
+            let midpoint = low + (high - low) / 2;
+            if self.scopes[midpoint].start_byte <= byte_offset {
+                low = midpoint + 1;
+            } else {
+                high = midpoint;
+            }
+        }
+
+        let mut scope_index = low.checked_sub(1);
+        while let Some(index) = scope_index {
+            let scope = &self.scopes[index];
             if let Some(deadline) = deadline {
                 deadline.check(OVERLOAD_DECORATOR_PHASE)?;
             }
-            if scope.start_byte > byte_offset || byte_offset >= scope.end_byte {
-                continue;
-            }
-            let Some(bindings) = scope.bindings.get(name) else {
-                continue;
-            };
-            for binding in bindings.iter().rev() {
-                if let Some(deadline) = deadline {
-                    deadline.check(OVERLOAD_DECORATOR_PHASE)?;
+            if scope.start_byte <= byte_offset
+                && byte_offset < scope.end_byte
+                && let Some(bindings) = scope.bindings.get(name)
+            {
+                for binding in bindings.iter().rev() {
+                    if let Some(deadline) = deadline {
+                        deadline.check(OVERLOAD_DECORATOR_PHASE)?;
+                    }
+                    if binding.end_byte <= byte_offset {
+                        return Ok(Some(binding.active));
+                    }
                 }
-                if binding.end_byte <= byte_offset {
-                    return Ok(Some(binding.active));
-                }
             }
+            scope_index = scope.parent;
         }
         self.binding_before(name, byte_offset, deadline)
     }
@@ -684,6 +698,7 @@ fn python_collect_overload_scopes(
             scopes.push(PythonOverloadScope {
                 start_byte: body.start_byte(),
                 end_byte: body.end_byte(),
+                parent: None,
                 bindings: state.bindings,
             });
         }
@@ -764,7 +779,18 @@ pub(crate) fn python_overload_names(
         &mut scopes,
         deadline,
     )?;
-    scopes.sort_by_key(|scope| scope.end_byte - scope.start_byte);
+    let mut active_scopes: Vec<usize> = Vec::new();
+    for index in 0..scopes.len() {
+        while let Some(&parent) = active_scopes.last() {
+            if scopes[parent].end_byte <= scopes[index].start_byte {
+                active_scopes.pop();
+            } else {
+                break;
+            }
+        }
+        scopes[index].parent = active_scopes.last().copied();
+        active_scopes.push(index);
+    }
     Ok(PythonOverloadNames {
         bindings: names,
         scopes,
