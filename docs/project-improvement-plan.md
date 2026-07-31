@@ -114,6 +114,9 @@ completed item can land in its own commit unless two changes are inseparable.
   `patching.rs`, `symbols.rs`, `model.rs`, and test modules now remain focused
   facades over dedicated submodules; continue extending the same boundary discipline
   as new core responsibilities are added.
+- [x] Extract Python overload alias visibility and module-level rebinding
+  tracking into a dedicated semantic helper module while retaining the existing
+  overload identity behavior and deadline checks.
 - [x] Split `tests/c_symbol_graph` into thematic submodules (`core`,
   `constructors`, `templates`, `methods`, `namespaces`, `overloads`,
   `wrappers`, `std_get`) under `tests/c_symbol_graph/`.

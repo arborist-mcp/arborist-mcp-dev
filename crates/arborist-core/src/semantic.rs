@@ -10,6 +10,7 @@ mod c;
 mod paths;
 mod python;
 mod python_identity;
+mod python_overloads;
 
 pub(crate) use paths::{semantic_depth, semantic_parent_path, semantic_path};
 
@@ -24,10 +25,11 @@ pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
 pub(crate) use c::{c_parameters, c_return_type};
 pub(crate) use c::{c_symbol_nodes, c_symbol_nodes_with_deadline};
 pub(crate) use python::{
-    python_display_byte_range, python_display_header, python_docstring, python_is_overload,
-    python_overload_names, python_parameters, python_return_type, python_symbol_id_for_node,
+    python_display_byte_range, python_display_header, python_docstring, python_parameters,
+    python_return_type, python_symbol_id_for_node,
 };
 pub(crate) use python_identity::{PythonSymbolIdentity, python_symbol_ids};
+pub(crate) use python_overloads::{python_is_overload, python_overload_names};
 
 pub(crate) fn get_semantic_skeleton_with_deadline(
     path: &Path,
