@@ -393,14 +393,15 @@ pub(crate) fn python_symbol_id_for_node(
     path: &Path,
     node: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<String> {
     let mut root = node;
     while let Some(parent) = root.parent() {
         root = parent;
     }
     let normalized_file_path = normalize_path(path);
-    let nodes = collect_python_symbol_nodes(root, None)?;
-    let overload_names = python_overload_names(root, source, None)?;
+    let nodes = collect_python_symbol_nodes(root, deadline)?;
+    let overload_names = python_overload_names(root, source, deadline)?;
     let mut entries = Vec::with_capacity(nodes.len());
     let mut paths = Vec::with_capacity(nodes.len());
     for candidate in &nodes {

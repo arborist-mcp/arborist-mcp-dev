@@ -135,6 +135,7 @@ pub(crate) fn build_patch_result_with_deadline(
                 virtual_document.language_id,
                 node,
                 &updated_source,
+                deadline,
             )
         })
         .transpose()?
@@ -175,4 +176,63 @@ pub(crate) fn splice_source(source: &str, range: Range<usize>, replacement: &str
     updated.push_str(replacement);
     updated.push_str(&source[range.end..]);
     updated
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::{Result, bail};
+
+    use super::{PatchBuildInput, build_patch_result_with_deadline};
+    use crate::deadline::DeadlineCheck;
+
+    struct RejectOverloadAliasScan;
+
+    impl DeadlineCheck for RejectOverloadAliasScan {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == "collecting Python overload aliases" {
+                bail!("deadline check reached {phase}")
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn patch_result_identity_resolution_forwards_deadline_to_python_overload_alias_scans() {
+        let source = r#"from typing import overload as typed_overload
+
+class Store:
+    @typed_overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+        let patch_start = source
+            .find("def get(self, key):")
+            .expect("implementation definition should be present");
+
+        let error = build_patch_result_with_deadline(
+            PatchBuildInput {
+                path: Path::new("sample.py"),
+                semantic_target: "Store.get",
+                updated_source: source.to_string(),
+                bypass_reason: None,
+                patch_start,
+                replacement_len: "def get(self, key):".len(),
+                preflight_issues: Vec::new(),
+            },
+            Some(&RejectOverloadAliasScan),
+        )
+        .expect_err(
+            "patch result identity resolution must check overload alias scans against its deadline",
+        );
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+    }
 }

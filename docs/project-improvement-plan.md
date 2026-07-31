@@ -542,6 +542,8 @@ completed item can land in its own commit unless two changes are inseparable.
   skeletons and live or persisted indexes.
 - [x] Check Python overload-alias collection against semantic and workspace-scan
   deadlines before traversing top-level import declarations.
+- [x] Preserve patch-operation deadlines through Python position targeting and
+  patched-symbol identity resolution, including overload-alias collection.
 
 ### P4: Testing And Hardening
 

@@ -71,7 +71,7 @@ pub(crate) fn semantic_target_at_position_with_deadline(
 
     check_deadline(deadline, "position target resolution")?;
     match document.language_id {
-        LanguageId::Python => python_symbol_id_for_node(&path, symbol_node, source),
+        LanguageId::Python => python_symbol_id_for_node(&path, symbol_node, source, deadline),
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
             .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
     }
@@ -161,9 +161,10 @@ pub(super) fn resolve_symbol_id(
     language_id: LanguageId,
     node: Node<'_>,
     source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<String> {
     match language_id {
-        LanguageId::Python => python_symbol_id_for_node(path, node, source),
+        LanguageId::Python => python_symbol_id_for_node(path, node, source, deadline),
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
             .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
     }
@@ -262,4 +263,55 @@ fn python_symbol_replacement_node<'tree>(
     }
 
     node
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::{Result, bail};
+
+    use super::semantic_target_at_position_with_deadline;
+    use crate::deadline::DeadlineCheck;
+    use crate::model::Position;
+
+    struct RejectOverloadAliasScan;
+
+    impl DeadlineCheck for RejectOverloadAliasScan {
+        fn check(&self, phase: &str) -> Result<()> {
+            if phase == "collecting Python overload aliases" {
+                bail!("deadline check reached {phase}")
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn position_target_resolution_forwards_deadline_to_python_overload_alias_scans() {
+        let source = r#"from typing import overload as typed_overload
+
+class Store:
+    @typed_overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+
+        let error = semantic_target_at_position_with_deadline(
+            Path::new("sample.py"),
+            source,
+            &Position { row: 4, column: 8 },
+            Some(&RejectOverloadAliasScan),
+        )
+        .expect_err(
+            "position target resolution must check overload alias scans against its deadline",
+        );
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+    }
 }
