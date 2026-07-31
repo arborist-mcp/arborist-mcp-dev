@@ -3,13 +3,13 @@ use std::path::Path;
 
 use anyhow::{Result, anyhow};
 
-use super::{choose_trace_symbol, validate_trace_symbol_path};
+use super::{choose_trace_symbol_with_deadline, validate_trace_symbol_path};
 use crate::model::{
     Position, SymbolMeta, TraceDirection, TraceSymbolGraphResult, TraceSymbolNeighborhoodResult,
 };
 use crate::symbol_position::resolve_symbol_at_position;
 use crate::symbol_trace::{
-    trace_from_symbol_with_timeout, trace_neighborhood_from_symbol_with_timeout,
+    TraceQueryDeadline, trace_from_symbol_with_timeout, trace_neighborhood_from_symbol_with_timeout,
 };
 
 #[allow(dead_code)]
@@ -36,9 +36,12 @@ pub(crate) fn trace_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     validate_trace_symbol_path(symbol_path)?;
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    deadline.check("selecting trace symbol")?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    let timeout_ms = deadline.remaining_timeout_ms("trace graph expansion")?;
     trace_from_symbol_with_timeout(
         resolved_symbols,
         indexed_files,
@@ -58,8 +61,12 @@ pub(crate) fn trace_neighborhood_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     validate_trace_symbol_path(symbol_path)?;
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
+    let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    deadline.check("selecting trace symbol")?;
+
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
+    let timeout_ms = deadline.remaining_timeout_ms("trace neighborhood expansion")?;
     trace_neighborhood_from_symbol_with_timeout(
         resolved_symbols,
         indexed_files,

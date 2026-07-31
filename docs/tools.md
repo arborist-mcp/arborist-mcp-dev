@@ -425,9 +425,10 @@ control `direction`, `max_depth`, and `max_nodes`; `truncated` indicates the
 bounded expansion omitted reachable symbols. `max_depth` is capped at `64`, and
 `max_nodes` is capped at `10000` across trace, context, and patch-impact tools.
 The four direct trace tools also accept an optional `timeout_ms` cooperative
-budget for graph summarization and neighborhood expansion, capped at `300000`
-milliseconds. The budget is checked between expansion phases and BFS edges;
-index loading, source parsing, and a single blocking operation remain
+budget for symbol selection, graph summarization, and neighborhood expansion,
+capped at `300000` milliseconds. The budget is checked while scanning candidate
+symbols and between expansion phases and BFS edges; index loading, source parsing,
+and a single blocking operation remain
 non-preemptible.
 
 `read_symbol_context`, `read_symbol_neighborhood_context`, and
