@@ -37,6 +37,40 @@ const FORWARD_ALIASED_OVERLOAD_SOURCE: &str = r#"class ForwardAliasDB:
 from typing import overload as typing_overload
 "#;
 
+const CONTROL_FLOW_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as if_overload
+from typing import overload as try_overload
+from typing import overload as while_overload
+
+if condition:
+    if_overload = not_an_overload
+    class IfAliasDB:
+        @if_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+
+try:
+    try_overload = not_an_overload
+    class TryAliasDB:
+        @try_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+except Exception:
+    pass
+
+while condition:
+    while_overload = not_an_overload
+    class WhileAliasDB:
+        @while_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+"#;
+
 const LOOP_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as typed_overload
 
 for typed_overload in decorators:
@@ -169,6 +203,75 @@ fn later_typing_overload_aliases_do_not_retroactively_mark_definitions() {
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "ForwardAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn control_flow_rebindings_apply_before_decorated_definitions_in_their_bodies() {
+    let dir = temporary_dir();
+    let source_path = dir.join("control_flow_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, CONTROL_FLOW_REBOUND_ALIASED_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::IfAliasDB.get#definition[1]"),
+        format!("{source_anchor}::IfAliasDB.get#definition[2]"),
+        format!("{source_anchor}::TryAliasDB.get#definition[1]"),
+        format!("{source_anchor}::TryAliasDB.get#definition[2]"),
+        format!("{source_anchor}::WhileAliasDB.get#definition[1]"),
+        format!("{source_anchor}::WhileAliasDB.get#definition[2]"),
+    ];
+    let skeleton = get_semantic_skeleton(
+        &source_path,
+        CONTROL_FLOW_REBOUND_ALIASED_OVERLOAD_SOURCE,
+        2,
+        &[],
+    )
+    .unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "IfAliasDB.get" | "TryAliasDB.get" | "WhileAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "IfAliasDB.get" | "TryAliasDB.get" | "WhileAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "IfAliasDB.get" | "TryAliasDB.get" | "WhileAliasDB.get"
+            )
+        })
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();
