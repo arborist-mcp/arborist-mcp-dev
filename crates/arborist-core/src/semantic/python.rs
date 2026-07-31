@@ -23,12 +23,23 @@ pub(crate) fn python_display_byte_range(node: Node<'_>) -> (usize, usize) {
     (display_node.start_byte(), display_node.end_byte())
 }
 
+#[derive(Debug)]
+pub(crate) struct PythonOverloadNames(BTreeMap<String, usize>);
+
+impl PythonOverloadNames {
+    fn contains_before(&self, name: &str, byte_offset: usize) -> bool {
+        self.0
+            .get(name)
+            .is_some_and(|declaration_end| *declaration_end <= byte_offset)
+    }
+}
+
 pub(crate) fn python_overload_names(
     root: Node<'_>,
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
-) -> Result<BTreeSet<String>> {
-    let mut names = BTreeSet::from(["overload".to_string()]);
+) -> Result<PythonOverloadNames> {
+    let mut names = BTreeMap::new();
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(deadline) = deadline {
@@ -64,25 +75,29 @@ pub(crate) fn python_overload_names(
                         && node_text(alias_children[0], source)?.trim() == "overload"
                         && let Some(alias) = alias_children.last()
                     {
-                        names.insert(node_text(*alias, source)?.trim().to_string());
+                        names
+                            .entry(node_text(*alias, source)?.trim().to_string())
+                            .or_insert(statement.end_byte());
                     }
                 }
                 "identifier" | "dotted_name"
                     if node_text(imported, source)?.trim() == "overload" =>
                 {
-                    names.insert("overload".to_string());
+                    names
+                        .entry("overload".to_string())
+                        .or_insert(statement.end_byte());
                 }
                 _ => {}
             }
         }
     }
-    Ok(names)
+    Ok(PythonOverloadNames(names))
 }
 
 pub(crate) fn python_is_overload(
     node: Node<'_>,
     source: &str,
-    overload_names: &BTreeSet<String>,
+    overload_names: &PythonOverloadNames,
 ) -> bool {
     let Some(parent) = node
         .parent()
@@ -101,7 +116,8 @@ pub(crate) fn python_is_overload(
                     .unwrap_or_default()
                     .trim_start();
                 let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
-                name.rsplit('.').next() == Some("overload") || overload_names.contains(name)
+                name.rsplit('.').next() == Some("overload")
+                    || overload_names.contains_before(name, node.start_byte())
             })
     })
 }
