@@ -6,7 +6,7 @@ use anyhow::Result;
 use crate::deadline::DeadlineCheck;
 use crate::language::{normalize_path, parse_document};
 use crate::model::{
-    PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
+    LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
 
 use super::{
@@ -128,7 +128,7 @@ pub(crate) fn build_patch_result_with_deadline(
         })
         .transpose()?
         .unwrap_or_else(|| semantic_target.to_string());
-    let resolved_symbol_id = patched_symbol
+    let mut resolved_symbol_id = patched_symbol
         .map(|node| {
             target_resolution::resolve_symbol_id(
                 path,
@@ -139,6 +139,12 @@ pub(crate) fn build_patch_result_with_deadline(
         })
         .transpose()?
         .unwrap_or_else(|| resolved_path.clone());
+    if virtual_document.language_id == LanguageId::Python
+        && resolved_symbol_id == resolved_path
+        && semantic_target.ends_with(&format!("::{resolved_path}"))
+    {
+        resolved_symbol_id = semantic_target.to_string();
+    }
 
     check_deadline(deadline, "patch result validation")?;
     let result = PatchAstNodeResult {

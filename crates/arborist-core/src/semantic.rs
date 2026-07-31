@@ -9,6 +9,7 @@ use crate::model::{LanguageId, SemanticSkeleton};
 mod c;
 mod paths;
 mod python;
+mod python_identity;
 
 pub(crate) use paths::{semantic_depth, semantic_parent_path, semantic_path};
 
@@ -23,9 +24,10 @@ pub use c::{c_function_header, c_semantic_path, c_symbol_id_for_node};
 pub(crate) use c::{c_parameters, c_return_type};
 pub(crate) use c::{c_symbol_nodes, c_symbol_nodes_with_deadline};
 pub(crate) use python::{
-    python_display_byte_range, python_display_header, python_docstring, python_parameters,
-    python_return_type,
+    python_display_byte_range, python_display_header, python_docstring, python_is_overload,
+    python_parameters, python_return_type, python_symbol_id_for_node,
 };
+pub(crate) use python_identity::{PythonSymbolIdentity, python_symbol_ids};
 
 pub(crate) fn get_semantic_skeleton_with_deadline(
     path: &Path,
@@ -56,7 +58,7 @@ pub(crate) fn find_semantic_node_with_deadline<'tree>(
 ) -> Result<Option<Node<'tree>>> {
     match language_id {
         LanguageId::Python => {
-            python::find_python_semantic_node(tree, source, target_path, deadline)
+            python::find_python_semantic_node(path, tree, source, target_path, deadline)
         }
         LanguageId::C | LanguageId::Cpp => {
             c::find_c_semantic_node(path, tree, source, target_path, deadline)

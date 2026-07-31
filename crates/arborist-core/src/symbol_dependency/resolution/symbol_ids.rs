@@ -6,7 +6,7 @@ use anyhow::Result;
 use super::super::c::c_symbol_family_anchor;
 use crate::language::{detect_language, is_c_header_path};
 use crate::model::LanguageId;
-use crate::semantic::cpp_callable_symbol_id;
+use crate::semantic::{PythonSymbolIdentity, cpp_callable_symbol_id, python_symbol_ids};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -19,16 +19,49 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<()> {
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
-    let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
-    for index in 0..raw_symbols.len() {
+    let mut languages = Vec::with_capacity(raw_symbols.len());
+    for symbol in raw_symbols.iter() {
         if let Some(deadline) = deadline {
             deadline.check("assigning symbol identities")?;
         }
-        symbol_ids.push(symbol_id_for_index(
-            index,
-            raw_symbols,
-            &mut languages_by_file,
-        )?);
+        let language = *languages_by_file
+            .entry(symbol.file_path.as_str())
+            .or_insert_with(|| detect_language(Path::new(&symbol.file_path)).ok());
+        languages.push(language);
+    }
+
+    let python_indices = languages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, language)| (*language == Some(LanguageId::Python)).then_some(index))
+        .collect::<Vec<_>>();
+    let python_entries = python_indices
+        .iter()
+        .map(|index| {
+            let symbol = &raw_symbols[*index];
+            PythonSymbolIdentity {
+                file_path: &symbol.file_path,
+                semantic_path: &symbol.semantic_path,
+                is_overload: symbol.is_overload,
+                byte_range: symbol.byte_range,
+            }
+        })
+        .collect::<Vec<_>>();
+    let python_ids = python_symbol_ids(&python_entries);
+    let mut python_ids_by_index = HashMap::new();
+    for (index, symbol_id) in python_indices.into_iter().zip(python_ids) {
+        python_ids_by_index.insert(index, symbol_id);
+    }
+
+    let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
+    for (index, language) in languages.into_iter().enumerate() {
+        if let Some(deadline) = deadline {
+            deadline.check("assigning symbol identities")?;
+        }
+        match python_ids_by_index.remove(&index) {
+            Some(symbol_id) => symbol_ids.push(symbol_id),
+            None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+        }
     }
 
     for (symbol, symbol_id) in raw_symbols.iter_mut().zip(symbol_ids) {
@@ -44,16 +77,13 @@ pub(crate) fn assign_symbol_ids_with_deadline(
     Ok(())
 }
 
-fn symbol_id_for_index<'a>(
+fn symbol_id_for_index(
     index: usize,
-    raw_symbols: &'a [IndexedSymbol],
-    languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
+    raw_symbols: &[IndexedSymbol],
+    language: Option<LanguageId>,
 ) -> Result<String> {
     let symbol = &raw_symbols[index];
     let path = Path::new(&symbol.file_path);
-    let language = *languages_by_file
-        .entry(symbol.file_path.as_str())
-        .or_insert_with(|| detect_language(path).ok());
     if language == Some(LanguageId::Cpp)
         && matches!(
             symbol.node_kind.as_str(),

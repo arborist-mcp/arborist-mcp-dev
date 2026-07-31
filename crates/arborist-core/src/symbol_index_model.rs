@@ -29,6 +29,7 @@ pub(crate) struct IndexedSymbol {
     pub(crate) node_kind: String,
     pub(crate) byte_range: (usize, usize),
     pub(crate) signature: Option<String>,
+    pub(crate) is_overload: bool,
     pub(crate) parameters: Vec<String>,
     pub(crate) return_type: Option<String>,
     pub(crate) docstring: Option<String>,

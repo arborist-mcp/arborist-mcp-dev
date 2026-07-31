@@ -97,15 +97,21 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         }
         let symbol_id = nonempty_string_from_row(row, 0, "symbol_id")?;
         let semantic_path = nonempty_string_from_row(row, 1, "semantic_path")?;
+        let file_path = nonempty_string_from_row(row, 3, "file_path")?;
+        let overload_prefix = format!("{file_path}::{semantic_path}#");
+        let is_overload = symbol_id
+            .strip_prefix(&overload_prefix)
+            .is_some_and(|suffix| suffix.starts_with("overload["));
         let scope_path = validated_scope_path(row, 2, &semantic_path)?;
         Ok(IndexedSymbol {
             symbol_id,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,
             scope_path,
-            file_path: nonempty_string_from_row(row, 3, "file_path")?,
+            file_path,
             node_kind: nonempty_string_from_row(row, 4, "node_kind")?,
             byte_range: byte_range_from_row(row, 5, 6)?,
+            is_overload,
             signature: optional_nonempty_string_from_row(row, 7, "signature")?,
             parameters,
             return_type: optional_nonempty_string_from_row(row, 9, "return_type")?,

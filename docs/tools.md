@@ -368,6 +368,17 @@ write" result. Registered-index synchronization then completes or reports its
 own error; a synchronization failure leaves the persisted source marked for a
 later retry. A single blocking source read or parse remains non-preemptible.
 
+For Python, repeated definitions that share one semantic path receive distinct
+IDs. A standard `typing.overload` group uses IDs such as
+`/repo/lokdb.py::LokDB.get#overload[1]`,
+`/repo/lokdb.py::LokDB.get#overload[2]`, and
+`/repo/lokdb.py::LokDB.get#implementation`. Read, trace, expansion, and patch callers may use
+those exact IDs. A non-unique semantic path such as `LokDB.get` is rejected
+with the candidate IDs instead of silently selecting the first declaration.
+Indexes created before this identity behavior should be rebuilt before using
+exact Python overload IDs. Incremental refreshes rewrite every affected file
+when a cross-file collision changes its ID.
+
 For C, patch selectors may be a plain name such as `helper` or a precise
 `symbol_id` such as `E:/repo/include/zeta.h::helper`. When a file contains both
 a forward declaration and a definition for the same symbol, Arborist prefers the

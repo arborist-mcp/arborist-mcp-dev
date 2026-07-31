@@ -37,7 +37,7 @@ pub(crate) fn trace_from_symbols_with_timeout(
 ) -> Result<TraceSymbolGraphResult> {
     validate_trace_symbol_path(symbol_path)?;
 
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     trace_from_symbol_with_timeout(
         resolved_symbols,
@@ -58,7 +58,7 @@ pub(crate) fn trace_neighborhood_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     validate_trace_symbol_path(symbol_path)?;
-    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)
+    let symbol = choose_trace_symbol(resolved_symbols, symbol_path)?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     trace_neighborhood_from_symbol_with_timeout(
         resolved_symbols,

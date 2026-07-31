@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Result;
@@ -221,13 +221,54 @@ pub fn refresh_symbol_index_for_file_with_limits(
         changed_file_paths.insert(normalized_refresh_path);
     }
 
+    let old_symbol_ids = grouped_symbols
+        .values()
+        .flatten()
+        .map(|symbol| {
+            (
+                (
+                    symbol.file_path.clone(),
+                    symbol.semantic_path.clone(),
+                    symbol.node_kind.clone(),
+                    symbol.byte_range,
+                ),
+                symbol.symbol_id.clone(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut raw_symbols = grouped_symbols
-        .into_values()
-        .flat_map(|symbols| symbols.into_iter())
+        .values()
+        .flatten()
+        .cloned()
         .collect::<Vec<_>>();
     deadline.check("assigning refreshed symbol identities")?;
     assign_symbol_ids_with_deadline(&mut raw_symbols, &deadline)?;
     deadline.check("assigning refreshed symbol identities")?;
+    let identity_changed_paths = raw_symbols
+        .iter()
+        .filter_map(|symbol| {
+            let key = (
+                symbol.file_path.clone(),
+                symbol.semantic_path.clone(),
+                symbol.node_kind.clone(),
+                symbol.byte_range,
+            );
+            old_symbol_ids
+                .get(&key)
+                .is_some_and(|old_id| old_id != &symbol.symbol_id)
+                .then(|| symbol.file_path.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    for identity_changed_path in identity_changed_paths {
+        if changed_file_paths.insert(identity_changed_path.clone()) {
+            old_changed_symbols.extend(
+                grouped_symbols
+                    .get(&identity_changed_path)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+    }
     let new_changed_symbols = raw_symbols
         .iter()
         .filter(|symbol| changed_file_paths.contains(&symbol.file_path))

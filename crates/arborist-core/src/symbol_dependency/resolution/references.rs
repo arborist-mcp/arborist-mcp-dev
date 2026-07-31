@@ -481,6 +481,7 @@ mod tests {
             node_kind: "function_definition".to_string(),
             byte_range: (0, 1),
             signature: None,
+            is_overload: false,
             parameters: Vec::new(),
             return_type: None,
             docstring: None,

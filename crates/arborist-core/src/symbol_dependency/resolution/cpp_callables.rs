@@ -203,6 +203,7 @@ mod tests {
             node_kind: "function_definition".to_string(),
             byte_range: (0, 0),
             signature: None,
+            is_overload: false,
             parameters: parameters
                 .iter()
                 .map(|parameter| (*parameter).to_string())

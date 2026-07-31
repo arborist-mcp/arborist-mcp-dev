@@ -26,10 +26,11 @@ use super::{
     read_symbol_discovery_context_at_position_with_source,
     read_symbol_discovery_context_from_index, read_symbol_from_index,
     read_symbol_neighborhood_context, read_symbol_neighborhood_context_from_index,
-    rebuild_symbol_index, refresh_symbol_index, replay_patch_evidence_against_trace,
-    replay_patch_evidence_against_trace_with_timeout, search_symbols, search_symbols_context,
-    search_symbols_context_filtered_with_timeout, search_symbols_context_from_index,
-    search_symbols_discovery_context, search_symbols_discovery_context_filtered_with_timeout,
+    rebuild_symbol_index, refresh_symbol_index, refresh_symbol_index_for_file,
+    replay_patch_evidence_against_trace, replay_patch_evidence_against_trace_with_timeout,
+    search_symbols, search_symbols_context, search_symbols_context_filtered_with_timeout,
+    search_symbols_context_from_index, search_symbols_discovery_context,
+    search_symbols_discovery_context_filtered_with_timeout,
     search_symbols_discovery_context_from_index, search_symbols_filtered,
     search_symbols_filtered_with_timeout, search_symbols_from_index,
     search_symbols_from_index_filtered, search_symbols_from_index_filtered_with_timeout,
@@ -58,6 +59,7 @@ mod patch_replay;
 mod patch_timeout;
 mod path_entrypoints;
 mod persisted_index;
+mod python_overloads;
 mod query_parity;
 mod skeleton;
 mod source_overlay;

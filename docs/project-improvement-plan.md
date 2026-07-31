@@ -534,6 +534,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Normalize expanded decorated Python method replacements before re-indenting
   them, preventing decorator/definition indentation drift, and explicitly reject
   mismatched decorator-definition indentation before the commit gate.
+- [x] Assign distinct Python overload declaration and implementation IDs, and
+  reject ambiguous semantic-path reads, traces, expansions, and patches with
+  actionable candidate IDs.
 
 ### P4: Testing And Hardening
 

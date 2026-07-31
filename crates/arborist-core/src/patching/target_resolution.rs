@@ -13,7 +13,7 @@ use crate::language::{
 use crate::model::{LanguageId, Position, ValidationIssue};
 use crate::semantic::{
     ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node_with_deadline,
-    semantic_path,
+    python_symbol_id_for_node, semantic_path,
 };
 
 pub(crate) struct PreparedPatchReplacement {
@@ -71,7 +71,7 @@ pub(crate) fn semantic_target_at_position_with_deadline(
 
     check_deadline(deadline, "position target resolution")?;
     match document.language_id {
-        LanguageId::Python => semantic_path(symbol_node, source),
+        LanguageId::Python => python_symbol_id_for_node(&path, symbol_node, source),
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
             .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
     }
@@ -163,7 +163,7 @@ pub(super) fn resolve_symbol_id(
     source: &str,
 ) -> Result<String> {
     match language_id {
-        LanguageId::Python => semantic_path(node, source),
+        LanguageId::Python => python_symbol_id_for_node(path, node, source),
         LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
             .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
     }
