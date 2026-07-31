@@ -379,8 +379,10 @@ IDs. A standard `typing.overload` group uses IDs such as
 tracked in source order through top-level control-flow bodies and the enclosing
 class/function scopes, so `typing` and `typing_extensions` wildcard imports, later loop
 targets, assignments, deletes, match captures, parameters, and ordinary imports can
-invalidate them without retroactively changing earlier definitions. Wildcard imports from
-unknown modules conservatively invalidate the bare
+invalidate them without retroactively changing earlier definitions. Nested functions
+inherit aliases from enclosing function scopes, and `global`/`nonlocal` declarations
+preserve the corresponding rebinding behavior. Wildcard imports from unknown modules
+conservatively invalidate the bare
 `overload` name, and rebinding it also invalidates later `@overload` decorators. Arbitrary
 qualified names such as `@custom.overload` are not treated as standard overloads. Read,
 trace, expansion, and patch callers may use those exact IDs. A

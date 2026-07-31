@@ -42,7 +42,10 @@ imported aliases and module aliases declared before the decorated definition.
 Those aliases are tracked in source order through top-level control-flow bodies
 and the enclosing class/function scopes, including `typing` and
 `typing_extensions` wildcard imports, imports, loop targets, assignments, deletes,
-match captures, parameters, and other rebinding events; wildcard imports
+match captures, parameters, and other rebinding events. Nested functions inherit
+overload aliases from enclosing function scopes, while `global` and `nonlocal`
+declarations keep
+rebinding behavior aligned with Python name resolution; wildcard imports
 from unknown modules conservatively invalidate the bare `overload` name. Rebinding
 the bare `overload` name also invalidates later `@overload` decorators. Arbitrary
 decorators such as `custom.overload` are not treated as standard overloads. Non-unique Python
