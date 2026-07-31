@@ -23,10 +23,17 @@ pub(crate) fn python_display_byte_range(node: Node<'_>) -> (usize, usize) {
     (display_node.start_byte(), display_node.end_byte())
 }
 
-pub(crate) fn python_overload_names(root: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+pub(crate) fn python_overload_names(
+    root: Node<'_>,
+    source: &str,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeSet<String>> {
     let mut names = BTreeSet::from(["overload".to_string()]);
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check("collecting Python overload aliases")?;
+        }
         if statement.kind() != "import_from_statement" {
             continue;
         }
@@ -44,6 +51,9 @@ pub(crate) fn python_overload_names(root: Node<'_>, source: &str) -> Result<BTre
             continue;
         }
         for imported in children.into_iter().skip(1) {
+            if let Some(deadline) = deadline {
+                deadline.check("collecting Python overload aliases")?;
+            }
             match imported.kind() {
                 "aliased_import" => {
                     let mut alias_cursor = imported.walk();
@@ -172,7 +182,7 @@ pub(super) fn build_python_skeleton(
 
     let mut cursor = QueryCursor::new();
     let normalized_file_path = normalize_path(path);
-    let overload_names = python_overload_names(tree.root_node(), source)?;
+    let overload_names = python_overload_names(tree.root_node(), source, deadline)?;
     let mut collected_items = Vec::new();
     let mut expand_set: BTreeSet<String> = expand_nodes.iter().cloned().collect();
 
@@ -318,7 +328,7 @@ pub(super) fn find_python_semantic_node<'tree>(
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
     let nodes = collect_python_symbol_nodes(tree.root_node(), deadline)?;
-    let overload_names = python_overload_names(tree.root_node(), source)?;
+    let overload_names = python_overload_names(tree.root_node(), source, deadline)?;
     let mut paths = Vec::with_capacity(nodes.len());
     let mut ranges = Vec::with_capacity(nodes.len());
     for node in &nodes {
@@ -390,7 +400,7 @@ pub(crate) fn python_symbol_id_for_node(
     }
     let normalized_file_path = normalize_path(path);
     let nodes = collect_python_symbol_nodes(root, None)?;
-    let overload_names = python_overload_names(root, source)?;
+    let overload_names = python_overload_names(root, source, None)?;
     let mut entries = Vec::with_capacity(nodes.len());
     let mut paths = Vec::with_capacity(nodes.len());
     for candidate in &nodes {
@@ -437,4 +447,42 @@ fn collect_python_symbol_nodes<'tree>(
         pending.extend(children.into_iter().rev());
     }
     Ok(nodes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use anyhow::{Result, bail};
+
+    use super::python_overload_names;
+    use crate::deadline::DeadlineCheck;
+    use crate::language::parse_document;
+
+    struct RejectDeadlineChecks;
+
+    impl DeadlineCheck for RejectDeadlineChecks {
+        fn check(&self, phase: &str) -> Result<()> {
+            bail!("deadline check reached {phase}")
+        }
+    }
+
+    #[test]
+    fn overload_alias_collection_checks_deadlines_before_scanning_imports() {
+        let source = "from typing import overload as typed_overload\n";
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+
+        let error = python_overload_names(
+            document.tree.root_node(),
+            source,
+            Some(&RejectDeadlineChecks),
+        )
+        .expect_err("deadline must be checked before scanning overload aliases");
+
+        assert!(
+            error
+                .to_string()
+                .contains("collecting Python overload aliases")
+        );
+    }
 }

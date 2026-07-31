@@ -540,6 +540,8 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Recognize `typing` and `typing_extensions` overload decorators imported
   under a top-level alias when assigning Python overload identities across
   skeletons and live or persisted indexes.
+- [x] Check Python overload-alias collection against semantic and workspace-scan
+  deadlines before traversing top-level import declarations.
 
 ### P4: Testing And Hardening
 

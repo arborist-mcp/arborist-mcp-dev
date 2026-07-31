@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
+use crate::deadline::DeadlineCheck;
 use crate::language::{normalize_path, visit_tree, visit_tree_with_deadline};
 use crate::patching::{collect_python_references, collect_python_references_with_deadline};
 use crate::semantic::{
@@ -22,7 +23,11 @@ pub(super) fn index_python_symbols_with_deadline(
 ) -> Result<Vec<IndexedSymbol>> {
     let mut symbols = Vec::new();
     let normalized_path = normalize_path(path);
-    let overload_names = python_overload_names(root, source)?;
+    let overload_names = python_overload_names(
+        root,
+        source,
+        deadline.map(|deadline| deadline as &dyn DeadlineCheck),
+    )?;
     let mut extraction_error = None;
 
     let mut callback = |node: Node<'_>| {
