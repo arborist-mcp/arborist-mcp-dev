@@ -16,6 +16,13 @@ struct PythonOverloadBinding {
 }
 
 #[derive(Debug)]
+struct PythonModuleBinding {
+    name: String,
+    effective_byte: usize,
+    is_overload_import: bool,
+}
+
+#[derive(Debug)]
 pub(crate) struct PythonOverloadNames(BTreeMap<String, Vec<PythonOverloadBinding>>);
 
 impl PythonOverloadNames {
@@ -47,7 +54,8 @@ fn python_add_overload_binding(
 fn python_collect_pattern_bindings(
     node: Node<'_>,
     source: &str,
-    bindings: &mut BTreeSet<String>,
+    effective_byte: usize,
+    bindings: &mut Vec<PythonModuleBinding>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
@@ -57,14 +65,18 @@ fn python_collect_pattern_bindings(
         "identifier" | "keyword_identifier" => {
             let name = node_text(node, source)?.trim();
             if name != "_" {
-                bindings.insert(name.to_string());
+                bindings.push(PythonModuleBinding {
+                    name: name.to_string(),
+                    effective_byte,
+                    is_overload_import: false,
+                });
             }
         }
         "attribute" | "subscript" => {}
         _ => {
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                python_collect_pattern_bindings(child, source, bindings, deadline)?;
+                python_collect_pattern_bindings(child, source, effective_byte, bindings, deadline)?;
             }
         }
     }
@@ -74,9 +86,21 @@ fn python_collect_pattern_bindings(
 fn python_collect_import_bindings(
     statement: Node<'_>,
     source: &str,
-    bindings: &mut BTreeSet<String>,
+    bindings: &mut Vec<PythonModuleBinding>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
+    let module_is_typing = if statement.kind() == "import_from_statement" {
+        statement
+            .named_child(0)
+            .map(|module| {
+                node_text(module, source)
+                    .map(|text| matches!(text.trim(), "typing" | "typing_extensions"))
+            })
+            .transpose()?
+            .unwrap_or(false)
+    } else {
+        false
+    };
     let mut cursor = statement.walk();
     let mut children = statement.named_children(&mut cursor);
     if statement.kind() == "import_from_statement" {
@@ -86,23 +110,135 @@ fn python_collect_import_bindings(
         if let Some(deadline) = deadline {
             deadline.check(OVERLOAD_ALIAS_PHASE)?;
         }
-        let binding = if child.kind() == "aliased_import" {
+        let (binding, imported_name) = if child.kind() == "aliased_import" {
             let mut alias_cursor = child.walk();
-            child
-                .named_children(&mut alias_cursor)
-                .last()
-                .map(|alias| node_text(alias, source).map(str::to_string))
-                .transpose()?
+            let aliases = child.named_children(&mut alias_cursor).collect::<Vec<_>>();
+            (
+                aliases
+                    .last()
+                    .map(|alias| node_text(*alias, source).map(str::to_string))
+                    .transpose()?,
+                aliases
+                    .first()
+                    .map(|imported| node_text(*imported, source).map(str::to_string))
+                    .transpose()?,
+            )
         } else if matches!(child.kind(), "dotted_name" | "identifier") {
-            node_text(child, source)?
-                .split('.')
-                .next()
-                .map(str::to_string)
+            let imported_name = node_text(child, source)?.to_string();
+            let binding_name = if statement.kind() == "import_statement" {
+                imported_name
+                    .split('.')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string()
+            } else {
+                imported_name.clone()
+            };
+            (Some(binding_name), Some(imported_name))
         } else {
-            None
+            (None, None)
         };
         if let Some(binding) = binding {
-            bindings.insert(binding.trim().to_string());
+            bindings.push(PythonModuleBinding {
+                name: binding.trim().to_string(),
+                effective_byte: statement.end_byte(),
+                is_overload_import: module_is_typing
+                    && imported_name
+                        .as_deref()
+                        .is_some_and(|name| name.trim() == "overload"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn python_collect_match_pattern_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut Vec<PythonModuleBinding>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
+    match node.kind() {
+        "case_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() == "dotted_name" {
+                    let name = node_text(child, source)?.trim();
+                    if !name.contains('.') && name != "_" {
+                        bindings.push(PythonModuleBinding {
+                            name: name.to_string(),
+                            effective_byte: child.end_byte(),
+                            is_overload_import: false,
+                        });
+                    }
+                } else {
+                    python_collect_match_pattern_bindings(child, source, bindings, deadline)?;
+                }
+            }
+        }
+        "as_pattern" => {
+            let mut cursor = node.walk();
+            let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+            if let Some(alias) = node.child_by_field_name("alias").or_else(|| {
+                children
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|child| matches!(child.kind(), "identifier" | "keyword_identifier"))
+            }) {
+                python_collect_pattern_bindings(
+                    alias,
+                    source,
+                    alias.end_byte(),
+                    bindings,
+                    deadline,
+                )?;
+            }
+            for child in children {
+                if child.kind() == "case_pattern" {
+                    python_collect_match_pattern_bindings(child, source, bindings, deadline)?;
+                }
+            }
+        }
+        "keyword_pattern" => {
+            let mut cursor = node.walk();
+            let mut children = node.named_children(&mut cursor);
+            let _ = children.next();
+            for child in children {
+                if child.kind() == "dotted_name" {
+                    let name = node_text(child, source)?.trim();
+                    if !name.contains('.') && name != "_" {
+                        bindings.push(PythonModuleBinding {
+                            name: name.to_string(),
+                            effective_byte: child.end_byte(),
+                            is_overload_import: false,
+                        });
+                    }
+                } else {
+                    python_collect_match_pattern_bindings(child, source, bindings, deadline)?;
+                }
+            }
+        }
+        "splat_pattern" => {
+            if let Some(name_node) = node.named_child(0) {
+                let name = node_text(name_node, source)?.trim();
+                if name != "_" {
+                    bindings.push(PythonModuleBinding {
+                        name: name.to_string(),
+                        effective_byte: name_node.end_byte(),
+                        is_overload_import: false,
+                    });
+                }
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                python_collect_match_pattern_bindings(child, source, bindings, deadline)?;
+            }
         }
     }
     Ok(())
@@ -111,43 +247,31 @@ fn python_collect_import_bindings(
 fn python_collect_nested_module_bindings(
     node: Node<'_>,
     source: &str,
-    bindings: &mut BTreeSet<String>,
+    bindings: &mut Vec<PythonModuleBinding>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check(OVERLOAD_ALIAS_PHASE)?;
     }
     match node.kind() {
-        "assignment" | "augmented_assignment" | "for_statement" => {
+        "assignment" | "augmented_assignment" => {
             if let Some(left) = node.child_by_field_name("left") {
-                python_collect_pattern_bindings(left, source, bindings, deadline)?;
+                python_collect_pattern_bindings(left, source, node.end_byte(), bindings, deadline)?;
             }
         }
-        "expression_statement" => {
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                if let Some(deadline) = deadline {
-                    deadline.check(OVERLOAD_ALIAS_PHASE)?;
-                }
-                match child.kind() {
-                    "assignment" | "augmented_assignment" => {
-                        if let Some(left) = child.child_by_field_name("left") {
-                            python_collect_pattern_bindings(left, source, bindings, deadline)?;
-                        }
-                    }
-                    "named_expression" => {
-                        if let Some(name) = child.child_by_field_name("name") {
-                            python_collect_pattern_bindings(name, source, bindings, deadline)?;
-                        }
-                    }
-                    _ => {}
-                }
+        "for_statement" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                python_collect_pattern_bindings(left, source, left.end_byte(), bindings, deadline)?;
             }
         }
         "named_expression" => {
             if let Some(name) = node.child_by_field_name("name") {
-                python_collect_pattern_bindings(name, source, bindings, deadline)?;
+                python_collect_pattern_bindings(name, source, node.end_byte(), bindings, deadline)?;
             }
+        }
+        "case_pattern" => {
+            python_collect_match_pattern_bindings(node, source, bindings, deadline)?;
+            return Ok(());
         }
         "delete_statement" => {
             let mut cursor = node.walk();
@@ -155,12 +279,22 @@ fn python_collect_nested_module_bindings(
                 if let Some(deadline) = deadline {
                     deadline.check(OVERLOAD_ALIAS_PHASE)?;
                 }
-                python_collect_pattern_bindings(child, source, bindings, deadline)?;
+                python_collect_pattern_bindings(
+                    child,
+                    source,
+                    node.end_byte(),
+                    bindings,
+                    deadline,
+                )?;
             }
         }
         "function_definition" | "class_definition" => {
             if let Some(name) = node.child_by_field_name("name") {
-                bindings.insert(node_text(name, source)?.trim().to_string());
+                bindings.push(PythonModuleBinding {
+                    name: node_text(name, source)?.trim().to_string(),
+                    effective_byte: node.end_byte(),
+                    is_overload_import: false,
+                });
             }
             return Ok(());
         }
@@ -168,26 +302,32 @@ fn python_collect_nested_module_bindings(
             if let Some(definition) = node.child_by_field_name("definition")
                 && let Some(name) = definition.child_by_field_name("name")
             {
-                bindings.insert(node_text(name, source)?.trim().to_string());
+                bindings.push(PythonModuleBinding {
+                    name: node_text(name, source)?.trim().to_string(),
+                    effective_byte: node.end_byte(),
+                    is_overload_import: false,
+                });
             }
             return Ok(());
         }
         "type_alias_statement" => {
             if let Some(left) = node.child_by_field_name("left") {
-                python_collect_pattern_bindings(left, source, bindings, deadline)?;
+                python_collect_pattern_bindings(left, source, node.end_byte(), bindings, deadline)?;
             }
         }
         "import_statement" | "import_from_statement" => {
             python_collect_import_bindings(node, source, bindings, deadline)?;
+            return Ok(());
         }
-        "except_clause" => {
+        "except_clause" | "as_pattern" => {
             if let Some(alias) = node.child_by_field_name("alias") {
-                python_collect_pattern_bindings(alias, source, bindings, deadline)?;
-            }
-        }
-        "as_pattern" => {
-            if let Some(alias) = node.child_by_field_name("alias") {
-                python_collect_pattern_bindings(alias, source, bindings, deadline)?;
+                python_collect_pattern_bindings(
+                    alias,
+                    source,
+                    alias.end_byte(),
+                    bindings,
+                    deadline,
+                )?;
             }
         }
         _ => {}
@@ -200,29 +340,15 @@ fn python_collect_nested_module_bindings(
     Ok(())
 }
 
-fn python_module_binding_names(
+fn python_module_binding_events(
     statement: Node<'_>,
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
-) -> Result<BTreeSet<String>> {
-    let mut bindings = BTreeSet::new();
+) -> Result<Vec<PythonModuleBinding>> {
+    let mut bindings = Vec::new();
     python_collect_nested_module_bindings(statement, source, &mut bindings, deadline)?;
+    bindings.sort_by_key(|binding| binding.effective_byte);
     Ok(bindings)
-}
-
-fn python_module_binding_effective_byte(statement: Node<'_>) -> usize {
-    if statement.kind() == "for_statement" {
-        return statement
-            .child_by_field_name("left")
-            .map_or(statement.start_byte(), |left| left.end_byte());
-    }
-    if matches!(
-        statement.kind(),
-        "if_statement" | "while_statement" | "try_statement" | "with_statement" | "match_statement"
-    ) {
-        return statement.start_byte();
-    }
-    statement.end_byte()
 }
 
 fn python_typing_overload_import_aliases(
@@ -293,15 +419,18 @@ pub(crate) fn python_overload_names(
                 deadline.check(OVERLOAD_ALIAS_PHASE)?;
             }
             tracked_names.insert(alias.clone());
-            python_add_overload_binding(&mut names, alias.clone(), statement.end_byte(), true);
         }
         if tracked_names.is_empty() {
             continue;
         }
-        let binding_effective_byte = python_module_binding_effective_byte(statement);
-        for binding in python_module_binding_names(statement, source, deadline)? {
-            if tracked_names.contains(&binding) && !aliases.contains(&binding) {
-                python_add_overload_binding(&mut names, binding, binding_effective_byte, false);
+        for binding in python_module_binding_events(statement, source, deadline)? {
+            if tracked_names.contains(&binding.name) {
+                python_add_overload_binding(
+                    &mut names,
+                    binding.name,
+                    binding.effective_byte,
+                    binding.is_overload_import,
+                );
             }
         }
     }
@@ -357,7 +486,7 @@ mod tests {
     use anyhow::{Result, bail};
 
     use super::{
-        python_is_overload, python_module_binding_names, python_overload_names,
+        python_is_overload, python_module_binding_events, python_overload_names,
         python_typing_overload_import_aliases,
     };
     use crate::deadline::DeadlineCheck;
@@ -437,7 +566,7 @@ mod tests {
             .expect("assignment statement should be present");
         let deadline = RejectAfterChecks::new(2);
 
-        let error = python_module_binding_names(statement, source, Some(&deadline))
+        let error = python_module_binding_events(statement, source, Some(&deadline))
             .expect_err("nested pattern collection must check the deadline");
 
         assert!(

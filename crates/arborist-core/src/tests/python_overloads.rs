@@ -82,6 +82,86 @@ for typed_overload in decorators:
             return key
 "#;
 
+const CONTROL_FLOW_ORDERED_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as typed_overload
+
+if condition:
+    class BeforeAliasDB:
+        @typed_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+
+    typed_overload = not_an_overload
+
+    class AfterAliasDB:
+        @typed_overload
+        def get(self, key: str) -> str: ...
+
+        def get(self, key):
+            return key
+"#;
+
+const MATCH_CAPTURE_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as bare_overload
+from typing import overload as as_overload
+from typing import overload as keyword_overload
+from typing import overload as union_overload
+
+match value:
+    case bare_overload:
+        class BareCaptureAliasDB:
+            @bare_overload
+            def get(self, key: str) -> str: ...
+
+            def get(self, key):
+                return key
+
+match another_value:
+    case _ as as_overload:
+        class AsCaptureAliasDB:
+            @as_overload
+            def get(self, key: str) -> str: ...
+
+            def get(self, key):
+                return key
+
+match point:
+    case Point(value=keyword_overload):
+        class KeywordCaptureAliasDB:
+            @keyword_overload
+            def get(self, key: str) -> str: ...
+
+            def get(self, key):
+                return key
+
+match sequence:
+    case [union_overload] | (union_overload,):
+        class UnionCaptureAliasDB:
+            @union_overload
+            def get(self, key: str) -> str: ...
+
+            def get(self, key):
+                return key
+"#;
+
+const DUPLICATE_IMPORT_REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as first_overload, Any as first_overload
+from typing import Any as second_overload, overload as second_overload
+
+class FirstDuplicateImportAliasDB:
+    @first_overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+class SecondDuplicateImportAliasDB:
+    @second_overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+
 const REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as reassigned_overload
 from typing import overload as deleted_overload
 from typing import overload as imported_overload
@@ -279,6 +359,78 @@ fn control_flow_rebindings_apply_before_decorated_definitions_in_their_bodies() 
 }
 
 #[test]
+fn control_flow_rebindings_preserve_definitions_before_ordered_alias_rebinds() {
+    let dir = temporary_dir();
+    let source_path = dir.join("ordered_control_flow_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        CONTROL_FLOW_ORDERED_REBOUND_ALIASED_OVERLOAD_SOURCE,
+    )
+    .unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::AfterAliasDB.get#definition[1]"),
+        format!("{source_anchor}::AfterAliasDB.get#definition[2]"),
+        format!("{source_anchor}::BeforeAliasDB.get#implementation"),
+        format!("{source_anchor}::BeforeAliasDB.get#overload[1]"),
+    ];
+
+    let skeleton = get_semantic_skeleton(
+        &source_path,
+        CONTROL_FLOW_ORDERED_REBOUND_ALIASED_OVERLOAD_SOURCE,
+        2,
+        &[],
+    )
+    .unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeAliasDB.get" | "AfterAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeAliasDB.get" | "AfterAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BeforeAliasDB.get" | "AfterAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
 fn loop_target_rebindings_apply_before_decorated_definitions_in_the_loop_body() {
     let dir = temporary_dir();
     let source_path = dir.join("loop_rebound_alias.py");
@@ -317,6 +469,159 @@ fn loop_target_rebindings_apply_before_decorated_definitions_in_the_loop_body() 
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "LoopAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn match_capture_rebindings_apply_before_decorated_definitions_in_case_bodies() {
+    let dir = temporary_dir();
+    let source_path = dir.join("match_capture_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, MATCH_CAPTURE_REBOUND_ALIASED_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::AsCaptureAliasDB.get#definition[1]"),
+        format!("{source_anchor}::AsCaptureAliasDB.get#definition[2]"),
+        format!("{source_anchor}::BareCaptureAliasDB.get#definition[1]"),
+        format!("{source_anchor}::BareCaptureAliasDB.get#definition[2]"),
+        format!("{source_anchor}::KeywordCaptureAliasDB.get#definition[1]"),
+        format!("{source_anchor}::KeywordCaptureAliasDB.get#definition[2]"),
+        format!("{source_anchor}::UnionCaptureAliasDB.get#definition[1]"),
+        format!("{source_anchor}::UnionCaptureAliasDB.get#definition[2]"),
+    ];
+
+    let skeleton = get_semantic_skeleton(
+        &source_path,
+        MATCH_CAPTURE_REBOUND_ALIASED_OVERLOAD_SOURCE,
+        2,
+        &[],
+    )
+    .unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BareCaptureAliasDB.get"
+                    | "AsCaptureAliasDB.get"
+                    | "KeywordCaptureAliasDB.get"
+                    | "UnionCaptureAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BareCaptureAliasDB.get"
+                    | "AsCaptureAliasDB.get"
+                    | "KeywordCaptureAliasDB.get"
+                    | "UnionCaptureAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "BareCaptureAliasDB.get"
+                    | "AsCaptureAliasDB.get"
+                    | "KeywordCaptureAliasDB.get"
+                    | "UnionCaptureAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn duplicate_import_bindings_follow_their_source_order() {
+    let dir = temporary_dir();
+    let source_path = dir.join("duplicate_import_rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        DUPLICATE_IMPORT_REBOUND_ALIASED_OVERLOAD_SOURCE,
+    )
+    .unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::FirstDuplicateImportAliasDB.get#definition[1]"),
+        format!("{source_anchor}::FirstDuplicateImportAliasDB.get#definition[2]"),
+        format!("{source_anchor}::SecondDuplicateImportAliasDB.get#implementation"),
+        format!("{source_anchor}::SecondDuplicateImportAliasDB.get#overload[1]"),
+    ];
+
+    let skeleton = get_semantic_skeleton(
+        &source_path,
+        DUPLICATE_IMPORT_REBOUND_ALIASED_OVERLOAD_SOURCE,
+        2,
+        &[],
+    )
+    .unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "FirstDuplicateImportAliasDB.get" | "SecondDuplicateImportAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "FirstDuplicateImportAliasDB.get" | "SecondDuplicateImportAliasDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "FirstDuplicateImportAliasDB.get" | "SecondDuplicateImportAliasDB.get"
+            )
+        })
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();
