@@ -547,6 +547,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Apply the remaining trace-backed patch-validation timeout budget to both
   semantic-target selection and patch application across workspace and
   persisted-index graph, trace, neighborhood, and discovery contexts.
+- [x] Split persisted-index loading's strict SQLite row and JSON decoding helpers
+  from query orchestration, keeping validation errors and existing loading tests
+  intact while reducing the loading module's scope.
 
 ### P4: Testing And Hardening
 
