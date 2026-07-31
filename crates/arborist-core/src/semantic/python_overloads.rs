@@ -20,6 +20,7 @@ struct PythonModuleBinding {
     name: String,
     effective_byte: usize,
     is_overload_import: bool,
+    is_overload_module_import: bool,
 }
 
 #[derive(Debug)]
@@ -69,6 +70,7 @@ fn python_collect_pattern_bindings(
                     name: name.to_string(),
                     effective_byte,
                     is_overload_import: false,
+                    is_overload_module_import: false,
                 });
             }
         }
@@ -146,6 +148,10 @@ fn python_collect_import_bindings(
                     && imported_name
                         .as_deref()
                         .is_some_and(|name| name.trim() == "overload"),
+                is_overload_module_import: statement.kind() == "import_statement"
+                    && imported_name
+                        .as_deref()
+                        .is_some_and(|name| matches!(name.trim(), "typing" | "typing_extensions")),
             });
         }
     }
@@ -172,6 +178,7 @@ fn python_collect_match_pattern_bindings(
                             name: name.to_string(),
                             effective_byte: child.end_byte(),
                             is_overload_import: false,
+                            is_overload_module_import: false,
                         });
                     }
                 } else {
@@ -215,6 +222,7 @@ fn python_collect_match_pattern_bindings(
                             name: name.to_string(),
                             effective_byte: child.end_byte(),
                             is_overload_import: false,
+                            is_overload_module_import: false,
                         });
                     }
                 } else {
@@ -230,6 +238,7 @@ fn python_collect_match_pattern_bindings(
                         name: name.to_string(),
                         effective_byte: name_node.end_byte(),
                         is_overload_import: false,
+                        is_overload_module_import: false,
                     });
                 }
             }
@@ -294,6 +303,7 @@ fn python_collect_nested_module_bindings(
                     name: node_text(name, source)?.trim().to_string(),
                     effective_byte: node.end_byte(),
                     is_overload_import: false,
+                    is_overload_module_import: false,
                 });
             }
             return Ok(());
@@ -306,6 +316,7 @@ fn python_collect_nested_module_bindings(
                     name: node_text(name, source)?.trim().to_string(),
                     effective_byte: node.end_byte(),
                     is_overload_import: false,
+                    is_overload_module_import: false,
                 });
             }
             return Ok(());
@@ -408,28 +419,44 @@ pub(crate) fn python_overload_names(
 ) -> Result<PythonOverloadNames> {
     let mut names = BTreeMap::new();
     let mut tracked_names = BTreeSet::new();
+    let mut tracked_module_aliases =
+        BTreeSet::from(["typing".to_string(), "typing_extensions".to_string()]);
+    for module in &tracked_module_aliases {
+        python_add_overload_binding(&mut names, format!("{module}.overload"), 0, true);
+    }
     let mut cursor = root.walk();
     for statement in root.named_children(&mut cursor) {
         if let Some(deadline) = deadline {
             deadline.check(OVERLOAD_ALIAS_PHASE)?;
         }
         let aliases = python_typing_overload_import_aliases(statement, source, deadline)?;
+        let bindings = python_module_binding_events(statement, source, deadline)?;
         for alias in &aliases {
             if let Some(deadline) = deadline {
                 deadline.check(OVERLOAD_ALIAS_PHASE)?;
             }
             tracked_names.insert(alias.clone());
         }
-        if tracked_names.is_empty() {
-            continue;
+        for binding in &bindings {
+            if binding.is_overload_module_import {
+                tracked_module_aliases.insert(binding.name.clone());
+            }
         }
-        for binding in python_module_binding_events(statement, source, deadline)? {
+        for binding in bindings {
             if tracked_names.contains(&binding.name) {
                 python_add_overload_binding(
                     &mut names,
-                    binding.name,
+                    binding.name.clone(),
                     binding.effective_byte,
                     binding.is_overload_import,
+                );
+            }
+            if tracked_module_aliases.contains(&binding.name) {
+                python_add_overload_binding(
+                    &mut names,
+                    format!("{}.overload", binding.name),
+                    binding.effective_byte,
+                    binding.is_overload_module_import,
                 );
             }
         }
@@ -468,8 +495,7 @@ pub(crate) fn python_is_overload(
                 .unwrap_or_default()
                 .trim_start();
             let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
-            name.rsplit('.').next() == Some("overload")
-                || overload_names.contains_before(name, node.start_byte())
+            name == "overload" || overload_names.contains_before(name, node.start_byte())
         });
         if is_overload {
             return Ok(true);

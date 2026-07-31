@@ -27,6 +27,55 @@ class AliasDB:
         return key
 "#;
 
+const QUALIFIED_OVERLOAD_DECORATOR_SOURCE: &str = r#"import typing as typing_module
+import typing_extensions as extensions_module
+
+class StandardQualifiedDB:
+    @typing.overload
+    def get(self, key: str) -> str: ...
+
+    @typing_extensions.overload
+    def get(self, key: int) -> int: ...
+
+    def get(self, key):
+        return key
+
+class ModuleAliasQualifiedDB:
+    @typing_module.overload
+    def get(self, key: str) -> str: ...
+
+    @extensions_module.overload
+    def get(self, key: int) -> int: ...
+
+    def get(self, key):
+        return key
+
+typing_module = custom_module
+
+typing = custom_module
+
+class ShadowedQualifiedDB:
+    @typing.overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+class ReboundModuleAliasDB:
+    @typing_module.overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+
+class CustomQualifiedDB:
+    @custom.overload
+    def get(self, key: str) -> str: ...
+
+    def get(self, key):
+        return key
+"#;
+
 const FORWARD_ALIASED_OVERLOAD_SOURCE: &str = r#"class ForwardAliasDB:
     @typing_overload
     def get(self, key: str) -> str: ...
@@ -238,6 +287,89 @@ fn typing_overload_import_aliases_keep_overload_ids_consistent() {
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "AliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn only_standard_qualified_overload_decorators_form_overload_groups() {
+    let dir = temporary_dir();
+    let source_path = dir.join("qualified_overload_decorators.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, QUALIFIED_OVERLOAD_DECORATOR_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::CustomQualifiedDB.get#definition[1]"),
+        format!("{source_anchor}::CustomQualifiedDB.get#definition[2]"),
+        format!("{source_anchor}::ModuleAliasQualifiedDB.get#implementation"),
+        format!("{source_anchor}::ModuleAliasQualifiedDB.get#overload[1]"),
+        format!("{source_anchor}::ModuleAliasQualifiedDB.get#overload[2]"),
+        format!("{source_anchor}::ReboundModuleAliasDB.get#definition[1]"),
+        format!("{source_anchor}::ReboundModuleAliasDB.get#definition[2]"),
+        format!("{source_anchor}::ShadowedQualifiedDB.get#definition[1]"),
+        format!("{source_anchor}::ShadowedQualifiedDB.get#definition[2]"),
+        format!("{source_anchor}::StandardQualifiedDB.get#implementation"),
+        format!("{source_anchor}::StandardQualifiedDB.get#overload[1]"),
+        format!("{source_anchor}::StandardQualifiedDB.get#overload[2]"),
+    ];
+
+    let skeleton =
+        get_semantic_skeleton(&source_path, QUALIFIED_OVERLOAD_DECORATOR_SOURCE, 2, &[]).unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "StandardQualifiedDB.get"
+                    | "ModuleAliasQualifiedDB.get"
+                    | "ReboundModuleAliasDB.get"
+                    | "ShadowedQualifiedDB.get"
+                    | "CustomQualifiedDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "StandardQualifiedDB.get"
+                    | "ModuleAliasQualifiedDB.get"
+                    | "ReboundModuleAliasDB.get"
+                    | "ShadowedQualifiedDB.get"
+                    | "CustomQualifiedDB.get"
+            )
+        })
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.semantic_path.as_str(),
+                "StandardQualifiedDB.get"
+                    | "ModuleAliasQualifiedDB.get"
+                    | "ReboundModuleAliasDB.get"
+                    | "ShadowedQualifiedDB.get"
+                    | "CustomQualifiedDB.get"
+            )
+        })
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();
