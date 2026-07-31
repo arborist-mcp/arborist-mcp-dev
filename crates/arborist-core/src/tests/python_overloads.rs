@@ -37,6 +37,43 @@ const FORWARD_ALIASED_OVERLOAD_SOURCE: &str = r#"class ForwardAliasDB:
 from typing import overload as typing_overload
 "#;
 
+const REBOUND_ALIASED_OVERLOAD_SOURCE: &str = r#"from typing import overload as reassigned_overload
+from typing import overload as deleted_overload
+from typing import overload as imported_overload
+from typing import overload as restored_overload
+
+reassigned_overload = not_an_overload
+del deleted_overload
+from replacement import overload as imported_overload
+restored_overload = not_an_overload
+from typing import overload as restored_overload
+
+class ReboundAliasDB:
+    @reassigned_overload
+    def reassigned(self, key: str) -> str: ...
+
+    def reassigned(self, key):
+        return key
+
+    @deleted_overload
+    def deleted(self, key: str) -> str: ...
+
+    def deleted(self, key):
+        return key
+
+    @imported_overload
+    def imported(self, key: str) -> str: ...
+
+    def imported(self, key):
+        return key
+
+    @restored_overload
+    def restored(self, key: str) -> str: ...
+
+    def restored(self, key):
+        return key
+"#;
+
 #[test]
 fn typing_overload_import_aliases_keep_overload_ids_consistent() {
     let dir = temporary_dir();
@@ -121,6 +158,57 @@ fn later_typing_overload_aliases_do_not_retroactively_mark_definitions() {
         .symbols
         .into_iter()
         .filter(|symbol| symbol.semantic_path == "ForwardAliasDB.get")
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    persisted_ids.sort();
+    assert_eq!(persisted_ids, expected);
+}
+
+#[test]
+fn rebound_typing_overload_aliases_do_not_mark_definitions_until_reimported() {
+    let dir = temporary_dir();
+    let source_path = dir.join("rebound_alias.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, REBOUND_ALIASED_OVERLOAD_SOURCE).unwrap();
+
+    let source_anchor = source_path.to_string_lossy().replace('\\', "/");
+    let expected = vec![
+        format!("{source_anchor}::ReboundAliasDB.deleted#definition[1]"),
+        format!("{source_anchor}::ReboundAliasDB.deleted#definition[2]"),
+        format!("{source_anchor}::ReboundAliasDB.imported#definition[1]"),
+        format!("{source_anchor}::ReboundAliasDB.imported#definition[2]"),
+        format!("{source_anchor}::ReboundAliasDB.reassigned#definition[1]"),
+        format!("{source_anchor}::ReboundAliasDB.reassigned#definition[2]"),
+        format!("{source_anchor}::ReboundAliasDB.restored#implementation"),
+        format!("{source_anchor}::ReboundAliasDB.restored#overload[1]"),
+    ];
+    let skeleton =
+        get_semantic_skeleton(&source_path, REBOUND_ALIASED_OVERLOAD_SOURCE, 2, &[]).unwrap();
+    let mut skeleton_ids = skeleton
+        .available_symbols
+        .iter()
+        .filter(|symbol| symbol.semantic_path.starts_with("ReboundAliasDB."))
+        .map(|symbol| symbol.symbol_id.clone())
+        .collect::<Vec<_>>();
+    skeleton_ids.sort();
+    assert_eq!(skeleton_ids, expected);
+
+    let mut live_ids = list_symbols(&dir, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| symbol.semantic_path.starts_with("ReboundAliasDB."))
+        .map(|symbol| symbol.symbol_id)
+        .collect::<Vec<_>>();
+    live_ids.sort();
+    assert_eq!(live_ids, expected);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let mut persisted_ids = list_symbols_from_index(&db_path, 20)
+        .unwrap()
+        .symbols
+        .into_iter()
+        .filter(|symbol| symbol.semantic_path.starts_with("ReboundAliasDB."))
         .map(|symbol| symbol.symbol_id)
         .collect::<Vec<_>>();
     persisted_ids.sort();

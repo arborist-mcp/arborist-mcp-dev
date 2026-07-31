@@ -374,8 +374,8 @@ IDs. A standard `typing.overload` group uses IDs such as
 `/repo/lokdb.py::LokDB.get#overload[2]`, and
 `/repo/lokdb.py::LokDB.get#implementation`. Overload decorators imported from
 `typing` or `typing_extensions` under an alias declared before the decorated
-definition receive the same treatment. Read, trace, expansion, and patch
-callers may use those exact IDs. A
+definition and not rebound by a later direct module-level binding receive the same
+treatment. Read, trace, expansion, and patch callers may use those exact IDs. A
 non-unique semantic path such as `LokDB.get` is rejected with the candidate
 IDs instead of silently selecting the first declaration. Indexes created before
 this identity behavior should be rebuilt before using exact Python overload

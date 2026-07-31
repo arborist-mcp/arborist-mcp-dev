@@ -538,8 +538,9 @@ completed item can land in its own commit unless two changes are inseparable.
   reject ambiguous semantic-path reads, traces, expansions, and patches with
   actionable candidate IDs.
 - [x] Recognize `typing` and `typing_extensions` overload decorators imported
-  under a top-level alias declared before the decorated definition when assigning
-  Python overload identities across skeletons and live or persisted indexes.
+  under a top-level alias declared before the decorated definition and not
+  rebound by a later direct module-level binding when assigning Python overload
+  identities across skeletons and live or persisted indexes.
 - [x] Check Python overload-alias collection against semantic and workspace-scan
   deadlines before traversing top-level import declarations.
 - [x] Preserve patch-operation deadlines through Python position targeting and
