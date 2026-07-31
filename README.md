@@ -38,9 +38,11 @@ unique IDs for each declaration and implementation, such as
 `/repo/store.py::Store.get#overload[1]` and
 `/repo/store.py::Store.get#implementation`. Arborist recognizes standard
 `typing` and `typing_extensions` overload decorators, including directly
-imported aliases declared before the decorated definition and not rebound by a
-later direct module-level binding, including rebinding in top-level control-flow
-bodies. Non-unique Python
+imported aliases and module aliases declared before the decorated definition.
+Those aliases are tracked in source order through top-level control-flow bodies,
+including imports, loop targets, assignments, deletes, match captures, and other
+rebinding events; arbitrary decorators such as `custom.overload` are not treated
+as standard overloads. Non-unique Python
 semantic-path selectors are rejected with
 candidate IDs rather than silently selecting the first overload. Rebuild
 indexes created by older Arborist builds to materialize these identities.

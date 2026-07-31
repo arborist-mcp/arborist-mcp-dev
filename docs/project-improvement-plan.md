@@ -541,10 +541,11 @@ completed item can land in its own commit unless two changes are inseparable.
   reject ambiguous semantic-path reads, traces, expansions, and patches with
   actionable candidate IDs.
 - [x] Recognize `typing` and `typing_extensions` overload decorators imported
-  under a top-level alias declared before the decorated definition and not
-  rebound by a later direct module-level binding, including loop targets and
-  top-level control-flow bodies, when assigning Python overload identities across
-  skeletons and live or persisted indexes.
+  under direct or module aliases declared before the decorated definition and
+  not rebound by a later binding, including imports, loop targets, assignments,
+  deletes, match captures, and other top-level control-flow events, when assigning
+  Python overload identities across skeletons and live or persisted indexes;
+  reject arbitrary qualified decorators such as `custom.overload`.
 - [x] Check Python overload discovery against semantic and workspace-scan deadlines
   throughout top-level import, rebinding, nested pattern traversal, and decorator
   classification.

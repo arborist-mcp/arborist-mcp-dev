@@ -372,10 +372,14 @@ For Python, repeated definitions that share one semantic path receive distinct
 IDs. A standard `typing.overload` group uses IDs such as
 `/repo/lokdb.py::LokDB.get#overload[1]`,
 `/repo/lokdb.py::LokDB.get#overload[2]`, and
-`/repo/lokdb.py::LokDB.get#implementation`. Overload decorators imported from
-`typing` or `typing_extensions` under an alias declared before the decorated
-definition and not rebound by a later direct module-level binding, including
-rebinding in top-level control-flow bodies, receive the same treatment. Read,
+`/repo/lokdb.py::LokDB.get#implementation`. Decorators written as
+`@overload`, `@typing.overload`, or `@typing_extensions.overload` are recognized;
+`import typing as t` and `import typing_extensions as te` also enable
+`@t.overload` and `@te.overload`. Direct overload imports and module aliases are
+tracked in source order through top-level control-flow bodies, so later loop
+targets, assignments, deletes, match captures, and ordinary imports can invalidate
+them without retroactively changing earlier definitions. Arbitrary qualified
+names such as `@custom.overload` are not treated as standard overloads. Read,
 trace, expansion, and patch callers may use those exact IDs. A
 non-unique semantic path such as `LokDB.get` is rejected with the candidate
 IDs instead of silently selecting the first declaration. Indexes created before
