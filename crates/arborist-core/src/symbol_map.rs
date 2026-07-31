@@ -1,13 +1,20 @@
 use std::collections::BTreeMap;
 
+use anyhow::Result;
+
+use crate::deadline::DeadlineCheck;
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::symbol_kind_rank;
 
-pub(crate) fn resolved_symbol_ref_map<'a>(
+pub(crate) fn resolved_symbol_ref_map_with_deadline<'a>(
     symbols: &'a [SymbolMeta],
-) -> BTreeMap<&'a str, &'a SymbolMeta> {
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeMap<&'a str, &'a SymbolMeta>> {
     let mut map: BTreeMap<&'a str, &'a SymbolMeta> = BTreeMap::new();
     for symbol in symbols {
+        if let Some(deadline) = deadline {
+            deadline.check("building resolved symbol map")?;
+        }
         match map.get_mut(symbol.symbol_id.as_str()) {
             Some(existing) => {
                 if symbol_kind_rank(&symbol.node_kind) > symbol_kind_rank(&existing.node_kind) {
@@ -19,7 +26,7 @@ pub(crate) fn resolved_symbol_ref_map<'a>(
             }
         }
     }
-    map
+    Ok(map)
 }
 pub(crate) fn resolved_symbol_map(symbols: &[SymbolMeta]) -> BTreeMap<String, SymbolMeta> {
     let mut map: BTreeMap<String, SymbolMeta> = BTreeMap::new();
@@ -37,7 +44,7 @@ pub(crate) fn resolved_symbol_map(symbols: &[SymbolMeta]) -> BTreeMap<String, Sy
 
 #[cfg(test)]
 mod tests {
-    use super::{resolved_symbol_map, resolved_symbol_ref_map};
+    use super::{resolved_symbol_map, resolved_symbol_ref_map_with_deadline};
     use crate::model::{SymbolMeta, SymbolMetaInit};
 
     fn symbol(symbol_id: &str, node_kind: &str, file_path: &str) -> SymbolMeta {
@@ -59,6 +66,17 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_map_checks_deadlines_while_scanning_symbols() {
+        let symbols = vec![symbol("item", "function_definition", "item.py")];
+        let deadline = crate::symbol_trace::TraceQueryDeadline::expired_for_tests(1);
+
+        let error = resolved_symbol_ref_map_with_deadline(&symbols, Some(&deadline))
+            .expect_err("resolved symbol map should honor an expired deadline");
+
+        assert!(error.to_string().contains("building resolved symbol map"));
+    }
+
+    #[test]
     fn borrowed_map_matches_owned_resolution_for_duplicate_ids() {
         let symbols = vec![
             symbol("item", "declaration", "item.h"),
@@ -67,7 +85,7 @@ mod tests {
         ];
 
         let owned = resolved_symbol_map(&symbols);
-        let borrowed = resolved_symbol_ref_map(&symbols);
+        let borrowed = resolved_symbol_ref_map_with_deadline(&symbols, None).unwrap();
 
         assert_eq!(borrowed.len(), owned.len());
         for (symbol_id, symbol) in &owned {

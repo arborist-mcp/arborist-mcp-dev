@@ -7,7 +7,7 @@ use crate::model::{
     SymbolMeta, SymbolSearchContextResult, SymbolSearchDiscoveryContextResult,
     SymbolSearchNeighborhoodContextResult, SymbolSearchResult, TraceDirection,
 };
-use crate::symbol_map::resolved_symbol_ref_map;
+use crate::symbol_map::resolved_symbol_ref_map_with_deadline;
 use crate::symbol_query::validate_symbol_limit;
 use crate::symbol_read::read_symbol_result_from_meta_with_cache;
 use crate::symbol_search::{
@@ -151,7 +151,7 @@ pub(crate) fn search_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut reads = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
 
@@ -230,7 +230,7 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut reads = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
     let mut contexts = Vec::with_capacity(search.matches.len());
@@ -328,7 +328,7 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
         node_kind,
         timeout_ms,
     )?;
-    let resolved_map = resolved_symbol_ref_map(resolved_symbols);
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut contexts = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
 
