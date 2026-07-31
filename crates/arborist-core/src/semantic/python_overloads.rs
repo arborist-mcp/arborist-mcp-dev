@@ -23,12 +23,28 @@ struct PythonModuleBinding {
     is_overload_module_import: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PythonOverloadScopeKind {
+    Class,
+    Function,
+}
+
 #[derive(Debug)]
-pub(crate) struct PythonOverloadNames(BTreeMap<String, Vec<PythonOverloadBinding>>);
+struct PythonOverloadScope {
+    start_byte: usize,
+    end_byte: usize,
+    bindings: BTreeMap<String, Vec<PythonOverloadBinding>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PythonOverloadNames {
+    bindings: BTreeMap<String, Vec<PythonOverloadBinding>>,
+    scopes: Vec<PythonOverloadScope>,
+}
 
 impl PythonOverloadNames {
     fn binding_before(&self, name: &str, byte_offset: usize) -> Option<bool> {
-        self.0.get(name).and_then(|bindings| {
+        self.bindings.get(name).and_then(|bindings| {
             bindings
                 .iter()
                 .rev()
@@ -37,8 +53,31 @@ impl PythonOverloadNames {
         })
     }
 
-    fn contains_before(&self, name: &str, byte_offset: usize) -> bool {
-        self.binding_before(name, byte_offset) == Some(true)
+    fn binding_before_node(&self, name: &str, node: Node<'_>) -> Option<bool> {
+        let byte_offset = node.start_byte();
+        let mut scopes = self
+            .scopes
+            .iter()
+            .filter(|scope| scope.start_byte <= byte_offset && byte_offset < scope.end_byte)
+            .collect::<Vec<_>>();
+        scopes.sort_by_key(|scope| scope.end_byte - scope.start_byte);
+
+        for scope in scopes {
+            if let Some(binding) = scope.bindings.get(name).and_then(|bindings| {
+                bindings
+                    .iter()
+                    .rev()
+                    .find(|binding| binding.end_byte <= byte_offset)
+                    .map(|binding| binding.active)
+            }) {
+                return Some(binding);
+            }
+        }
+        self.binding_before(name, byte_offset)
+    }
+
+    fn contains_before(&self, name: &str, node: Node<'_>) -> bool {
+        self.binding_before_node(name, node) == Some(true)
     }
 }
 
@@ -426,6 +465,210 @@ fn python_typing_overload_import_aliases(
     Ok(aliases)
 }
 
+fn python_collect_parameter_bindings(
+    function: Node<'_>,
+    source: &str,
+    effective_byte: usize,
+    bindings: &mut Vec<PythonModuleBinding>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    let Some(parameters) = function.child_by_field_name("parameters") else {
+        return Ok(());
+    };
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        if let Some(deadline) = deadline {
+            deadline.check(OVERLOAD_ALIAS_PHASE)?;
+        }
+        let binding = match parameter.kind() {
+            "identifier" | "keyword_identifier" | "tuple_pattern" => Some(parameter),
+            "default_parameter" | "typed_default_parameter" => {
+                parameter.child_by_field_name("name")
+            }
+            "typed_parameter" | "list_splat_pattern" | "dictionary_splat_pattern" => {
+                parameter.named_child(0)
+            }
+            _ => None,
+        };
+        if let Some(binding) = binding {
+            python_collect_pattern_bindings(binding, source, effective_byte, bindings, deadline)?;
+        }
+    }
+    Ok(())
+}
+
+fn python_collect_scope_declarations(
+    node: Node<'_>,
+    source: &str,
+    global_names: &mut BTreeSet<String>,
+    nonlocal_names: &mut BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
+    if matches!(node.kind(), "function_definition" | "class_definition") {
+        return Ok(());
+    }
+    if matches!(node.kind(), "global_statement" | "nonlocal_statement") {
+        let target = if node.kind() == "global_statement" {
+            global_names
+        } else {
+            nonlocal_names
+        };
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if child.kind() == "identifier" {
+                target.insert(node_text(child, source)?.trim().to_string());
+            }
+        }
+        return Ok(());
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        python_collect_scope_declarations(child, source, global_names, nonlocal_names, deadline)?;
+    }
+    Ok(())
+}
+
+fn python_scope_binding_map(
+    scope: Node<'_>,
+    source: &str,
+    kind: PythonOverloadScopeKind,
+    overload_aliases: &BTreeSet<String>,
+    module_aliases: &BTreeSet<String>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<BTreeMap<String, Vec<PythonOverloadBinding>>> {
+    let Some(body) = scope.child_by_field_name("body") else {
+        return Ok(BTreeMap::new());
+    };
+    let events = python_module_binding_events(body, source, deadline)?;
+    let mut bindings = BTreeMap::new();
+    let mut tracked_names = overload_aliases.clone();
+    let mut tracked_modules = module_aliases.clone();
+    let mut global_names = BTreeSet::new();
+    let mut nonlocal_names = BTreeSet::new();
+    if kind == PythonOverloadScopeKind::Function {
+        python_collect_scope_declarations(
+            body,
+            source,
+            &mut global_names,
+            &mut nonlocal_names,
+            deadline,
+        )?;
+    }
+
+    if kind == PythonOverloadScopeKind::Function {
+        for event in &events {
+            if global_names.contains(&event.name) || nonlocal_names.contains(&event.name) {
+                continue;
+            }
+            python_add_overload_binding(
+                &mut bindings,
+                event.name.clone(),
+                body.start_byte(),
+                false,
+            );
+            if tracked_modules.contains(&event.name) || event.is_overload_module_import {
+                python_add_overload_binding(
+                    &mut bindings,
+                    format!("{}.overload", event.name),
+                    body.start_byte(),
+                    false,
+                );
+            }
+        }
+        let mut parameters = Vec::new();
+        python_collect_parameter_bindings(
+            scope,
+            source,
+            body.start_byte(),
+            &mut parameters,
+            deadline,
+        )?;
+        for parameter in parameters {
+            python_add_overload_binding(&mut bindings, parameter.name, body.start_byte(), false);
+        }
+    }
+
+    for event in events {
+        if let Some(deadline) = deadline {
+            deadline.check(OVERLOAD_ALIAS_PHASE)?;
+        }
+        if event.is_overload_import {
+            tracked_names.insert(event.name.clone());
+        }
+        if event.is_overload_module_import {
+            tracked_modules.insert(event.name.clone());
+        }
+        if event.name == "overload" || tracked_names.contains(&event.name) {
+            python_add_overload_binding(
+                &mut bindings,
+                event.name.clone(),
+                event.effective_byte,
+                event.is_overload_import,
+            );
+        }
+        if tracked_modules.contains(&event.name) {
+            python_add_overload_binding(
+                &mut bindings,
+                format!("{}.overload", event.name),
+                event.effective_byte,
+                event.is_overload_module_import,
+            );
+        }
+    }
+    Ok(bindings)
+}
+
+fn python_collect_overload_scopes(
+    node: Node<'_>,
+    source: &str,
+    overload_aliases: &BTreeSet<String>,
+    module_aliases: &BTreeSet<String>,
+    scopes: &mut Vec<PythonOverloadScope>,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check(OVERLOAD_ALIAS_PHASE)?;
+    }
+    if matches!(node.kind(), "class_definition" | "function_definition") {
+        let kind = if node.kind() == "class_definition" {
+            PythonOverloadScopeKind::Class
+        } else {
+            PythonOverloadScopeKind::Function
+        };
+        if let Some(body) = node.child_by_field_name("body") {
+            scopes.push(PythonOverloadScope {
+                start_byte: body.start_byte(),
+                end_byte: body.end_byte(),
+                bindings: python_scope_binding_map(
+                    node,
+                    source,
+                    kind,
+                    overload_aliases,
+                    module_aliases,
+                    deadline,
+                )?,
+            });
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        python_collect_overload_scopes(
+            child,
+            source,
+            overload_aliases,
+            module_aliases,
+            scopes,
+            deadline,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn python_overload_names(
     root: Node<'_>,
     source: &str,
@@ -478,7 +721,19 @@ pub(crate) fn python_overload_names(
             }
         }
     }
-    Ok(PythonOverloadNames(names))
+    let mut scopes = Vec::new();
+    python_collect_overload_scopes(
+        root,
+        source,
+        &tracked_names,
+        &tracked_module_aliases,
+        &mut scopes,
+        deadline,
+    )?;
+    Ok(PythonOverloadNames {
+        bindings: names,
+        scopes,
+    })
 }
 
 pub(crate) fn python_is_overload(
@@ -514,9 +769,9 @@ pub(crate) fn python_is_overload(
             let name = decorator.split(['(', ' ', '\t']).next().unwrap_or_default();
             (name == "overload"
                 && overload_names
-                    .binding_before(name, node.start_byte())
+                    .binding_before_node(name, node)
                     .unwrap_or(true))
-                || overload_names.contains_before(name, node.start_byte())
+                || overload_names.contains_before(name, node)
         });
         if is_overload {
             return Ok(true);
@@ -531,6 +786,7 @@ mod tests {
     use std::path::Path;
 
     use anyhow::{Result, bail};
+    use tree_sitter::Node;
 
     use super::{
         python_is_overload, python_module_binding_events, python_overload_names,
@@ -538,6 +794,24 @@ mod tests {
     };
     use crate::deadline::DeadlineCheck;
     use crate::language::parse_document;
+
+    fn find_definition<'tree>(node: Node<'tree>, source: &str, name: &str) -> Option<Node<'tree>> {
+        if matches!(node.kind(), "class_definition" | "function_definition")
+            && node
+                .child_by_field_name("name")
+                .and_then(|name_node| name_node.utf8_text(source.as_bytes()).ok())
+                == Some(name)
+        {
+            return Some(node);
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            if let Some(found) = find_definition(child, source, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
 
     struct RejectDeadlineChecks;
 
@@ -569,6 +843,85 @@ mod tests {
                 bail!("deadline check reached {phase}");
             }
             Ok(())
+        }
+    }
+
+    #[test]
+    fn overload_decorators_respect_class_and_function_scope_rebindings() {
+        let source = r#"from typing import overload
+
+class ShadowedClass:
+    overload = custom_overload
+
+    @overload
+    def shadowed(self, key: str) -> str: ...
+
+class RestoredClass:
+    overload = custom_overload
+    from typing import overload
+
+    @overload
+    def restored_class(self, key: str) -> str: ...
+
+class QualifiedShadowedClass:
+    typing = custom_typing
+
+    @typing.overload
+    def qualified(self, key: str) -> str: ...
+
+def parameter_shadow(overload):
+    @overload
+    def inner(key: str) -> str: ...
+
+
+def local_assignment_shadow():
+    @overload
+    def before(key: str) -> str: ...
+
+    overload = custom_overload
+
+    @overload
+    def after(key: str) -> str: ...
+
+def local_import_restore():
+    from typing import overload as local_overload
+
+    @local_overload
+    def restored(key: str) -> str: ...
+
+def global_rebinding():
+    global overload
+
+    @overload
+    def global_before(key: str) -> str: ...
+
+    overload = custom_overload
+
+    @overload
+    def global_after(key: str) -> str: ...
+"#;
+        let document = parse_document(Path::new("sample.py"), source).unwrap();
+        let overload_names =
+            python_overload_names(document.tree.root_node(), source, None).unwrap();
+
+        for (name, expected) in [
+            ("shadowed", false),
+            ("restored_class", true),
+            ("qualified", false),
+            ("inner", false),
+            ("before", false),
+            ("after", false),
+            ("restored", true),
+            ("global_before", true),
+            ("global_after", false),
+        ] {
+            let node = find_definition(document.tree.root_node(), source, name)
+                .unwrap_or_else(|| panic!("definition {name} should be present"));
+            assert_eq!(
+                python_is_overload(node, source, &overload_names, None).unwrap(),
+                expected,
+                "unexpected overload classification for {name}"
+            );
         }
     }
 
