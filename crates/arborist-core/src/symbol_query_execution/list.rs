@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 
-use super::read::read_symbol_neighborhood_context_from_meta_with_timeout_and_cache;
+use super::read::read_symbol_neighborhood_context_from_meta_with_deadline_and_cache;
 use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, SymbolMeta, TraceDirection,
@@ -40,6 +40,24 @@ pub(crate) fn list_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    list_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        &deadline,
+    )
+}
+
+pub(crate) fn list_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolListResult> {
     validate_symbol_limit(limit)?;
     let file_path_contains =
         normalize_optional_search_filter(file_path_contains, "file_path_contains")?;
@@ -107,14 +125,13 @@ pub(crate) fn list_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
-    let list = list_from_symbols_with_timeout(
+    let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        timeout_ms,
+        &deadline,
     )?;
     let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut reads = Vec::with_capacity(list.symbols.len());
@@ -182,14 +199,13 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
-    let list = list_from_symbols_with_timeout(
+    let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        timeout_ms,
+        &deadline,
     )?;
     let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut reads = Vec::with_capacity(list.symbols.len());
@@ -210,9 +226,8 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
             file_overrides,
             &mut source_cache,
         )?);
-        let timeout_ms = deadline.remaining_timeout_ms("symbol discovery neighborhood")?;
         contexts.push(
-            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+            read_symbol_neighborhood_context_from_meta_with_deadline_and_cache(
                 resolved_symbols,
                 indexed_files,
                 meta,
@@ -220,7 +235,7 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                timeout_ms,
+                &deadline,
                 &mut source_cache,
             )?,
         );
@@ -276,14 +291,13 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("symbol listing")?;
-    let list = list_from_symbols_with_timeout(
+    let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        timeout_ms,
+        &deadline,
     )?;
     let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
     let mut contexts = Vec::with_capacity(list.symbols.len());
@@ -297,9 +311,8 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
                 symbol.symbol_id
             )
         })?;
-        let timeout_ms = deadline.remaining_timeout_ms("symbol neighborhood context")?;
         contexts.push(
-            read_symbol_neighborhood_context_from_meta_with_timeout_and_cache(
+            read_symbol_neighborhood_context_from_meta_with_deadline_and_cache(
                 resolved_symbols,
                 indexed_files,
                 meta,
@@ -307,7 +320,7 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                timeout_ms,
+                &deadline,
                 &mut source_cache,
             )?,
         );
@@ -317,4 +330,20 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
     deadline.check("symbol neighborhood context result")?;
     result.validate_public_output()?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_from_symbols_with_deadline;
+    use crate::symbol_trace::TraceQueryDeadline;
+
+    #[test]
+    fn list_reuses_the_callers_deadline() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = list_from_symbols_with_deadline(&[], 0, 1, None, None, &deadline)
+            .expect_err("symbol listing should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol listing"));
+    }
 }
