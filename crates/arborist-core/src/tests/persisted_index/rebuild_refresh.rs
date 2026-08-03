@@ -212,3 +212,73 @@ fn rebuilds_and_traces_javascript_direct_calls() {
         vec!["helper"]
     );
 }
+
+#[test]
+fn traces_named_typescript_imports_to_the_local_module() {
+    let dir = temporary_dir();
+    let imported = dir.join("imported.ts");
+    let alternate = dir.join("alternate.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &imported,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &alternate,
+        "export function helper(value: number): number { return value + 2; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { helper as selected } from \"./imported\";\nexport function caller(value: number): number { return selected(value); }\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(live_trace.callees.len(), 1);
+    assert_eq!(live_trace.callees[0].semantic_path, "helper");
+    assert_eq!(
+        live_trace.callees[0].file_path,
+        imported.to_string_lossy().replace('\\', "/")
+    );
+    assert_ne!(live_trace.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "helper");
+    assert_eq!(
+        trace.callees[0].file_path,
+        imported.to_string_lossy().replace('\\', "/")
+    );
+    assert_ne!(trace.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn does_not_trace_unresolved_named_typescript_imports_to_workspace_symbols() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.ts");
+    let unrelated = dir.join("unrelated.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller,
+        "import { helper } from \"./missing\";\nexport function caller(value: number): number { return helper(value); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert!(live_trace.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}

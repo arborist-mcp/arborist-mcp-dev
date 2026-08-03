@@ -149,7 +149,7 @@ fn require_capability(
 | Language family | Initial capability target | Deferred work |
 | --- | --- | --- |
 | Python, C, C++ | Preserve current behavior | Migration only; no intentional reduction. |
-| JavaScript/TypeScript | Query, skeleton, symbols, conservative direct-call trace, and static local module dependency refresh; module-aware import resolution and patch targeting/validation follow in later adapter slices. | Dynamic imports, bundler aliases, framework injection, rich type-driven dispatch. |
+| JavaScript/TypeScript | Query, skeleton, symbols, conservative direct-call trace including static local named imports, and static local module dependency refresh; re-export/default/namespace resolution and patch targeting/validation follow in later adapter slices. | Dynamic imports, bundler aliases, framework injection, rich type-driven dispatch. |
 | Rust | Query, skeleton, symbols, module dependencies, patch targeting; selected direct-call trace | Macro expansion, trait-method dispatch, complete Cargo feature resolution. |
 | Go | Query, skeleton, symbols, package imports, direct-call trace, patch targeting | Interface dispatch and build-tag-aware workspace modes. |
 | Java | Query, skeleton, symbols, package/import dependencies, direct-call trace, patch targeting | Full Maven/Gradle classpath and type hierarchy resolution. |
@@ -523,7 +523,7 @@ pub enum FileDependencyKind {
 | Go | package import paths and workspace module boundaries. |
 | Java/Kotlin | package/import facts and configured source roots. |
 
-The existing C include-dependent refresh behavior now runs through a generic local-file-dependency reverse index while retaining its tested implementation internally. JavaScript/TypeScript contributes only static relative imports, re-exports, and direct literal `require` calls that resolve to local JS/TS-family files; dynamic imports, package specifiers, escaped literals, and bundler aliases remain unresolved. Languages are added one at a time; an adapter without `FILE_DEPENDENCIES` does not contribute reverse-refresh paths.
+The existing C include-dependent refresh behavior now runs through a generic local-file-dependency reverse index while retaining its tested implementation internally. JavaScript/TypeScript contributes static relative imports, re-exports, and direct literal `require` calls that resolve to local JS/TS-family files. Direct calls through local named imports (including aliases) are resolved only to matching symbols in the imported module; missing or non-local bindings fail closed instead of falling back to same-named workspace symbols. Dynamic imports, package specifiers, escaped literals, re-export/default/namespace symbol resolution, and bundler aliases remain unresolved. Languages are added one at a time; an adapter without `FILE_DEPENDENCIES` does not contribute reverse-refresh paths.
 
 ## 12. Patching Model
 
@@ -683,7 +683,7 @@ Introduce `ReferenceFact`, adapt Python/C/C++ extraction, and update the resolve
 
 Add `tree-sitter-javascript` and `tree-sitter-typescript` using the repository's existing dependency and lockfile conventions. Implement the first external adapter with a conservative initial capability set.
 
-The first delivered slices register JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.mts`, `.cts`), and TSX (`.tsx`) grammars for parsing, Tree-sitter queries, semantic skeletons, conservative direct-call symbol indexing/tracing, and static local module dependency extraction. Module-aware import resolution and patch capabilities remain explicitly withheld until their language adapters are implemented.
+The first delivered slices register JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.mts`, `.cts`), and TSX (`.tsx`) grammars for parsing, Tree-sitter queries, semantic skeletons, conservative direct-call symbol indexing/tracing, static local module dependency extraction, and direct calls through static local named imports. Re-export/default/namespace import resolution and patch capabilities remain explicitly withheld until their language adapters are implemented.
 
 Initial scope:
 

@@ -53,6 +53,19 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         python_ids_by_index.insert(index, symbol_id);
     }
 
+    let javascript_indices = languages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, language)| {
+            matches!(
+                language,
+                Some(LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx)
+            )
+            .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let javascript_ids_by_index = javascript_symbol_ids(raw_symbols, &javascript_indices);
+
     let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
     for (index, language) in languages.into_iter().enumerate() {
         if let Some(deadline) = deadline {
@@ -60,7 +73,10 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         }
         match python_ids_by_index.remove(&index) {
             Some(symbol_id) => symbol_ids.push(symbol_id),
-            None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+            None => match javascript_ids_by_index.get(&index) {
+                Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
+                None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+            },
         }
     }
 
@@ -75,6 +91,47 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         deadline.check("assigning symbol identities")?;
     }
     Ok(())
+}
+
+fn javascript_symbol_ids(
+    raw_symbols: &[IndexedSymbol],
+    indices: &[usize],
+) -> HashMap<usize, String> {
+    let mut path_counts: HashMap<&str, usize> = HashMap::new();
+    let mut groups: std::collections::BTreeMap<(&str, &str), Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for index in indices {
+        let symbol = &raw_symbols[*index];
+        *path_counts.entry(&symbol.semantic_path).or_default() += 1;
+        groups
+            .entry((&symbol.file_path, &symbol.semantic_path))
+            .or_default()
+            .push(*index);
+    }
+
+    let mut ids = HashMap::new();
+    for ((file_path, semantic_path), indexes) in &mut groups {
+        indexes.sort_by_key(|index| raw_symbols[*index].byte_range);
+        let identity_path = format!("{file_path}::{semantic_path}");
+        if indexes.len() == 1 {
+            let index = indexes[0];
+            let symbol_id = if path_counts[semantic_path] > 1 {
+                identity_path
+            } else {
+                (*semantic_path).to_string()
+            };
+            ids.insert(index, symbol_id);
+            continue;
+        }
+
+        for (ordinal, index) in indexes.iter().enumerate() {
+            ids.insert(
+                *index,
+                format!("{identity_path}#definition[{}]", ordinal + 1),
+            );
+        }
+    }
+    ids
 }
 
 fn symbol_id_for_index(

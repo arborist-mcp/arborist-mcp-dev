@@ -1,4 +1,5 @@
 mod c;
+mod javascript;
 mod refresh;
 mod resolution;
 

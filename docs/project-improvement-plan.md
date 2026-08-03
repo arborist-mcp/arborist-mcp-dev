@@ -708,8 +708,11 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Add JavaScript, TypeScript, and TSX grammar routing, Tree-sitter
   queries, semantic skeletons, and conservative direct-call indexing/tracing.
 - [x] Add static local JavaScript/TypeScript import, re-export, and direct
-  `require` dependency extraction for transitive incremental refresh; keep
-  module-aware import resolution and patch flows capability-gated.
+  `require` dependency extraction for transitive incremental refresh.
+- [x] Resolve direct calls through statically resolvable local named imports,
+  including aliases, while rejecting unresolved imports instead of falling back
+  to unrelated workspace symbols; keep re-export/default/namespace resolution
+  and patch flows capability-gated.
 
 ## Suggested Commit Sequence
 

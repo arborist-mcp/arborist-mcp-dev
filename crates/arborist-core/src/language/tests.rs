@@ -129,15 +129,20 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
             LanguageId::JavaScript,
             "JavaScript",
             &["js", "jsx", "mjs", "cjs"][..],
-            "javascript-imports-v1",
+            "javascript-import-resolution-v1",
         ),
         (
             LanguageId::TypeScript,
             "TypeScript",
             &["ts", "mts", "cts"][..],
-            "typescript-imports-v1",
+            "typescript-import-resolution-v1",
         ),
-        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-imports-v1"),
+        (
+            LanguageId::Tsx,
+            "TSX",
+            &["tsx"][..],
+            "tsx-import-resolution-v1",
+        ),
     ] {
         let descriptor = registry.descriptor(language_id).unwrap();
         assert_eq!(descriptor.display_name, display_name);

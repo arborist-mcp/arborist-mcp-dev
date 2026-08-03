@@ -386,7 +386,7 @@ static JAVASCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "JavaScript",
     extensions: JAVASCRIPT_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "javascript-imports-v1",
+    analysis_revision: "javascript-import-resolution-v1",
     grammar: javascript_grammar,
 };
 static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -394,7 +394,7 @@ static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "TypeScript",
     extensions: TYPESCRIPT_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "typescript-imports-v1",
+    analysis_revision: "typescript-import-resolution-v1",
     grammar: typescript_grammar,
 };
 static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -402,7 +402,7 @@ static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "TSX",
     extensions: TSX_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "tsx-imports-v1",
+    analysis_revision: "tsx-import-resolution-v1",
     grammar: tsx_grammar,
 };
 

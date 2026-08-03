@@ -4,6 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
+use super::super::javascript::{
+    JavaScriptImportContext, javascript_import_context_for_file_with_overrides_and_deadline,
+};
 use super::cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
@@ -60,6 +63,7 @@ impl CallResolutionContext {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     symbol: &'a IndexedSymbol,
     raw_symbols: &'a [IndexedSymbol],
@@ -68,6 +72,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -77,6 +82,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         file_overrides,
         languages_by_file,
         include_contexts_by_file,
+        javascript_import_contexts_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
@@ -91,6 +97,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -132,6 +139,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     semantic_path_index,
                     file_overrides,
                     include_contexts_by_file,
+                    javascript_import_contexts_by_file,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -148,6 +156,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             semantic_path_index,
             file_overrides,
             include_contexts_by_file,
+            javascript_import_contexts_by_file,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -171,6 +180,7 @@ fn resolve_reference_path_with_deadline<'a>(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
+    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -182,6 +192,24 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         (reference_name, None)
     };
+    let javascript_import_binding = matches!(
+        language_id,
+        Some(LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx)
+    )
+    .then(|| {
+        javascript_named_import_binding_for_reference(
+            source_symbol,
+            lookup_name,
+            file_overrides,
+            javascript_import_contexts_by_file,
+            deadline,
+        )
+    })
+    .flatten();
+    let candidate_lookup_name = javascript_import_binding
+        .as_ref()
+        .map(|binding| binding.imported_name.as_str())
+        .unwrap_or(lookup_name);
     let qualified_cpp_reference =
         language_id == Some(LanguageId::Cpp) && lookup_name.contains("::");
     let scoped_cpp_direct_call =
@@ -228,7 +256,7 @@ fn resolve_reference_path_with_deadline<'a>(
             ),
         }
     } else {
-        let Some(candidates) = name_index.get(lookup_name) else {
+        let Some(candidates) = name_index.get(candidate_lookup_name) else {
             return Ok(None);
         };
         (candidates.clone(), false)
@@ -257,6 +285,19 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         visible_candidates
     };
+    let import_bound_candidates = if let Some(binding) = javascript_import_binding {
+        candidate_slice
+            .iter()
+            .copied()
+            .filter(|index| {
+                binding
+                    .module_paths
+                    .contains(&raw_symbols[*index].file_path)
+            })
+            .collect()
+    } else {
+        candidate_slice
+    };
     let hinted_candidates = if let Some(module_hint) = module_hint {
         let imported_summary = resolve_local_python_imported_symbol(
             Path::new(&source_symbol.file_path),
@@ -266,7 +307,7 @@ fn resolve_reference_path_with_deadline<'a>(
         .ok()
         .flatten();
         let class_method_path = format!("{module_hint}.{lookup_name}");
-        let filtered = candidate_slice
+        let filtered = import_bound_candidates
             .iter()
             .copied()
             .filter(|index| {
@@ -280,12 +321,12 @@ fn resolve_reference_path_with_deadline<'a>(
             })
             .collect::<Vec<_>>();
         if filtered.is_empty() {
-            candidate_slice.clone()
+            import_bound_candidates
         } else {
             filtered
         }
     } else {
-        candidate_slice
+        import_bound_candidates
     };
     if let Some(deadline) = deadline {
         deadline.check("filtering reference candidates")?;
@@ -406,6 +447,30 @@ fn resolve_reference_path_with_deadline<'a>(
     Ok(selected)
 }
 
+fn javascript_named_import_binding_for_reference<'a>(
+    source_symbol: &'a IndexedSymbol,
+    reference_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Option<super::super::javascript::JavaScriptImportBinding> {
+    let source_file_path = source_symbol.file_path.as_str();
+    if !contexts_by_file.contains_key(source_file_path) {
+        let context = javascript_import_context_for_file_with_overrides_and_deadline(
+            source_file_path,
+            file_overrides,
+            deadline,
+        )
+        .ok();
+        contexts_by_file.insert(source_file_path, context);
+    }
+    contexts_by_file
+        .get(source_file_path)
+        .and_then(|context| context.as_ref())
+        .and_then(|context| context.named_import_bindings.get(reference_name))
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -445,6 +510,7 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             None,
+            &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
             Some(&deadline),
