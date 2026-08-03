@@ -157,23 +157,21 @@ pub fn validate_patch_with_graph_context_from_index_with_timeout(
 
     deadline.check("indexed patch graph overrides")?;
     let overrides = BTreeMap::from([(patch.file.clone(), patch.updated_source.clone())]);
-    let timeout_ms = deadline.remaining_timeout_ms("indexed patch graph trace")?;
-    let trace = symbols::trace_symbol_graph_from_index_with_overrides_and_timeout(
+    let trace = symbols::trace_symbol_graph_from_index_with_overrides_with_deadline(
         db_path,
         &overrides,
         &trace_target,
         direction,
-        timeout_ms,
+        &deadline,
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed patch graph neighborhood")?;
-    let neighborhood = symbols::trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
+    let neighborhood = symbols::trace_symbol_neighborhood_from_index_with_overrides_with_deadline(
         db_path,
         &overrides,
         &trace_target,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )?;
     deadline.check("indexed patch graph trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;

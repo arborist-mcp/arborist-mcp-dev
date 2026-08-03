@@ -95,22 +95,20 @@ pub fn validate_patch_with_trace_context_with_timeout(
     }
 
     let baseline_overrides = BTreeMap::from([(patch.file.clone(), source.to_string())]);
-    let timeout_ms = deadline.remaining_timeout_ms("baseline patch trace")?;
-    let baseline = symbols::trace_symbol_graph_with_overrides_and_timeout(
+    let baseline = symbols::trace_symbol_graph_with_overrides_with_deadline(
         &workspace_root,
         &baseline_overrides,
         &trace_target,
         direction,
-        timeout_ms,
+        &deadline,
     )?;
     let overrides = BTreeMap::from([(patch.file.clone(), patch.updated_source.clone())]);
-    let timeout_ms = deadline.remaining_timeout_ms("updated patch trace")?;
-    let trace = symbols::trace_symbol_graph_with_overrides_and_timeout(
+    let trace = symbols::trace_symbol_graph_with_overrides_with_deadline(
         &workspace_root,
         &overrides,
         &trace_target,
         direction,
-        timeout_ms,
+        &deadline,
     )?;
     deadline.check("patch trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
