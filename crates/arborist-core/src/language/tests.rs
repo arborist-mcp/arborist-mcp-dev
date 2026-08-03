@@ -121,7 +121,7 @@ fn builtin_registry_preserves_current_language_contracts() {
 }
 
 #[test]
-fn syntax_only_js_and_typescript_adapters_are_explicitly_capability_gated() {
+fn javascript_and_typescript_adapters_expose_indexing_capabilities() {
     let registry = builtin_language_registry();
 
     for (language_id, display_name, extensions, analysis_revision) in [
@@ -129,15 +129,15 @@ fn syntax_only_js_and_typescript_adapters_are_explicitly_capability_gated() {
             LanguageId::JavaScript,
             "JavaScript",
             &["js", "jsx", "mjs", "cjs"][..],
-            "javascript-syntax-v1",
+            "javascript-index-v1",
         ),
         (
             LanguageId::TypeScript,
             "TypeScript",
             &["ts", "mts", "cts"][..],
-            "typescript-syntax-v1",
+            "typescript-index-v1",
         ),
-        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-syntax-v1"),
+        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-index-v1"),
     ] {
         let descriptor = registry.descriptor(language_id).unwrap();
         assert_eq!(descriptor.display_name, display_name);
@@ -149,7 +149,7 @@ fn syntax_only_js_and_typescript_adapters_are_explicitly_capability_gated() {
                 .contains(LanguageCapabilities::TREE_QUERY)
         );
         assert!(
-            !descriptor
+            descriptor
                 .capabilities
                 .contains(LanguageCapabilities::SYMBOL_INDEX)
         );

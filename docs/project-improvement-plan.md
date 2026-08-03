@@ -705,9 +705,9 @@ completed item can land in its own commit unless two changes are inseparable.
   protocol behavior.
 - [x] Complete Phase 3 structured reference facts and persisted analysis
   provenance before adding the first JavaScript/TypeScript adapter.
-- [x] Begin Phase 4 with JavaScript, TypeScript, and TSX grammar routing plus
-  capability-gated Tree-sitter query support; keep unsupported semantic,
-  indexing, trace, and patch flows fail-closed until their adapters land.
+- [x] Begin Phase 4 with JavaScript, TypeScript, and TSX grammar routing,
+  Tree-sitter queries, and conservative direct-call indexing/tracing; keep
+  semantic, import, and patch flows capability-gated until their adapters land.
 
 ## Suggested Commit Sequence
 

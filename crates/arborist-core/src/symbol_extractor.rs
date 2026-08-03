@@ -7,6 +7,7 @@ use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) mod c;
+pub(crate) mod javascript;
 pub(crate) mod python;
 
 pub(crate) fn index_symbols_from_document(
@@ -43,18 +44,6 @@ mod tests {
     use super::index_symbols_from_document_with_deadline;
     use crate::language::parse_document;
     use crate::workspace_scan::WorkspaceScanDeadline;
-
-    #[test]
-    fn syntax_only_language_symbol_extraction_is_rejected_before_walking_the_tree() {
-        let source = "export function sample() { return 1; }";
-        let path = Path::new("sample.js");
-        let document = parse_document(path, source).expect("source should parse");
-
-        let error = index_symbols_from_document_with_deadline(path, source, &document, None)
-            .expect_err("syntax-only languages must not enter symbol extraction");
-        assert!(error.to_string().contains("JavaScript"));
-        assert!(error.to_string().contains("symbol indexing"));
-    }
 
     #[test]
     fn symbol_extraction_rejects_expired_deadline() {

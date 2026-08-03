@@ -29,6 +29,9 @@ impl LanguageCapabilities {
     pub const PATCH_TARGETING: Self = Self(1 << 5);
     pub const PATCH_VALIDATION: Self = Self(1 << 6);
 
+    pub const INDEXED_TRACE_SUPPORT: Self =
+        Self(Self::TREE_QUERY.0 | Self::SYMBOL_INDEX.0 | Self::REFERENCE_TRACE.0);
+
     pub const FULL_CURRENT_SUPPORT: Self = Self(
         Self::TREE_QUERY.0
             | Self::SEMANTIC_SKELETON.0
@@ -378,45 +381,45 @@ static JAVASCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::JavaScript,
     display_name: "JavaScript",
     extensions: JAVASCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::TREE_QUERY,
-    analysis_revision: "javascript-syntax-v1",
+    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
+    analysis_revision: "javascript-index-v1",
     grammar: javascript_grammar,
 };
 static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::TypeScript,
     display_name: "TypeScript",
     extensions: TYPESCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::TREE_QUERY,
-    analysis_revision: "typescript-syntax-v1",
+    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
+    analysis_revision: "typescript-index-v1",
     grammar: typescript_grammar,
 };
 static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Tsx,
     display_name: "TSX",
     extensions: TSX_EXTENSIONS,
-    capabilities: LanguageCapabilities::TREE_QUERY,
-    analysis_revision: "tsx-syntax-v1",
+    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
+    analysis_revision: "tsx-index-v1",
     grammar: tsx_grammar,
 };
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
 static CPP_ADAPTER: CppAdapter = CppAdapter;
-static JAVASCRIPT_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+static JAVASCRIPT_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
     descriptor: &JAVASCRIPT_DESCRIPTOR,
 };
-static TYPESCRIPT_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+static TYPESCRIPT_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
     descriptor: &TYPESCRIPT_DESCRIPTOR,
 };
-static TSX_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+static TSX_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
     descriptor: &TSX_DESCRIPTOR,
 };
 
-struct SyntaxOnlyAdapter {
+struct JavaScriptFamilyAdapter {
     descriptor: &'static LanguageDescriptor,
 }
 
-impl SyntaxOnlyAdapter {
+impl JavaScriptFamilyAdapter {
     fn unsupported<T>(&self, operation: &str) -> Result<T> {
         bail!(
             "{} does not support {} yet",
@@ -426,7 +429,7 @@ impl SyntaxOnlyAdapter {
     }
 }
 
-impl LanguageAdapter for SyntaxOnlyAdapter {
+impl LanguageAdapter for JavaScriptFamilyAdapter {
     fn descriptor(&self) -> &'static LanguageDescriptor {
         self.descriptor
     }
@@ -567,12 +570,17 @@ impl LanguageAdapter for SyntaxOnlyAdapter {
 
     fn extract_symbols(
         &self,
-        _path: &Path,
-        _source: &str,
-        _document: &ParsedDocument,
-        _deadline: Option<&WorkspaceScanDeadline>,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.unsupported("symbol indexing")
+        crate::symbol_extractor::javascript::index_javascript_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 

@@ -53,21 +53,22 @@ fn recognizes_skipped_workspace_path_segments() {
 }
 
 #[test]
-fn collect_source_files_skips_syntax_only_languages_until_indexing_is_supported() {
+fn collect_source_files_includes_javascript_and_typescript_after_indexing_support_lands() {
     let workspace = temporary_dir();
-    let python = workspace.join("kept.py");
-    fs::write(&python, "def kept():\n    return 1\n").unwrap();
+    let javascript = workspace.join("first.js");
+    let typescript = workspace.join("second.ts");
+    fs::write(&javascript, "export function first() { return 1; }").unwrap();
     fs::write(
-        workspace.join("syntax-only.ts"),
-        "export function skipped(): number { return 1; }",
+        &typescript,
+        "export function second(): number { return 2; }",
     )
     .unwrap();
 
     let files =
-        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
-            .expect("syntax-only files must not count toward index scan limits");
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(2))
+            .expect("indexed JavaScript and TypeScript files should be collected");
 
-    assert_eq!(files, vec![python]);
+    assert_eq!(files, vec![javascript, typescript]);
 }
 
 #[test]

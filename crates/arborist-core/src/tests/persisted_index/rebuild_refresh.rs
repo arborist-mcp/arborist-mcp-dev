@@ -185,3 +185,30 @@ fn rebuild_existing_empty_database_does_not_initialize_schema() {
         .unwrap();
     assert_eq!(table_count, 0);
 }
+
+#[test]
+fn rebuilds_and_traces_javascript_direct_calls() {
+    let dir = temporary_dir();
+    let source_path = dir.join("api.js");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "export function helper(value) { return value + 1; }\nexport function caller() { return helper(1); }\n",
+    )
+    .unwrap();
+
+    let stats = rebuild_symbol_index(&dir, &db_path).unwrap();
+    assert_eq!(stats.indexed_files, 1);
+    assert_eq!(stats.indexed_symbols, 2);
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(trace.symbol.semantic_path, "caller");
+    assert_eq!(
+        trace
+            .callees
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["helper"]
+    );
+}
