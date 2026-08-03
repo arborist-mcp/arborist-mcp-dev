@@ -20,23 +20,6 @@ use super::{
     load_workspace_symbols_with_overrides_at_path_with_timeout,
 };
 
-pub fn trace_symbol_graph_with_overrides_and_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolGraphResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_symbol_graph_with_overrides_with_deadline(
-        workspace_root,
-        file_overrides,
-        symbol_path,
-        direction,
-        &deadline,
-    )
-}
-
 pub(crate) fn trace_symbol_graph_with_overrides_with_deadline(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -56,27 +39,6 @@ pub(crate) fn trace_symbol_graph_with_overrides_with_deadline(
         symbol_path,
         direction,
         deadline,
-    )
-}
-
-pub fn trace_symbol_neighborhood_with_overrides_and_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_symbol_neighborhood_with_overrides_with_deadline(
-        workspace_root,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        &deadline,
     )
 }
 

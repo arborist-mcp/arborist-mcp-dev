@@ -117,13 +117,33 @@ impl VirtualFileSystem {
         &mut self,
         workspace_root: &Path,
     ) -> Result<BTreeMap<String, String>> {
+        self.virtual_overrides_for_workspace_inner(workspace_root, None)
+    }
+
+    pub(in crate::vfs) fn virtual_overrides_for_workspace_with_deadline(
+        &mut self,
+        workspace_root: &Path,
+        deadline: &dyn DeadlineCheck,
+    ) -> Result<BTreeMap<String, String>> {
+        self.virtual_overrides_for_workspace_inner(workspace_root, Some(deadline))
+    }
+
+    fn virtual_overrides_for_workspace_inner(
+        &mut self,
+        workspace_root: &Path,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<BTreeMap<String, String>> {
         let loaded_files: Vec<_> = self.entries.keys().cloned().collect();
         for normalized in &loaded_files {
-            self.refresh_if_clean(normalized)?;
+            match deadline {
+                Some(deadline) => self.refresh_if_clean_with_deadline(normalized, deadline)?,
+                None => self.refresh_if_clean(normalized)?,
+            };
         }
 
         let mut overrides = BTreeMap::new();
         for entry in self.entries.values() {
+            check_optional_deadline(deadline, "virtual override collection")?;
             if !entry.dirty {
                 continue;
             }
@@ -137,6 +157,7 @@ impl VirtualFileSystem {
             }
         }
 
+        check_optional_deadline(deadline, "virtual override collection result")?;
         Ok(overrides)
     }
 }

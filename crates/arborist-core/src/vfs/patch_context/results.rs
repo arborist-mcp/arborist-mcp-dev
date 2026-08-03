@@ -63,7 +63,8 @@ impl VirtualFileSystem {
         }
 
         deadline.check("virtual patch overrides")?;
-        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        let mut overrides =
+            self.virtual_overrides_for_workspace_with_deadline(workspace_root, deadline)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
         let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
@@ -132,7 +133,8 @@ impl VirtualFileSystem {
         }
 
         deadline.check("virtual graph patch overrides")?;
-        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        let mut overrides =
+            self.virtual_overrides_for_workspace_with_deadline(workspace_root, deadline)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
         let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
@@ -210,7 +212,8 @@ impl VirtualFileSystem {
         }
 
         deadline.check("virtual neighborhood patch overrides")?;
-        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        let mut overrides =
+            self.virtual_overrides_for_workspace_with_deadline(workspace_root, deadline)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
         let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
@@ -290,7 +293,8 @@ impl VirtualFileSystem {
         }
 
         deadline.check("virtual discovery patch overrides")?;
-        let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
+        let mut overrides =
+            self.virtual_overrides_for_workspace_with_deadline(workspace_root, deadline)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
         let discovery = read_symbol_discovery_context_with_overrides_with_deadline(
             workspace_root,

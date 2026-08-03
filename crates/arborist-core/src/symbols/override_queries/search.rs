@@ -41,27 +41,6 @@ pub fn search_symbols_with_overrides_filtered(
     )
 }
 
-pub fn search_symbols_with_overrides_filtered_with_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    query: &str,
-    limit: usize,
-    file_path_contains: Option<&str>,
-    node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
-) -> Result<SymbolSearchResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    search_symbols_with_overrides_filtered_with_deadline(
-        workspace_root,
-        file_overrides,
-        query,
-        limit,
-        file_path_contains,
-        node_kind,
-        &deadline,
-    )
-}
-
 pub(crate) fn search_symbols_with_overrides_filtered_with_deadline(
     workspace_root: &Path,
     file_overrides: &BTreeMap<String, String>,
@@ -114,27 +93,6 @@ pub(crate) fn search_symbols_from_index_with_overrides_filtered_with_deadline(
         file_path_contains,
         node_kind,
         deadline,
-    )
-}
-
-pub fn search_symbols_context_with_overrides_filtered_with_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    query: &str,
-    limit: usize,
-    file_path_contains: Option<&str>,
-    node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
-) -> Result<SymbolSearchContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    search_symbols_context_with_overrides_filtered_with_deadline(
-        workspace_root,
-        file_overrides,
-        query,
-        limit,
-        file_path_contains,
-        node_kind,
-        &deadline,
     )
 }
 
@@ -192,34 +150,6 @@ pub(crate) fn search_symbols_context_from_index_with_overrides_filtered_with_dea
         node_kind,
         Some(file_overrides),
         deadline,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn search_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    query: &str,
-    limit: usize,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_path_contains: Option<&str>,
-    node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
-) -> Result<SymbolSearchNeighborhoodContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    search_symbols_neighborhood_context_with_overrides_filtered_with_deadline(
-        workspace_root,
-        file_overrides,
-        query,
-        limit,
-        direction,
-        max_depth,
-        max_nodes,
-        file_path_contains,
-        node_kind,
-        &deadline,
     )
 }
 
@@ -291,34 +221,6 @@ pub(crate) fn search_symbols_neighborhood_context_from_index_with_overrides_filt
         node_kind,
         Some(file_overrides),
         deadline,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn search_symbols_discovery_context_with_overrides_filtered_with_timeout(
-    workspace_root: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    query: &str,
-    limit: usize,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_path_contains: Option<&str>,
-    node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
-) -> Result<SymbolSearchDiscoveryContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    search_symbols_discovery_context_with_overrides_filtered_with_deadline(
-        workspace_root,
-        file_overrides,
-        query,
-        limit,
-        direction,
-        max_depth,
-        max_nodes,
-        file_path_contains,
-        node_kind,
-        &deadline,
     )
 }
 

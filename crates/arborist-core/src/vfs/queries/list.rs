@@ -8,14 +8,15 @@ use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, TraceDirection,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols::{
     list_symbols_context_with_overrides_filtered,
-    list_symbols_context_with_overrides_filtered_with_timeout,
+    list_symbols_context_with_overrides_filtered_with_deadline,
     list_symbols_discovery_context_with_overrides_filtered,
-    list_symbols_discovery_context_with_overrides_filtered_with_timeout,
+    list_symbols_discovery_context_with_overrides_filtered_with_deadline,
     list_symbols_neighborhood_context_with_overrides_filtered,
-    list_symbols_neighborhood_context_with_overrides_filtered_with_timeout,
-    list_symbols_with_overrides_filtered, list_symbols_with_overrides_filtered_with_timeout,
+    list_symbols_neighborhood_context_with_overrides_filtered_with_deadline,
+    list_symbols_with_overrides_filtered, list_symbols_with_overrides_filtered_with_deadline,
 };
 
 impl VirtualFileSystem {
@@ -99,15 +100,19 @@ impl VirtualFileSystem {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
-        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        list_symbols_with_overrides_filtered_with_timeout(
+        deadline.check("virtual symbol query setup")?;
+        let overrides =
+            self.virtual_overrides_for_workspace_with_deadline(&workspace_root, &deadline)?;
+        deadline.check("virtual symbol query setup")?;
+        list_symbols_with_overrides_filtered_with_deadline(
             &workspace_root,
             &overrides,
             limit,
             file_path_contains,
             node_kind,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -137,15 +142,19 @@ impl VirtualFileSystem {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListContextResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
-        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        list_symbols_context_with_overrides_filtered_with_timeout(
+        deadline.check("virtual symbol query setup")?;
+        let overrides =
+            self.virtual_overrides_for_workspace_with_deadline(&workspace_root, &deadline)?;
+        deadline.check("virtual symbol query setup")?;
+        list_symbols_context_with_overrides_filtered_with_deadline(
             &workspace_root,
             &overrides,
             limit,
             file_path_contains,
             node_kind,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -186,9 +195,13 @@ impl VirtualFileSystem {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListNeighborhoodContextResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
-        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        list_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
+        deadline.check("virtual symbol query setup")?;
+        let overrides =
+            self.virtual_overrides_for_workspace_with_deadline(&workspace_root, &deadline)?;
+        deadline.check("virtual symbol query setup")?;
+        list_symbols_neighborhood_context_with_overrides_filtered_with_deadline(
             &workspace_root,
             &overrides,
             limit,
@@ -197,7 +210,7 @@ impl VirtualFileSystem {
             max_nodes,
             file_path_contains,
             node_kind,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -238,9 +251,13 @@ impl VirtualFileSystem {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListDiscoveryContextResult> {
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let workspace_root = normalize_absolute_path(workspace_root)?;
-        let overrides = self.virtual_overrides_for_workspace(&workspace_root)?;
-        list_symbols_discovery_context_with_overrides_filtered_with_timeout(
+        deadline.check("virtual symbol query setup")?;
+        let overrides =
+            self.virtual_overrides_for_workspace_with_deadline(&workspace_root, &deadline)?;
+        deadline.check("virtual symbol query setup")?;
+        list_symbols_discovery_context_with_overrides_filtered_with_deadline(
             &workspace_root,
             &overrides,
             limit,
@@ -249,7 +266,7 @@ impl VirtualFileSystem {
             max_nodes,
             file_path_contains,
             node_kind,
-            timeout_ms,
+            &deadline,
         )
     }
 }

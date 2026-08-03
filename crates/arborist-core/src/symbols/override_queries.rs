@@ -50,6 +50,6 @@ pub(super) fn load_workspace_symbols_with_overrides_at_path_with_timeout(
 }
 
 pub use list::*;
-pub use read::*;
+pub(crate) use read::*;
 pub use search::*;
 pub use trace::*;
