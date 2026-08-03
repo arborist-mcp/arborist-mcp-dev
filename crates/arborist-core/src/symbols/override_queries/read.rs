@@ -442,27 +442,6 @@ pub(crate) fn read_symbol_context_from_index_with_overrides_with_deadline(
     )
 }
 
-pub fn read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
-    db_path: &Path,
-    file_overrides: &BTreeMap<String, String>,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    timeout_ms: Option<u64>,
-) -> Result<SymbolNeighborhoodContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    read_symbol_neighborhood_context_from_index_with_overrides_with_deadline(
-        db_path,
-        file_overrides,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        &deadline,
-    )
-}
-
 pub(crate) fn read_symbol_neighborhood_context_from_index_with_overrides_with_deadline(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,

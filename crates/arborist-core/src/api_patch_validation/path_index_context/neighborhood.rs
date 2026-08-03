@@ -190,16 +190,15 @@ pub(crate) fn validate_patch_with_neighborhood_context_from_index_with_deadline(
         direction,
         deadline,
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed patch neighborhood context")?;
     let neighborhood_context =
-        symbols::read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
+        symbols::read_symbol_neighborhood_context_from_index_with_overrides_with_deadline(
             db_path,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            deadline,
         )?;
     deadline.check("indexed patch neighborhood trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;

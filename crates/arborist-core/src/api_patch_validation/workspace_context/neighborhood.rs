@@ -134,16 +134,15 @@ pub(crate) fn validate_patch_with_neighborhood_context_with_deadline(
         direction,
         deadline,
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("patch neighborhood context")?;
     let neighborhood_context =
-        symbols::read_symbol_neighborhood_context_with_overrides_with_timeout(
+        symbols::read_symbol_neighborhood_context_with_overrides_with_deadline(
             &workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            deadline,
         )?;
     deadline.check("patch neighborhood trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
