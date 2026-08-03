@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::ops::{BitOr, BitOrAssign};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use anyhow::{Result, anyhow};
@@ -166,6 +166,15 @@ pub(crate) trait LanguageAdapter: Sync {
         node: Node<'_>,
         candidates: Option<&[Node<'_>]>,
     ) -> Result<(Option<String>, Option<String>, Option<String>)>;
+
+    fn supports_incremental_file_dependencies(&self) -> bool;
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>>;
 
     fn extract_symbols(
         &self,
@@ -438,6 +447,19 @@ impl LanguageAdapter for PythonAdapter {
         crate::query::owners::python_capture_owner(source, node)
     }
 
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        false
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        _path: &Path,
+        _root: Node<'_>,
+        _source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        Ok(Vec::new())
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -590,6 +612,20 @@ impl LanguageAdapter for CAdapter {
         crate::query::owners::c_capture_owner(path, source, node, candidates.unwrap_or_default())
     }
 
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        true
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        crate::language::c_local_include_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -723,6 +759,19 @@ impl LanguageAdapter for CppAdapter {
         candidates: Option<&[Node<'_>]>,
     ) -> Result<(Option<String>, Option<String>, Option<String>)> {
         C_ADAPTER.query_capture_owner(path, source, node, candidates)
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        C_ADAPTER.supports_incremental_file_dependencies()
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        C_ADAPTER.collect_local_file_dependencies(path, root, source)
     }
 
     fn extract_symbols(

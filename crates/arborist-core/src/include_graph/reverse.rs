@@ -4,11 +4,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::language::{
-    c_include_targets, c_local_include_targets, detect_language, normalize_absolute_path,
-    normalize_path, parse_document_with_timeout, path_is_inside_workspace, read_source,
-    resolve_local_c_include,
+    builtin_language_registry, detect_language, normalize_path, parse_document_with_timeout,
+    path_is_inside_workspace, read_source,
 };
-use crate::model::LanguageId;
 use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files_with_deadline,
 };
@@ -22,7 +20,13 @@ pub(super) fn reverse_local_c_include_index(
 
     for path in collect_source_files_with_deadline(workspace_root, limits, deadline)? {
         deadline.check("building C include reverse index")?;
-        if !matches!(detect_language(&path), Ok(LanguageId::C | LanguageId::Cpp)) {
+        let Ok(language_id) = detect_language(&path) else {
+            continue;
+        };
+        let adapter = builtin_language_registry()
+            .adapter(language_id)
+            .expect("every LanguageId must have a builtin language adapter");
+        if !adapter.supports_incremental_file_dependencies() {
             continue;
         }
 
@@ -33,20 +37,9 @@ pub(super) fn reverse_local_c_include_index(
             deadline.remaining_timeout_micros("parsing C include files")?,
         )?;
         deadline.check("extracting C include targets")?;
-        let local_include_targets = c_local_include_targets(document.tree.root_node(), &source)?
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        for include_target in c_include_targets(document.tree.root_node(), &source)? {
-            let Some(include_path) =
-                resolve_local_c_include(&path, &include_target).or_else(|| {
-                    local_include_targets
-                        .contains(&include_target)
-                        .then(|| unresolved_local_c_include_path(&path, &include_target))
-                        .flatten()
-                })
-            else {
-                continue;
-            };
+        for include_path in
+            adapter.collect_local_file_dependencies(&path, document.tree.root_node(), &source)?
+        {
             if !path_is_inside_workspace(workspace_root, &include_path)? {
                 continue;
             }
@@ -59,9 +52,4 @@ pub(super) fn reverse_local_c_include_index(
     }
 
     Ok(reverse_index)
-}
-
-fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) -> Option<PathBuf> {
-    let parent = current_path.parent()?;
-    normalize_absolute_path(&parent.join(include_target)).ok()
 }

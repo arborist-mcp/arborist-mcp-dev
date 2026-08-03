@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -112,7 +113,7 @@ pub(crate) fn c_include_targets_before(
     )
 }
 
-pub fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
+fn c_local_include_targets(root: Node<'_>, source: &str) -> Result<Vec<String>> {
     include_targets_for_nodes(
         c_include_target_nodes(root, source, None)?,
         source,
@@ -213,6 +214,36 @@ pub fn resolve_local_c_include(current_path: &Path, include_target: &str) -> Opt
     let parent = current_path.parent()?;
     let candidate = normalize_absolute_path(&parent.join(include_target)).ok()?;
     candidate.exists().then_some(candidate)
+}
+
+pub(crate) fn c_local_include_dependency_paths(
+    current_path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    let local_include_targets = c_local_include_targets(root, source)?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let mut include_paths = BTreeSet::new();
+
+    for include_target in c_include_targets(root, source)? {
+        let include_path = resolve_local_c_include(current_path, &include_target).or_else(|| {
+            local_include_targets
+                .contains(&include_target)
+                .then(|| unresolved_local_c_include_path(current_path, &include_target))
+                .flatten()
+        });
+        if let Some(include_path) = include_path {
+            include_paths.insert(include_path);
+        }
+    }
+
+    Ok(include_paths)
+}
+
+fn unresolved_local_c_include_path(current_path: &Path, include_target: &str) -> Option<PathBuf> {
+    let parent = current_path.parent()?;
+    normalize_absolute_path(&parent.join(include_target)).ok()
 }
 
 fn existing_path_with_exact_file_name(candidate: &Path) -> Option<PathBuf> {

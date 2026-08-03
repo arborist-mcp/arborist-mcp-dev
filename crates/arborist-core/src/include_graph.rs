@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::language::{detect_language, normalize_path};
-use crate::model::LanguageId;
+use crate::language::{builtin_language_registry, detect_language, normalize_path};
 use crate::workspace_scan::{WorkspaceScanDeadline, WorkspaceScanLimits};
 
 mod reverse;
@@ -18,7 +17,11 @@ pub(crate) fn expanded_refresh_file_paths(
     let mut refresh_paths = BTreeSet::new();
     refresh_paths.insert(file_path.to_path_buf());
 
-    if matches!(detect_language(file_path)?, LanguageId::C | LanguageId::Cpp) {
+    let language_id = detect_language(file_path)?;
+    let adapter = builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter");
+    if adapter.supports_incremental_file_dependencies() {
         refresh_paths.extend(transitive_c_include_dependents_with_deadline(
             workspace_root,
             file_path,
