@@ -10,13 +10,13 @@ use crate::model::{
 };
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides_with_timeout;
 use crate::symbol_query_execution::{
-    read_symbol_at_position_from_symbols_with_timeout,
-    read_symbol_context_at_position_from_symbols_with_timeout,
+    read_symbol_at_position_from_symbols_with_deadline,
+    read_symbol_context_at_position_from_symbols_with_deadline,
     read_symbol_context_from_symbols_with_deadline,
-    read_symbol_discovery_context_at_position_from_symbols_with_timeout,
+    read_symbol_discovery_context_at_position_from_symbols_with_deadline,
     read_symbol_discovery_context_from_symbols_with_deadline,
     read_symbol_from_symbols_with_deadline,
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout,
+    read_symbol_neighborhood_context_at_position_from_symbols_with_deadline,
     read_symbol_neighborhood_context_from_symbols_with_deadline,
 };
 use crate::symbol_trace::TraceQueryDeadline;
@@ -145,14 +145,13 @@ pub fn read_symbol_at_position_with_overrides_with_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol position read")?;
-    read_symbol_at_position_from_symbols_with_timeout(
+    read_symbol_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -174,15 +173,14 @@ pub fn read_symbol_context_at_position_with_overrides_with_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol context read")?;
-    read_symbol_context_at_position_from_symbols_with_timeout(
+    read_symbol_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         direction,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -206,8 +204,7 @@ pub fn read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol neighborhood read")?;
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+    read_symbol_neighborhood_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -216,7 +213,7 @@ pub fn read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -240,8 +237,7 @@ pub fn read_symbol_discovery_context_at_position_with_overrides_with_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol discovery read")?;
-    read_symbol_discovery_context_at_position_from_symbols_with_timeout(
+    read_symbol_discovery_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -250,7 +246,7 @@ pub fn read_symbol_discovery_context_at_position_with_overrides_with_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -377,14 +373,13 @@ pub fn read_symbol_at_position_from_index_with_overrides_with_timeout(
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol position read")?;
-    read_symbol_at_position_from_symbols_with_timeout(
+    read_symbol_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -406,15 +401,14 @@ pub fn read_symbol_context_at_position_from_index_with_overrides_with_timeout(
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol context read")?;
-    read_symbol_context_at_position_from_symbols_with_timeout(
+    read_symbol_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         direction,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -438,8 +432,7 @@ pub fn read_symbol_neighborhood_context_at_position_from_index_with_overrides_wi
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol neighborhood read")?;
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+    read_symbol_neighborhood_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -448,7 +441,7 @@ pub fn read_symbol_neighborhood_context_at_position_from_index_with_overrides_wi
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -472,8 +465,7 @@ pub fn read_symbol_discovery_context_at_position_from_index_with_overrides_with_
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol discovery read")?;
-    read_symbol_discovery_context_at_position_from_symbols_with_timeout(
+    read_symbol_discovery_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -482,6 +474,6 @@ pub fn read_symbol_discovery_context_at_position_from_index_with_overrides_with_
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }

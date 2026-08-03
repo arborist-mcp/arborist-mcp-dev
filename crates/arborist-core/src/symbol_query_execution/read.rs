@@ -137,22 +137,21 @@ pub(crate) fn read_symbol_discovery_context_from_meta_with_deadline_and_cache(
     Ok(result)
 }
 
-pub(crate) fn read_symbol_at_position_from_symbols_with_timeout(
+pub(crate) fn read_symbol_at_position_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     file_path: &Path,
     position: &Position,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolReadResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol position resolution")?;
     let symbol = resolve_symbol_at_position_with_deadline(
         resolved_symbols,
         file_path,
         position,
         file_overrides,
-        Some(&deadline),
+        Some(deadline),
     )?;
     deadline.check("symbol position read")?;
     let result = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
@@ -161,23 +160,22 @@ pub(crate) fn read_symbol_at_position_from_symbols_with_timeout(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_context_at_position_from_symbols_with_timeout(
+pub(crate) fn read_symbol_context_at_position_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     file_path: &Path,
     position: &Position,
     direction: TraceDirection,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol context position resolution")?;
     let symbol = resolve_symbol_at_position_with_deadline(
         resolved_symbols,
         file_path,
         position,
         file_overrides,
-        Some(&deadline),
+        Some(deadline),
     )?;
     read_symbol_context_from_meta_with_deadline(
         resolved_symbols,
@@ -185,12 +183,12 @@ pub(crate) fn read_symbol_context_at_position_from_symbols_with_timeout(
         symbol,
         direction,
         file_overrides,
-        &deadline,
+        deadline,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     file_path: &Path,
@@ -199,16 +197,15 @@ pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_tim
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol neighborhood position resolution")?;
     let symbol = resolve_symbol_at_position_with_deadline(
         resolved_symbols,
         file_path,
         position,
         file_overrides,
-        Some(&deadline),
+        Some(deadline),
     )?;
     let mut source_cache = BTreeMap::new();
     read_symbol_neighborhood_context_from_meta_with_deadline_and_cache(
@@ -219,13 +216,13 @@ pub(crate) fn read_symbol_neighborhood_context_at_position_from_symbols_with_tim
         max_depth,
         max_nodes,
         file_overrides,
-        &deadline,
+        deadline,
         &mut source_cache,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_timeout(
+pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     file_path: &Path,
@@ -234,16 +231,15 @@ pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_timeou
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("symbol discovery position resolution")?;
     let symbol = resolve_symbol_at_position_with_deadline(
         resolved_symbols,
         file_path,
         position,
         file_overrides,
-        Some(&deadline),
+        Some(deadline),
     )?;
     let mut source_cache = BTreeMap::new();
     read_symbol_discovery_context_from_meta_with_deadline_and_cache(
@@ -254,7 +250,7 @@ pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_timeou
         max_depth,
         max_nodes,
         file_overrides,
-        &deadline,
+        deadline,
         &mut source_cache,
     )
 }
@@ -364,26 +360,13 @@ pub(crate) fn read_symbol_discovery_context_from_symbols_with_deadline(
 mod tests {
     use std::path::Path;
 
-    use anyhow::Error;
-
     use super::{
-        read_symbol_at_position_from_symbols_with_timeout,
-        read_symbol_context_at_position_from_symbols_with_timeout,
+        read_symbol_at_position_from_symbols_with_deadline,
         read_symbol_context_from_meta_with_deadline,
-        read_symbol_context_from_symbols_with_deadline,
-        read_symbol_discovery_context_at_position_from_symbols_with_timeout,
-        read_symbol_from_symbols_with_deadline,
+        read_symbol_context_from_symbols_with_deadline, read_symbol_from_symbols_with_deadline,
     };
     use crate::model::{Position, SymbolMeta, SymbolMetaInit, TraceDirection};
     use crate::symbol_trace::TraceQueryDeadline;
-
-    fn assert_zero_timeout(error: Error) {
-        assert!(
-            error
-                .to_string()
-                .contains("invalid trace timeout_ms: value must be greater than zero")
-        );
-    }
 
     #[test]
     fn read_context_reuses_the_callers_deadline() {
@@ -445,46 +428,20 @@ mod tests {
     }
 
     #[test]
-    fn direct_position_read_variants_reject_zero_timeout_before_resolution() {
-        let symbols = Vec::new();
-        let file_path = Path::new("missing.py");
+    fn direct_position_read_reuses_the_callers_deadline() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
         let position = Position { row: 0, column: 0 };
-        assert_zero_timeout(
-            read_symbol_at_position_from_symbols_with_timeout(
-                &symbols,
-                0,
-                file_path,
-                &position,
-                None,
-                Some(0),
-            )
-            .expect_err("position read should reject zero timeout"),
-        );
-        assert_zero_timeout(
-            read_symbol_context_at_position_from_symbols_with_timeout(
-                &symbols,
-                0,
-                file_path,
-                &position,
-                TraceDirection::Both,
-                None,
-                Some(0),
-            )
-            .expect_err("position context read should reject zero timeout"),
-        );
-        assert_zero_timeout(
-            read_symbol_discovery_context_at_position_from_symbols_with_timeout(
-                &symbols,
-                0,
-                file_path,
-                &position,
-                TraceDirection::Both,
-                2,
-                64,
-                None,
-                Some(0),
-            )
-            .expect_err("position discovery read should reject zero timeout"),
-        );
+
+        let error = read_symbol_at_position_from_symbols_with_deadline(
+            &[],
+            0,
+            Path::new("missing.py"),
+            &position,
+            None,
+            &deadline,
+        )
+        .expect_err("symbol position read should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol position resolution"));
     }
 }

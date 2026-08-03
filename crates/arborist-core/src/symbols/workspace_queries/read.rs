@@ -9,13 +9,13 @@ use crate::model::{
 };
 use crate::symbol_index_workspace::load_live_workspace_symbols_with_timeout;
 use crate::symbol_query_execution::{
-    read_symbol_at_position_from_symbols_with_timeout,
-    read_symbol_context_at_position_from_symbols_with_timeout,
+    read_symbol_at_position_from_symbols_with_deadline,
+    read_symbol_context_at_position_from_symbols_with_deadline,
     read_symbol_context_from_symbols_with_deadline,
-    read_symbol_discovery_context_at_position_from_symbols_with_timeout,
+    read_symbol_discovery_context_at_position_from_symbols_with_deadline,
     read_symbol_discovery_context_from_symbols_with_deadline,
     read_symbol_from_symbols_with_deadline,
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout,
+    read_symbol_neighborhood_context_at_position_from_symbols_with_deadline,
     read_symbol_neighborhood_context_from_symbols_with_deadline,
 };
 use crate::symbol_trace::TraceQueryDeadline;
@@ -172,14 +172,13 @@ pub fn read_symbol_at_position_with_timeout(
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol position read")?;
-    read_symbol_at_position_from_symbols_with_timeout(
+    read_symbol_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         None,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -209,15 +208,14 @@ pub fn read_symbol_context_at_position_with_timeout(
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol context read")?;
-    read_symbol_context_at_position_from_symbols_with_timeout(
+    read_symbol_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         direction,
         None,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -254,8 +252,7 @@ pub fn read_symbol_neighborhood_context_at_position_with_timeout(
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol neighborhood read")?;
-    read_symbol_neighborhood_context_at_position_from_symbols_with_timeout(
+    read_symbol_neighborhood_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -264,7 +261,7 @@ pub fn read_symbol_neighborhood_context_at_position_with_timeout(
         max_depth,
         max_nodes,
         None,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -301,8 +298,7 @@ pub fn read_symbol_discovery_context_at_position_with_timeout(
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_live_workspace_symbols_at_path_with_timeout(workspace_root, file_path, timeout_ms)?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol discovery read")?;
-    read_symbol_discovery_context_at_position_from_symbols_with_timeout(
+    read_symbol_discovery_context_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -311,6 +307,6 @@ pub fn read_symbol_discovery_context_at_position_with_timeout(
         max_depth,
         max_nodes,
         None,
-        timeout_ms,
+        &deadline,
     )
 }
