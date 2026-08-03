@@ -10,8 +10,8 @@ use crate::{patching, symbols};
 
 use super::super::{
     validate_discovery_context_patch_result, validate_patch_commit_with_trace,
-    validate_patch_with_discovery_context_at_position_with_timeout,
-    validate_patch_with_discovery_context_with_timeout,
+    validate_patch_with_discovery_context_at_position_with_deadline,
+    validate_patch_with_discovery_context_with_deadline,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -56,8 +56,7 @@ pub fn validate_patch_with_discovery_context_from_path_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms = deadline.remaining_timeout_ms("discovery-context patch validation")?;
-    validate_patch_with_discovery_context_with_timeout(
+    validate_patch_with_discovery_context_with_deadline(
         &workspace_root,
         &path,
         &source,
@@ -67,7 +66,7 @@ pub fn validate_patch_with_discovery_context_from_path_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -111,10 +110,37 @@ pub fn validate_patch_with_discovery_context_from_index_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<DiscoveryContextPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_discovery_context_from_index_with_deadline(
+        db_path,
+        path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_discovery_context_from_index_with_deadline(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<DiscoveryContextPatchResult> {
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch validation")?;
     let patch = super::super::patch_ast_node_with_trace_deadline(
-        &deadline,
+        deadline,
         &path,
         source,
         semantic_target,
@@ -159,15 +185,14 @@ pub fn validate_patch_with_discovery_context_from_index_with_timeout(
 
     deadline.check("indexed patch discovery overrides")?;
     let overrides = BTreeMap::from([(patch.file.clone(), patch.updated_source.clone())]);
-    let timeout_ms = deadline.remaining_timeout_ms("indexed patch discovery context")?;
-    let discovery = symbols::read_symbol_discovery_context_from_index_with_overrides_with_timeout(
+    let discovery = symbols::read_symbol_discovery_context_from_index_with_overrides_with_deadline(
         db_path,
         &overrides,
         &trace_target,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        deadline,
     )?;
     deadline.check("indexed patch discovery trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &discovery.trace)?;
@@ -202,8 +227,7 @@ pub fn validate_patch_with_discovery_context_from_index_path_with_timeout(
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed discovery-context patch validation")?;
-    validate_patch_with_discovery_context_from_index_with_timeout(
+    validate_patch_with_discovery_context_from_index_with_deadline(
         db_path,
         &path,
         &source,
@@ -213,7 +237,7 @@ pub fn validate_patch_with_discovery_context_from_index_path_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -259,9 +283,7 @@ pub fn validate_patch_with_discovery_context_at_position_from_path_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms =
-        deadline.remaining_timeout_ms("position discovery-context patch validation")?;
-    validate_patch_with_discovery_context_at_position_with_timeout(
+    validate_patch_with_discovery_context_at_position_with_deadline(
         &workspace_root,
         &path,
         &source,
@@ -271,7 +293,7 @@ pub fn validate_patch_with_discovery_context_at_position_from_path_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -315,15 +337,41 @@ pub fn validate_patch_with_discovery_context_at_position_from_index_with_timeout
     timeout_ms: Option<u64>,
 ) -> Result<DiscoveryContextPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_discovery_context_at_position_from_index_with_deadline(
+        db_path,
+        path,
+        source,
+        position,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_discovery_context_at_position_from_index_with_deadline(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<DiscoveryContextPatchResult> {
     deadline.check("indexed patch position resolution")?;
     let semantic_target = patching::semantic_target_at_position_with_deadline(
         path,
         source,
         position,
-        Some(&deadline),
+        Some(deadline),
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed discovery-context patch validation")?;
-    validate_patch_with_discovery_context_from_index_with_timeout(
+    validate_patch_with_discovery_context_from_index_with_deadline(
         db_path,
         path,
         source,
@@ -333,7 +381,7 @@ pub fn validate_patch_with_discovery_context_at_position_from_index_with_timeout
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        deadline,
     )
 }
 
@@ -353,8 +401,7 @@ pub fn validate_patch_with_discovery_context_at_position_from_index_path_with_ti
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed position patch validation")?;
-    validate_patch_with_discovery_context_at_position_from_index_with_timeout(
+    validate_patch_with_discovery_context_at_position_from_index_with_deadline(
         db_path,
         &path,
         &source,
@@ -364,6 +411,6 @@ pub fn validate_patch_with_discovery_context_at_position_from_index_path_with_ti
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }

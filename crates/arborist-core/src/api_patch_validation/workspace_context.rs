@@ -4,6 +4,10 @@ mod neighborhood;
 mod trace;
 
 pub use discovery::*;
+pub(crate) use discovery::{
+    validate_patch_with_discovery_context_at_position_with_deadline,
+    validate_patch_with_discovery_context_with_deadline,
+};
 pub use graph::*;
 pub(crate) use graph::{
     validate_patch_with_graph_context_at_position_with_deadline,
