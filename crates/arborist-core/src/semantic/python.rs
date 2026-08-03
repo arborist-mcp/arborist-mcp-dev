@@ -77,7 +77,7 @@ pub(crate) fn python_return_type(node: Node<'_>, source: &str) -> Result<Option<
     Ok(Some(node_text(return_type, source)?.trim().to_string()))
 }
 
-pub(super) fn build_python_skeleton(
+pub(crate) fn build_python_skeleton(
     path: &Path,
     source: &str,
     tree: &Tree,
@@ -239,7 +239,7 @@ pub(super) fn build_python_skeleton(
     Ok(result)
 }
 
-pub(super) fn find_python_semantic_node<'tree>(
+pub(crate) fn find_python_semantic_node<'tree>(
     path: &Path,
     tree: &'tree Tree,
     source: &str,

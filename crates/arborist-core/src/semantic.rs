@@ -4,11 +4,12 @@ use anyhow::Result;
 use tree_sitter::{Node, Tree};
 
 use crate::deadline::DeadlineCheck;
+use crate::language::builtin_language_registry;
 use crate::model::{LanguageId, SemanticSkeleton};
 
-mod c;
+pub(crate) mod c;
 mod paths;
-mod python;
+pub(crate) mod python;
 mod python_identity;
 mod python_overloads;
 
@@ -40,14 +41,10 @@ pub(crate) fn get_semantic_skeleton_with_deadline(
     expand_nodes: &[String],
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticSkeleton> {
-    match language_id {
-        LanguageId::Python => {
-            python::build_python_skeleton(path, source, tree, depth_limit, expand_nodes, deadline)
-        }
-        LanguageId::C | LanguageId::Cpp => {
-            c::build_c_skeleton(path, source, tree, expand_nodes, deadline)
-        }
-    }
+    builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .build_semantic_skeleton(path, source, tree, depth_limit, expand_nodes, deadline)
 }
 
 pub(crate) fn find_semantic_node_with_deadline<'tree>(
@@ -58,21 +55,24 @@ pub(crate) fn find_semantic_node_with_deadline<'tree>(
     target_path: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
-    match language_id {
-        LanguageId::Python => {
-            python::find_python_semantic_node(path, tree, source, target_path, deadline)
-        }
-        LanguageId::C | LanguageId::Cpp => {
-            c::find_c_semantic_node(path, tree, source, target_path, deadline)
-        }
-    }
+    builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .find_semantic_node(path, tree, source, target_path, deadline)
 }
 
 pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<'_>> {
+    builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .ascend_to_symbol(node)
+}
+
+pub(crate) fn ascend_python_to_symbol(node: Node<'_>) -> Option<Node<'_>> {
     let mut current = Some(node);
 
     while let Some(candidate) = current {
-        if matches!(language_id, LanguageId::Python) && candidate.kind() == "decorated_definition" {
+        if candidate.kind() == "decorated_definition" {
             let mut cursor = candidate.walk();
             for child in candidate.named_children(&mut cursor) {
                 if matches!(child.kind(), "class_definition" | "function_definition") {
@@ -81,28 +81,34 @@ pub fn ascend_to_symbol(language_id: LanguageId, node: Node<'_>) -> Option<Node<
             }
         }
 
-        let is_symbol = match language_id {
-            LanguageId::Python => {
-                matches!(candidate.kind(), "class_definition" | "function_definition")
-            }
-            LanguageId::C | LanguageId::Cpp => {
-                matches!(
-                    candidate.kind(),
-                    "alias_declaration"
-                        | "class_specifier"
-                        | "concept_definition"
-                        | "enum_specifier"
-                        | "enumerator"
-                        | "namespace_alias_definition"
-                        | "struct_specifier"
-                        | "template_instantiation"
-                        | "type_definition"
-                        | "union_specifier"
-                        | "using_declaration"
-                ) || candidate.kind() == "function_definition"
-                    || c::c_is_callable_declaration(candidate)
-            }
-        };
+        if matches!(candidate.kind(), "class_definition" | "function_definition") {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+
+    None
+}
+
+pub(crate) fn ascend_c_to_symbol(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = Some(node);
+
+    while let Some(candidate) = current {
+        let is_symbol = matches!(
+            candidate.kind(),
+            "alias_declaration"
+                | "class_specifier"
+                | "concept_definition"
+                | "enum_specifier"
+                | "enumerator"
+                | "namespace_alias_definition"
+                | "struct_specifier"
+                | "template_instantiation"
+                | "type_definition"
+                | "union_specifier"
+                | "using_declaration"
+        ) || candidate.kind() == "function_definition"
+            || c::c_is_callable_declaration(candidate);
 
         if is_symbol {
             return Some(candidate);

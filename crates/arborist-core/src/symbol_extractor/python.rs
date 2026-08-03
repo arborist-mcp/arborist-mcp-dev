@@ -15,7 +15,7 @@ use crate::semantic::{
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
-pub(super) fn index_python_symbols_with_deadline(
+pub(crate) fn index_python_symbols_with_deadline(
     path: &Path,
     source: &str,
     root: Node<'_>,

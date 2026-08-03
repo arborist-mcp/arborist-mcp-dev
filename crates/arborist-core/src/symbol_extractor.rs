@@ -2,13 +2,12 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use crate::language::ParsedDocument;
-use crate::model::LanguageId;
+use crate::language::{ParsedDocument, builtin_language_registry};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
-mod c;
-mod python;
+pub(crate) mod c;
+pub(crate) mod python;
 
 pub(crate) fn index_symbols_from_document(
     path: &Path,
@@ -24,28 +23,10 @@ pub(crate) fn index_symbols_from_document_with_deadline(
     document: &ParsedDocument,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<IndexedSymbol>> {
-    match document.language_id {
-        LanguageId::Python => python::index_python_symbols_with_deadline(
-            path,
-            source,
-            document.tree.root_node(),
-            deadline,
-        ),
-        LanguageId::C => c::index_c_symbols_with_deadline(
-            path,
-            source,
-            document.tree.root_node(),
-            false,
-            deadline,
-        ),
-        LanguageId::Cpp => c::index_c_symbols_with_deadline(
-            path,
-            source,
-            document.tree.root_node(),
-            true,
-            deadline,
-        ),
-    }
+    builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .extract_symbols(path, source, document, deadline)
 }
 
 #[cfg(test)]
