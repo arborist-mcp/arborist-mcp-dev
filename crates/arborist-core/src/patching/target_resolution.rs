@@ -3,9 +3,6 @@ use std::path::Path;
 use anyhow::{Result, anyhow, bail};
 use tree_sitter::Node;
 
-use super::python_replacement::{
-    normalize_python_replacement_indentation, python_replacement_starts_with_decorator,
-};
 use crate::deadline::DeadlineCheck;
 use crate::language::{
     ParsedDocument, builtin_language_registry, normalize_absolute_path, offset_for_position,
@@ -85,21 +82,18 @@ pub(crate) fn prepare_patch_replacement_with_deadline(
 ) -> Result<PreparedPatchReplacement> {
     let target = semantic_target_info(path, source, semantic_target, deadline)?;
     check_deadline(deadline, "patch replacement preparation")?;
-    let replacement = match target.language_id {
-        LanguageId::Python => normalize_python_replacement_indentation(
-            source,
-            target.start_byte,
-            target.end_byte,
-            target.node_kind == "decorated_definition",
-            new_code,
-        ),
-        LanguageId::C | LanguageId::Cpp => new_code.to_string(),
-    };
+    let adapter = builtin_language_registry()
+        .adapter(target.language_id)
+        .expect("every LanguageId must have a builtin language adapter");
+    let replacement = adapter.normalize_patch_replacement(
+        source,
+        target.start_byte,
+        target.end_byte,
+        &target.node_kind,
+        new_code,
+    )?;
     let mut validation_issues = Vec::new();
-    if target.language_id == LanguageId::Python
-        && target.node_kind == "decorated_definition"
-        && !python_replacement_starts_with_decorator(&replacement)
-    {
+    if !adapter.replacement_preserves_required_wrappers(&target.node_kind, &replacement) {
         validation_issues.push(ValidationIssue {
             kind: "decorator_guard".to_string(),
             message: "replacement would remove existing Python decorator(s); include decorators in new_code or provide an explicit bypass_reason".to_string(),
@@ -179,7 +173,10 @@ fn semantic_target_info(
         deadline,
     )?
     .ok_or_else(|| anyhow!("semantic path not found: {semantic_target}"))?;
-    let target_node = python_symbol_replacement_node(document.language_id, target_node);
+    let target_node = builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .patch_replacement_node(target_node);
 
     Ok(SemanticTargetInfo {
         language_id: document.language_id,
@@ -239,20 +236,6 @@ fn replacement_content_end(
         return Some(patch_start);
     }
     Some(patch_start + content_len - 1)
-}
-
-fn python_symbol_replacement_node<'tree>(
-    language_id: LanguageId,
-    node: Node<'tree>,
-) -> Node<'tree> {
-    if language_id == LanguageId::Python
-        && let Some(parent) = node.parent()
-        && parent.kind() == "decorated_definition"
-    {
-        return parent;
-    }
-
-    node
 }
 
 #[cfg(test)]

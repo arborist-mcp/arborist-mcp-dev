@@ -5,7 +5,7 @@ mod python_bindings;
 mod python_imports;
 mod python_patterns;
 mod python_references;
-mod python_replacement;
+pub(crate) mod python_replacement;
 mod python_visibility;
 mod reference_validation;
 mod result_builder;

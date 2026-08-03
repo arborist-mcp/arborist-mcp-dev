@@ -130,6 +130,19 @@ pub(crate) trait LanguageAdapter: Sync {
         source: &str,
     ) -> Result<Option<Vec<Node<'tree>>>>;
 
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree>;
+
+    fn normalize_patch_replacement(
+        &self,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+        node_kind: &str,
+        new_code: &str,
+    ) -> Result<String>;
+
+    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool;
+
     fn query_capture_owner(
         &self,
         path: &Path,
@@ -327,6 +340,38 @@ impl LanguageAdapter for PythonAdapter {
         crate::semantic::python_symbol_id_for_node(path, node, source, deadline).map(Some)
     }
 
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        node.parent()
+            .filter(|parent| parent.kind() == "decorated_definition")
+            .unwrap_or(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+        node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        Ok(
+            crate::patching::python_replacement::normalize_python_replacement_indentation(
+                source,
+                start_byte,
+                end_byte,
+                node_kind == "decorated_definition",
+                new_code,
+            ),
+        )
+    }
+
+    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
+        node_kind != "decorated_definition"
+            || crate::patching::python_replacement::python_replacement_starts_with_decorator(
+                replacement,
+            )
+    }
+
     fn query_owner_candidates<'tree>(
         &self,
         _path: &Path,
@@ -430,6 +475,29 @@ impl LanguageAdapter for CAdapter {
         crate::semantic::c_symbol_id_for_node(path, node, source)
     }
 
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        node
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        Ok(new_code.to_string())
+    }
+
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        true
+    }
+
     fn query_owner_candidates<'tree>(
         &self,
         path: &Path,
@@ -524,6 +592,25 @@ impl LanguageAdapter for CppAdapter {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
         C_ADAPTER.symbol_id_for_node(path, node, source, deadline)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        C_ADAPTER.patch_replacement_node(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+        node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        C_ADAPTER.normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+    }
+
+    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
+        C_ADAPTER.replacement_preserves_required_wrappers(node_kind, replacement)
     }
 
     fn query_owner_candidates<'tree>(

@@ -4,7 +4,7 @@ use tree_sitter::Node;
 
 use crate::language::parse_document;
 
-pub(super) fn normalize_python_replacement_indentation(
+pub(crate) fn normalize_python_replacement_indentation(
     source: &str,
     target_start: usize,
     target_end: usize,
@@ -39,7 +39,7 @@ pub(super) fn normalize_python_replacement_indentation(
     )
 }
 
-pub(super) fn python_replacement_starts_with_decorator(replacement: &str) -> bool {
+pub(crate) fn python_replacement_starts_with_decorator(replacement: &str) -> bool {
     replacement
         .lines()
         .map(str::trim_start)
