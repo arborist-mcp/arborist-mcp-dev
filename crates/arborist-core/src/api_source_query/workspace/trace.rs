@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::{SourceQueryRoot, with_source_query_context_with_timeout};
+use super::super::{SourceQueryRoot, with_source_query_context_with_trace_deadline};
 use crate::model::*;
 
 pub fn trace_symbol_graph_at_position_with_source(
@@ -30,14 +30,14 @@ pub fn trace_symbol_graph_at_position_with_source_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
+        |context, deadline| {
             context
-                .trace_symbol_graph_at_position_with_timeout(path, position, direction, timeout_ms)
+                .trace_symbol_graph_at_position_with_deadline(path, position, direction, deadline)
         },
     )
 }
@@ -67,13 +67,13 @@ pub fn trace_symbol_graph_with_source_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.trace_symbol_graph_with_timeout(symbol_path, direction, timeout_ms)
+        |context, deadline| {
+            context.trace_symbol_graph_with_deadline(symbol_path, direction, deadline)
         },
     )
 }
@@ -111,14 +111,14 @@ pub fn trace_symbol_neighborhood_at_position_with_source_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.trace_symbol_neighborhood_at_position_with_timeout(
-                path, position, direction, max_depth, max_nodes, timeout_ms,
+        |context, deadline| {
+            context.trace_symbol_neighborhood_at_position_with_deadline(
+                path, position, direction, max_depth, max_nodes, deadline,
             )
         },
     )
@@ -157,18 +157,18 @@ pub fn trace_symbol_neighborhood_with_source_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Workspace(workspace_root),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.trace_symbol_neighborhood_with_timeout(
+        |context, deadline| {
+            context.trace_symbol_neighborhood_with_deadline(
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
-                timeout_ms,
+                deadline,
             )
         },
     )

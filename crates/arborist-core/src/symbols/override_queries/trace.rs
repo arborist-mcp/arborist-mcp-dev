@@ -28,6 +28,22 @@ pub fn trace_symbol_graph_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_graph_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        symbol_path,
+        direction,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_graph_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolGraphResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -39,7 +55,7 @@ pub fn trace_symbol_graph_with_overrides_and_timeout(
         indexed_files,
         symbol_path,
         direction,
-        &deadline,
+        deadline,
     )
 }
 
@@ -53,6 +69,26 @@ pub fn trace_symbol_neighborhood_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_neighborhood_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_neighborhood_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolNeighborhoodResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -66,7 +102,7 @@ pub fn trace_symbol_neighborhood_with_overrides_and_timeout(
         direction,
         max_depth,
         max_nodes,
-        &deadline,
+        deadline,
     )
 }
 
@@ -97,6 +133,24 @@ pub fn trace_symbol_graph_at_position_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_graph_at_position_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        file_path,
+        position,
+        direction,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_graph_at_position_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolGraphResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_workspace_symbols_with_overrides_at_path_with_timeout(
@@ -112,7 +166,7 @@ pub fn trace_symbol_graph_at_position_with_overrides_and_timeout(
         position,
         direction,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -150,6 +204,29 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_neighborhood_at_position_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_symbol_neighborhood_at_position_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolNeighborhoodResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (file_path, resolved_symbols, indexed_files) =
         load_workspace_symbols_with_overrides_at_path_with_timeout(
@@ -167,7 +244,7 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -179,6 +256,22 @@ pub fn trace_symbol_graph_from_index_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_graph_from_index_with_overrides_with_deadline(
+        db_path,
+        file_overrides,
+        symbol_path,
+        direction,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_graph_from_index_with_overrides_with_deadline(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolGraphResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -191,7 +284,7 @@ pub fn trace_symbol_graph_from_index_with_overrides_and_timeout(
         indexed_files,
         symbol_path,
         direction,
-        &deadline,
+        deadline,
     )
 }
 
@@ -205,6 +298,26 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_neighborhood_from_index_with_overrides_with_deadline(
+        db_path,
+        file_overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_neighborhood_from_index_with_overrides_with_deadline(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolNeighborhoodResult> {
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -219,7 +332,7 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
         direction,
         max_depth,
         max_nodes,
-        &deadline,
+        deadline,
     )
 }
 
@@ -250,6 +363,24 @@ pub fn trace_symbol_graph_at_position_from_index_with_overrides_and_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolGraphResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_graph_at_position_from_index_with_overrides_with_deadline(
+        db_path,
+        file_overrides,
+        file_path,
+        position,
+        direction,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_symbol_graph_at_position_from_index_with_overrides_with_deadline(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolGraphResult> {
     let file_path = normalize_absolute_path(file_path)?;
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) =
@@ -265,7 +396,7 @@ pub fn trace_symbol_graph_at_position_from_index_with_overrides_and_timeout(
         position,
         direction,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -303,6 +434,29 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides_and_timeo
     timeout_ms: Option<u64>,
 ) -> Result<TraceSymbolNeighborhoodResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_symbol_neighborhood_at_position_from_index_with_overrides_with_deadline(
+        db_path,
+        file_overrides,
+        file_path,
+        position,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn trace_symbol_neighborhood_at_position_from_index_with_overrides_with_deadline(
+    db_path: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    file_path: &Path,
+    position: &Position,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolNeighborhoodResult> {
     let file_path = normalize_absolute_path(file_path)?;
     let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
     let (resolved_symbols, indexed_files) =
@@ -320,6 +474,6 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides_and_timeo
         max_depth,
         max_nodes,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }

@@ -6,6 +6,7 @@ use anyhow::{Result, anyhow};
 use crate::language::normalize_absolute_path;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::source_overlay::source_override_for_path;
+use crate::symbol_trace::TraceQueryDeadline;
 
 mod list;
 mod read;
@@ -104,6 +105,20 @@ impl SymbolQueryContext {
                 workspace(workspace_root, &self.file_overrides, timeout_ms)
             }
             SymbolQueryBackend::Index(db_path) => index(db_path, &self.file_overrides, timeout_ms),
+        }
+    }
+
+    pub(crate) fn dispatch_with_deadline<T>(
+        &self,
+        deadline: &TraceQueryDeadline,
+        workspace: impl FnOnce(&Path, &BTreeMap<String, String>, &TraceQueryDeadline) -> Result<T>,
+        index: impl FnOnce(&Path, &BTreeMap<String, String>, &TraceQueryDeadline) -> Result<T>,
+    ) -> Result<T> {
+        match &self.backend {
+            SymbolQueryBackend::Workspace(workspace_root) => {
+                workspace(workspace_root, &self.file_overrides, deadline)
+            }
+            SymbolQueryBackend::Index(db_path) => index(db_path, &self.file_overrides, deadline),
         }
     }
 }
