@@ -43,9 +43,6 @@ pub(crate) use trace::{
     trace_symbol_neighborhood_at_position_from_symbols_with_deadline,
 };
 
-#[cfg(test)]
-pub(crate) use trace::trace_from_symbols_with_timeout;
-
 pub(crate) fn read_symbol_from_meta(
     symbol: &SymbolMeta,
     indexed_files: usize,

@@ -13,40 +13,6 @@ use crate::symbol_trace::{
     trace_neighborhood_from_symbol_with_deadline,
 };
 
-#[allow(dead_code)]
-pub(crate) fn trace_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-) -> Result<TraceSymbolGraphResult> {
-    trace_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
-        direction,
-        None,
-    )
-}
-
-pub(crate) fn trace_from_symbols_with_timeout(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolGraphResult> {
-    validate_trace_symbol_path(symbol_path)?;
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_from_symbols_with_deadline(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
-        direction,
-        &deadline,
-    )
-}
-
 pub(crate) fn trace_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -87,47 +53,6 @@ pub(crate) fn trace_neighborhood_from_symbols_with_deadline(
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn trace_symbol_graph_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<TraceSymbolGraphResult> {
-    trace_symbol_graph_at_position_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        file_path,
-        position,
-        direction,
-        file_overrides,
-        None,
-    )
-}
-
-pub(crate) fn trace_symbol_graph_at_position_from_symbols_with_timeout(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolGraphResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_symbol_graph_at_position_from_symbols_with_deadline(
-        resolved_symbols,
-        indexed_files,
-        file_path,
-        position,
-        direction,
-        file_overrides,
-        &deadline,
-    )
-}
-
 pub(crate) fn trace_symbol_graph_at_position_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -146,57 +71,6 @@ pub(crate) fn trace_symbol_graph_at_position_from_symbols_with_deadline(
         Some(deadline),
     )?;
     trace_from_symbol_with_deadline(resolved_symbols, indexed_files, symbol, direction, deadline)
-}
-
-#[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
-pub(crate) fn trace_symbol_neighborhood_at_position_from_symbols(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        file_path,
-        position,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    file_path: &Path,
-    position: &Position,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_symbol_neighborhood_at_position_from_symbols_with_deadline(
-        resolved_symbols,
-        indexed_files,
-        file_path,
-        position,
-        direction,
-        max_depth,
-        max_nodes,
-        file_overrides,
-        &deadline,
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -11,48 +11,6 @@ use crate::symbol_summary::symbol_summary_from_meta;
 
 use super::{MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, TraceQueryDeadline};
 
-#[allow(dead_code)]
-pub(crate) fn trace_neighborhood_from_symbol(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    trace_neighborhood_from_symbol_with_timeout(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        None,
-    )
-}
-
-pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol: &SymbolMeta,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    validate_neighborhood_bounds(max_depth, max_nodes)?;
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_neighborhood_from_symbol_with_deadline(
-        resolved_symbols,
-        indexed_files,
-        symbol,
-        direction,
-        max_depth,
-        max_nodes,
-        &deadline,
-    )
-}
-
 pub(crate) fn trace_neighborhood_from_symbol_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
@@ -62,6 +20,7 @@ pub(crate) fn trace_neighborhood_from_symbol_with_deadline(
     max_nodes: usize,
     deadline: &TraceQueryDeadline,
 ) -> Result<TraceSymbolNeighborhoodResult> {
+    validate_neighborhood_bounds(max_depth, max_nodes)?;
     deadline.check("starting neighborhood expansion")?;
 
     let root = symbol.clone().with_origin_type("trace_root");

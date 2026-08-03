@@ -45,8 +45,7 @@ pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_deadline;
 mod tests {
     use super::{
         MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline,
-        neighborhood::validate_neighborhood_bounds, trace_from_symbol_with_deadline,
-        trace_neighborhood_from_symbol_with_deadline,
+        trace_from_symbol_with_deadline, trace_neighborhood_from_symbol_with_deadline,
     };
     use crate::model::{SymbolMeta, SymbolMetaInit, TraceDirection};
     use crate::symbol_summary::{
@@ -140,12 +139,28 @@ mod tests {
     }
 
     #[test]
-    fn validates_neighborhood_bounds() {
-        assert!(validate_neighborhood_bounds(MAX_GRAPH_DEPTH, 1).is_ok());
-        assert!(validate_neighborhood_bounds(MAX_GRAPH_DEPTH + 1, 1).is_err());
-        assert!(validate_neighborhood_bounds(0, 0).is_err());
-        assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES).is_ok());
-        assert!(validate_neighborhood_bounds(0, MAX_GRAPH_NODES + 1).is_err());
+    fn neighborhood_expansion_validates_bounds() {
+        let symbol = test_symbol();
+        let deadline = TraceQueryDeadline::new(None).expect("unbounded deadline should be valid");
+
+        for (max_depth, max_nodes, expected_message) in [
+            (MAX_GRAPH_DEPTH + 1, 1, "max_depth must not exceed"),
+            (0, 0, "max_nodes must be greater than zero"),
+            (0, MAX_GRAPH_NODES + 1, "max_nodes must not exceed"),
+        ] {
+            let error = trace_neighborhood_from_symbol_with_deadline(
+                std::slice::from_ref(&symbol),
+                1,
+                &symbol,
+                TraceDirection::Both,
+                max_depth,
+                max_nodes,
+                &deadline,
+            )
+            .expect_err("invalid neighborhood bounds should be rejected");
+
+            assert!(error.to_string().contains(expected_message));
+        }
     }
 
     #[test]

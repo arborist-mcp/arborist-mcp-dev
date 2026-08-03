@@ -6,7 +6,8 @@ use crate::language::normalize_absolute_path;
 use crate::model::{SymbolMeta, TraceDirection, TraceSymbolGraphResult};
 use crate::symbol_index_state::load_symbol_index;
 use crate::symbol_index_workspace::load_live_workspace_symbols;
-use crate::symbol_query_execution::trace_from_symbols_with_timeout;
+use crate::symbol_query_execution::trace_from_symbols_with_deadline;
+use crate::symbol_trace::TraceQueryDeadline;
 
 pub(super) struct PreparedSymbolGraph {
     symbols: Vec<SymbolMeta>,
@@ -32,12 +33,13 @@ impl PreparedSymbolGraph {
     }
 
     pub(super) fn trace(&self, symbol_path: &str) -> Result<TraceSymbolGraphResult> {
-        trace_from_symbols_with_timeout(
+        let deadline = TraceQueryDeadline::new(None)?;
+        trace_from_symbols_with_deadline(
             &self.symbols,
             self.indexed_files,
             symbol_path,
             TraceDirection::Both,
-            None,
+            &deadline,
         )
     }
 }
