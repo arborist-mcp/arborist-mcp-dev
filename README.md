@@ -21,6 +21,9 @@ Current layers:
   tool catalog generation, and protocol validation.
 - [Tool guide](docs/tools.md): supported tool families, source overlays, patch
   preview, symbol indexes, trace/context workflows, and C/C++ status.
+- [Multi-language support design](docs/multi-language-support-design.md):
+  proposed adapter architecture, capability model, migration plan, and language
+  expansion roadmap.
 - [Generated tool catalog](docs/tool-catalog.json): exact `tools/list` snapshot.
 
 ## Language Support
