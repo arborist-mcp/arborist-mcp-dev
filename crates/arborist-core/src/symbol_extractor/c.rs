@@ -14,7 +14,7 @@ use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
     c_symbol_nodes, c_symbol_nodes_with_deadline, semantic_parent_path,
 };
-use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::symbol_index_model::{IndexedSymbol, reference_facts_from_legacy, symbol_base_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn index_c_symbols_with_deadline(
@@ -61,6 +61,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                         parameters: Vec::new(),
                         return_type: None,
                         docstring: None,
+                        reference_facts: Vec::new(),
                         references_by_name: BTreeSet::new(),
                         call_arities_by_name: BTreeMap::new(),
                     });
@@ -82,6 +83,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                         parameters: c_parameters(child, source)?,
                         return_type: c_return_type(child, source)?,
                         docstring: None,
+                        reference_facts: Vec::new(),
                         references_by_name: BTreeSet::new(),
                         call_arities_by_name: BTreeMap::new(),
                     });
@@ -125,6 +127,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                         }
                     }
                     references.extend(call_arities.keys().cloned());
+                    let reference_facts = reference_facts_from_legacy(&references, &call_arities);
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
                         symbol_id: String::new(),
@@ -139,6 +142,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                         parameters: c_parameters(child, source)?,
                         return_type: c_return_type(child, source)?,
                         docstring: None,
+                        reference_facts,
                         references_by_name: references,
                         call_arities_by_name: call_arities,
                     });

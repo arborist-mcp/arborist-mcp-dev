@@ -144,8 +144,23 @@ pub(crate) struct IndexedSymbol {
     pub(crate) parameters: Vec<String>,
     pub(crate) return_type: Option<String>,
     pub(crate) docstring: Option<String>,
+    pub(crate) reference_facts: Vec<ReferenceFact>,
+    // Retained until persisted indexes have fully transitioned to reference_facts_json.
     pub(crate) references_by_name: BTreeSet<String>,
     pub(crate) call_arities_by_name: BTreeMap<String, BTreeSet<usize>>,
+}
+
+impl IndexedSymbol {
+    pub(crate) fn effective_reference_facts(&self) -> std::borrow::Cow<'_, [ReferenceFact]> {
+        if self.reference_facts.is_empty() && !self.references_by_name.is_empty() {
+            return std::borrow::Cow::Owned(reference_facts_from_legacy(
+                &self.references_by_name,
+                &self.call_arities_by_name,
+            ));
+        }
+
+        std::borrow::Cow::Borrowed(&self.reference_facts)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -194,7 +209,8 @@ mod tests {
 
     use super::{
         CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
-        CppReferenceDetails, ReferenceLanguageDetails, reference_facts_from_legacy,
+        CppReferenceDetails, IndexedSymbol, ReferenceFact, ReferenceLanguageDetails,
+        reference_facts_from_legacy,
     };
 
     #[test]
@@ -206,6 +222,36 @@ mod tests {
         assert_eq!(facts[0].spelling, "helper");
         assert_eq!(facts[0].call_arities, None);
         assert_eq!(facts[0].language_details, ReferenceLanguageDetails::None);
+    }
+
+    #[test]
+    fn indexed_symbol_prefers_explicit_reference_facts_over_legacy_fields() {
+        let symbol = IndexedSymbol {
+            symbol_id: "caller".to_string(),
+            semantic_path: "caller".to_string(),
+            base_name: "caller".to_string(),
+            scope_path: None,
+            file_path: "caller.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            reference_facts: vec![ReferenceFact {
+                spelling: "structured_helper".to_string(),
+                call_arities: None,
+                language_details: ReferenceLanguageDetails::None,
+            }],
+            references_by_name: BTreeSet::from(["legacy_helper".to_string()]),
+            call_arities_by_name: BTreeMap::new(),
+        };
+
+        let facts = symbol.effective_reference_facts();
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].spelling, "structured_helper");
     }
 
     #[test]

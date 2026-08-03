@@ -75,6 +75,11 @@ pub(crate) fn index_python_symbols_with_deadline(
         let parameters = python_parameters(node, source).unwrap_or_default();
         let return_type = python_return_type(node, source).ok().flatten();
         let docstring = python_docstring(node, source).ok().flatten();
+        let call_arities_by_name = std::collections::BTreeMap::new();
+        let reference_facts = crate::symbol_index_model::reference_facts_from_legacy(
+            &references,
+            &call_arities_by_name,
+        );
 
         symbols.push(IndexedSymbol {
             symbol_id: String::new(),
@@ -89,8 +94,9 @@ pub(crate) fn index_python_symbols_with_deadline(
             parameters,
             return_type,
             docstring,
+            reference_facts,
             references_by_name: references,
-            call_arities_by_name: std::collections::BTreeMap::new(),
+            call_arities_by_name,
         });
     };
 

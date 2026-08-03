@@ -11,7 +11,7 @@ use super::loading_values::{
 use crate::deadline::DeadlineCheck;
 use crate::index_schema::load_indexed_files_metadata_with_deadline;
 use crate::model::{SymbolMeta, SymbolMetaInit};
-use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::symbol_index_model::{IndexedSymbol, reference_facts_from_legacy, symbol_base_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn load_indexed_symbols_grouped_by_file(
@@ -81,8 +81,10 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         let reference_names_json: String = row.get(11)?;
         let reference_call_arities_json: String = row.get(12)?;
         let parameters = string_list_from_json_column(&parameters_json, 8, "parameters_json")?;
-        let reference_names =
-            string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?;
+        let reference_names: std::collections::BTreeSet<_> =
+            string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?
+                .into_iter()
+                .collect();
         let call_arities_by_name = call_arities_from_json_column(&reference_call_arities_json, 12)?;
         if call_arities_by_name
             .keys()
@@ -105,6 +107,7 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
             .strip_prefix(&overload_prefix)
             .is_some_and(|suffix| suffix.starts_with("overload["));
         let scope_path = validated_scope_path(row, 2, &semantic_path)?;
+        let reference_facts = reference_facts_from_legacy(&reference_names, &call_arities_by_name);
         Ok(IndexedSymbol {
             symbol_id,
             base_name: symbol_base_name(&semantic_path),
@@ -118,7 +121,8 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
             parameters,
             return_type: optional_nonempty_string_from_row(row, 9, "return_type")?,
             docstring: optional_nonempty_string_from_row(row, 10, "docstring")?,
-            references_by_name: reference_names.into_iter().collect(),
+            reference_facts,
+            references_by_name: reference_names,
             call_arities_by_name,
         })
     })?;

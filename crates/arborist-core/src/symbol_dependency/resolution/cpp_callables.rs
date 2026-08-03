@@ -210,6 +210,7 @@ mod tests {
                 .collect(),
             return_type: None,
             docstring: None,
+            reference_facts: Vec::new(),
             references_by_name: BTreeSet::new(),
             call_arities_by_name: BTreeMap::new(),
         }

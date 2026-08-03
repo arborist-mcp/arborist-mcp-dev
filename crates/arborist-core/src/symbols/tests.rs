@@ -81,6 +81,7 @@ fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
         parameters: Vec::new(),
         return_type: None,
         docstring: None,
+        reference_facts: Vec::new(),
         references_by_name: BTreeSet::new(),
         call_arities_by_name: BTreeMap::new(),
     };
@@ -271,6 +272,7 @@ fn invalid_indexed_symbol(file_path: &str) -> IndexedSymbol {
         parameters: Vec::new(),
         return_type: None,
         docstring: None,
+        reference_facts: Vec::new(),
         references_by_name: BTreeSet::new(),
         call_arities_by_name: BTreeMap::new(),
     }
@@ -301,6 +303,7 @@ fn valid_indexed_symbol(file_path: &str) -> IndexedSymbol {
         parameters: Vec::new(),
         return_type: None,
         docstring: None,
+        reference_facts: Vec::new(),
         references_by_name: BTreeSet::new(),
         call_arities_by_name: BTreeMap::new(),
     }

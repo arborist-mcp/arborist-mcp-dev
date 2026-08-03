@@ -23,9 +23,7 @@ use super::type_alias::{
 use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
-use crate::symbol_index_model::{
-    IndexedSymbol, ReferenceLanguageDetails, reference_facts_from_legacy,
-};
+use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Clone, Copy)]
@@ -98,14 +96,12 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     let language_id = *languages_by_file
         .entry(symbol.file_path.as_str())
         .or_insert_with(|| detect_language(Path::new(&symbol.file_path)).ok());
-    for reference in
-        reference_facts_from_legacy(&symbol.references_by_name, &symbol.call_arities_by_name)
-    {
+    for reference in symbol.effective_reference_facts().iter() {
         if let Some(deadline) = deadline {
             deadline.check("resolving symbol references")?;
         }
         let (rvalue_this_receiver, const_this_receiver, explicit_member_receiver) =
-            match reference.language_details {
+            match &reference.language_details {
                 ReferenceLanguageDetails::None => (false, false, false),
                 ReferenceLanguageDetails::Cpp(details) => (
                     details.rvalue_receiver,
@@ -433,6 +429,7 @@ mod tests {
             parameters: Vec::new(),
             return_type: None,
             docstring: None,
+            reference_facts: Vec::new(),
             references_by_name: BTreeSet::from(["callee".to_string()]),
             call_arities_by_name: BTreeMap::new(),
         };
