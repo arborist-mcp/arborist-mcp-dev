@@ -57,24 +57,66 @@ fn with_source_query_context_with_timeout<T>(
 mod tests {
     use std::path::Path;
 
-    use super::workspace::list_symbols_with_source_filtered_with_timeout;
+    use super::workspace::{
+        list_symbols_with_source_filtered_with_timeout, read_symbol_with_source_and_timeout,
+        search_symbols_with_source_filtered_with_timeout,
+        trace_symbol_graph_with_source_and_timeout,
+    };
+    use crate::model::TraceDirection;
 
-    #[test]
-    fn source_query_rejects_zero_timeout_before_overlay_setup() {
-        let error = list_symbols_with_source_filtered_with_timeout(
-            Path::new("missing-workspace"),
-            Path::new("../outside.py"),
-            "not valid source",
-            10,
-            None,
-            None,
-            Some(0),
-        )
-        .expect_err("zero timeout should be rejected before context setup");
+    fn assert_zero_timeout(error: anyhow::Error) {
         assert!(
             error
                 .to_string()
                 .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn source_query_families_reject_zero_timeout_before_overlay_setup() {
+        let workspace = Path::new("missing-workspace");
+        let path = Path::new("../outside.py");
+        let source = "not valid source";
+
+        assert_zero_timeout(
+            list_symbols_with_source_filtered_with_timeout(
+                workspace,
+                path,
+                source,
+                10,
+                None,
+                None,
+                Some(0),
+            )
+            .expect_err("list should reject zero timeout before context setup"),
+        );
+        assert_zero_timeout(
+            search_symbols_with_source_filtered_with_timeout(
+                workspace,
+                path,
+                source,
+                "helper",
+                10,
+                None,
+                None,
+                Some(0),
+            )
+            .expect_err("search should reject zero timeout before context setup"),
+        );
+        assert_zero_timeout(
+            read_symbol_with_source_and_timeout(workspace, path, source, "helper", Some(0))
+                .expect_err("read should reject zero timeout before context setup"),
+        );
+        assert_zero_timeout(
+            trace_symbol_graph_with_source_and_timeout(
+                workspace,
+                path,
+                source,
+                "helper",
+                TraceDirection::Both,
+                Some(0),
+            )
+            .expect_err("trace should reject zero timeout before context setup"),
         );
     }
 }
