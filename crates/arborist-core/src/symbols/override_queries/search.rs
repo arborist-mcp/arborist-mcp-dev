@@ -9,11 +9,11 @@ use crate::model::{
 };
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides;
 use crate::symbol_query_execution::{
-    search_context_from_symbols, search_context_from_symbols_with_timeout,
-    search_discovery_context_from_symbols, search_discovery_context_from_symbols_with_timeout,
-    search_from_symbols, search_from_symbols_with_timeout,
+    search_context_from_symbols, search_context_from_symbols_with_deadline,
+    search_discovery_context_from_symbols, search_discovery_context_from_symbols_with_deadline,
+    search_from_symbols, search_from_symbols_with_deadline,
     search_neighborhood_context_from_symbols,
-    search_neighborhood_context_from_symbols_with_timeout,
+    search_neighborhood_context_from_symbols_with_deadline,
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
@@ -58,15 +58,14 @@ pub fn search_symbols_with_overrides_filtered_with_timeout(
         timeout_ms,
     )?;
     deadline.check("workspace symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol search")?;
-    search_from_symbols_with_timeout(
+    search_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
         limit,
         file_path_contains,
         node_kind,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -88,15 +87,14 @@ pub fn search_symbols_from_index_with_overrides_filtered_with_timeout(
             timeout_ms,
         )?;
     deadline.check("index symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
-    search_from_symbols_with_timeout(
+    search_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
         limit,
         file_path_contains,
         node_kind,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -117,8 +115,7 @@ pub fn search_symbols_context_with_overrides_filtered_with_timeout(
         timeout_ms,
     )?;
     deadline.check("workspace symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol search")?;
-    search_context_from_symbols_with_timeout(
+    search_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -126,7 +123,7 @@ pub fn search_symbols_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -148,8 +145,7 @@ pub fn search_symbols_context_from_index_with_overrides_filtered_with_timeout(
             timeout_ms,
         )?;
     deadline.check("index symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
-    search_context_from_symbols_with_timeout(
+    search_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -157,7 +153,7 @@ pub fn search_symbols_context_from_index_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -182,8 +178,7 @@ pub fn search_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
         timeout_ms,
     )?;
     deadline.check("workspace symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol search")?;
-    search_neighborhood_context_from_symbols_with_timeout(
+    search_neighborhood_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -194,7 +189,7 @@ pub fn search_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -220,8 +215,7 @@ pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_wi
             timeout_ms,
         )?;
     deadline.check("index symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
-    search_neighborhood_context_from_symbols_with_timeout(
+    search_neighborhood_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -232,7 +226,7 @@ pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_wi
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -257,8 +251,7 @@ pub fn search_symbols_discovery_context_with_overrides_filtered_with_timeout(
         timeout_ms,
     )?;
     deadline.check("workspace symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("workspace symbol search")?;
-    search_discovery_context_from_symbols_with_timeout(
+    search_discovery_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -269,7 +262,7 @@ pub fn search_symbols_discovery_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -295,8 +288,7 @@ pub fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_
             timeout_ms,
         )?;
     deadline.check("index symbol search")?;
-    let timeout_ms = deadline.remaining_timeout_ms("index symbol search")?;
-    search_discovery_context_from_symbols_with_timeout(
+    search_discovery_context_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         query,
@@ -307,7 +299,7 @@ pub fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 

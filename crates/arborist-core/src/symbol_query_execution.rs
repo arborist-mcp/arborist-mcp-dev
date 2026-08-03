@@ -31,13 +31,10 @@ pub(crate) use read::{
 };
 pub(crate) use search::{
     search_context_from_symbols, search_context_from_symbols_with_deadline,
-    search_context_from_symbols_with_timeout, search_discovery_context_from_symbols,
-    search_discovery_context_from_symbols_with_deadline,
-    search_discovery_context_from_symbols_with_timeout, search_from_symbols,
-    search_from_symbols_with_deadline, search_from_symbols_with_timeout,
+    search_discovery_context_from_symbols, search_discovery_context_from_symbols_with_deadline,
+    search_from_symbols, search_from_symbols_with_deadline,
     search_neighborhood_context_from_symbols,
     search_neighborhood_context_from_symbols_with_deadline,
-    search_neighborhood_context_from_symbols_with_timeout,
 };
 pub(crate) use trace::{
     trace_from_symbols_with_deadline, trace_neighborhood_from_symbols_with_deadline,
