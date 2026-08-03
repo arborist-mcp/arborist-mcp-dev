@@ -7,6 +7,7 @@ use crate::model::{
     Position, SymbolContextResult, SymbolNeighborhoodContextResult,
     SymbolReadDiscoveryContextResult, SymbolReadResult, TraceDirection,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols;
 
 impl SymbolQueryContext {
@@ -19,21 +20,31 @@ impl SymbolQueryContext {
         symbol_path: &str,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolReadResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_with_deadline(symbol_path, &deadline)
+    }
+
+    pub(crate) fn read_symbol_with_deadline(
+        &self,
+        symbol_path: &str,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolReadResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     symbol_path,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     symbol_path,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -53,19 +64,30 @@ impl SymbolQueryContext {
         position: &Position,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolReadResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_at_position_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_at_position_with_deadline(file_path, position, &deadline)
+    }
+
+    pub(crate) fn read_symbol_at_position_with_deadline(
+        &self,
+        file_path: &Path,
+        position: &Position,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolReadResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_at_position_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     file_path,
                     position,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_at_position_from_index_with_overrides_with_timeout(
-                    db_path, overrides, file_path, position, timeout_ms,
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_at_position_from_index_with_overrides_with_deadline(
+                    db_path, overrides, file_path, position, deadline,
                 )
             },
         )
@@ -85,23 +107,34 @@ impl SymbolQueryContext {
         direction: TraceDirection,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_context_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_context_with_deadline(symbol_path, direction, &deadline)
+    }
+
+    pub(crate) fn read_symbol_context_with_deadline(
+        &self,
+        symbol_path: &str,
+        direction: TraceDirection,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_context_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     symbol_path,
                     direction,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_context_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_context_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     symbol_path,
                     direction,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -123,20 +156,34 @@ impl SymbolQueryContext {
         direction: TraceDirection,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_context_at_position_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_context_at_position_with_deadline(
+            file_path, position, direction, &deadline,
+        )
+    }
+
+    pub(crate) fn read_symbol_context_at_position_with_deadline(
+        &self,
+        file_path: &Path,
+        position: &Position,
+        direction: TraceDirection,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_context_at_position_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     file_path,
                     position,
                     direction,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_context_at_position_from_index_with_overrides_with_timeout(
-                    db_path, overrides, file_path, position, direction, timeout_ms,
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_context_at_position_from_index_with_overrides_with_deadline(
+                    db_path, overrides, file_path, position, direction, deadline,
                 )
             },
         )
@@ -166,27 +213,46 @@ impl SymbolQueryContext {
         max_nodes: usize,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolNeighborhoodContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_neighborhood_context_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_neighborhood_context_with_deadline(
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            &deadline,
+        )
+    }
+
+    pub(crate) fn read_symbol_neighborhood_context_with_deadline(
+        &self,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolNeighborhoodContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_neighborhood_context_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_neighborhood_context_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_neighborhood_context_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -215,9 +281,25 @@ impl SymbolQueryContext {
         max_nodes: usize,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolNeighborhoodContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_neighborhood_context_at_position_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_neighborhood_context_at_position_with_deadline(
+            file_path, position, direction, max_depth, max_nodes, &deadline,
+        )
+    }
+
+    pub(crate) fn read_symbol_neighborhood_context_at_position_with_deadline(
+        &self,
+        file_path: &Path,
+        position: &Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolNeighborhoodContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_neighborhood_context_at_position_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     file_path,
@@ -225,11 +307,11 @@ impl SymbolQueryContext {
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_neighborhood_context_at_position_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_neighborhood_context_at_position_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     file_path,
@@ -237,7 +319,7 @@ impl SymbolQueryContext {
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -267,27 +349,46 @@ impl SymbolQueryContext {
         max_nodes: usize,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolReadDiscoveryContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_discovery_context_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_discovery_context_with_deadline(
+            symbol_path,
+            direction,
+            max_depth,
+            max_nodes,
+            &deadline,
+        )
+    }
+
+    pub(crate) fn read_symbol_discovery_context_with_deadline(
+        &self,
+        symbol_path: &str,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolReadDiscoveryContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_discovery_context_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_discovery_context_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_discovery_context_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     symbol_path,
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -316,9 +417,25 @@ impl SymbolQueryContext {
         max_nodes: usize,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolReadDiscoveryContextResult> {
-        self.dispatch(
-            |workspace_root, overrides| {
-                symbols::read_symbol_discovery_context_at_position_with_overrides_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.read_symbol_discovery_context_at_position_with_deadline(
+            file_path, position, direction, max_depth, max_nodes, &deadline,
+        )
+    }
+
+    pub(crate) fn read_symbol_discovery_context_at_position_with_deadline(
+        &self,
+        file_path: &Path,
+        position: &Position,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolReadDiscoveryContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::read_symbol_discovery_context_at_position_with_overrides_with_deadline(
                     workspace_root,
                     overrides,
                     file_path,
@@ -326,11 +443,11 @@ impl SymbolQueryContext {
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides| {
-                symbols::read_symbol_discovery_context_at_position_from_index_with_overrides_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::read_symbol_discovery_context_at_position_from_index_with_overrides_with_deadline(
                     db_path,
                     overrides,
                     file_path,
@@ -338,7 +455,7 @@ impl SymbolQueryContext {
                     direction,
                     max_depth,
                     max_nodes,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )

@@ -31,20 +31,6 @@ fn with_source_query_context<T>(
     query(&context)
 }
 
-fn with_source_query_context_with_timeout<T>(
-    root: SourceQueryRoot<'_>,
-    path: &Path,
-    source: &str,
-    timeout_ms: Option<u64>,
-    query: impl FnOnce(&SymbolQueryContext, Option<u64>) -> Result<T>,
-) -> Result<T> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    with_source_query_context_with_deadline(root, path, source, &deadline, |context, deadline| {
-        let timeout_ms = deadline.remaining_timeout_ms("source query execution")?;
-        query(context, timeout_ms)
-    })
-}
-
 fn with_source_query_context_with_trace_deadline<T>(
     root: SourceQueryRoot<'_>,
     path: &Path,
@@ -204,6 +190,36 @@ mod tests {
             },
         )
         .expect_err("source search query should retain the deadline created before overlay setup");
+
+        fs::remove_dir_all(&workspace).expect("temporary workspace should be removed");
+        assert!(error.to_string().contains("workspace symbol loading"));
+        assert!(error.to_string().contains("trace timeout exceeded"));
+    }
+
+    #[test]
+    fn source_read_query_preserves_deadline_after_overlay_setup() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("arborist-source-read-deadline-{unique}"));
+        let path = workspace.join("module.py");
+        fs::create_dir_all(&workspace).expect("temporary workspace should be created");
+        fs::write(&path, "def helper():\n    return 1\n")
+            .expect("temporary source file should be written");
+
+        let error = with_source_query_context_with_trace_deadline(
+            SourceQueryRoot::Workspace(&workspace),
+            &path,
+            "def helper():\n    return 2\n",
+            Some(100),
+            |context, deadline| {
+                thread::sleep(Duration::from_millis(150));
+                context.read_symbol_with_deadline("helper", deadline)
+            },
+        )
+        .expect_err("source read query should retain the deadline created before overlay setup");
 
         fs::remove_dir_all(&workspace).expect("temporary workspace should be removed");
         assert!(error.to_string().contains("workspace symbol loading"));

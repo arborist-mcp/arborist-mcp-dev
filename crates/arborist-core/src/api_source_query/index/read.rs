@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-use super::super::{SourceQueryRoot, with_source_query_context_with_timeout};
+use super::super::{SourceQueryRoot, with_source_query_context_with_trace_deadline};
 use crate::model::*;
 
 pub fn read_symbol_at_position_from_index_with_source(
@@ -23,14 +23,12 @@ pub fn read_symbol_at_position_from_index_with_source_and_timeout(
     position: &Position,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolReadResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_at_position_with_timeout(path, position, timeout_ms)
-        },
+        |context, deadline| context.read_symbol_at_position_with_deadline(path, position, deadline),
     )
 }
 
@@ -50,12 +48,12 @@ pub fn read_symbol_from_index_with_source_and_timeout(
     symbol_path: &str,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolReadResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| context.read_symbol_with_timeout(symbol_path, timeout_ms),
+        |context, deadline| context.read_symbol_with_deadline(symbol_path, deadline),
     )
 }
 
@@ -79,14 +77,14 @@ pub fn read_symbol_context_at_position_from_index_with_source_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
+        |context, deadline| {
             context
-                .read_symbol_context_at_position_with_timeout(path, position, direction, timeout_ms)
+                .read_symbol_context_at_position_with_deadline(path, position, direction, deadline)
         },
     )
 }
@@ -116,13 +114,13 @@ pub fn read_symbol_context_from_index_with_source_and_timeout(
     direction: TraceDirection,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_context_with_timeout(symbol_path, direction, timeout_ms)
+        |context, deadline| {
+            context.read_symbol_context_with_deadline(symbol_path, direction, deadline)
         },
     )
 }
@@ -153,14 +151,14 @@ pub fn read_symbol_neighborhood_context_at_position_from_index_with_source_and_t
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_neighborhood_context_at_position_with_timeout(
-                path, position, direction, max_depth, max_nodes, timeout_ms,
+        |context, deadline| {
+            context.read_symbol_neighborhood_context_at_position_with_deadline(
+                path, position, direction, max_depth, max_nodes, deadline,
             )
         },
     )
@@ -199,18 +197,18 @@ pub fn read_symbol_neighborhood_context_from_index_with_source_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_neighborhood_context_with_timeout(
+        |context, deadline| {
+            context.read_symbol_neighborhood_context_with_deadline(
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
-                timeout_ms,
+                deadline,
             )
         },
     )
@@ -242,14 +240,14 @@ pub fn read_symbol_discovery_context_at_position_from_index_with_source_and_time
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_discovery_context_at_position_with_timeout(
-                path, position, direction, max_depth, max_nodes, timeout_ms,
+        |context, deadline| {
+            context.read_symbol_discovery_context_at_position_with_deadline(
+                path, position, direction, max_depth, max_nodes, deadline,
             )
         },
     )
@@ -288,18 +286,18 @@ pub fn read_symbol_discovery_context_from_index_with_source_and_timeout(
     max_nodes: usize,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.read_symbol_discovery_context_with_timeout(
+        |context, deadline| {
+            context.read_symbol_discovery_context_with_deadline(
                 symbol_path,
                 direction,
                 max_depth,
                 max_nodes,
-                timeout_ms,
+                deadline,
             )
         },
     )
