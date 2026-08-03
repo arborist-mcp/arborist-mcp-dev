@@ -9,8 +9,8 @@ use crate::model::{
 };
 use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols::{
-    read_symbol_discovery_context_with_overrides_with_timeout,
-    read_symbol_neighborhood_context_with_overrides_with_timeout,
+    read_symbol_discovery_context_with_overrides_with_deadline,
+    read_symbol_neighborhood_context_with_overrides_with_deadline,
     trace_symbol_graph_with_overrides_with_deadline,
     trace_symbol_neighborhood_with_overrides_with_deadline,
 };
@@ -166,16 +166,15 @@ impl VirtualFileSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn neighborhood_context_patch_result_with_timeout(
+    pub(in crate::vfs) fn neighborhood_context_patch_result_with_deadline(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
         max_depth: usize,
         max_nodes: usize,
-        timeout_ms: Option<u64>,
+        deadline: &TraceQueryDeadline,
     ) -> Result<NeighborhoodContextPatchResult> {
-        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
             deadline.check("virtual neighborhood patch validation result")?;
@@ -218,17 +217,16 @@ impl VirtualFileSystem {
             &overrides,
             &trace_target,
             direction,
-            &deadline,
+            deadline,
         )?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual patch neighborhood context")?;
-        let neighborhood_context = read_symbol_neighborhood_context_with_overrides_with_timeout(
+        let neighborhood_context = read_symbol_neighborhood_context_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            deadline,
         )?;
         deadline.check("virtual neighborhood patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
@@ -246,16 +244,15 @@ impl VirtualFileSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn discovery_context_patch_result_with_timeout(
+    pub(in crate::vfs) fn discovery_context_patch_result_with_deadline(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
         max_depth: usize,
         max_nodes: usize,
-        timeout_ms: Option<u64>,
+        deadline: &TraceQueryDeadline,
     ) -> Result<DiscoveryContextPatchResult> {
-        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
             deadline.check("virtual discovery patch validation result")?;
@@ -295,15 +292,14 @@ impl VirtualFileSystem {
         deadline.check("virtual discovery patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let timeout_ms = deadline.remaining_timeout_ms("virtual patch discovery context")?;
-        let discovery = read_symbol_discovery_context_with_overrides_with_timeout(
+        let discovery = read_symbol_discovery_context_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            deadline,
         )?;
         deadline.check("virtual discovery patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &discovery.trace)?;

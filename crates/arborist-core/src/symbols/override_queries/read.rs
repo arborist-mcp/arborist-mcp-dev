@@ -82,6 +82,26 @@ pub fn read_symbol_neighborhood_context_with_overrides_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    read_symbol_neighborhood_context_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+pub(crate) fn read_symbol_neighborhood_context_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolNeighborhoodContextResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -96,7 +116,7 @@ pub fn read_symbol_neighborhood_context_with_overrides_with_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -111,6 +131,27 @@ pub fn read_symbol_discovery_context_with_overrides_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolReadDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    read_symbol_discovery_context_with_overrides_with_deadline(
+        workspace_root,
+        file_overrides,
+        symbol_path,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn read_symbol_discovery_context_with_overrides_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    symbol_path: &str,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolReadDiscoveryContextResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -125,7 +166,7 @@ pub fn read_symbol_discovery_context_with_overrides_with_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 

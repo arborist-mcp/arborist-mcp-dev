@@ -300,3 +300,46 @@ fn trace_backed_virtual_patch_result_reuses_caller_deadline() {
 
     assert!(error.to_string().contains("virtual patch overrides"));
 }
+
+#[test]
+fn virtual_read_context_patch_results_reuse_caller_deadline() {
+    let file = temp_file("def value() -> int:\n    return 1\n");
+    let workspace = file.parent().expect("temporary file should have a parent");
+    let mut vfs = VirtualFileSystem::new();
+    let patch = vfs
+        .patch_node(&file, "value", "def value() -> int:\n    return 2\n", None)
+        .expect("virtual patch should apply");
+    let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+    let neighborhood_error = vfs
+        .neighborhood_context_patch_result_with_deadline(
+            workspace,
+            &patch,
+            TraceDirection::Both,
+            1,
+            10,
+            &deadline,
+        )
+        .expect_err("neighborhood patch results should honor an expired caller deadline");
+    let discovery_error = vfs
+        .discovery_context_patch_result_with_deadline(
+            workspace,
+            &patch,
+            TraceDirection::Both,
+            1,
+            10,
+            &deadline,
+        )
+        .expect_err("discovery patch results should honor an expired caller deadline");
+
+    assert!(
+        neighborhood_error
+            .to_string()
+            .contains("virtual neighborhood patch overrides")
+    );
+    assert!(
+        discovery_error
+            .to_string()
+            .contains("virtual discovery patch overrides")
+    );
+}

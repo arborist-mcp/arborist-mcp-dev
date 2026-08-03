@@ -291,15 +291,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual neighborhood patch validation")?;
-        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual neighborhood patch context")?;
-        self.neighborhood_context_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Semantic(semantic_target),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.neighborhood_context_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -350,16 +356,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual position neighborhood patch validation")?;
-        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        let timeout_ms =
-            deadline.remaining_timeout_ms("virtual position neighborhood patch context")?;
-        self.neighborhood_context_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Position(position),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.neighborhood_context_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -410,15 +421,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual discovery patch validation")?;
-        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual discovery patch context")?;
-        self.discovery_context_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Semantic(semantic_target),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.discovery_context_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -469,16 +486,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual position discovery patch validation")?;
-        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        let timeout_ms =
-            deadline.remaining_timeout_ms("virtual position discovery patch context")?;
-        self.discovery_context_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Position(position),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.discovery_context_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 }
