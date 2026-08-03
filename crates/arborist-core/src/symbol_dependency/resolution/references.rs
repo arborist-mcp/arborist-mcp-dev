@@ -24,12 +24,7 @@ use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
 use crate::symbol_index_model::{
-    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
-    CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_CONST_RVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR, IndexedSymbol,
+    IndexedSymbol, ReferenceLanguageDetails, reference_facts_from_legacy,
 };
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -103,77 +98,30 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     let language_id = *languages_by_file
         .entry(symbol.file_path.as_str())
         .or_insert_with(|| detect_language(Path::new(&symbol.file_path)).ok());
-    for encoded_reference_name in &symbol.references_by_name {
+    for reference in
+        reference_facts_from_legacy(&symbol.references_by_name, &symbol.call_arities_by_name)
+    {
         if let Some(deadline) = deadline {
             deadline.check("resolving symbol references")?;
         }
-        let (reference_name, rvalue_this_receiver, const_this_receiver, explicit_member_receiver) =
-            encoded_reference_name
-                .strip_prefix(CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX)
-                .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                .map(|(_, name)| (name, false, false, true))
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, false, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, true, false, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, true, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, true, false, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, true, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX)
-                        .and_then(|value| value.split_once(CPP_TEMPORARY_MEMBER_CALL_SEPARATOR))
-                        .map(|(_, name)| (name, false, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_RVALUE_THIS_CALL_PREFIX)
-                        .map(|name| (name, true, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_CONST_LVALUE_THIS_CALL_PREFIX)
-                        .map(|name| (name, false, true, true))
-                })
-                .or_else(|| {
-                    encoded_reference_name
-                        .strip_prefix(CPP_RVALUE_THIS_CALL_PREFIX)
-                        .map(|name| (name, true, false, true))
-                })
-                .unwrap_or((encoded_reference_name.as_str(), false, false, false));
-        let call_arities = symbol.call_arities_by_name.get(encoded_reference_name);
+        let (rvalue_this_receiver, const_this_receiver, explicit_member_receiver) =
+            match reference.language_details {
+                ReferenceLanguageDetails::None => (false, false, false),
+                ReferenceLanguageDetails::Cpp(details) => (
+                    details.rvalue_receiver,
+                    details.const_receiver,
+                    details.explicit_member_receiver,
+                ),
+            };
         if language_id == Some(LanguageId::Cpp)
-            && let Some(call_arities) = call_arities
+            && let Some(call_arities) = reference.call_arities.as_ref()
         {
             for call_arity in call_arities {
                 if let Some(deadline) = deadline {
                     deadline.check("resolving symbol call arities")?;
                 }
                 if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
-                    reference_name,
+                    &reference.spelling,
                     language_id,
                     CallResolutionContext::cpp(
                         *call_arity,
@@ -194,7 +142,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                 }
             }
         } else if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
-            reference_name,
+            &reference.spelling,
             language_id,
             CallResolutionContext::non_call(),
             symbol,
