@@ -45,6 +45,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "patch_context_validation"
+path = "fuzz_targets/patch_context_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "symbol_index_inspection"
 path = "fuzz_targets/symbol_index_inspection.rs"
 test = false
