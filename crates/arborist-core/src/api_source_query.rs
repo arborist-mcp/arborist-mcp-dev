@@ -63,12 +63,33 @@ mod tests {
         trace_symbol_graph_with_source_and_timeout,
     };
     use crate::model::TraceDirection;
+    use crate::symbol_trace::MAX_TRACE_TIMEOUT_MS;
 
     fn assert_zero_timeout(error: anyhow::Error) {
         assert!(
             error
                 .to_string()
                 .contains("invalid trace timeout_ms: value must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn source_query_rejects_excessive_timeout_before_overlay_setup() {
+        let error = list_symbols_with_source_filtered_with_timeout(
+            Path::new("missing-workspace"),
+            Path::new("../outside.py"),
+            "not valid source",
+            10,
+            None,
+            None,
+            Some(MAX_TRACE_TIMEOUT_MS + 1),
+        )
+        .expect_err("excessive timeout should be rejected before context setup");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid trace timeout_ms: value must not exceed")
         );
     }
 
