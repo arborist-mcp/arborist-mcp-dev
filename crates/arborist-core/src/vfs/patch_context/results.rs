@@ -11,8 +11,8 @@ use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols::{
     read_symbol_discovery_context_with_overrides_with_timeout,
     read_symbol_neighborhood_context_with_overrides_with_timeout,
-    trace_symbol_graph_with_overrides_and_timeout,
-    trace_symbol_neighborhood_with_overrides_and_timeout,
+    trace_symbol_graph_with_overrides_with_deadline,
+    trace_symbol_neighborhood_with_overrides_with_deadline,
 };
 use crate::{
     validate_discovery_context_patch_result, validate_graph_backed_patch_result,
@@ -21,14 +21,13 @@ use crate::{
 };
 
 impl VirtualFileSystem {
-    pub(super) fn trace_backed_patch_result_with_timeout(
+    pub(in crate::vfs) fn trace_backed_patch_result_with_deadline(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
-        timeout_ms: Option<u64>,
+        deadline: &TraceQueryDeadline,
     ) -> Result<TraceBackedPatchResult> {
-        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
             deadline.check("virtual patch validation result")?;
@@ -66,13 +65,12 @@ impl VirtualFileSystem {
         deadline.check("virtual patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let timeout_ms = deadline.remaining_timeout_ms("virtual patch trace")?;
-        let trace = trace_symbol_graph_with_overrides_and_timeout(
+        let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
-            timeout_ms,
+            deadline,
         )?;
         deadline.check("virtual patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
@@ -90,16 +88,15 @@ impl VirtualFileSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn graph_backed_patch_result_with_timeout(
+    pub(in crate::vfs) fn graph_backed_patch_result_with_deadline(
         &mut self,
         workspace_root: &Path,
         patch: &PatchAstNodeResult,
         direction: TraceDirection,
         max_depth: usize,
         max_nodes: usize,
-        timeout_ms: Option<u64>,
+        deadline: &TraceQueryDeadline,
     ) -> Result<GraphBackedPatchResult> {
-        let deadline = TraceQueryDeadline::new(timeout_ms)?;
         let trace_target = patch.resolved_symbol_id.clone();
         if !patch.validation.syntax_errors.is_empty() {
             deadline.check("virtual graph patch validation result")?;
@@ -137,23 +134,21 @@ impl VirtualFileSystem {
         deadline.check("virtual graph patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let timeout_ms = deadline.remaining_timeout_ms("virtual graph patch trace")?;
-        let trace = trace_symbol_graph_with_overrides_and_timeout(
+        let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
-            timeout_ms,
+            deadline,
         )?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual graph patch neighborhood")?;
-        let neighborhood = trace_symbol_neighborhood_with_overrides_and_timeout(
+        let neighborhood = trace_symbol_neighborhood_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            deadline,
         )?;
         deadline.check("virtual graph patch trace validation")?;
         let trace_validation = validate_patch_commit_with_trace(patch, &trace)?;
@@ -218,13 +213,12 @@ impl VirtualFileSystem {
         deadline.check("virtual neighborhood patch overrides")?;
         let mut overrides = self.virtual_overrides_for_workspace(workspace_root)?;
         overrides.insert(patch.file.clone(), patch.updated_source.clone());
-        let timeout_ms = deadline.remaining_timeout_ms("virtual neighborhood patch trace")?;
-        let trace = trace_symbol_graph_with_overrides_and_timeout(
+        let trace = trace_symbol_graph_with_overrides_with_deadline(
             workspace_root,
             &overrides,
             &trace_target,
             direction,
-            timeout_ms,
+            &deadline,
         )?;
         let timeout_ms = deadline.remaining_timeout_ms("virtual patch neighborhood context")?;
         let neighborhood_context = read_symbol_neighborhood_context_with_overrides_with_timeout(

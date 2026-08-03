@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::super::VirtualFileSystem;
 use super::super::state::normalized_virtual_path;
+use super::apply::VirtualPatchTarget;
 use crate::language::{ensure_path_inside_workspace, normalize_absolute_path};
 use crate::model::{
     DiscoveryContextPatchResult, GraphBackedPatchResult, NeighborhoodContextPatchResult,
@@ -52,9 +53,15 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual patch validation")?;
-        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual patch trace")?;
-        self.trace_backed_patch_result_with_timeout(&workspace_root, &patch, direction, timeout_ms)
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Semantic(semantic_target),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.trace_backed_patch_result_with_deadline(&workspace_root, &patch, direction, &deadline)
     }
     pub fn validate_patch_with_trace_context_at_position(
         &mut self,
@@ -96,9 +103,15 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual position patch validation")?;
-        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual position patch trace")?;
-        self.trace_backed_patch_result_with_timeout(&workspace_root, &patch, direction, timeout_ms)
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Position(position),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.trace_backed_patch_result_with_deadline(&workspace_root, &patch, direction, &deadline)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -148,15 +161,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual graph patch validation")?;
-        let patch = self.patch_node(&path, semantic_target, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual graph patch trace")?;
-        self.graph_backed_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Semantic(semantic_target),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.graph_backed_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 
@@ -207,15 +226,21 @@ impl VirtualFileSystem {
         self.refresh_if_clean(&normalized)?;
 
         deadline.check("virtual position graph patch validation")?;
-        let patch = self.patch_node_at_position(&path, position, new_code, bypass_reason)?;
-        let timeout_ms = deadline.remaining_timeout_ms("virtual position graph patch trace")?;
-        self.graph_backed_patch_result_with_timeout(
+        let patch = self.patch_node_with_deadline(
+            &path,
+            VirtualPatchTarget::Position(position),
+            new_code,
+            bypass_reason,
+            false,
+            &deadline,
+        )?;
+        self.graph_backed_patch_result_with_deadline(
             &workspace_root,
             &patch,
             direction,
             max_depth,
             max_nodes,
-            timeout_ms,
+            &deadline,
         )
     }
 

@@ -3,6 +3,7 @@ use std::cell::Cell;
 use super::super::patch_context::VirtualPatchTarget;
 use super::*;
 use crate::deadline::DeadlineCheck;
+use crate::symbol_trace::TraceQueryDeadline;
 use crate::{MAX_PATCH_TIMEOUT_MS, read_symbol_from_index};
 
 struct FailOnPhase {
@@ -281,4 +282,21 @@ fn committed_patch_preserves_persisted_state_when_index_sync_fails() {
             .source
             .contains("return 2")
     );
+}
+
+#[test]
+fn trace_backed_virtual_patch_result_reuses_caller_deadline() {
+    let file = temp_file("def value() -> int:\n    return 1\n");
+    let workspace = file.parent().expect("temporary file should have a parent");
+    let mut vfs = VirtualFileSystem::new();
+    let patch = vfs
+        .patch_node(&file, "value", "def value() -> int:\n    return 2\n", None)
+        .expect("virtual patch should apply");
+    let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+    let error = vfs
+        .trace_backed_patch_result_with_deadline(workspace, &patch, TraceDirection::Both, &deadline)
+        .expect_err("trace-backed virtual patch results should honor an expired caller deadline");
+
+    assert!(error.to_string().contains("virtual patch overrides"));
 }
