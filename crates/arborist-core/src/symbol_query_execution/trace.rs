@@ -9,7 +9,8 @@ use crate::model::{
 };
 use crate::symbol_position::resolve_symbol_at_position_with_deadline;
 use crate::symbol_trace::{
-    TraceQueryDeadline, trace_from_symbol_with_timeout, trace_neighborhood_from_symbol_with_timeout,
+    TraceQueryDeadline, trace_from_symbol_with_deadline,
+    trace_neighborhood_from_symbol_with_deadline,
 };
 
 #[allow(dead_code)]
@@ -41,13 +42,12 @@ pub(crate) fn trace_from_symbols_with_timeout(
 
     let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    let timeout_ms = deadline.remaining_timeout_ms("trace graph expansion")?;
-    trace_from_symbol_with_timeout(
+    trace_from_symbol_with_deadline(
         resolved_symbols,
         indexed_files,
         symbol,
         direction,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -66,15 +66,14 @@ pub(crate) fn trace_neighborhood_from_symbols_with_timeout(
 
     let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
-    let timeout_ms = deadline.remaining_timeout_ms("trace neighborhood expansion")?;
-    trace_neighborhood_from_symbol_with_timeout(
+    trace_neighborhood_from_symbol_with_deadline(
         resolved_symbols,
         indexed_files,
         symbol,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -116,13 +115,12 @@ pub(crate) fn trace_symbol_graph_at_position_from_symbols_with_timeout(
         file_overrides,
         Some(&deadline),
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("trace graph expansion")?;
-    trace_from_symbol_with_timeout(
+    trace_from_symbol_with_deadline(
         resolved_symbols,
         indexed_files,
         symbol,
         direction,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -172,14 +170,13 @@ pub(crate) fn trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
         file_overrides,
         Some(&deadline),
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("trace neighborhood expansion")?;
-    trace_neighborhood_from_symbol_with_timeout(
+    trace_neighborhood_from_symbol_with_deadline(
         resolved_symbols,
         indexed_files,
         symbol,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }

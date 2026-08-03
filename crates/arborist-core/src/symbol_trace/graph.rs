@@ -4,20 +4,19 @@ use crate::symbol_summary::{summarize_symbols_with_deadline, trace_evidence_keys
 use super::TraceQueryDeadline;
 use anyhow::Result;
 
-pub(crate) fn trace_from_symbol_with_timeout(
+pub(crate) fn trace_from_symbol_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     symbol: &SymbolMeta,
     direction: TraceDirection,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<TraceSymbolGraphResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     deadline.check("starting graph expansion")?;
     let symbol = symbol.clone().with_origin_type("trace_root");
 
     let callers = if matches!(direction, TraceDirection::Callers | TraceDirection::Both) {
         deadline.check("expanding callers")?;
-        summarize_symbols_with_deadline(resolved_symbols, &symbol.references, None, &deadline)?
+        summarize_symbols_with_deadline(resolved_symbols, &symbol.references, None, deadline)?
     } else {
         Vec::new()
     };
@@ -28,7 +27,7 @@ pub(crate) fn trace_from_symbol_with_timeout(
             resolved_symbols,
             &symbol.dependencies,
             Some(&symbol.file_path),
-            &deadline,
+            deadline,
         )?
     } else {
         Vec::new()
@@ -36,7 +35,7 @@ pub(crate) fn trace_from_symbol_with_timeout(
     deadline.check("validating graph output")?;
 
     let result = TraceSymbolGraphResult {
-        evidence_keys: trace_evidence_keys_with_deadline(&symbol, &callers, &callees, &deadline)?,
+        evidence_keys: trace_evidence_keys_with_deadline(&symbol, &callers, &callees, deadline)?,
         symbol,
         callers,
         callees,

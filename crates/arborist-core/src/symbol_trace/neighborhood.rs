@@ -42,10 +42,30 @@ pub(crate) fn trace_neighborhood_from_symbol_with_timeout(
 ) -> Result<TraceSymbolNeighborhoodResult> {
     validate_neighborhood_bounds(max_depth, max_nodes)?;
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    trace_neighborhood_from_symbol_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        symbol,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+pub(crate) fn trace_neighborhood_from_symbol_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    symbol: &SymbolMeta,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<TraceSymbolNeighborhoodResult> {
     deadline.check("starting neighborhood expansion")?;
 
     let root = symbol.clone().with_origin_type("trace_root");
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
 
     let mut nodes = vec![TraceSymbolNeighborhoodNode {
         symbol: symbol_summary_from_meta(&root),

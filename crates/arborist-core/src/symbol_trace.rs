@@ -37,20 +37,79 @@ impl DeadlineCheck for TraceQueryDeadline {
     }
 }
 
-pub(crate) use graph::trace_from_symbol_with_timeout;
+pub(crate) use graph::trace_from_symbol_with_deadline;
 
-pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_timeout;
+pub(crate) use neighborhood::trace_neighborhood_from_symbol_with_deadline;
 
 #[cfg(test)]
 mod tests {
     use super::{
         MAX_GRAPH_DEPTH, MAX_GRAPH_NODES, MAX_TRACE_TIMEOUT_MS, TraceQueryDeadline,
-        neighborhood::validate_neighborhood_bounds,
+        neighborhood::validate_neighborhood_bounds, trace_from_symbol_with_deadline,
+        trace_neighborhood_from_symbol_with_deadline,
     };
-    use crate::model::{SymbolMeta, SymbolMetaInit};
+    use crate::model::{SymbolMeta, SymbolMetaInit, TraceDirection};
     use crate::symbol_summary::{
         summarize_symbols_with_deadline, trace_evidence_keys_with_deadline,
     };
+
+    fn test_symbol() -> SymbolMeta {
+        SymbolMeta::new(SymbolMetaInit {
+            symbol_id: "helper".to_string(),
+            semantic_path: "helper".to_string(),
+            scope_path: None,
+            file_path: "helper.py".to_string(),
+            node_kind: "function_definition".to_string(),
+            origin_type: "workspace_symbol".to_string(),
+            byte_range: (0, 1),
+            signature: None,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            dependencies: Vec::new(),
+            references: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn graph_expansion_reuses_the_callers_deadline() {
+        let symbol = test_symbol();
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = trace_from_symbol_with_deadline(
+            std::slice::from_ref(&symbol),
+            1,
+            &symbol,
+            TraceDirection::Both,
+            &deadline,
+        )
+        .expect_err("graph expansion should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("starting graph expansion"));
+    }
+
+    #[test]
+    fn neighborhood_expansion_reuses_the_callers_deadline() {
+        let symbol = test_symbol();
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = trace_neighborhood_from_symbol_with_deadline(
+            std::slice::from_ref(&symbol),
+            1,
+            &symbol,
+            TraceDirection::Both,
+            1,
+            1,
+            &deadline,
+        )
+        .expect_err("neighborhood expansion should honor an already-expired deadline");
+
+        assert!(
+            error
+                .to_string()
+                .contains("starting neighborhood expansion")
+        );
+    }
 
     #[test]
     fn validates_trace_timeout_bounds() {
