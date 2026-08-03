@@ -346,3 +346,65 @@ fn rejects_too_many_expand_selectors_before_parsing_source() {
             .contains(&crate::MAX_SEMANTIC_EXPAND_NODES.to_string())
     );
 }
+
+#[test]
+fn builds_javascript_typescript_and_tsx_semantic_skeletons() {
+    for (path, source, expected_path, expected_signature, expected_return_type) in [
+        (
+            "sample.js",
+            "export function helper(value) { return value + 1; }\n",
+            "helper",
+            "function helper(value)",
+            None,
+        ),
+        (
+            "sample.ts",
+            "export function helper(value: number): number { return value + 1; }\n",
+            "helper",
+            "function helper(value: number): number",
+            Some("number"),
+        ),
+        (
+            "sample.tsx",
+            "export function App(props: { title: string }): JSX.Element { return <main>{props.title}</main>; }\n",
+            "App",
+            "function App(props: { title: string }): JSX.Element",
+            Some("JSX.Element"),
+        ),
+    ] {
+        let skeleton = get_semantic_skeleton(Path::new(path), source, 1, &[]).unwrap();
+        let symbol = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == expected_path)
+            .unwrap();
+
+        assert_eq!(skeleton.available_paths, vec![expected_path]);
+        assert!(skeleton.skeleton.contains(expected_signature));
+        assert_eq!(symbol.signature.as_deref(), Some(expected_signature));
+        assert_eq!(symbol.return_type.as_deref(), expected_return_type);
+    }
+}
+
+#[test]
+fn expands_javascript_semantic_nodes_without_duplicating_members() {
+    let source = "export class Counter { increment(value) { return value + 1; } }\n";
+
+    let skeleton =
+        get_semantic_skeleton(Path::new("sample.js"), source, 2, &["Counter".to_string()]).unwrap();
+
+    assert!(
+        skeleton
+            .skeleton
+            .contains("class Counter { increment(value)")
+    );
+    assert_eq!(skeleton.skeleton.matches("increment(value)").count(), 1);
+    assert_eq!(
+        skeleton.available_paths,
+        vec!["Counter", "Counter::increment"]
+    );
+    assert_eq!(
+        skeleton.available_symbols[1].scope_path.as_deref(),
+        Some("Counter")
+    );
+}

@@ -31,6 +31,8 @@ impl LanguageCapabilities {
 
     pub const INDEXED_TRACE_SUPPORT: Self =
         Self(Self::TREE_QUERY.0 | Self::SYMBOL_INDEX.0 | Self::REFERENCE_TRACE.0);
+    pub const INDEXED_SKELETON_TRACE_SUPPORT: Self =
+        Self(Self::INDEXED_TRACE_SUPPORT.0 | Self::SEMANTIC_SKELETON.0);
 
     pub const FULL_CURRENT_SUPPORT: Self = Self(
         Self::TREE_QUERY.0
@@ -381,24 +383,24 @@ static JAVASCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::JavaScript,
     display_name: "JavaScript",
     extensions: JAVASCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
-    analysis_revision: "javascript-index-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
+    analysis_revision: "javascript-skeleton-v1",
     grammar: javascript_grammar,
 };
 static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::TypeScript,
     display_name: "TypeScript",
     extensions: TYPESCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
-    analysis_revision: "typescript-index-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
+    analysis_revision: "typescript-skeleton-v1",
     grammar: typescript_grammar,
 };
 static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Tsx,
     display_name: "TSX",
     extensions: TSX_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_TRACE_SUPPORT,
-    analysis_revision: "tsx-index-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
+    analysis_revision: "tsx-skeleton-v1",
     grammar: tsx_grammar,
 };
 
@@ -436,25 +438,38 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
 
     fn build_semantic_skeleton(
         &self,
-        _path: &Path,
-        _source: &str,
-        _tree: &Tree,
-        _depth_limit: usize,
-        _expand_nodes: &[String],
-        _deadline: Option<&dyn DeadlineCheck>,
+        path: &Path,
+        source: &str,
+        tree: &Tree,
+        depth_limit: usize,
+        expand_nodes: &[String],
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<SemanticSkeleton> {
-        self.unsupported("semantic skeletons")
+        crate::semantic::javascript::build_javascript_skeleton(
+            path,
+            source,
+            tree,
+            depth_limit,
+            expand_nodes,
+            deadline,
+        )
     }
 
     fn find_semantic_node<'tree>(
         &self,
-        _path: &Path,
-        _tree: &'tree Tree,
-        _source: &str,
-        _target_path: &str,
-        _deadline: Option<&dyn DeadlineCheck>,
+        path: &Path,
+        tree: &'tree Tree,
+        source: &str,
+        target_path: &str,
+        deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<Node<'tree>>> {
-        self.unsupported("semantic skeletons")
+        crate::semantic::javascript::find_javascript_semantic_node(
+            path,
+            tree,
+            source,
+            target_path,
+            deadline,
+        )
     }
 
     fn ascend_to_symbol<'tree>(&self, _node: Node<'tree>) -> Option<Node<'tree>> {

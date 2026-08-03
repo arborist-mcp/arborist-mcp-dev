@@ -121,7 +121,7 @@ fn builtin_registry_preserves_current_language_contracts() {
 }
 
 #[test]
-fn javascript_and_typescript_adapters_expose_indexing_capabilities() {
+fn javascript_and_typescript_adapters_expose_skeleton_indexing_capabilities() {
     let registry = builtin_language_registry();
 
     for (language_id, display_name, extensions, analysis_revision) in [
@@ -129,15 +129,15 @@ fn javascript_and_typescript_adapters_expose_indexing_capabilities() {
             LanguageId::JavaScript,
             "JavaScript",
             &["js", "jsx", "mjs", "cjs"][..],
-            "javascript-index-v1",
+            "javascript-skeleton-v1",
         ),
         (
             LanguageId::TypeScript,
             "TypeScript",
             &["ts", "mts", "cts"][..],
-            "typescript-index-v1",
+            "typescript-skeleton-v1",
         ),
-        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-index-v1"),
+        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-skeleton-v1"),
     ] {
         let descriptor = registry.descriptor(language_id).unwrap();
         assert_eq!(descriptor.display_name, display_name);
@@ -152,6 +152,26 @@ fn javascript_and_typescript_adapters_expose_indexing_capabilities() {
             descriptor
                 .capabilities
                 .contains(LanguageCapabilities::SYMBOL_INDEX)
+        );
+        assert!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::SEMANTIC_SKELETON)
+        );
+        assert!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::REFERENCE_TRACE)
+        );
+        assert!(
+            !descriptor
+                .capabilities
+                .contains(LanguageCapabilities::FILE_DEPENDENCIES)
+        );
+        assert!(
+            !descriptor
+                .capabilities
+                .contains(LanguageCapabilities::PATCH_TARGETING)
         );
         for extension in extensions {
             assert_eq!(

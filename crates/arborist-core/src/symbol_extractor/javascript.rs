@@ -5,6 +5,10 @@ use anyhow::Result;
 use tree_sitter::Node;
 
 use crate::language::{node_text, normalize_path};
+use crate::semantic::javascript::{
+    is_javascript_symbol_node, javascript_parameters, javascript_return_type,
+    javascript_semantic_path, javascript_signature, javascript_symbol_name,
+};
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 use crate::symbol_reference_compat::reference_facts_from_legacy;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -34,7 +38,7 @@ fn collect_symbols(
     if let Some(deadline) = deadline {
         deadline.check("extracting JavaScript/TypeScript symbols")?;
     }
-    if is_symbol_node(node)
+    if is_javascript_symbol_node(node)
         && let Some(symbol) = indexed_symbol(path, source, node, deadline)?
     {
         symbols.push(symbol);
@@ -53,10 +57,10 @@ fn indexed_symbol(
     node: Node<'_>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<IndexedSymbol>> {
-    let Some(name) = symbol_name(node, source)? else {
+    let Some(name) = javascript_symbol_name(node, source)? else {
         return Ok(None);
     };
-    let semantic_path = semantic_path(node, source, &name)?;
+    let semantic_path = javascript_semantic_path(node, source, &name)?;
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
@@ -71,116 +75,15 @@ fn indexed_symbol(
         file_path: normalize_path(path),
         node_kind: node.kind().to_string(),
         byte_range: (node.start_byte(), node.end_byte()),
-        signature: display_signature(node, source),
+        signature: javascript_signature(node, source),
         is_overload: false,
-        parameters: parameters(node, source),
-        return_type: return_type(node, source),
+        parameters: javascript_parameters(node, source),
+        return_type: javascript_return_type(node, source),
         docstring: None,
         reference_facts,
         references_by_name,
         call_arities_by_name,
     }))
-}
-
-fn is_symbol_node(node: Node<'_>) -> bool {
-    matches!(
-        node.kind(),
-        "abstract_class_declaration"
-            | "class_declaration"
-            | "enum_declaration"
-            | "function_declaration"
-            | "generator_function_declaration"
-            | "interface_declaration"
-            | "method_definition"
-    ) || is_callable_variable_declarator(node)
-}
-
-fn is_callable_variable_declarator(node: Node<'_>) -> bool {
-    node.kind() == "variable_declarator"
-        && node
-            .child_by_field_name("value")
-            .is_some_and(|value| matches!(value.kind(), "arrow_function" | "function_expression"))
-}
-
-fn symbol_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
-    let name = node.child_by_field_name("name").or_else(|| {
-        (node.kind() == "variable_declarator")
-            .then(|| node.child_by_field_name("name"))
-            .flatten()
-    });
-    name.map(|name| node_text(name, source).map(str::trim).map(str::to_string))
-        .transpose()
-        .map(|name| name.filter(|name| !name.is_empty()))
-}
-
-fn semantic_path(node: Node<'_>, source: &str, name: &str) -> Result<String> {
-    let mut ancestors = Vec::new();
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        if is_symbol_node(parent)
-            && let Some(parent_name) = symbol_name(parent, source)?
-        {
-            ancestors.push(parent_name);
-        }
-        current = parent.parent();
-    }
-    ancestors.reverse();
-    ancestors.push(name.to_string());
-    Ok(ancestors.join("::"))
-}
-
-fn callable_value(node: Node<'_>) -> Node<'_> {
-    node.child_by_field_name("value")
-        .filter(|value| matches!(value.kind(), "arrow_function" | "function_expression"))
-        .unwrap_or(node)
-}
-
-fn display_signature(node: Node<'_>, source: &str) -> Option<String> {
-    let callable = callable_value(node);
-    let end_byte = callable
-        .child_by_field_name("body")
-        .map_or(node.end_byte(), |body| body.start_byte());
-    source
-        .get(node.start_byte()..end_byte)
-        .map(str::trim)
-        .filter(|signature| !signature.is_empty())
-        .map(str::to_string)
-}
-
-fn parameters(node: Node<'_>, source: &str) -> Vec<String> {
-    let callable = callable_value(node);
-    let parameters = callable
-        .child_by_field_name("parameters")
-        .or_else(|| callable.child_by_field_name("parameter"));
-    let Some(parameters) = parameters else {
-        return Vec::new();
-    };
-    if parameters.kind() == "identifier" {
-        return node_text(parameters, source)
-            .ok()
-            .map(str::trim)
-            .filter(|parameter| !parameter.is_empty())
-            .map(|parameter| vec![parameter.to_string()])
-            .unwrap_or_default();
-    }
-
-    let mut cursor = parameters.walk();
-    parameters
-        .named_children(&mut cursor)
-        .filter_map(|parameter| node_text(parameter, source).ok().map(str::trim))
-        .filter(|parameter| !parameter.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn return_type(node: Node<'_>, source: &str) -> Option<String> {
-    callable_value(node)
-        .child_by_field_name("return_type")
-        .and_then(|return_type| node_text(return_type, source).ok())
-        .map(str::trim)
-        .map(|return_type| return_type.trim_start_matches(':').trim())
-        .filter(|return_type| !return_type.is_empty())
-        .map(str::to_string)
 }
 
 fn collect_direct_calls(
@@ -239,7 +142,7 @@ fn collect_direct_calls_from_node(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if is_symbol_node(child) {
+        if is_javascript_symbol_node(child) {
             continue;
         }
         collect_direct_calls_from_node(child, source, deadline, references, call_arities_by_name)?;

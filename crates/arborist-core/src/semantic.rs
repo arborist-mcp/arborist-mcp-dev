@@ -8,6 +8,7 @@ use crate::language::{LanguageCapabilities, builtin_language_registry};
 use crate::model::{LanguageId, SemanticSkeleton};
 
 pub(crate) mod c;
+pub(crate) mod javascript;
 mod paths;
 pub(crate) mod python;
 mod python_identity;
@@ -151,6 +152,11 @@ mod tests {
             (
                 Path::new("sample.c"),
                 "int sample(void) { return 1; }
+",
+            ),
+            (
+                Path::new("sample.js"),
+                "export function sample() { return 1; }
 ",
             ),
         ];
