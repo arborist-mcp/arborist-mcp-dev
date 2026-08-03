@@ -4,9 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::deadline::DeadlineCheck;
-use crate::language::{normalize_path, parse_document};
+use crate::language::{builtin_language_registry, normalize_path, parse_document};
 use crate::model::{
-    LanguageId, PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
+    PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
 
 use super::{
@@ -128,7 +128,7 @@ pub(crate) fn build_patch_result_with_deadline(
         })
         .transpose()?
         .unwrap_or_else(|| semantic_target.to_string());
-    let mut resolved_symbol_id = patched_symbol
+    let resolved_symbol_id = patched_symbol
         .map(|node| {
             target_resolution::resolve_symbol_id(
                 path,
@@ -140,12 +140,10 @@ pub(crate) fn build_patch_result_with_deadline(
         })
         .transpose()?
         .unwrap_or_else(|| resolved_path.clone());
-    if virtual_document.language_id == LanguageId::Python
-        && resolved_symbol_id == resolved_path
-        && semantic_target.ends_with(&format!("::{resolved_path}"))
-    {
-        resolved_symbol_id = semantic_target.to_string();
-    }
+    let resolved_symbol_id = builtin_language_registry()
+        .adapter(virtual_document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .reconcile_patch_symbol_id(semantic_target, &resolved_path, resolved_symbol_id);
 
     check_deadline(deadline, "patch result validation")?;
     let result = PatchAstNodeResult {

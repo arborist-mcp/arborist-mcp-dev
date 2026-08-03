@@ -143,6 +143,13 @@ pub(crate) trait LanguageAdapter: Sync {
 
     fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool;
 
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String;
+
     fn collect_patch_reference_validation(
         &self,
         path: &Path,
@@ -381,6 +388,21 @@ impl LanguageAdapter for PythonAdapter {
             )
     }
 
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        if resolved_symbol_id == resolved_path
+            && semantic_target.ends_with(&format!("::{resolved_path}"))
+        {
+            semantic_target.to_string()
+        } else {
+            resolved_symbol_id
+        }
+    }
+
     fn query_owner_candidates<'tree>(
         &self,
         _path: &Path,
@@ -523,6 +545,15 @@ impl LanguageAdapter for CAdapter {
         true
     }
 
+    fn reconcile_patch_symbol_id(
+        &self,
+        _semantic_target: &str,
+        _resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        resolved_symbol_id
+    }
+
     fn query_owner_candidates<'tree>(
         &self,
         path: &Path,
@@ -653,6 +684,15 @@ impl LanguageAdapter for CppAdapter {
 
     fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
         C_ADAPTER.replacement_preserves_required_wrappers(node_kind, replacement)
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        C_ADAPTER.reconcile_patch_symbol_id(semantic_target, resolved_path, resolved_symbol_id)
     }
 
     fn query_owner_candidates<'tree>(
