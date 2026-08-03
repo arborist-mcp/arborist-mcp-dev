@@ -476,6 +476,9 @@ for response shapes, error behavior, and examples.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, bounded neighborhood context, and optional cooperative budgets for
   direct read and trace queries.
+- JavaScript, TypeScript, and TSX Tree-sitter parsing and query execution with
+  explicit capability gates; workspace symbol indexing, traces, and patching
+  remain disabled until their language adapters are implemented.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,

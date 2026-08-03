@@ -53,6 +53,24 @@ fn recognizes_skipped_workspace_path_segments() {
 }
 
 #[test]
+fn collect_source_files_skips_syntax_only_languages_until_indexing_is_supported() {
+    let workspace = temporary_dir();
+    let python = workspace.join("kept.py");
+    fs::write(&python, "def kept():\n    return 1\n").unwrap();
+    fs::write(
+        workspace.join("syntax-only.ts"),
+        "export function skipped(): number { return 1; }",
+    )
+    .unwrap();
+
+    let files =
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
+            .expect("syntax-only files must not count toward index scan limits");
+
+    assert_eq!(files, vec![python]);
+}
+
+#[test]
 fn collect_source_files_rejects_workspace_file_limit_overflow() {
     let workspace = temporary_dir();
     fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();

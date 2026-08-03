@@ -4,7 +4,7 @@ use anyhow::Result;
 use tree_sitter::{Node, Tree};
 
 use crate::deadline::DeadlineCheck;
-use crate::language::builtin_language_registry;
+use crate::language::{LanguageCapabilities, builtin_language_registry};
 use crate::model::{LanguageId, SemanticSkeleton};
 
 pub(crate) mod c;
@@ -41,7 +41,13 @@ pub(crate) fn get_semantic_skeleton_with_deadline(
     expand_nodes: &[String],
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<SemanticSkeleton> {
-    builtin_language_registry()
+    let registry = builtin_language_registry();
+    registry.require_capability(
+        language_id,
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        "semantic skeleton requests",
+    )?;
+    registry
         .adapter(language_id)
         .expect("every LanguageId must have a builtin language adapter")
         .build_semantic_skeleton(path, source, tree, depth_limit, expand_nodes, deadline)
@@ -55,7 +61,13 @@ pub(crate) fn find_semantic_node_with_deadline<'tree>(
     target_path: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<Option<Node<'tree>>> {
-    builtin_language_registry()
+    let registry = builtin_language_registry();
+    registry.require_capability(
+        language_id,
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        "semantic symbol lookup",
+    )?;
+    registry
         .adapter(language_id)
         .expect("every LanguageId must have a builtin language adapter")
         .find_semantic_node(path, tree, source, target_path, deadline)

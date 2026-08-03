@@ -7,7 +7,9 @@ use super::limits::{
     WorkspaceScanDeadline, WorkspaceScanLimits, validate_source_file_size,
     validate_workspace_scan_limits,
 };
-use crate::language::{detect_language, path_is_inside_workspace};
+use crate::language::{
+    LanguageCapabilities, builtin_language_registry, detect_language, path_is_inside_workspace,
+};
 
 pub(crate) const SKIPPED_WORKSPACE_DIR_NAMES: &[&str] = &[
     ".git",
@@ -107,7 +109,10 @@ fn walk_workspace(
         return Ok(());
     }
 
-    if detect_language(path).is_ok() {
+    if detect_language(path).is_ok_and(|language_id| {
+        builtin_language_registry()
+            .supports_capability(language_id, LanguageCapabilities::SYMBOL_INDEX)
+    }) {
         validate_source_file_size(path, limits)?;
         if files.len() >= limits.max_files {
             bail!(

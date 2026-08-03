@@ -5,8 +5,8 @@ use anyhow::{Context, Result, bail};
 use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::language::{
-    builtin_language_registry, language_for_id, normalize_absolute_path, normalize_path,
-    parse_document_with_timeout, position_from,
+    LanguageCapabilities, builtin_language_registry, language_for_id, normalize_absolute_path,
+    normalize_path, parse_document_with_timeout, position_from,
 };
 use crate::model::QueryCaptureResult;
 
@@ -49,9 +49,15 @@ pub(super) fn execute_tree_query_with_timeout(
     }
     let document = parse_document_with_timeout(&path, source, remaining_parse_micros)?;
     ensure_within_deadline(&path, timeout_micros, deadline)?;
+    let registry = builtin_language_registry();
+    registry.require_capability(
+        document.language_id,
+        LanguageCapabilities::TREE_QUERY,
+        "Tree-sitter query execution",
+    )?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
-    let adapter = builtin_language_registry()
+    let adapter = registry
         .adapter(document.language_id)
         .expect("every LanguageId must have a builtin language adapter");
     let owner_candidates = adapter.query_owner_candidates(&path, root, source)?;

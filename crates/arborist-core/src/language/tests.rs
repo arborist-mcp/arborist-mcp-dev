@@ -28,6 +28,14 @@ fn detect_language_accepts_uppercase_extensions() {
         ("HH", LanguageId::Cpp),
         ("HXX", LanguageId::Cpp),
         ("H++", LanguageId::Cpp),
+        ("JS", LanguageId::JavaScript),
+        ("JSX", LanguageId::JavaScript),
+        ("MJS", LanguageId::JavaScript),
+        ("CJS", LanguageId::JavaScript),
+        ("TS", LanguageId::TypeScript),
+        ("MTS", LanguageId::TypeScript),
+        ("CTS", LanguageId::TypeScript),
+        ("TSX", LanguageId::Tsx),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -39,7 +47,10 @@ fn detect_language_accepts_uppercase_extensions() {
 
 #[test]
 fn supported_languages_reports_cpp() {
-    assert_eq!(supported_languages(), vec!["python", "c", "cpp"]);
+    assert_eq!(
+        supported_languages(),
+        vec!["python", "c", "cpp", "javascript", "typescript", "tsx"]
+    );
 }
 
 #[test]
@@ -48,6 +59,9 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Python, "python"),
         (LanguageId::C, "c"),
         (LanguageId::Cpp, "cpp"),
+        (LanguageId::JavaScript, "javascript"),
+        (LanguageId::TypeScript, "typescript"),
+        (LanguageId::Tsx, "tsx"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -104,6 +118,76 @@ fn builtin_registry_preserves_current_language_contracts() {
     }
 
     assert_eq!(registry.language_for_extension("txt"), None);
+}
+
+#[test]
+fn syntax_only_js_and_typescript_adapters_are_explicitly_capability_gated() {
+    let registry = builtin_language_registry();
+
+    for (language_id, display_name, extensions, analysis_revision) in [
+        (
+            LanguageId::JavaScript,
+            "JavaScript",
+            &["js", "jsx", "mjs", "cjs"][..],
+            "javascript-syntax-v1",
+        ),
+        (
+            LanguageId::TypeScript,
+            "TypeScript",
+            &["ts", "mts", "cts"][..],
+            "typescript-syntax-v1",
+        ),
+        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-syntax-v1"),
+    ] {
+        let descriptor = registry.descriptor(language_id).unwrap();
+        assert_eq!(descriptor.display_name, display_name);
+        assert_eq!(descriptor.extensions, extensions);
+        assert_eq!(descriptor.analysis_revision, analysis_revision);
+        assert!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::TREE_QUERY)
+        );
+        assert!(
+            !descriptor
+                .capabilities
+                .contains(LanguageCapabilities::SYMBOL_INDEX)
+        );
+        for extension in extensions {
+            assert_eq!(
+                registry.language_for_extension(&extension.to_ascii_uppercase()),
+                Some(language_id)
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_document_uses_javascript_and_typescript_grammars() {
+    for (path, source, language_id) in [
+        (
+            "sample.js",
+            "export function add(left, right) { return left + right; }",
+            LanguageId::JavaScript,
+        ),
+        (
+            "sample.ts",
+            "export function add(left: number, right: number): number { return left + right; }",
+            LanguageId::TypeScript,
+        ),
+        (
+            "sample.tsx",
+            "export const App = () => <main>ready</main>;",
+            LanguageId::Tsx,
+        ),
+    ] {
+        let document = parse_document(Path::new(path), source).unwrap();
+        assert_eq!(document.language_id, language_id);
+        assert!(
+            !document.tree.root_node().has_error(),
+            "{path} should parse"
+        );
+    }
 }
 
 #[test]

@@ -683,6 +683,8 @@ Introduce `ReferenceFact`, adapt Python/C/C++ extraction, and update the resolve
 
 Add `tree-sitter-javascript` and `tree-sitter-typescript` using the repository's existing dependency and lockfile conventions. Implement the first external adapter with a conservative initial capability set.
 
+The first delivered slice registers JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.mts`, `.cts`), and TSX (`.tsx`) grammars for parsing and Tree-sitter queries only. The registry explicitly withholds symbol-index, trace, file-dependency, and patch capabilities, and workspace scans skip those syntax-only files so existing index flows cannot silently treat them as fully supported.
+
 Initial scope:
 
 - JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs`;

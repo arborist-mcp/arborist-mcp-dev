@@ -48,3 +48,35 @@ fn execute_tree_query_rejects_capture_limit_overflow() {
     assert!(error.to_string().contains("capture limit exceeded"));
     assert!(error.to_string().contains("max_captures=2"));
 }
+
+#[test]
+fn executes_tree_queries_for_javascript_and_typescript_syntax_only_adapters() {
+    for (path, source, query, expected) in [
+        (
+            "sample.js",
+            "export function add(left, right) { return left + right; }",
+            "(function_declaration name: (identifier) @name)",
+            "add",
+        ),
+        (
+            "sample.ts",
+            "export function add(left: number, right: number): number { return left + right; }",
+            "(function_declaration name: (identifier) @name)",
+            "add",
+        ),
+        (
+            "sample.tsx",
+            "export const App = () => <main>ready</main>;",
+            "(identifier) @name",
+            "App",
+        ),
+    ] {
+        let captures = execute_tree_query(Path::new(path), source, query).unwrap();
+        assert!(captures.iter().any(|capture| capture.text == expected));
+        assert!(
+            captures
+                .iter()
+                .all(|capture| capture.owner_symbol_id.is_none())
+        );
+    }
+}
