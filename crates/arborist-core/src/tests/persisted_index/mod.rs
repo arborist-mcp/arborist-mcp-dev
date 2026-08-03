@@ -17,6 +17,7 @@ pub(super) use crate::{
     read_symbol_from_index, rebuild_symbol_index, rebuild_symbol_index_with_limits,
     refresh_symbol_index_for_file, refresh_symbol_index_for_file_with_limits,
     search_symbols_from_index, trace_symbol_graph, trace_symbol_graph_from_index,
+    trace_symbol_graph_from_index_with_source, trace_symbol_graph_with_source,
 };
 
 mod inspect;

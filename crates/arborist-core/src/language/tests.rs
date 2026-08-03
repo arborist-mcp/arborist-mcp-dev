@@ -129,19 +129,19 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
             LanguageId::JavaScript,
             "JavaScript",
             &["js", "jsx", "mjs", "cjs"][..],
-            "javascript-import-resolution-v1",
+            "javascript-reexport-resolution-v1",
         ),
         (
             LanguageId::TypeScript,
             "TypeScript",
             &["ts", "mts", "cts"][..],
-            "typescript-import-resolution-v1",
+            "typescript-reexport-resolution-v1",
         ),
         (
             LanguageId::Tsx,
             "TSX",
             &["tsx"][..],
-            "tsx-import-resolution-v1",
+            "tsx-reexport-resolution-v1",
         ),
     ] {
         let descriptor = registry.descriptor(language_id).unwrap();

@@ -15,7 +15,9 @@ pub(crate) use c::{
     c_include_targets_before, c_local_include_dependency_paths, extension_case_candidates,
 };
 pub(crate) use javascript::{
-    javascript_local_module_dependency_paths, javascript_named_import_module_paths,
+    javascript_local_module_dependency_paths,
+    javascript_named_import_module_paths_with_overrides_and_check,
+    javascript_named_reexport_module_paths_with_overrides_and_check,
 };
 pub use parser::{
     ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,

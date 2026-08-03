@@ -711,8 +711,10 @@ completed item can land in its own commit unless two changes are inseparable.
   `require` dependency extraction for transitive incremental refresh.
 - [x] Resolve direct calls through statically resolvable local named imports,
   including aliases, while rejecting unresolved imports instead of falling back
-  to unrelated workspace symbols; keep re-export/default/namespace resolution
-  and patch flows capability-gated.
+  to unrelated workspace symbols.
+- [x] Follow static local named re-export chains for direct calls with cycle
+  detection and fail-closed unresolved targets; keep star/default/namespace
+  resolution and patch flows capability-gated.
 
 ## Suggested Commit Sequence
 

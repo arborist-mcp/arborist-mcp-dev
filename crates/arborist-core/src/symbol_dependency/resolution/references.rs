@@ -5,7 +5,7 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::javascript::{
-    JavaScriptImportContext, javascript_import_context_for_file_with_overrides_and_deadline,
+    JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
@@ -72,7 +72,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
-    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -97,7 +97,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     file_overrides: Option<&BTreeMap<String, String>>,
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
-    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -180,7 +180,7 @@ fn resolve_reference_path_with_deadline<'a>(
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
-    javascript_import_contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
+    javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -192,20 +192,20 @@ fn resolve_reference_path_with_deadline<'a>(
     } else {
         (reference_name, None)
     };
-    let javascript_import_binding = matches!(
+    let javascript_import_binding = if matches!(
         language_id,
         Some(LanguageId::JavaScript | LanguageId::TypeScript | LanguageId::Tsx)
-    )
-    .then(|| {
-        javascript_named_import_binding_for_reference(
-            source_symbol,
+    ) {
+        resolve_javascript_named_import_binding_for_reference(
+            &source_symbol.file_path,
             lookup_name,
             file_overrides,
             javascript_import_contexts_by_file,
             deadline,
-        )
-    })
-    .flatten();
+        )?
+    } else {
+        None
+    };
     let candidate_lookup_name = javascript_import_binding
         .as_ref()
         .map(|binding| binding.imported_name.as_str())
@@ -447,30 +447,6 @@ fn resolve_reference_path_with_deadline<'a>(
     Ok(selected)
 }
 
-fn javascript_named_import_binding_for_reference<'a>(
-    source_symbol: &'a IndexedSymbol,
-    reference_name: &str,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    contexts_by_file: &mut HashMap<&'a str, Option<JavaScriptImportContext>>,
-    deadline: Option<&WorkspaceScanDeadline>,
-) -> Option<super::super::javascript::JavaScriptImportBinding> {
-    let source_file_path = source_symbol.file_path.as_str();
-    if !contexts_by_file.contains_key(source_file_path) {
-        let context = javascript_import_context_for_file_with_overrides_and_deadline(
-            source_file_path,
-            file_overrides,
-            deadline,
-        )
-        .ok();
-        contexts_by_file.insert(source_file_path, context);
-    }
-    contexts_by_file
-        .get(source_file_path)
-        .and_then(|context| context.as_ref())
-        .and_then(|context| context.named_import_bindings.get(reference_name))
-        .cloned()
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -512,7 +488,7 @@ mod tests {
             None,
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
-            &mut std::collections::HashMap::new(),
+            &mut std::collections::BTreeMap::new(),
             Some(&deadline),
         )
         .expect_err("expired reference resolution should fail before lookup");

@@ -10,9 +10,10 @@ const JAVASCRIPT_FAMILY_EXTENSIONS: &[&str] =
     &["js", "jsx", "mjs", "cjs", "ts", "mts", "cts", "tsx"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct JavaScriptNamedImport {
+pub(crate) struct JavaScriptNamedModuleBinding {
     pub(crate) imported_name: String,
     pub(crate) module_paths: BTreeSet<PathBuf>,
+    pub(crate) unresolved: bool,
 }
 
 pub(crate) fn javascript_local_module_dependency_paths(
@@ -28,19 +29,55 @@ pub(crate) fn javascript_local_module_dependency_paths(
     })
 }
 
-pub(crate) fn javascript_named_import_module_paths(
+pub(crate) fn javascript_named_import_module_paths_with_overrides_and_check(
     path: &Path,
     root: Node<'_>,
     source: &str,
-) -> Result<BTreeMap<String, JavaScriptNamedImport>> {
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeMap<String, JavaScriptNamedModuleBinding>> {
     let mut bindings = BTreeMap::new();
-    collect_javascript_named_import_module_paths(path, root, source, &mut bindings)?;
+    collect_javascript_named_import_module_paths(
+        path,
+        root,
+        source,
+        file_overrides,
+        check,
+        &mut bindings,
+    )?;
+    Ok(bindings)
+}
+
+pub(crate) fn javascript_named_reexport_module_paths_with_overrides_and_check(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+) -> Result<BTreeMap<String, JavaScriptNamedModuleBinding>> {
+    let mut bindings = BTreeMap::new();
+    collect_javascript_named_reexport_module_paths(
+        path,
+        root,
+        source,
+        file_overrides,
+        check,
+        &mut bindings,
+    )?;
     Ok(bindings)
 }
 
 pub(crate) fn resolve_local_javascript_module_path(
     current_path: &Path,
     specifier: &str,
+) -> Option<PathBuf> {
+    resolve_local_javascript_module_path_with_overrides(current_path, specifier, None)
+}
+
+pub(crate) fn resolve_local_javascript_module_path_with_overrides(
+    current_path: &Path,
+    specifier: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Option<PathBuf> {
     if !is_relative_module_specifier(specifier) {
         return None;
@@ -50,47 +87,202 @@ pub(crate) fn resolve_local_javascript_module_path(
     let base = normalize_absolute_path(&parent.join(specifier)).ok()?;
     local_module_candidates(&base)
         .into_iter()
-        .find(|candidate| is_javascript_family_source_file(candidate))
+        .find(|candidate| {
+            is_javascript_family_source_file(candidate)
+                || file_overrides.is_some_and(|overrides| {
+                    overrides.contains_key(&super::normalize_path(candidate))
+                })
+        })
 }
 
 fn collect_javascript_named_import_module_paths(
     path: &Path,
     node: Node<'_>,
     source: &str,
-    bindings: &mut BTreeMap<String, JavaScriptNamedImport>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+    bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
 ) -> Result<()> {
+    if let Some(check) = check {
+        check()?;
+    }
     if node.kind() == "import_statement" {
         let module_path = node
             .child_by_field_name("source")
             .or_else(|| first_string_child(node))
             .and_then(|source_node| javascript_string_literal(source_node, source).transpose())
             .transpose()?
-            .and_then(|specifier| resolve_local_javascript_module_path(path, &specifier));
+            .and_then(|specifier| {
+                resolve_local_javascript_module_path_with_overrides(
+                    path,
+                    &specifier,
+                    file_overrides,
+                )
+            });
+        collect_unsupported_import_bindings(node, source, bindings)?;
         for (imported_name, local_name) in named_import_bindings(node, source)? {
-            let binding = bindings
-                .entry(local_name)
-                .or_insert_with(|| JavaScriptNamedImport {
-                    imported_name: imported_name.clone(),
-                    module_paths: BTreeSet::new(),
-                });
-            if binding.imported_name == imported_name
-                && let Some(module_path) = &module_path
-            {
-                binding.module_paths.insert(module_path.clone());
-            }
+            insert_javascript_module_binding(
+                bindings,
+                local_name,
+                imported_name.clone(),
+                module_path.clone(),
+                imported_name == "default" || imported_name == "<unsupported>",
+            );
         }
     }
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_javascript_named_import_module_paths(path, child, source, bindings)?;
+        collect_javascript_named_import_module_paths(
+            path,
+            child,
+            source,
+            file_overrides,
+            check,
+            bindings,
+        )?;
     }
     Ok(())
+}
+
+fn collect_javascript_named_reexport_module_paths(
+    path: &Path,
+    node: Node<'_>,
+    source: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    check: Option<&dyn Fn() -> Result<()>>,
+    bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
+) -> Result<()> {
+    if let Some(check) = check {
+        check()?;
+    }
+    if node.kind() == "export_statement"
+        && let Some(source_node) = node.child_by_field_name("source")
+    {
+        let module_path = javascript_string_literal(source_node, source)?.and_then(|specifier| {
+            resolve_local_javascript_module_path_with_overrides(path, &specifier, file_overrides)
+        });
+        for (imported_name, exported_name) in named_reexport_bindings(node, source)? {
+            insert_javascript_module_binding(
+                bindings,
+                exported_name,
+                imported_name.clone(),
+                module_path.clone(),
+                imported_name == "default" || imported_name == "<unsupported>",
+            );
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_javascript_named_reexport_module_paths(
+            path,
+            child,
+            source,
+            file_overrides,
+            check,
+            bindings,
+        )?;
+    }
+    Ok(())
+}
+
+fn collect_unsupported_import_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
+) -> Result<()> {
+    let Some(import_clause) = node
+        .named_children(&mut node.walk())
+        .find(|child| child.kind() == "import_clause")
+    else {
+        return Ok(());
+    };
+
+    let mut cursor = import_clause.walk();
+    for child in import_clause.named_children(&mut cursor) {
+        let (local_name, imported_name) = match child.kind() {
+            "identifier" => (node_text(child, source)?.trim().to_owned(), "default"),
+            "namespace_import" => {
+                let Some(local_node) = child.named_child(0) else {
+                    continue;
+                };
+                (
+                    node_text(local_node, source)?.trim().to_owned(),
+                    "<namespace>",
+                )
+            }
+            _ => continue,
+        };
+        if local_name.is_empty() {
+            continue;
+        }
+        insert_javascript_module_binding(
+            bindings,
+            local_name,
+            imported_name.to_owned(),
+            None,
+            true,
+        );
+    }
+    Ok(())
+}
+
+fn insert_javascript_module_binding(
+    bindings: &mut BTreeMap<String, JavaScriptNamedModuleBinding>,
+    local_name: String,
+    imported_name: String,
+    module_path: Option<PathBuf>,
+    unresolved: bool,
+) {
+    let Some(module_path) = module_path else {
+        bindings.insert(
+            local_name,
+            JavaScriptNamedModuleBinding {
+                imported_name,
+                module_paths: BTreeSet::new(),
+                unresolved: true,
+            },
+        );
+        return;
+    };
+    if unresolved {
+        bindings.insert(
+            local_name,
+            JavaScriptNamedModuleBinding {
+                imported_name,
+                module_paths: BTreeSet::new(),
+                unresolved: true,
+            },
+        );
+        return;
+    }
+
+    match bindings.entry(local_name) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(JavaScriptNamedModuleBinding {
+                imported_name,
+                module_paths: BTreeSet::from([module_path]),
+                unresolved: false,
+            });
+        }
+        std::collections::btree_map::Entry::Occupied(mut entry) => {
+            let binding = entry.get_mut();
+            binding.unresolved = true;
+            binding.module_paths.clear();
+        }
+    }
 }
 
 fn named_import_bindings(node: Node<'_>, source: &str) -> Result<Vec<(String, String)>> {
     let mut bindings = Vec::new();
     collect_named_import_bindings(node, source, &mut bindings)?;
+    Ok(bindings)
+}
+
+fn named_reexport_bindings(node: Node<'_>, source: &str) -> Result<Vec<(String, String)>> {
+    let mut bindings = Vec::new();
+    collect_named_reexport_bindings(node, source, &mut bindings)?;
     Ok(bindings)
 }
 
@@ -100,10 +292,8 @@ fn collect_named_import_bindings(
     bindings: &mut Vec<(String, String)>,
 ) -> Result<()> {
     if node.kind() == "import_specifier" {
-        let names = identifier_names(node, source)?;
-        if let Some(imported_name) = names.first() {
-            let local_name = names.last().unwrap_or(imported_name);
-            bindings.push((imported_name.clone(), local_name.clone()));
+        if let Some(binding) = named_identifier_binding(node, source)? {
+            bindings.push(binding);
         }
         return Ok(());
     }
@@ -115,22 +305,53 @@ fn collect_named_import_bindings(
     Ok(())
 }
 
-fn identifier_names(node: Node<'_>, source: &str) -> Result<Vec<String>> {
-    let mut names = Vec::new();
-    let mut pending = vec![node];
-    while let Some(current) = pending.pop() {
-        if matches!(current.kind(), "identifier" | "type_identifier") {
-            let name = node_text(current, source)?.trim().to_string();
-            if !name.is_empty() {
-                names.push(name);
-            }
-            continue;
+fn collect_named_reexport_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut Vec<(String, String)>,
+) -> Result<()> {
+    if node.kind() == "export_specifier" {
+        if let Some(binding) = named_identifier_binding(node, source)? {
+            bindings.push(binding);
         }
-        let mut cursor = current.walk();
-        let children = current.named_children(&mut cursor).collect::<Vec<_>>();
-        pending.extend(children.into_iter().rev());
+        return Ok(());
     }
-    Ok(names)
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_named_reexport_bindings(child, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn named_identifier_binding(node: Node<'_>, source: &str) -> Result<Option<(String, String)>> {
+    let Some(imported_node) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let imported_name = if imported_node.kind() == "identifier" {
+        node_text(imported_node, source)?.trim().to_owned()
+    } else {
+        "<unsupported>".to_owned()
+    };
+    if imported_name.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(alias_node) = node.child_by_field_name("alias") else {
+        return if imported_name == "<unsupported>" {
+            Ok(None)
+        } else {
+            Ok(Some((imported_name.clone(), imported_name)))
+        };
+    };
+    if alias_node.kind() != "identifier" {
+        return Ok(None);
+    }
+    let local_name = node_text(alias_node, source)?.trim().to_owned();
+    if local_name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((imported_name, local_name)))
 }
 
 fn javascript_static_module_specifiers(root: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
@@ -253,10 +474,17 @@ fn is_javascript_family_source_file(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use super::{javascript_named_import_module_paths, javascript_static_module_specifiers};
+    use anyhow::bail;
+
+    use super::{
+        javascript_named_import_module_paths_with_overrides_and_check,
+        javascript_named_reexport_module_paths_with_overrides_and_check,
+        javascript_static_module_specifiers,
+    };
     use crate::language::parse_document;
 
     #[test]
@@ -283,6 +511,36 @@ const escaped = require("./escaped\\name");
     }
 
     #[test]
+    fn checks_the_traversal_budget_while_collecting_named_imports() {
+        let source = "import { helper } from \"./helper\";\n";
+        let document = parse_document(Path::new("sample.ts"), source).unwrap();
+        let checks = Cell::new(0);
+        let check = || {
+            let count = checks.get() + 1;
+            checks.set(count);
+            if count == 2 {
+                bail!("binding traversal budget exhausted");
+            }
+            Ok(())
+        };
+
+        let error = javascript_named_import_module_paths_with_overrides_and_check(
+            Path::new("sample.ts"),
+            document.tree.root_node(),
+            source,
+            None,
+            Some(&check),
+        )
+        .expect_err("binding traversal must stop when the supplied budget expires");
+        assert!(
+            error
+                .to_string()
+                .contains("binding traversal budget exhausted")
+        );
+        assert_eq!(checks.get(), 2);
+    }
+
+    #[test]
     fn resolves_named_import_bindings_to_local_modules() {
         let root = std::env::temp_dir().join(format!(
             "arborist-javascript-import-bindings-{}",
@@ -296,9 +554,14 @@ const escaped = require("./escaped\\name");
         let source = "import { helper as localHelper, other } from \"./helper\";\n";
         let document = parse_document(&importer, source).unwrap();
 
-        let bindings =
-            javascript_named_import_module_paths(&importer, document.tree.root_node(), source)
-                .unwrap();
+        let bindings = javascript_named_import_module_paths_with_overrides_and_check(
+            &importer,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             bindings
                 .get("localHelper")
@@ -308,6 +571,146 @@ const escaped = require("./escaped\\name");
         assert_eq!(
             bindings
                 .get("localHelper")
+                .map(|binding| &binding.module_paths),
+            Some(&BTreeSet::from([helper.clone()]))
+        );
+        assert_eq!(
+            bindings.get("other").map(|binding| &binding.module_paths),
+            Some(&BTreeSet::from([helper]))
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_default_specifiers_when_collecting_named_bindings() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-default-bindings-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let helper = root.join("helper.ts");
+        std::fs::write(&helper, "export default function helper() {}\n").unwrap();
+        let source = "import selected from \"./helper\";\nimport * as namespace from \"./helper\";\nimport { default as selectedAlias } from \"./helper\";\nexport { default as forwarded } from \"./helper\";\n";
+        let document = parse_document(&module, source).unwrap();
+
+        let imports = javascript_named_import_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        let reexports = javascript_named_reexport_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        for local_name in ["selected", "namespace", "selectedAlias"] {
+            assert!(
+                imports
+                    .get(local_name)
+                    .is_some_and(|binding| binding.module_paths.is_empty())
+            );
+        }
+        assert!(
+            reexports
+                .get("forwarded")
+                .is_some_and(|binding| binding.module_paths.is_empty())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ignores_local_named_exports_when_collecting_reexport_bindings() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-local-exports-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let module = root.join("module.ts");
+        let source = "function helper() {}\nexport { helper };\n";
+        let document = parse_document(&module, source).unwrap();
+
+        let bindings = javascript_named_reexport_module_paths_with_overrides_and_check(
+            &module,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(bindings.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn poisons_conflicting_named_reexport_bindings() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-reexport-conflicts-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "export { helper as forwarded } from \"./missing\";\nexport { helper as forwarded } from \"./helper\";\n";
+        let document = parse_document(&bridge, source).unwrap();
+
+        let bindings = javascript_named_reexport_module_paths_with_overrides_and_check(
+            &bridge,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            bindings
+                .get("forwarded")
+                .is_some_and(|binding| binding.unresolved && binding.module_paths.is_empty())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_named_reexport_bindings_to_local_modules() {
+        let root = std::env::temp_dir().join(format!(
+            "arborist-javascript-reexport-bindings-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bridge = root.join("bridge.ts");
+        let helper = root.join("helper.ts");
+        std::fs::write(&helper, "export function helper() {}\n").unwrap();
+        let source = "export { helper as forwarded, other } from \"./helper\";\n";
+        let document = parse_document(&bridge, source).unwrap();
+
+        let bindings = javascript_named_reexport_module_paths_with_overrides_and_check(
+            &bridge,
+            document.tree.root_node(),
+            source,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            bindings
+                .get("forwarded")
+                .map(|binding| &binding.imported_name),
+            Some(&"helper".to_string())
+        );
+        assert_eq!(
+            bindings
+                .get("forwarded")
                 .map(|binding| &binding.module_paths),
             Some(&BTreeSet::from([helper.clone()]))
         );

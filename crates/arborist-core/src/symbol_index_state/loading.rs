@@ -23,6 +23,7 @@ use crate::symbol_dependency::{
 use crate::symbol_extractor::{
     index_symbols_from_document, index_symbols_from_document_with_deadline,
 };
+use crate::symbol_index_workspace::expanded_refresh_file_paths;
 use crate::symbol_map::resolved_symbol_map;
 use crate::workspace_scan::{MAX_WORKSPACE_SCAN_FILES, WorkspaceScanDeadline, WorkspaceScanLimits};
 
@@ -191,9 +192,26 @@ fn load_symbol_index_with_overrides_internal(
         Some(&file_overrides),
         deadline,
     )?;
+    let unbounded_deadline = WorkspaceScanDeadline::new(WorkspaceScanLimits::default())?;
+    let refresh_deadline = deadline.unwrap_or(&unbounded_deadline);
     let mut changed_file_paths = BTreeSet::new();
+    for override_path in file_overrides.keys() {
+        refresh_deadline.check("expanding indexed override dependents")?;
+        for refresh_path in expanded_refresh_file_paths(
+            &workspace_root,
+            Path::new(override_path),
+            WorkspaceScanLimits::default(),
+            refresh_deadline,
+        )? {
+            changed_file_paths.insert(normalize_path(&refresh_path));
+        }
+    }
+
     let mut added_file_paths = BTreeSet::new();
-    let mut old_changed_symbols = Vec::new();
+    let old_changed_symbols = changed_file_paths
+        .iter()
+        .flat_map(|path| grouped_symbols.get(path).into_iter().flatten().cloned())
+        .collect::<Vec<_>>();
 
     for (override_path, override_source) in &file_overrides {
         if let Some(deadline) = deadline {
@@ -221,9 +239,6 @@ fn load_symbol_index_with_overrides_internal(
         let normalized_path = normalize_path(override_path);
         if !persisted_file_states.contains_key(&normalized_path) {
             added_file_paths.insert(normalized_path.clone());
-        }
-        if let Some(previous_symbols) = grouped_symbols.get(&normalized_path) {
-            old_changed_symbols.extend(previous_symbols.iter().cloned());
         }
         grouped_symbols.insert(normalized_path.clone(), symbols);
         changed_file_paths.insert(normalized_path);

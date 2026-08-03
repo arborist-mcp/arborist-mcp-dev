@@ -258,6 +258,270 @@ fn traces_named_typescript_imports_to_the_local_module() {
 }
 
 #[test]
+fn traces_named_typescript_imports_through_local_reexport_chains() {
+    let dir = temporary_dir();
+    let original = dir.join("original.ts");
+    let middle = dir.join("middle.ts");
+    let bridge = dir.join("bridge.ts");
+    let alternate = dir.join("alternate.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &original,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &middle,
+        "export { helper as forwarded } from \"./original\";\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "export { forwarded as publicHelper } from \"./middle\";\n",
+    )
+    .unwrap();
+    fs::write(
+        &alternate,
+        "export function helper(value: number): number { return value + 2; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { publicHelper as selected } from \"./bridge\";\nexport function caller(value: number): number { return selected(value); }\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(live_trace.callees.len(), 1);
+    assert_eq!(live_trace.callees[0].semantic_path, "helper");
+    assert_eq!(
+        live_trace.callees[0].file_path,
+        original.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(trace.callees.len(), 1);
+    assert_eq!(trace.callees[0].semantic_path, "helper");
+    assert_eq!(
+        trace.callees[0].file_path,
+        original.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
+fn traces_named_javascript_and_tsx_reexport_chains() {
+    for (extension, helper_source, caller_source) in [
+        (
+            "js",
+            "export function helper(value) { return value + 1; }\n",
+            "import { forwarded as selected } from \"./bridge\";\nexport function caller(value) { return selected(value); }\n",
+        ),
+        (
+            "tsx",
+            "export function helper(value: number): number { return value + 1; }\n",
+            "import { forwarded as selected } from \"./bridge\";\nexport function caller(value: number): number { return selected(value); }\n",
+        ),
+    ] {
+        let dir = temporary_dir();
+        let original = dir.join(format!("original.{extension}"));
+        let bridge = dir.join(format!("bridge.{extension}"));
+        let caller = dir.join(format!("caller.{extension}"));
+        let db_path = dir.join("symbols.db");
+        fs::write(&original, helper_source).unwrap();
+        fs::write(
+            &bridge,
+            "export { helper as forwarded } from \"./original\";\n",
+        )
+        .unwrap();
+        fs::write(&caller, caller_source).unwrap();
+
+        let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+        assert_eq!(live_trace.callees.len(), 1, "{extension} live trace");
+        assert_eq!(
+            live_trace.callees[0].file_path,
+            original.to_string_lossy().replace('\\', "/"),
+            "{extension} live trace"
+        );
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+
+        let trace =
+            trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+        assert_eq!(trace.callees.len(), 1, "{extension} persisted trace");
+        assert_eq!(
+            trace.callees[0].file_path,
+            original.to_string_lossy().replace('\\', "/"),
+            "{extension} persisted trace"
+        );
+    }
+}
+
+#[test]
+fn traces_named_typescript_reexports_from_live_and_persisted_source_overlays() {
+    let dir = temporary_dir();
+    let original = dir.join("original.ts");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &original,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(&bridge, "export { helper as stale } from \"./original\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import { forwarded as selected } from \"./bridge\";\nexport function caller(value: number): number { return selected(value); }\n",
+    )
+    .unwrap();
+    let bridge_overlay = "export { helper as forwarded } from \"./original\";\n";
+
+    let live_trace = trace_symbol_graph_with_source(
+        &dir,
+        &bridge,
+        bridge_overlay,
+        "caller",
+        TraceDirection::Both,
+    )
+    .unwrap();
+    assert_eq!(live_trace.callees.len(), 1);
+    assert_eq!(
+        live_trace.callees[0].file_path,
+        original.to_string_lossy().replace('\\', "/")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let persisted_trace = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &bridge,
+        bridge_overlay,
+        "caller",
+        TraceDirection::Both,
+    )
+    .unwrap();
+    assert_eq!(persisted_trace.callees.len(), 1);
+    assert_eq!(
+        persisted_trace.callees[0].file_path,
+        original.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
+fn refreshes_typescript_named_reexport_callers_after_bridge_changes() {
+    let dir = temporary_dir();
+    let original = dir.join("original.ts");
+    let alternate = dir.join("alternate.ts");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &original,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &alternate,
+        "export function helper(value: number): number { return value + 2; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "export { helper as forwarded } from \"./original\";\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { forwarded as selected } from \"./bridge\";\nexport function caller(value: number): number { return selected(value); }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let before = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(
+        before.callees[0].file_path,
+        original.to_string_lossy().replace('\\', "/")
+    );
+
+    fs::write(
+        &bridge,
+        "export { helper as forwarded } from \"./alternate\";\n",
+    )
+    .unwrap();
+    refresh_symbol_index_for_file(&dir, &db_path, &bridge).unwrap();
+
+    let after = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert_eq!(after.callees.len(), 1);
+    assert_eq!(
+        after.callees[0].file_path,
+        alternate.to_string_lossy().replace('\\', "/")
+    );
+}
+
+#[test]
+fn does_not_trace_conflicting_named_typescript_reexports_to_workspace_symbols() {
+    let dir = temporary_dir();
+    let original = dir.join("original.ts");
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &original,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &bridge,
+        "export { helper as forwarded } from \"./missing\";\nexport { helper as forwarded } from \"./original\";\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "import { forwarded as selected } from \"./bridge\";\nexport function caller(value: number): number { return selected(value); }\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert!(live_trace.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}
+
+#[test]
+fn does_not_trace_unresolved_named_typescript_reexports_to_workspace_symbols() {
+    let dir = temporary_dir();
+    let bridge = dir.join("bridge.ts");
+    let caller = dir.join("caller.ts");
+    let unrelated = dir.join("unrelated.ts");
+    let db_path = dir.join("symbols.db");
+    fs::write(&bridge, "export { helper } from \"./missing\";\n").unwrap();
+    fs::write(
+        &caller,
+        "import { helper } from \"./bridge\";\nexport function caller(value: number): number { return helper(value); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "export function helper(value: number): number { return value + 1; }\n",
+    )
+    .unwrap();
+
+    let live_trace = trace_symbol_graph(&dir, "caller", TraceDirection::Both).unwrap();
+    assert!(live_trace.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let trace = trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Both).unwrap();
+    assert!(trace.callees.is_empty());
+}
+
+#[test]
 fn does_not_trace_unresolved_named_typescript_imports_to_workspace_symbols() {
     let dir = temporary_dir();
     let caller = dir.join("caller.ts");

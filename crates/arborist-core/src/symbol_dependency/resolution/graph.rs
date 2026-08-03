@@ -23,7 +23,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
     let mut include_contexts_by_file = HashMap::new();
-    let mut javascript_import_contexts_by_file = HashMap::new();
+    let mut javascript_import_contexts_by_file = BTreeMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -91,7 +91,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let mut dependency_map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut languages_by_file = HashMap::new();
     let mut include_contexts_by_file = HashMap::new();
-    let mut javascript_import_contexts_by_file = HashMap::new();
+    let mut javascript_import_contexts_by_file = BTreeMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;

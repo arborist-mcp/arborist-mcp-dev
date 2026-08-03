@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::Result;
 
 use super::c::CIncludeContext;
-use super::javascript::JavaScriptImportContext;
 use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
     raw_symbol_indexes_by_id, resolve_dependencies_for_symbol_with_deadline,
@@ -45,8 +44,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     let mut resolved_map = old_resolved_map.clone();
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
     let mut include_contexts_by_file: HashMap<&str, Option<CIncludeContext>> = HashMap::new();
-    let mut javascript_import_contexts_by_file: HashMap<&str, Option<JavaScriptImportContext>> =
-        HashMap::new();
+    let mut javascript_import_contexts_by_file = BTreeMap::new();
     for symbol in old_changed_symbols {
         resolved_map.remove(&symbol.symbol_id);
     }
@@ -88,6 +86,8 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
 
     let reference_impacted_paths =
         reference_impacted_paths(old_resolved_map, &resolved_map, &impacted_ids);
+    let mut persistence_impacted_paths = impacted_ids.clone();
+    persistence_impacted_paths.extend(reference_impacted_paths.iter().cloned());
 
     for impacted_path in reference_impacted_paths {
         if let Some(deadline) = deadline {
@@ -112,7 +112,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         }
     }
 
-    Ok((resolved_map, impacted_ids))
+    Ok((resolved_map, persistence_impacted_paths))
 }
 
 pub(crate) fn materialize_resolved_symbol_rows(
