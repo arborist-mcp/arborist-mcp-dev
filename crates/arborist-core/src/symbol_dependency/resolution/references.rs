@@ -24,6 +24,7 @@ use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
 use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails};
+use crate::symbol_reference_compat::effective_reference_facts;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Clone, Copy)]
@@ -96,7 +97,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     let language_id = *languages_by_file
         .entry(symbol.file_path.as_str())
         .or_insert_with(|| detect_language(Path::new(&symbol.file_path)).ok());
-    for reference in symbol.effective_reference_facts().iter() {
+    for reference in effective_reference_facts(symbol).iter() {
         if let Some(deadline) = deadline {
             deadline.check("resolving symbol references")?;
         }

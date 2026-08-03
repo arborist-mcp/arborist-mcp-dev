@@ -14,7 +14,8 @@ use crate::semantic::{
     c_function_header, c_is_callable_declaration, c_parameters, c_return_type, c_semantic_path,
     c_symbol_nodes, c_symbol_nodes_with_deadline, semantic_parent_path,
 };
-use crate::symbol_index_model::{IndexedSymbol, reference_facts_from_legacy, symbol_base_name};
+use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::symbol_reference_compat::reference_facts_from_legacy;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn index_c_symbols_with_deadline(

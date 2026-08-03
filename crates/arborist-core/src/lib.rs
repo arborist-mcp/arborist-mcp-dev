@@ -22,6 +22,7 @@ mod symbol_position;
 mod symbol_query;
 mod symbol_query_execution;
 mod symbol_read;
+mod symbol_reference_compat;
 mod symbol_search;
 mod symbol_summary;
 mod symbol_trace;

@@ -76,7 +76,7 @@ pub(crate) fn index_python_symbols_with_deadline(
         let return_type = python_return_type(node, source).ok().flatten();
         let docstring = python_docstring(node, source).ok().flatten();
         let call_arities_by_name = std::collections::BTreeMap::new();
-        let reference_facts = crate::symbol_index_model::reference_facts_from_legacy(
+        let reference_facts = crate::symbol_reference_compat::reference_facts_from_legacy(
             &references,
             &call_arities_by_name,
         );

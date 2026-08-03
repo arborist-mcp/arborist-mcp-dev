@@ -1,12 +1,23 @@
 use super::super::cpp_types::CppThisMemberReceiver;
-use crate::symbol_index_model::{
-    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
-    CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_CONST_RVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
-    CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
-    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
-};
+
+pub(crate) const CPP_RVALUE_THIS_CALL_PREFIX: &str = "\u{1f}arborist-rvalue-this:";
+pub(crate) const CPP_CONST_LVALUE_THIS_CALL_PREFIX: &str = "\u{1f}arborist-const-lvalue-this:";
+pub(crate) const CPP_CONST_RVALUE_THIS_CALL_PREFIX: &str = "\u{1f}arborist-const-rvalue-this:";
+pub(crate) const CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-rvalue-temporary-member:";
+pub(crate) const CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-const-lvalue-temporary-member:";
+pub(crate) const CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-const-rvalue-temporary-member:";
+pub(crate) const CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-lvalue-variable-member:";
+pub(crate) const CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-const-lvalue-variable-member:";
+pub(crate) const CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-rvalue-variable-member:";
+pub(crate) const CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX: &str =
+    "\u{1f}arborist-const-rvalue-variable-member:";
+pub(crate) const CPP_TEMPORARY_MEMBER_CALL_SEPARATOR: &str = "\u{1e}";
 
 pub(super) fn encode_cpp_this_member_call_name(
     name: String,

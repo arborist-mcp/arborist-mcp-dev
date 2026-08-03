@@ -13,6 +13,14 @@ pub(crate) use call_arities::{
     collect_c_call_arities, collect_c_call_arities_with_deadline, collect_cpp_call_arities,
     collect_cpp_call_arities_with_deadline,
 };
+pub(crate) use member_call_names::{
+    CPP_CONST_LVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_CONST_LVALUE_THIS_CALL_PREFIX,
+    CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_CONST_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    CPP_CONST_RVALUE_THIS_CALL_PREFIX, CPP_CONST_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+    CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX,
+    CPP_RVALUE_THIS_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
+    CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
+};
 pub(crate) use name_collection::{
     collect_c_graph_references, collect_c_graph_references_with_deadline, collect_c_references,
     collect_c_references_with_deadline,

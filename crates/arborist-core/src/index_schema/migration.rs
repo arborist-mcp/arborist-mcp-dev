@@ -9,7 +9,7 @@ use crate::model::LanguageId;
 use crate::semantic::cpp_callable_symbol_id;
 
 use super::SYMBOL_INDEX_SCHEMA_VERSION;
-use crate::symbol_index_model::reference_facts_from_legacy;
+use crate::symbol_reference_compat::reference_facts_from_legacy;
 
 pub(crate) fn migrate_symbol_index_schema_to_current(connection: &mut Connection) -> Result<()> {
     let transaction = connection.transaction()?;

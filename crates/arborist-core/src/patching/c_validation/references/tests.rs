@@ -5,12 +5,12 @@ use crate::language::parse_document;
 
 use super::super::cpp_types::cpp_type_is_top_level_const;
 use super::{
-    collect_c_graph_references, collect_cpp_call_arities, cpp_this_receiver_from_expression,
-};
-use crate::symbol_index_model::{
     CPP_CONST_LVALUE_VARIABLE_MEMBER_CALL_PREFIX, CPP_LVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     CPP_RVALUE_TEMPORARY_MEMBER_CALL_PREFIX, CPP_RVALUE_VARIABLE_MEMBER_CALL_PREFIX,
     CPP_TEMPORARY_MEMBER_CALL_SEPARATOR,
+};
+use super::{
+    collect_c_graph_references, collect_cpp_call_arities, cpp_this_receiver_from_expression,
 };
 
 #[test]
