@@ -161,6 +161,29 @@ pub(crate) fn search_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchContextResult> {
     let search = search_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
@@ -168,9 +191,9 @@ pub(crate) fn search_context_from_symbols_with_timeout(
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut reads = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
 
@@ -239,6 +262,35 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_discovery_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_discovery_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchDiscoveryContextResult> {
     let search = search_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
@@ -246,9 +298,9 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut reads = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
     let mut contexts = Vec::with_capacity(search.matches.len());
@@ -276,7 +328,7 @@ pub(crate) fn search_discovery_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                &deadline,
+                deadline,
                 &mut source_cache,
             )?,
         );
@@ -335,6 +387,35 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_neighborhood_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_neighborhood_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
     let search = search_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
@@ -342,9 +423,9 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut contexts = Vec::with_capacity(search.matches.len());
     let mut source_cache = BTreeMap::new();
 
@@ -365,7 +446,7 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                &deadline,
+                deadline,
                 &mut source_cache,
             )?,
         );
@@ -379,8 +460,27 @@ pub(crate) fn search_neighborhood_context_from_symbols_with_timeout(
 
 #[cfg(test)]
 mod tests {
-    use super::search_from_symbols_with_deadline;
+    use super::{search_context_from_symbols_with_deadline, search_from_symbols_with_deadline};
     use crate::symbol_trace::TraceQueryDeadline;
+
+    #[test]
+    fn search_context_reuses_the_callers_deadline() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = search_context_from_symbols_with_deadline(
+            &[],
+            0,
+            "helper",
+            1,
+            None,
+            None,
+            None,
+            &deadline,
+        )
+        .expect_err("symbol search context should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol search"));
+    }
 
     #[test]
     fn search_reuses_the_callers_deadline() {
