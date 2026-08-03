@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 
 use crate::deadline::DeadlineCheck;
-use crate::language::detect_language;
-use crate::model::{LanguageId, SymbolMeta, SymbolReadResult};
+use crate::language::{builtin_language_registry, detect_language};
+use crate::model::{SymbolMeta, SymbolReadResult};
 use crate::symbol_index_model::symbol_kind_rank;
 use crate::symbol_read::read_symbol_result_from_meta;
 
@@ -71,15 +71,24 @@ pub(crate) fn choose_trace_symbol_with_deadline<'a>(
         |symbol| symbol.semantic_path == symbol_path,
         deadline,
     )?;
-    let mut python_candidates = Vec::new();
+    let registry = builtin_language_registry();
+    let mut exact_id_candidates = Vec::new();
+    let mut exact_id_language_names = BTreeSet::new();
     for symbol in semantic_candidates.iter().copied() {
         check_trace_selection_deadline(deadline)?;
-        if detect_language(Path::new(&symbol.file_path)).ok() == Some(LanguageId::Python) {
-            python_candidates.push(symbol);
+        let Some(adapter) = detect_language(Path::new(&symbol.file_path))
+            .ok()
+            .and_then(|language_id| registry.adapter(language_id))
+        else {
+            continue;
+        };
+        if adapter.requires_exact_symbol_id_for_ambiguous_semantic_paths() {
+            exact_id_candidates.push(symbol);
+            exact_id_language_names.insert(adapter.descriptor().display_name);
         }
     }
 
-    if python_candidates.len() > 1 {
+    if exact_id_candidates.len() > 1 {
         let exact_overload_candidates = exact_candidates
             .iter()
             .copied()
@@ -87,14 +96,22 @@ pub(crate) fn choose_trace_symbol_with_deadline<'a>(
         if let Some(symbol) = choose_best_trace_candidate(exact_overload_candidates, deadline)? {
             return Ok(Some(symbol));
         }
-        let candidate_ids = python_candidates
+        let candidate_ids = exact_id_candidates
             .iter()
             .map(|symbol| symbol.symbol_id.as_str())
             .collect::<BTreeSet<_>>();
+        let language_name = if exact_id_language_names.len() == 1 {
+            exact_id_language_names
+                .iter()
+                .next()
+                .expect("ambiguous exact-symbol-id candidates must have a language")
+        } else {
+            "language-specific"
+        };
         return Err(anyhow!(
-            "ambiguous Python semantic path `{symbol_path}`; use one of these symbol_id candidates: {}{}",
+            "ambiguous {language_name} semantic path `{symbol_path}`; use one of these symbol_id candidates: {}{}",
             candidate_ids.iter().copied().collect::<Vec<_>>().join(", "),
-            if candidate_ids.len() < python_candidates.len() {
+            if candidate_ids.len() < exact_id_candidates.len() {
                 "; rebuild the symbol index to materialize unique overload IDs"
             } else {
                 ""

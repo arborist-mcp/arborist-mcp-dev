@@ -123,6 +123,8 @@ pub(crate) trait LanguageAdapter: Sync {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>>;
 
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool;
+
     fn query_owner_candidates<'tree>(
         &self,
         path: &Path,
@@ -365,6 +367,10 @@ impl LanguageAdapter for PythonAdapter {
         crate::semantic::python_symbol_id_for_node(path, node, source, deadline).map(Some)
     }
 
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        true
+    }
+
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
         node.parent()
             .filter(|parent| parent.kind() == "decorated_definition")
@@ -544,6 +550,10 @@ impl LanguageAdapter for CAdapter {
         crate::semantic::c_symbol_id_for_node(path, node, source)
     }
 
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        false
+    }
+
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
         node
     }
@@ -701,6 +711,10 @@ impl LanguageAdapter for CppAdapter {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
         C_ADAPTER.symbol_id_for_node(path, node, source, deadline)
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        C_ADAPTER.requires_exact_symbol_id_for_ambiguous_semantic_paths()
     }
 
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
