@@ -233,9 +233,7 @@ pub fn validate_patch_with_neighborhood_context_from_index_path_with_timeout(
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms =
-        deadline.remaining_timeout_ms("indexed neighborhood-context patch validation")?;
-    validate_patch_with_neighborhood_context_from_index_with_timeout(
+    validate_patch_with_neighborhood_context_from_index_with_deadline(
         db_path,
         &path,
         &source,
@@ -245,7 +243,7 @@ pub fn validate_patch_with_neighborhood_context_from_index_path_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
