@@ -369,19 +369,11 @@ class CheckWorkflowTests(unittest.TestCase):
                 in_bin = False
             elif in_bin and line.startswith("name = "):
                 declared_targets.add(line.split('"')[1])
-        self.assertEqual(
-            declared_targets,
-            {
-                "tree_query",
-                "semantic_skeleton",
-                "patch_preview",
-                "workspace_edit_preview",
-                "symbol_index_inspection",
-                "symbol_index_queries",
-                "source_overlay_queries",
-                "workspace_edit_json",
-            },
-        )
+        fuzz_target_files = {
+            target_path.stem
+            for target_path in (self.repo_root / "fuzz" / "fuzz_targets").glob("*.rs")
+        }
+        self.assertEqual(declared_targets, fuzz_target_files)
         self.assertIn('Join-Path $RepoRoot "fuzz\\Cargo.toml"', check_script)
         self.assertNotIn(
             'foreach ($target in @("tree_query"',
