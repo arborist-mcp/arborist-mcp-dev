@@ -7,7 +7,8 @@ pub(super) use super::support::{
     create_legacy_symbol_index_schema_without_reference_names, create_minimal_symbol_index_schema,
     create_symbol_index_schema_with_text_byte_columns, downgrade_symbol_index_schema_to_v2,
     downgrade_symbol_index_schema_to_v3, downgrade_symbol_index_schema_to_v4,
-    symbol_table_column_type, symbol_table_columns, temporary_dir,
+    downgrade_symbol_index_schema_to_v5, symbol_table_column_type, symbol_table_columns,
+    temporary_dir,
 };
 pub(super) use crate::language::normalize_path;
 pub(super) use crate::{

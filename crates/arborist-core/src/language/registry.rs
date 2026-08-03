@@ -249,6 +249,46 @@ impl LanguageRegistry {
             })
             .collect()
     }
+
+    pub(crate) fn analysis_provenance(&self) -> (Vec<String>, BTreeMap<String, String>, String) {
+        let mut language_ids = Vec::new();
+        let mut analysis_revisions = BTreeMap::new();
+        let mut detection_entries = Vec::new();
+
+        for (language_id, adapter) in &self.adapters {
+            let descriptor = adapter.descriptor();
+            let language_id = persisted_language_id(*language_id).to_string();
+            let mut extensions = descriptor
+                .extensions
+                .iter()
+                .map(|extension| (*extension).to_string())
+                .collect::<Vec<_>>();
+            extensions.sort();
+            language_ids.push(language_id.clone());
+            analysis_revisions.insert(
+                language_id.clone(),
+                descriptor.analysis_revision.to_string(),
+            );
+            detection_entries.push(format!("{language_id}:{}", extensions.join(",")));
+        }
+
+        (
+            language_ids,
+            analysis_revisions,
+            format!(
+                "builtin-extension-routing-v1;{}",
+                detection_entries.join(";")
+            ),
+        )
+    }
+}
+
+fn persisted_language_id(language_id: LanguageId) -> &'static str {
+    match language_id {
+        LanguageId::Python => "python",
+        LanguageId::C => "c",
+        LanguageId::Cpp => "cpp",
+    }
 }
 
 pub fn builtin_language_registry() -> &'static LanguageRegistry {

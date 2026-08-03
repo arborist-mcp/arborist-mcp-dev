@@ -15,8 +15,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - Multi-language work now has a Phase 1 registry: descriptors, capabilities,
   extension routing, grammar selection, and supported-language reporting for
   Python, C, and C++ share one source of truth while retaining existing paths.
-- The remaining strategic gaps are adapter composition, structured reference
-  facts, persisted analysis provenance, a first JavaScript/TypeScript adapter,
+- The remaining strategic gaps are a first JavaScript/TypeScript adapter,
   property testing beyond the existing fuzz targets, and broader cancellation
   coverage for native symbol/trace operations beyond Tree-sitter parse and
   query execution.
@@ -704,7 +703,7 @@ completed item can land in its own commit unless two changes are inseparable.
   preserving `.h` as C by default.
 - [x] Complete Phase 2 adapter composition without changing existing public
   protocol behavior.
-- [ ] Complete Phase 3 structured reference facts and persisted analysis
+- [x] Complete Phase 3 structured reference facts and persisted analysis
   provenance before adding the first JavaScript/TypeScript adapter.
 
 ## Suggested Commit Sequence

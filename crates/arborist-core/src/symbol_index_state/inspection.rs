@@ -4,12 +4,15 @@ use anyhow::{Result, anyhow};
 
 use crate::index_migration;
 use crate::index_schema::{
-    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
-    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata_with_deadline,
-    load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root_with_deadline,
-    open_symbol_index_read_only, require_current_symbol_index_schema,
-    require_legacy_symbol_index_schema, require_older_symbol_index_schema,
+    ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
+    OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
+    load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
+    load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only,
+    require_current_symbol_index_schema, require_legacy_symbol_index_schema,
+    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
+    validate_symbol_index_analysis_provenance,
 };
 use crate::index_store::{
     count_table_rows_with_deadline, load_file_states_with_deadline,
@@ -120,8 +123,14 @@ pub fn inspect_symbol_index_with_timeout(
                 require_previous_symbol_index_schema(&connection, &db_path)
             } else if health.schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
                 require_legacy_symbol_index_schema(&connection, &db_path)
-            } else {
+            } else if health.schema_version.as_deref() == Some(OLDER_SYMBOL_INDEX_SCHEMA_VERSION) {
                 require_older_symbol_index_schema(&connection, &db_path)
+            } else {
+                debug_assert!(matches!(
+                    health.schema_version.as_deref(),
+                    Some(OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION)
+                ));
+                require_oldest_symbol_index_schema(&connection, &db_path)
             };
         if let Err(error) = schema_validation {
             health.issues.push(error.to_string());
@@ -144,6 +153,9 @@ pub fn inspect_symbol_index_with_timeout(
         health.migration = index_migration::incomplete_or_foreign_database();
         health.validate_public_output()?;
         return Ok(health);
+    } else if let Err(error) = validate_symbol_index_analysis_provenance(&connection, &db_path) {
+        health.issues.push(error.to_string());
+        health.migration = index_migration::failed_health_checks();
     }
 
     let workspace_root = match load_symbol_index_workspace_root_with_deadline(

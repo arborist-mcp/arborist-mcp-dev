@@ -552,7 +552,9 @@ A persisted index needs enough metadata to determine whether a stored file was a
 - language-detection policy fingerprint;
 - raw reference-fact schema revision, if facts are persisted.
 
-The concrete location may be file-state metadata, symbol rows, or both, but the schema must permit validation before a stale row participates in a query.
+The current implementation stores a deterministic index-level `analysis_provenance` metadata record. It contains a provenance-schema revision, every selectable canonical language ID and its adapter analysis revision, the extension-routing fingerprint, and the persisted reference-fact schema revision. Index-level validation is sufficient while routing is built in and workspace language overrides do not exist; a future override surface must extend provenance to record the selected language per affected file.
+
+Every current-schema persisted read, rebuild, and refresh validates this record before loading persisted symbols. Missing, malformed, or mismatched provenance fails closed and requires a rebuild; valid historical v1-v5 indexes may be migrated explicitly to the current schema.
 
 ### 13.2 Invalidation rules
 

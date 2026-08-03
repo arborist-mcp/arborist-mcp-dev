@@ -42,6 +42,27 @@ pub(crate) fn load_indexed_symbols_grouped_by_file_with_deadline(
     )
 }
 
+pub(crate) fn validate_pre_provenance_indexed_symbols(connection: &Connection) -> Result<()> {
+    validate_pre_provenance_indexed_symbols_with_deadline(connection, None)
+}
+
+pub(crate) fn validate_pre_provenance_indexed_symbols_with_deadline(
+    connection: &Connection,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    load_indexed_symbols_grouped_by_file_with_query_and_deadline(
+        connection,
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, reference_names_json,
+                reference_call_arities_json, reference_facts_json
+         FROM symbols
+         ORDER BY file_path, semantic_path",
+        deadline,
+    )
+    .context("invalid persisted pre-provenance symbol row")?;
+    Ok(())
+}
+
 pub(crate) fn validate_previous_indexed_symbols(connection: &Connection) -> Result<()> {
     validate_previous_indexed_symbols_with_deadline(connection, None)
 }

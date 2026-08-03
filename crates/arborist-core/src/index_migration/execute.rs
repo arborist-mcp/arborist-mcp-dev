@@ -5,15 +5,17 @@ use rusqlite::Connection;
 
 use crate::deadline::DeadlineCheck;
 use crate::index_schema::{
-    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, OLDER_SYMBOL_INDEX_SCHEMA_VERSION,
-    OLDEST_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
-    load_indexed_files_metadata, load_optional_metadata_value, load_symbol_index_workspace_root,
+    ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
+    OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata,
+    load_optional_metadata_value, load_symbol_index_workspace_root,
     migrate_symbol_index_schema_to_current, require_legacy_symbol_index_schema,
-    require_older_symbol_index_schema, require_previous_symbol_index_schema,
-    require_symbol_index_tables,
+    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
+    require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
     validate_legacy_indexed_symbols, validate_legacy_indexed_symbols_with_deadline,
+    validate_pre_provenance_indexed_symbols, validate_pre_provenance_indexed_symbols_with_deadline,
     validate_previous_indexed_symbols, validate_previous_indexed_symbols_with_deadline,
 };
 
@@ -49,7 +51,7 @@ fn migrate_symbol_index_inner(
 
     if !is_migratable_symbol_index_schema_version(&stored_version) {
         bail!(
-            "symbol index schema_version `{stored_version}` in {} cannot be migrated by this Arborist build; expected `{OLDEST_SYMBOL_INDEX_SCHEMA_VERSION}`, `{OLDER_SYMBOL_INDEX_SCHEMA_VERSION}`, `{LEGACY_SYMBOL_INDEX_SCHEMA_VERSION}`, or `{PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION}`",
+            "symbol index schema_version `{stored_version}` in {} cannot be migrated by this Arborist build; expected `{ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION}`, `{OLDEST_SYMBOL_INDEX_SCHEMA_VERSION}`, `{OLDER_SYMBOL_INDEX_SCHEMA_VERSION}`, `{LEGACY_SYMBOL_INDEX_SCHEMA_VERSION}`, or `{PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION}`",
             db_path.display()
         );
     }
@@ -58,12 +60,14 @@ fn migrate_symbol_index_inner(
         require_previous_symbol_index_schema(connection, db_path)?;
     } else if stored_version == LEGACY_SYMBOL_INDEX_SCHEMA_VERSION {
         require_legacy_symbol_index_schema(connection, db_path)?;
+    } else if stored_version == OLDER_SYMBOL_INDEX_SCHEMA_VERSION {
+        require_older_symbol_index_schema(connection, db_path)?;
     } else {
         debug_assert!(matches!(
             stored_version.as_str(),
-            OLDER_SYMBOL_INDEX_SCHEMA_VERSION | OLDEST_SYMBOL_INDEX_SCHEMA_VERSION
+            OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION
         ));
-        require_older_symbol_index_schema(connection, db_path)?;
+        require_oldest_symbol_index_schema(connection, db_path)?;
     }
     check_optional_deadline(deadline, "validating legacy symbol index schema")?;
     load_symbol_index_workspace_root(connection, db_path)?;
@@ -71,6 +75,13 @@ fn migrate_symbol_index_inner(
     load_indexed_files_metadata(connection)?;
     check_optional_deadline(deadline, "loading legacy indexed file count")?;
     if stored_version == PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION {
+        match deadline {
+            Some(deadline) => {
+                validate_pre_provenance_indexed_symbols_with_deadline(connection, Some(deadline))?
+            }
+            None => validate_pre_provenance_indexed_symbols(connection)?,
+        }
+    } else if stored_version == LEGACY_SYMBOL_INDEX_SCHEMA_VERSION {
         match deadline {
             Some(deadline) => {
                 validate_previous_indexed_symbols_with_deadline(connection, Some(deadline))?

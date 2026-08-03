@@ -1,12 +1,44 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 
-use crate::language::{normalize_absolute_path, normalize_path};
+use crate::language::{builtin_language_registry, normalize_absolute_path, normalize_path};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 use super::schema::SYMBOL_INDEX_SCHEMA_VERSION;
+
+const ANALYSIS_PROVENANCE_METADATA_KEY: &str = "analysis_provenance";
+const ANALYSIS_PROVENANCE_SCHEMA_REVISION: &str = "1";
+const REFERENCE_FACT_SCHEMA_REVISION: &str = "reference-facts-v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnalysisProvenance {
+    schema_revision: String,
+    language_ids: Vec<String>,
+    language_analysis_revisions: BTreeMap<String, String>,
+    language_detection_policy_fingerprint: String,
+    reference_fact_schema_revision: String,
+}
+
+fn current_analysis_provenance() -> AnalysisProvenance {
+    let (language_ids, language_analysis_revisions, language_detection_policy_fingerprint) =
+        builtin_language_registry().analysis_provenance();
+    AnalysisProvenance {
+        schema_revision: ANALYSIS_PROVENANCE_SCHEMA_REVISION.to_string(),
+        language_ids,
+        language_analysis_revisions,
+        language_detection_policy_fingerprint,
+        reference_fact_schema_revision: REFERENCE_FACT_SCHEMA_REVISION.to_string(),
+    }
+}
+
+pub(crate) fn current_analysis_provenance_json() -> Result<String> {
+    Ok(serde_json::to_string(&current_analysis_provenance())?)
+}
 
 pub(crate) fn open_symbol_index_read_only(db_path: &Path) -> Result<Connection> {
     Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(Into::into)
@@ -32,6 +64,50 @@ pub(crate) fn persist_symbol_index_metadata(
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [indexed_files.to_string()],
     )?;
+    persist_current_analysis_provenance(tx)?;
+    Ok(())
+}
+
+pub(crate) fn persist_current_analysis_provenance(tx: &Transaction<'_>) -> Result<()> {
+    let provenance = current_analysis_provenance_json()?;
+    tx.execute(
+        "INSERT INTO metadata(key, value) VALUES(?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (ANALYSIS_PROVENANCE_METADATA_KEY, provenance),
+    )?;
+    Ok(())
+}
+
+pub(crate) fn validate_symbol_index_analysis_provenance(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    let Some(stored) = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = ?1",
+            [ANALYSIS_PROVENANCE_METADATA_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        bail!(
+            "missing analysis_provenance metadata in symbol index {}; rebuild the index",
+            db_path.display()
+        );
+    };
+    let stored: AnalysisProvenance = serde_json::from_str(&stored).map_err(|error| {
+        anyhow!(
+            "invalid analysis_provenance metadata in symbol index {}: {error}",
+            db_path.display()
+        )
+    })?;
+    let expected = current_analysis_provenance();
+    if stored != expected {
+        bail!(
+            "analysis_provenance metadata in symbol index {} does not match current analysis behavior; rebuild the index",
+            db_path.display()
+        );
+    }
     Ok(())
 }
 

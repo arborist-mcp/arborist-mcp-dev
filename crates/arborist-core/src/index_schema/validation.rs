@@ -75,21 +75,34 @@ pub(crate) fn require_current_symbol_index_schema(
     db_path: &Path,
 ) -> Result<()> {
     require_symbol_index_schema_structure(connection, db_path)?;
-    require_table_primary_key_layout(
-        connection,
-        db_path,
-        "symbols",
-        &[
-            ("symbol_id", 1),
-            ("file_path", 2),
-            ("start_byte", 3),
-            ("end_byte", 4),
-        ],
-    )?;
-    require_symbols_file_path_index(connection, db_path)
+    require_current_symbols_primary_key_and_index(connection, db_path)
+}
+
+pub(crate) fn require_previous_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure(connection, db_path)?;
+    require_current_symbols_primary_key_and_index(connection, db_path)
+}
+
+pub(crate) fn require_legacy_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure_v4(connection, db_path)?;
+    require_current_symbols_primary_key_and_index(connection, db_path)
 }
 
 pub(crate) fn require_older_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure_v3(connection, db_path)?;
+    require_current_symbols_primary_key_and_index(connection, db_path)
+}
+
+pub(crate) fn require_oldest_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
@@ -100,22 +113,6 @@ pub(crate) fn require_older_symbol_index_schema(
         "symbols",
         &[("semantic_path", 1), ("file_path", 2)],
     )
-}
-
-pub(crate) fn require_legacy_symbol_index_schema(
-    connection: &Connection,
-    db_path: &Path,
-) -> Result<()> {
-    require_symbol_index_schema_structure_v3(connection, db_path)?;
-    require_current_symbols_primary_key_and_index(connection, db_path)
-}
-
-pub(crate) fn require_previous_symbol_index_schema(
-    connection: &Connection,
-    db_path: &Path,
-) -> Result<()> {
-    require_symbol_index_schema_structure_v4(connection, db_path)?;
-    require_current_symbols_primary_key_and_index(connection, db_path)
 }
 
 fn require_current_symbols_primary_key_and_index(

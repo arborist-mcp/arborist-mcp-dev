@@ -5,10 +5,12 @@ use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
-    load_optional_metadata_value, load_optional_metadata_value_with_deadline,
-    load_symbol_index_workspace_root, load_symbol_index_workspace_root_with_deadline,
-    require_legacy_symbol_index_schema, require_older_symbol_index_schema,
+    ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION, LEGACY_SYMBOL_INDEX_SCHEMA_VERSION,
+    OLDER_SYMBOL_INDEX_SCHEMA_VERSION, OLDEST_SYMBOL_INDEX_SCHEMA_VERSION,
+    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_optional_metadata_value,
+    load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root,
+    load_symbol_index_workspace_root_with_deadline, require_legacy_symbol_index_schema,
+    require_older_symbol_index_schema, require_oldest_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
@@ -79,8 +81,14 @@ fn migrate_symbol_index_inner(
             require_previous_symbol_index_schema(&connection, &db_path)?;
         } else if schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
             require_legacy_symbol_index_schema(&connection, &db_path)?;
-        } else {
+        } else if schema_version.as_deref() == Some(OLDER_SYMBOL_INDEX_SCHEMA_VERSION) {
             require_older_symbol_index_schema(&connection, &db_path)?;
+        } else {
+            debug_assert!(matches!(
+                schema_version.as_deref(),
+                Some(OLDEST_SYMBOL_INDEX_SCHEMA_VERSION | ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION)
+            ));
+            require_oldest_symbol_index_schema(&connection, &db_path)?;
         }
         check_optional_deadline(deadline, "validating migratable symbol index schema")?;
         let workspace_root = match deadline {

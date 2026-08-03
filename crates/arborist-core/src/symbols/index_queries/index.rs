@@ -6,8 +6,8 @@ use rusqlite::Connection;
 
 use crate::index_schema::{
     load_indexed_files_metadata_with_deadline, require_current_symbol_index_schema,
-    require_symbol_index_tables, validate_symbol_index_schema_version,
-    validate_symbol_index_workspace_with_deadline,
+    require_symbol_index_tables, validate_symbol_index_analysis_provenance,
+    validate_symbol_index_schema_version, validate_symbol_index_workspace_with_deadline,
 };
 use crate::index_store::{
     SymbolRefreshPersistence, load_file_states_with_deadline,
@@ -81,6 +81,7 @@ fn rebuild_symbol_index_with_deadline(
         load_indexed_files_metadata_with_deadline(&connection, Some(deadline))?;
         validate_symbol_index_schema_version(&connection, &db_path)?;
         require_current_symbol_index_schema(&connection, &db_path)?;
+        validate_symbol_index_analysis_provenance(&connection, &db_path)?;
     }
     let (raw_symbols, resolved_symbols, file_states, indexed_files, rebuilt_files, reused_files) =
         resolve_workspace_symbols_incremental_with_deadline(
@@ -153,6 +154,7 @@ pub fn refresh_symbol_index_for_file_with_limits(
     load_indexed_files_metadata_with_deadline(&connection, Some(&deadline))?;
     validate_symbol_index_schema_version(&connection, &db_path)?;
     require_current_symbol_index_schema(&connection, &db_path)?;
+    validate_symbol_index_analysis_provenance(&connection, &db_path)?;
 
     let old_resolved_symbols = load_resolved_symbols_with_deadline(&connection, Some(&deadline))?.0;
     deadline.check("loading existing resolved symbols")?;

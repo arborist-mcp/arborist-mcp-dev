@@ -8,11 +8,12 @@ use super::tables::{
     ensure_symbols_column, ensure_symbols_file_path_index, ensure_symbols_primary_key_layout,
 };
 
-pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "5";
-pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
-pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
-pub(crate) const OLDER_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
-pub(crate) const OLDEST_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
+pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "6";
+pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "5";
+pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
+pub(crate) const OLDER_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
+pub(crate) const OLDEST_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
+pub(crate) const ANCIENT_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
     connection.execute_batch(

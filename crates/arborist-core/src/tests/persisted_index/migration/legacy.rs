@@ -97,7 +97,7 @@ fn timed_migration_upgrades_legacy_schema_and_rebuilds_index() {
         .expect("timed migration should succeed");
 
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("5"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
     assert_eq!(
         read_symbol_from_index(&db_path, "helper")
             .unwrap()
@@ -140,7 +140,7 @@ fn rebuilt_symbol_index_writes_schema_version_metadata() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(schema_version, "5");
+    assert_eq!(schema_version, "6");
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn current_schema_missing_columns_is_rejected_without_implicit_migration() {
     );
     connection
         .execute(
-            "INSERT INTO metadata(key, value) VALUES('schema_version', '5')",
+            "INSERT INTO metadata(key, value) VALUES('schema_version', '6')",
             [],
         )
         .unwrap();
@@ -240,11 +240,46 @@ fn trace_rejects_unsupported_schema_version() {
             .to_string()
             .contains("unsupported symbol index schema_version")
     );
-    assert!(error.to_string().contains("expected `5`"));
+    assert!(error.to_string().contains("expected `6`"));
 }
 
 #[test]
-fn migrates_previous_symbol_index_schema_in_place() {
+fn migrates_v5_symbol_index_schema_to_v6_and_writes_analysis_provenance() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v5(&connection);
+    drop(connection);
+
+    let pending = inspect_symbol_index(&db_path).unwrap();
+    assert!(!pending.ok);
+    assert_eq!(pending.schema_version.as_deref(), Some("5"));
+    assert_eq!(pending.migration.action, "migrate");
+
+    let migrated = migrate_symbol_index(&db_path).unwrap();
+    assert!(migrated.ok, "{:#?}", migrated.issues);
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
+
+    let connection = Connection::open(&db_path).unwrap();
+    let analysis_provenance: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'analysis_provenance'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        analysis_provenance,
+        crate::index_schema::current_analysis_provenance_json().unwrap()
+    );
+}
+
+#[test]
+fn migrates_v1_symbol_index_schema_in_place() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
     let db_path = dir.join("symbols.db");
@@ -270,7 +305,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("5"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
     assert_eq!(migrated.migration.action, "none");
 
     let connection = Connection::open(&db_path).unwrap();
@@ -293,7 +328,7 @@ fn migrates_previous_symbol_index_schema_in_place() {
 }
 
 #[test]
-fn migrates_v2_symbol_index_schema_to_v5_without_losing_symbols() {
+fn migrates_v2_symbol_index_schema_to_v6_without_losing_symbols() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cpp");
     let db_path = dir.join("symbols.db");
@@ -315,7 +350,7 @@ fn migrates_v2_symbol_index_schema_to_v5_without_losing_symbols() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("5"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
     assert_eq!(migrated.indexed_symbols, Some(1));
     assert_eq!(
         trace_symbol_graph_from_index(&db_path, "api::convert(int)", TraceDirection::Both)
@@ -371,7 +406,7 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
             "
             CREATE TRIGGER reject_schema_version_upgrade
             BEFORE UPDATE OF value ON metadata
-            WHEN OLD.key = 'schema_version' AND NEW.value = '5'
+            WHEN OLD.key = 'schema_version' AND NEW.value = '6'
             BEGIN
                 SELECT RAISE(ABORT, 'forced schema_version update failure');
             END;
@@ -408,7 +443,58 @@ fn migration_rolls_back_index_creation_when_schema_version_update_fails() {
 }
 
 #[test]
-fn migrates_v4_symbol_index_schema_to_v5_and_writes_reference_facts() {
+fn migration_rolls_back_when_analysis_provenance_write_fails() {
+    let dir = temporary_dir();
+    let helper = dir.join("helper.py");
+    let db_path = dir.join("symbols.db");
+    fs::write(&helper, "def helper() -> int:\n    return 1\n").unwrap();
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+
+    let connection = Connection::open(&db_path).unwrap();
+    downgrade_symbol_index_schema_to_v5(&connection);
+    connection
+        .execute_batch(
+            "
+            CREATE TRIGGER reject_analysis_provenance_write
+            BEFORE INSERT ON metadata
+            WHEN NEW.key = 'analysis_provenance'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced analysis_provenance write failure');
+            END;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let error = migrate_symbol_index(&db_path)
+        .expect_err("a failed analysis provenance write must roll back the migration");
+    assert!(
+        error
+            .to_string()
+            .contains("forced analysis_provenance write failure")
+    );
+
+    let connection = Connection::open(&db_path).unwrap();
+    let schema_version: String = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(schema_version, "5");
+    let provenance_count: usize = connection
+        .query_row(
+            "SELECT COUNT(*) FROM metadata WHERE key = 'analysis_provenance'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(provenance_count, 0);
+}
+
+#[test]
+fn migrates_v4_symbol_index_schema_to_v6_and_writes_reference_facts() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cpp");
     let db_path = dir.join("symbols.db");
@@ -434,7 +520,7 @@ int caller() { return convert(1); }
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("5"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
 
     let connection = Connection::open(&db_path).unwrap();
     let reference_facts_json: String = connection
@@ -451,7 +537,7 @@ int caller() { return convert(1); }
 }
 
 #[test]
-fn migrates_v3_symbol_index_schema_to_v5_and_rebuilds_call_arity_metadata() {
+fn migrates_v3_symbol_index_schema_to_v6_and_rebuilds_call_arity_metadata() {
     let dir = temporary_dir();
     let helper = dir.join("helper.cpp");
     let db_path = dir.join("symbols.db");
@@ -473,7 +559,7 @@ fn migrates_v3_symbol_index_schema_to_v5_and_rebuilds_call_arity_metadata() {
 
     let migrated = migrate_symbol_index(&db_path).unwrap();
     assert!(migrated.ok, "{:#?}", migrated.issues);
-    assert_eq!(migrated.schema_version.as_deref(), Some("5"));
+    assert_eq!(migrated.schema_version.as_deref(), Some("6"));
 
     let connection = Connection::open(&db_path).unwrap();
     let call_arities: String = connection

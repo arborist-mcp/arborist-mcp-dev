@@ -5,6 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
+use crate::index_schema::current_analysis_provenance_json;
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn temporary_dir() -> PathBuf {
@@ -54,9 +56,15 @@ pub(super) fn create_minimal_symbol_index_schema(connection: &Connection) {
                     fingerprint INTEGER NOT NULL
                 );
                 CREATE INDEX idx_symbols_file_path ON symbols(file_path);
-                INSERT INTO metadata(key, value) VALUES('schema_version', '5');
+                INSERT INTO metadata(key, value) VALUES('schema_version', '6');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '1');
                 ",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO metadata(key, value) VALUES('analysis_provenance', ?1)",
+            [current_analysis_provenance_json().unwrap()],
         )
         .unwrap();
 }
@@ -112,8 +120,25 @@ pub(super) fn create_symbol_index_schema_with_text_byte_columns(connection: &Con
                     file_path TEXT PRIMARY KEY,
                     fingerprint INTEGER NOT NULL
                 );
-                INSERT INTO metadata(key, value) VALUES('schema_version', '5');
+                INSERT INTO metadata(key, value) VALUES('schema_version', '6');
                 INSERT INTO metadata(key, value) VALUES('indexed_files', '0');
+                ",
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO metadata(key, value) VALUES('analysis_provenance', ?1)",
+            [current_analysis_provenance_json().unwrap()],
+        )
+        .unwrap();
+}
+
+pub(super) fn downgrade_symbol_index_schema_to_v5(connection: &Connection) {
+    connection
+        .execute_batch(
+            "
+                DELETE FROM metadata WHERE key = 'analysis_provenance';
+                UPDATE metadata SET value = '5' WHERE key = 'schema_version';
                 ",
         )
         .unwrap();
