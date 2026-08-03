@@ -50,13 +50,40 @@ pub fn validate_patch_with_graph_context_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<GraphBackedPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_graph_context_with_deadline(
+        workspace_root,
+        path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_graph_context_with_deadline(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<GraphBackedPatchResult> {
     let workspace_root = language::normalize_absolute_path(workspace_root)?;
     let path = language::normalize_absolute_path(path)?;
     ensure_path_inside_workspace(&workspace_root, &path)?;
 
     deadline.check("patch validation")?;
     let patch = super::super::patch_ast_node_with_trace_deadline(
-        &deadline,
+        deadline,
         &path,
         source,
         semantic_target,
@@ -105,7 +132,7 @@ pub fn validate_patch_with_graph_context_with_timeout(
         &overrides,
         &trace_target,
         direction,
-        &deadline,
+        deadline,
     )?;
     let neighborhood = symbols::trace_symbol_neighborhood_with_overrides_with_deadline(
         &workspace_root,
@@ -114,7 +141,7 @@ pub fn validate_patch_with_graph_context_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        &deadline,
+        deadline,
     )?;
     deadline.check("patch graph trace validation")?;
     let trace_validation = validate_patch_commit_with_trace(&patch, &trace)?;
@@ -172,15 +199,41 @@ pub fn validate_patch_with_graph_context_at_position_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<GraphBackedPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_graph_context_at_position_with_deadline(
+        workspace_root,
+        path,
+        source,
+        position,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_graph_context_at_position_with_deadline(
+    workspace_root: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<GraphBackedPatchResult> {
     deadline.check("patch position resolution")?;
     let semantic_target = patching::semantic_target_at_position_with_deadline(
         path,
         source,
         position,
-        Some(&deadline),
+        Some(deadline),
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("graph-backed patch validation")?;
-    validate_patch_with_graph_context_with_timeout(
+    validate_patch_with_graph_context_with_deadline(
         workspace_root,
         path,
         source,
@@ -190,6 +243,6 @@ pub fn validate_patch_with_graph_context_at_position_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        deadline,
     )
 }
