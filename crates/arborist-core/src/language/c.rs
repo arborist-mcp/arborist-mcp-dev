@@ -6,10 +6,12 @@ use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path};
 
-pub const C_HEADER_EXTENSIONS: &[&str] = &["h"];
 pub const C_SOURCE_EXTENSIONS: &[&str] = &["c"];
+pub const C_LANGUAGE_EXTENSIONS: &[&str] = &["c", "h"];
 pub const CPP_HEADER_EXTENSIONS: &[&str] = &["hpp", "hh", "hxx", "h++"];
-pub const CPP_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl"];
+pub const CPP_LANGUAGE_EXTENSIONS: &[&str] = &[
+    "cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl", "hpp", "hh", "hxx", "h++",
+];
 
 const CPP_COMPANION_SOURCE_EXTENSIONS: &[&str] = &["cc", "cpp", "cxx", "c++"];
 

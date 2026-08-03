@@ -3,9 +3,9 @@ use std::path::Path;
 use tree_sitter::Point;
 
 use super::{
-    MAX_SOURCE_FILE_BYTES, c_companion_source_path, detect_language, is_c_header_path,
-    normalize_absolute_path, offset_for_position, parse_document, point_for_offset, read_source,
-    supported_languages,
+    LanguageCapabilities, MAX_SOURCE_FILE_BYTES, builtin_language_registry,
+    c_companion_source_path, detect_language, is_c_header_path, normalize_absolute_path,
+    offset_for_position, parse_document, point_for_offset, read_source, supported_languages,
 };
 use crate::model::{LanguageId, Position};
 
@@ -40,6 +40,70 @@ fn detect_language_accepts_uppercase_extensions() {
 #[test]
 fn supported_languages_reports_cpp() {
     assert_eq!(supported_languages(), vec!["python", "c", "cpp"]);
+}
+
+#[test]
+fn language_ids_use_stable_serde_names() {
+    for (language_id, expected_name) in [
+        (LanguageId::Python, "python"),
+        (LanguageId::C, "c"),
+        (LanguageId::Cpp, "cpp"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&language_id).unwrap(),
+            format!("\"{expected_name}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<LanguageId>(&format!("\"{expected_name}\"")).unwrap(),
+            language_id,
+        );
+    }
+}
+
+#[test]
+fn builtin_registry_preserves_current_language_contracts() {
+    let registry = builtin_language_registry();
+
+    for (language_id, display_name, extensions, analysis_revision) in [
+        (
+            LanguageId::Python,
+            "Python",
+            &["py", "pyi"][..],
+            "python-v1",
+        ),
+        (LanguageId::C, "C", &["c", "h"][..], "c-v1"),
+        (
+            LanguageId::Cpp,
+            "C++",
+            &[
+                "cc", "cpp", "cxx", "c++", "tpp", "tcc", "ipp", "inl", "hpp", "hh", "hxx", "h++",
+            ][..],
+            "cpp-v1",
+        ),
+    ] {
+        let descriptor = registry
+            .descriptor(language_id)
+            .expect("each supported language must have a descriptor");
+
+        assert_eq!(descriptor.display_name, display_name);
+        assert_eq!(descriptor.extensions, extensions);
+        assert_eq!(descriptor.analysis_revision, analysis_revision);
+        assert!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::FULL_CURRENT_SUPPORT),
+            "{display_name} should retain all existing capabilities",
+        );
+        for extension in extensions {
+            assert_eq!(
+                registry.language_for_extension(&extension.to_ascii_uppercase()),
+                Some(language_id),
+                "registry should preserve case-insensitive .{extension} routing",
+            );
+        }
+    }
+
+    assert_eq!(registry.language_for_extension("txt"), None);
 }
 
 #[test]

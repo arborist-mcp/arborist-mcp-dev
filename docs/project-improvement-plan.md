@@ -12,10 +12,14 @@ completed item can land in its own commit unless two changes are inseparable.
 - The gateway facade is now about 240 lines after symbol-query, patch,
   and trace route mixins join the earlier index/VFS/parameter helpers. The
   PyO3 root facade remains a thin registration surface over domain bindings.
-- The remaining strategic gaps are deeper Rust module splits, fuller C++
-  language-aware resolution, property testing beyond the existing fuzz targets,
-  and broader cancellation coverage for native symbol/trace operations beyond
-  Tree-sitter parse and query execution.
+- Multi-language work now has a Phase 1 registry: descriptors, capabilities,
+  extension routing, grammar selection, and supported-language reporting for
+  Python, C, and C++ share one source of truth while retaining existing paths.
+- The remaining strategic gaps are adapter composition, structured reference
+  facts, persisted analysis provenance, a first JavaScript/TypeScript adapter,
+  property testing beyond the existing fuzz targets, and broader cancellation
+  coverage for native symbol/trace operations beyond Tree-sitter parse and
+  query execution.
 - There are no explicit `TODO`, `FIXME`, `HACK`, or `XXX` markers in the tracked
   source and docs.
 
@@ -686,6 +690,22 @@ completed item can land in its own commit unless two changes are inseparable.
   check-mode coordination into a CLI-independent runtime module, reducing the
   console facade below two hundred fifty lines while preserving its established
   callable API, facade monkeypatch seams, protocol metadata, and pickle paths.
+
+### P2: Multi-Language Foundation
+
+- [x] Record the multi-language adapter architecture, capability contract,
+  persisted-index compatibility rules, and staged JavaScript/TypeScript-first
+  delivery plan in `docs/multi-language-support-design.md`.
+- [x] Establish the Phase 0 Python/C/C++ contract baseline with the existing
+  locked Rust regression suite, including routing, parser safety, symbols,
+  VFS/index parity, traces, patches, and SQLite behavior.
+- [x] Complete Phase 1 registry migration: route detection, grammar selection,
+  and supported-language reporting through descriptors and capabilities while
+  preserving `.h` as C by default.
+- [ ] Complete Phase 2 adapter composition without changing existing public
+  protocol behavior.
+- [ ] Complete Phase 3 structured reference facts and persisted analysis
+  provenance before adding the first JavaScript/TypeScript adapter.
 
 ## Suggested Commit Sequence
 

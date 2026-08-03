@@ -9,7 +9,8 @@ pub const MAX_POSITION_EDIT_TEXT_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SEMANTIC_EXPAND_NODES: usize = 10_000;
 pub const MAX_WORKSPACE_EDIT_PREVIEW_FILES: usize = 32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LanguageId {
     Python,
     C,

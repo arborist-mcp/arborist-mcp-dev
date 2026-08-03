@@ -4,10 +4,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use tree_sitter::{Language, ParseOptions, Parser, Tree};
 
-use crate::language::MAX_SOURCE_FILE_BYTES;
-use crate::language::{
-    C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS, CPP_SOURCE_EXTENSIONS,
-};
+use crate::language::{MAX_SOURCE_FILE_BYTES, builtin_language_registry};
 use crate::model::LanguageId;
 
 pub struct ParsedDocument {
@@ -16,7 +13,7 @@ pub struct ParsedDocument {
 }
 
 pub fn supported_languages() -> Vec<&'static str> {
-    vec!["python", "c", "cpp"]
+    builtin_language_registry().supported_language_names()
 }
 
 pub fn parse_document(path: &Path, source: &str) -> Result<ParsedDocument> {
@@ -83,42 +80,21 @@ pub fn parser_for_language(language_id: LanguageId) -> Result<Parser> {
 }
 
 pub fn detect_language(path: &Path) -> Result<LanguageId> {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi") => {
-            Ok(LanguageId::Python)
-        }
-        Some(ext)
-            if C_SOURCE_EXTENSIONS
-                .iter()
-                .any(|extension| ext.eq_ignore_ascii_case(extension))
-                || C_HEADER_EXTENSIONS
-                    .iter()
-                    .any(|extension| ext.eq_ignore_ascii_case(extension)) =>
-        {
-            Ok(LanguageId::C)
-        }
-        Some(ext)
-            if CPP_SOURCE_EXTENSIONS
-                .iter()
-                .any(|extension| ext.eq_ignore_ascii_case(extension))
-                || CPP_HEADER_EXTENSIONS
-                    .iter()
-                    .any(|extension| ext.eq_ignore_ascii_case(extension)) =>
-        {
-            Ok(LanguageId::Cpp)
-        }
-        other => bail!(
-            "unsupported file extension {:?} for {}",
-            other,
-            path.display()
-        ),
-    }
+    let extension = path.extension().and_then(|extension| extension.to_str());
+    builtin_language_registry()
+        .language_for_extension(extension.unwrap_or_default())
+        .ok_or_else(|| {
+            anyhow!(
+                "unsupported file extension {:?} for {}",
+                extension,
+                path.display()
+            )
+        })
 }
 
 pub fn language_for_id(language_id: LanguageId) -> Language {
-    match language_id {
-        LanguageId::Python => tree_sitter_python::LANGUAGE.into(),
-        LanguageId::C => tree_sitter_c::LANGUAGE.into(),
-        LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
-    }
+    builtin_language_registry()
+        .descriptor(language_id)
+        .expect("every LanguageId must have a builtin language descriptor")
+        .tree_sitter_language()
 }

@@ -3,12 +3,13 @@ mod io;
 mod parser;
 mod paths;
 mod positions;
+mod registry;
 mod tree;
 
 pub use c::{
-    C_FAMILY_HEADER_EXTENSIONS, C_HEADER_EXTENSIONS, C_SOURCE_EXTENSIONS, CPP_HEADER_EXTENSIONS,
-    CPP_SOURCE_EXTENSIONS, c_companion_source_path, c_include_targets, c_local_include_targets,
-    is_c_header_path, resolve_local_c_include,
+    C_FAMILY_HEADER_EXTENSIONS, C_LANGUAGE_EXTENSIONS, CPP_LANGUAGE_EXTENSIONS,
+    c_companion_source_path, c_include_targets, c_local_include_targets, is_c_header_path,
+    resolve_local_c_include,
 };
 pub(crate) use c::{c_include_targets_before, extension_case_candidates};
 pub use parser::{
@@ -19,6 +20,9 @@ pub(crate) use parser::{validate_source_length, validate_source_size};
 pub(crate) use paths::{ensure_path_inside_workspace, path_is_inside_workspace};
 pub use paths::{normalize_absolute_path, normalize_path};
 pub use positions::{offset_for_position, point_for_offset, position_from};
+pub use registry::{
+    LanguageCapabilities, LanguageDescriptor, LanguageRegistry, builtin_language_registry,
+};
 pub use tree::*;
 
 pub(crate) use io::write_source_atomic;

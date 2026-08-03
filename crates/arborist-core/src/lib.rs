@@ -60,7 +60,10 @@ pub(crate) use api::{
 pub use api_patch_validation::{
     export_patch_diagnostics_sarif, export_patch_diagnostics_sarif_with_timeout,
 };
-pub use language::{MAX_SOURCE_FILE_BYTES, read_source, supported_languages};
+pub use language::{
+    LanguageCapabilities, LanguageDescriptor, LanguageRegistry, MAX_SOURCE_FILE_BYTES,
+    builtin_language_registry, read_source, supported_languages,
+};
 pub use patching::{
     MAX_BYPASS_REASON_BYTES, MAX_PATCH_PREVIEW_TIMEOUT_MS, MAX_PATCH_REPLACEMENT_BYTES,
     MAX_PATCH_TIMEOUT_MS, patch_ast_node, patch_ast_node_at_position,
