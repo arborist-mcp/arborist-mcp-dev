@@ -25,10 +25,12 @@ use super::{
     validate_patch_with_neighborhood_context_at_position_from_index_path_with_timeout,
     validate_patch_with_neighborhood_context_at_position_from_index_with_timeout,
     validate_patch_with_neighborhood_context_at_position_from_path_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_with_deadline,
     validate_patch_with_neighborhood_context_at_position_with_timeout,
     validate_patch_with_neighborhood_context_from_index_path_with_timeout,
     validate_patch_with_neighborhood_context_from_index_with_timeout,
     validate_patch_with_neighborhood_context_from_path_with_timeout,
+    validate_patch_with_neighborhood_context_with_deadline,
     validate_patch_with_neighborhood_context_with_timeout,
     validate_patch_with_trace_context_at_position_from_index_path_with_timeout,
     validate_patch_with_trace_context_at_position_from_index_with_timeout,
@@ -526,6 +528,48 @@ fn discovery_context_timeout_variants_reject_zero_before_path_or_patch_work() {
                 .contains("invalid trace timeout_ms: value must be greater than zero")
         );
     }
+}
+
+#[test]
+fn neighborhood_context_deadline_helpers_reject_expired_budget_before_patch_work() {
+    let deadline = TraceQueryDeadline::expired_for_tests(1);
+    let workspace_root = Path::new(".");
+    let path = Path::new("missing.py");
+    let position = Position { row: 0, column: 0 };
+
+    let direct_error = validate_patch_with_neighborhood_context_with_deadline(
+        workspace_root,
+        path,
+        "def target():\n    return 1\n",
+        "target",
+        "def target():\n    return 2\n",
+        None,
+        TraceDirection::Both,
+        2,
+        10,
+        &deadline,
+    )
+    .expect_err("expired trace deadline must reject direct neighborhood patch validation");
+    assert!(direct_error.to_string().contains("patch validation"));
+
+    let position_error = validate_patch_with_neighborhood_context_at_position_with_deadline(
+        workspace_root,
+        path,
+        "def target():\n    return 1\n",
+        &position,
+        "def target():\n    return 2\n",
+        None,
+        TraceDirection::Both,
+        2,
+        10,
+        &deadline,
+    )
+    .expect_err("expired trace deadline must reject position neighborhood patch validation");
+    assert!(
+        position_error
+            .to_string()
+            .contains("patch position resolution")
+    );
 }
 
 #[test]

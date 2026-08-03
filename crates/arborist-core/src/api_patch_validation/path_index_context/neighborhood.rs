@@ -10,8 +10,8 @@ use crate::{patching, symbols};
 
 use super::super::{
     validate_neighborhood_context_patch_result, validate_patch_commit_with_trace,
-    validate_patch_with_neighborhood_context_at_position_with_timeout,
-    validate_patch_with_neighborhood_context_with_timeout,
+    validate_patch_with_neighborhood_context_at_position_with_deadline,
+    validate_patch_with_neighborhood_context_with_deadline,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -56,8 +56,7 @@ pub fn validate_patch_with_neighborhood_context_from_path_with_timeout(
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms = deadline.remaining_timeout_ms("neighborhood-context patch validation")?;
-    validate_patch_with_neighborhood_context_with_timeout(
+    validate_patch_with_neighborhood_context_with_deadline(
         &workspace_root,
         &path,
         &source,
@@ -67,7 +66,7 @@ pub fn validate_patch_with_neighborhood_context_from_path_with_timeout(
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -111,10 +110,37 @@ pub fn validate_patch_with_neighborhood_context_from_index_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<NeighborhoodContextPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_neighborhood_context_from_index_with_deadline(
+        db_path,
+        path,
+        source,
+        semantic_target,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_neighborhood_context_from_index_with_deadline(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    semantic_target: &str,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<NeighborhoodContextPatchResult> {
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch validation")?;
     let patch = super::super::patch_ast_node_with_trace_deadline(
-        &deadline,
+        deadline,
         &path,
         source,
         semantic_target,
@@ -162,7 +188,7 @@ pub fn validate_patch_with_neighborhood_context_from_index_with_timeout(
         &overrides,
         &trace_target,
         direction,
-        &deadline,
+        deadline,
     )?;
     let timeout_ms = deadline.remaining_timeout_ms("indexed patch neighborhood context")?;
     let neighborhood_context =
@@ -265,9 +291,7 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_path_with_timeo
     ensure_path_inside_workspace(&workspace_root, &path)?;
     deadline.check("patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms =
-        deadline.remaining_timeout_ms("position neighborhood-context patch validation")?;
-    validate_patch_with_neighborhood_context_at_position_with_timeout(
+    validate_patch_with_neighborhood_context_at_position_with_deadline(
         &workspace_root,
         &path,
         &source,
@@ -277,7 +301,7 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_path_with_timeo
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -321,16 +345,41 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_index_with_time
     timeout_ms: Option<u64>,
 ) -> Result<NeighborhoodContextPatchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    validate_patch_with_neighborhood_context_at_position_from_index_with_deadline(
+        db_path,
+        path,
+        source,
+        position,
+        new_code,
+        bypass_reason,
+        direction,
+        max_depth,
+        max_nodes,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_patch_with_neighborhood_context_at_position_from_index_with_deadline(
+    db_path: &Path,
+    path: &Path,
+    source: &str,
+    position: &Position,
+    new_code: &str,
+    bypass_reason: Option<&str>,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    deadline: &TraceQueryDeadline,
+) -> Result<NeighborhoodContextPatchResult> {
     deadline.check("indexed patch position resolution")?;
     let semantic_target = patching::semantic_target_at_position_with_deadline(
         path,
         source,
         position,
-        Some(&deadline),
+        Some(deadline),
     )?;
-    let timeout_ms =
-        deadline.remaining_timeout_ms("indexed neighborhood-context patch validation")?;
-    validate_patch_with_neighborhood_context_from_index_with_timeout(
+    validate_patch_with_neighborhood_context_from_index_with_deadline(
         db_path,
         path,
         source,
@@ -340,7 +389,7 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_index_with_time
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        deadline,
     )
 }
 
@@ -360,8 +409,7 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_index_path_with
     let path = language::normalize_absolute_path(path)?;
     deadline.check("indexed patch source read")?;
     let source = read_source(&path)?;
-    let timeout_ms = deadline.remaining_timeout_ms("indexed position patch validation")?;
-    validate_patch_with_neighborhood_context_at_position_from_index_with_timeout(
+    validate_patch_with_neighborhood_context_at_position_from_index_with_deadline(
         db_path,
         &path,
         &source,
@@ -371,6 +419,6 @@ pub fn validate_patch_with_neighborhood_context_at_position_from_index_path_with
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
