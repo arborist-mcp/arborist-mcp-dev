@@ -33,6 +33,8 @@ impl LanguageCapabilities {
         Self(Self::TREE_QUERY.0 | Self::SYMBOL_INDEX.0 | Self::REFERENCE_TRACE.0);
     pub const INDEXED_SKELETON_TRACE_SUPPORT: Self =
         Self(Self::INDEXED_TRACE_SUPPORT.0 | Self::SEMANTIC_SKELETON.0);
+    pub const INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT: Self =
+        Self(Self::INDEXED_SKELETON_TRACE_SUPPORT.0 | Self::FILE_DEPENDENCIES.0);
 
     pub const FULL_CURRENT_SUPPORT: Self = Self(
         Self::TREE_QUERY.0
@@ -383,24 +385,24 @@ static JAVASCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::JavaScript,
     display_name: "JavaScript",
     extensions: JAVASCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
-    analysis_revision: "javascript-skeleton-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "javascript-imports-v1",
     grammar: javascript_grammar,
 };
 static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::TypeScript,
     display_name: "TypeScript",
     extensions: TYPESCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
-    analysis_revision: "typescript-skeleton-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "typescript-imports-v1",
     grammar: typescript_grammar,
 };
 static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Tsx,
     display_name: "TSX",
     extensions: TSX_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
-    analysis_revision: "tsx-skeleton-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "tsx-imports-v1",
     grammar: tsx_grammar,
 };
 
@@ -571,16 +573,17 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        false
+        true
     }
 
     fn collect_local_file_dependencies(
         &self,
-        _path: &Path,
-        _root: Node<'_>,
-        _source: &str,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
     ) -> Result<Vec<PathBuf>> {
-        Ok(Vec::new())
+        crate::language::javascript_local_module_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

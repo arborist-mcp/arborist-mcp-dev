@@ -706,8 +706,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Complete Phase 3 structured reference facts and persisted analysis
   provenance before adding the first JavaScript/TypeScript adapter.
 - [x] Add JavaScript, TypeScript, and TSX grammar routing, Tree-sitter
-  queries, semantic skeletons, and conservative direct-call indexing/tracing;
-  keep import and patch flows capability-gated until their adapters land.
+  queries, semantic skeletons, and conservative direct-call indexing/tracing.
+- [x] Add static local JavaScript/TypeScript import, re-export, and direct
+  `require` dependency extraction for transitive incremental refresh; keep
+  module-aware import resolution and patch flows capability-gated.
 
 ## Suggested Commit Sequence
 

@@ -1,5 +1,6 @@
 mod c;
 mod io;
+mod javascript;
 mod parser;
 mod paths;
 mod positions;
@@ -13,6 +14,7 @@ pub use c::{
 pub(crate) use c::{
     c_include_targets_before, c_local_include_dependency_paths, extension_case_candidates,
 };
+pub(crate) use javascript::javascript_local_module_dependency_paths;
 pub use parser::{
     ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,
     parser_for_language, supported_languages,
