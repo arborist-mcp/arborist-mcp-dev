@@ -259,18 +259,17 @@ pub(crate) fn read_symbol_discovery_context_at_position_from_symbols_with_timeou
     )
 }
 
-pub(crate) fn read_symbol_from_symbols_with_timeout(
+pub(crate) fn read_symbol_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     symbol_path: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolReadResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol resolution")?;
+    validate_trace_symbol_path(symbol_path)?;
 
-    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     deadline.check("symbol read")?;
     let result = read_symbol_from_meta(symbol, indexed_files, file_overrides)?;
@@ -278,19 +277,18 @@ pub(crate) fn read_symbol_from_symbols_with_timeout(
     Ok(result)
 }
 
-pub(crate) fn read_symbol_context_from_symbols_with_timeout(
+pub(crate) fn read_symbol_context_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     symbol_path: &str,
     direction: TraceDirection,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol context resolution")?;
+    validate_trace_symbol_path(symbol_path)?;
 
-    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     read_symbol_context_from_meta_with_deadline(
         resolved_symbols,
@@ -298,12 +296,12 @@ pub(crate) fn read_symbol_context_from_symbols_with_timeout(
         symbol,
         direction,
         file_overrides,
-        &deadline,
+        deadline,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_timeout(
+pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     symbol_path: &str,
@@ -311,13 +309,12 @@ pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_timeout(
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolNeighborhoodContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol neighborhood resolution")?;
+    validate_trace_symbol_path(symbol_path)?;
 
-    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     let mut source_cache = BTreeMap::new();
     read_symbol_neighborhood_context_from_meta_with_deadline_and_cache(
@@ -328,13 +325,13 @@ pub(crate) fn read_symbol_neighborhood_context_from_symbols_with_timeout(
         max_depth,
         max_nodes,
         file_overrides,
-        &deadline,
+        deadline,
         &mut source_cache,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn read_symbol_discovery_context_from_symbols_with_timeout(
+pub(crate) fn read_symbol_discovery_context_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,
     symbol_path: &str,
@@ -342,13 +339,12 @@ pub(crate) fn read_symbol_discovery_context_from_symbols_with_timeout(
     max_depth: usize,
     max_nodes: usize,
     file_overrides: Option<&BTreeMap<String, String>>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolReadDiscoveryContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    validate_trace_symbol_path(symbol_path)?;
     deadline.check("symbol discovery resolution")?;
+    validate_trace_symbol_path(symbol_path)?;
 
-    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(&deadline))?
+    let symbol = choose_trace_symbol_with_deadline(resolved_symbols, symbol_path, Some(deadline))?
         .ok_or_else(|| anyhow!("symbol not found in workspace index: {symbol_path}"))?;
     let mut source_cache = BTreeMap::new();
     read_symbol_discovery_context_from_meta_with_deadline_and_cache(
@@ -359,7 +355,7 @@ pub(crate) fn read_symbol_discovery_context_from_symbols_with_timeout(
         max_depth,
         max_nodes,
         file_overrides,
-        &deadline,
+        deadline,
         &mut source_cache,
     )
 }
@@ -373,10 +369,10 @@ mod tests {
     use super::{
         read_symbol_at_position_from_symbols_with_timeout,
         read_symbol_context_at_position_from_symbols_with_timeout,
-        read_symbol_context_from_meta_with_deadline, read_symbol_context_from_symbols_with_timeout,
+        read_symbol_context_from_meta_with_deadline,
+        read_symbol_context_from_symbols_with_deadline,
         read_symbol_discovery_context_at_position_from_symbols_with_timeout,
-        read_symbol_discovery_context_from_symbols_with_timeout,
-        read_symbol_from_symbols_with_timeout,
+        read_symbol_from_symbols_with_deadline,
     };
     use crate::model::{Position, SymbolMeta, SymbolMetaInit, TraceDirection};
     use crate::symbol_trace::TraceQueryDeadline;
@@ -422,36 +418,30 @@ mod tests {
     }
 
     #[test]
-    fn direct_read_variants_reject_zero_timeout_before_symbol_resolution() {
-        let symbols = Vec::new();
-        assert_zero_timeout(
-            read_symbol_from_symbols_with_timeout(&symbols, 0, "missing", None, Some(0))
-                .expect_err("base read should reject zero timeout"),
-        );
-        assert_zero_timeout(
-            read_symbol_context_from_symbols_with_timeout(
-                &symbols,
-                0,
-                "missing",
-                TraceDirection::Both,
-                None,
-                Some(0),
-            )
-            .expect_err("context read should reject zero timeout"),
-        );
-        assert_zero_timeout(
-            read_symbol_discovery_context_from_symbols_with_timeout(
-                &symbols,
-                0,
-                "missing",
-                TraceDirection::Both,
-                2,
-                64,
-                None,
-                Some(0),
-            )
-            .expect_err("discovery read should reject zero timeout"),
-        );
+    fn direct_read_reuses_the_callers_deadline_before_selector_validation() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = read_symbol_from_symbols_with_deadline(&[], 0, " ", None, &deadline)
+            .expect_err("symbol read should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol resolution"));
+    }
+
+    #[test]
+    fn direct_context_read_reuses_the_callers_deadline() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = read_symbol_context_from_symbols_with_deadline(
+            &[],
+            0,
+            "helper",
+            TraceDirection::Both,
+            None,
+            &deadline,
+        )
+        .expect_err("symbol context read should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol context resolution"));
     }
 
     #[test]

@@ -23,11 +23,12 @@ pub(crate) use list::{
 pub(crate) use read::{
     read_symbol_at_position_from_symbols_with_timeout,
     read_symbol_context_at_position_from_symbols_with_timeout,
-    read_symbol_context_from_symbols_with_timeout,
+    read_symbol_context_from_symbols_with_deadline,
     read_symbol_discovery_context_at_position_from_symbols_with_timeout,
-    read_symbol_discovery_context_from_symbols_with_timeout, read_symbol_from_symbols_with_timeout,
+    read_symbol_discovery_context_from_symbols_with_deadline,
+    read_symbol_from_symbols_with_deadline,
     read_symbol_neighborhood_context_at_position_from_symbols_with_timeout,
-    read_symbol_neighborhood_context_from_symbols_with_timeout,
+    read_symbol_neighborhood_context_from_symbols_with_deadline,
 };
 pub(crate) use search::{
     search_context_from_symbols, search_context_from_symbols_with_deadline,
