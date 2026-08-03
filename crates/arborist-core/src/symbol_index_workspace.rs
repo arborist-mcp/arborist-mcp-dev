@@ -13,4 +13,4 @@ pub(crate) use live::{
 
 pub(crate) use crate::include_graph::expanded_refresh_file_paths;
 #[cfg(test)]
-pub(crate) use crate::include_graph::transitive_c_include_dependents;
+pub(crate) use crate::include_graph::transitive_local_file_dependents;

@@ -22,7 +22,7 @@ pub(crate) fn expanded_refresh_file_paths(
         .adapter(language_id)
         .expect("every LanguageId must have a builtin language adapter");
     if adapter.supports_incremental_file_dependencies() {
-        refresh_paths.extend(transitive_c_include_dependents_with_deadline(
+        refresh_paths.extend(transitive_local_file_dependents_with_deadline(
             workspace_root,
             file_path,
             limits,
@@ -34,12 +34,12 @@ pub(crate) fn expanded_refresh_file_paths(
 }
 
 #[cfg(test)]
-pub(crate) fn transitive_c_include_dependents(
+pub(crate) fn transitive_local_file_dependents(
     workspace_root: &Path,
     target_path: &Path,
 ) -> Result<BTreeSet<PathBuf>> {
     let deadline = WorkspaceScanDeadline::new(WorkspaceScanLimits::default())?;
-    transitive_c_include_dependents_with_deadline(
+    transitive_local_file_dependents_with_deadline(
         workspace_root,
         target_path,
         WorkspaceScanLimits::default(),
@@ -47,20 +47,21 @@ pub(crate) fn transitive_c_include_dependents(
     )
 }
 
-fn transitive_c_include_dependents_with_deadline(
+fn transitive_local_file_dependents_with_deadline(
     workspace_root: &Path,
     target_path: &Path,
     limits: WorkspaceScanLimits,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<BTreeSet<PathBuf>> {
-    let reverse_index = reverse::reverse_local_c_include_index(workspace_root, limits, deadline)?;
+    let reverse_index =
+        reverse::reverse_local_file_dependency_index(workspace_root, limits, deadline)?;
     let normalized_target = normalize_path(target_path);
     let mut queue = vec![normalized_target.clone()];
     let mut visited = BTreeSet::from([normalized_target]);
     let mut dependents = BTreeSet::new();
 
     while let Some(current_path) = queue.pop() {
-        deadline.check("expanding C include dependents")?;
+        deadline.check("expanding local file dependents")?;
         let Some(children) = reverse_index.get(&current_path) else {
             continue;
         };

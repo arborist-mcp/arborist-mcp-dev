@@ -11,7 +11,7 @@ use crate::workspace_scan::{
     WorkspaceScanDeadline, WorkspaceScanLimits, collect_source_files_with_deadline,
 };
 
-pub(super) fn reverse_local_c_include_index(
+pub(super) fn reverse_local_file_dependency_index(
     workspace_root: &Path,
     limits: WorkspaceScanLimits,
     deadline: &WorkspaceScanDeadline,
@@ -19,7 +19,7 @@ pub(super) fn reverse_local_c_include_index(
     let mut reverse_index = BTreeMap::new();
 
     for path in collect_source_files_with_deadline(workspace_root, limits, deadline)? {
-        deadline.check("building C include reverse index")?;
+        deadline.check("building local file dependency reverse index")?;
         let Ok(language_id) = detect_language(&path) else {
             continue;
         };
@@ -34,9 +34,9 @@ pub(super) fn reverse_local_c_include_index(
         let document = parse_document_with_timeout(
             &path,
             &source,
-            deadline.remaining_timeout_micros("parsing C include files")?,
+            deadline.remaining_timeout_micros("parsing local file dependency candidates")?,
         )?;
-        deadline.check("extracting C include targets")?;
+        deadline.check("extracting local file dependencies")?;
         for include_path in
             adapter.collect_local_file_dependencies(&path, document.tree.root_node(), &source)?
         {

@@ -13,7 +13,7 @@ use crate::index_store::{
 };
 use crate::model::SymbolMeta;
 use crate::symbol_index_model::{IndexedSymbol, PersistedFileState};
-use crate::symbol_index_workspace::transitive_c_include_dependents;
+use crate::symbol_index_workspace::transitive_local_file_dependents;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -211,7 +211,7 @@ fn persist_symbol_refresh_rolls_back_metadata_on_row_failure() {
 }
 
 #[test]
-fn transitive_c_include_dependents_skips_symlink_header_escape() {
+fn transitive_local_file_dependents_skips_symlink_header_escape() {
     let root = temporary_dir();
     let workspace = root.join("workspace");
     let outside = root.join("outside");
@@ -230,7 +230,7 @@ fn transitive_c_include_dependents_skips_symlink_header_escape() {
         return;
     }
 
-    let dependents = transitive_c_include_dependents(&workspace, &linked_header).unwrap();
+    let dependents = transitive_local_file_dependents(&workspace, &linked_header).unwrap();
 
     assert!(dependents.is_empty());
     fs::remove_dir_all(root).unwrap();
