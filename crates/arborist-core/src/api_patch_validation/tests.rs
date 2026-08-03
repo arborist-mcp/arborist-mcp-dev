@@ -525,7 +525,7 @@ fn discovery_context_timeout_variants_reject_zero_before_path_or_patch_work() {
 }
 
 #[test]
-fn patch_analysis_uses_remaining_trace_budget_before_patch_work() {
+fn patch_analysis_reuses_trace_deadline_for_patch_work() {
     let deadline = TraceQueryDeadline::expired_for_tests(1);
 
     let error = patch_ast_node_with_trace_deadline(
@@ -538,5 +538,5 @@ fn patch_analysis_uses_remaining_trace_budget_before_patch_work() {
     )
     .expect_err("expired trace budgets must reject patch work before parsing or validation");
 
-    assert!(error.to_string().contains("patch application"));
+    assert!(error.to_string().contains("patch input validation"));
 }

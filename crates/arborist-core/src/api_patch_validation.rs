@@ -58,14 +58,13 @@ pub(crate) fn patch_ast_node_with_trace_deadline(
     new_code: &str,
     bypass_reason: Option<&str>,
 ) -> Result<PatchAstNodeResult> {
-    let timeout_ms = deadline.remaining_timeout_ms("patch application")?;
-    patching::patch_ast_node_with_timeout(
+    patching::patch_ast_node_with_deadline(
         path,
         source,
         semantic_target,
         new_code,
         bypass_reason,
-        timeout_ms,
+        Some(deadline),
     )
 }
 

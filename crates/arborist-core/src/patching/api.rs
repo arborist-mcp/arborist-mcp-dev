@@ -204,7 +204,7 @@ pub fn patch_ast_node_with_timeout(
     )
 }
 
-fn patch_ast_node_with_deadline(
+pub(crate) fn patch_ast_node_with_deadline(
     path: &Path,
     source: &str,
     semantic_target: &str,

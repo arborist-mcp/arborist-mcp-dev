@@ -344,9 +344,10 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Apply cooperative deadlines to Tree-sitter parsing and query execution,
   using parser and cursor progress callbacks so native work can be interrupted.
 - [x] Reuse one exact `TraceQueryDeadline` across nested in-memory trace,
-  list, search, and read-context execution; source-overlay trace dispatch; and
-  outer live, persisted-index, and override list, search, direct or position
-  read, or trace expansion, instead of recreating rounded child budgets.
+  list, search, and read-context execution; source-overlay trace dispatch;
+  trace-backed patch construction; and outer live, persisted-index, and
+  override list, search, direct or position read, or trace expansion, instead
+  of recreating rounded child budgets.
 - [x] Extend cooperative deadlines through live, override, persisted-index,
   include-scan, and symbol-dependency loading used by trace and index paths.
 - [x] Extract symbol-trace neighborhood traversal into

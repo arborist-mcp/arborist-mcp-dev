@@ -40,7 +40,6 @@ pub(crate) use target_resolution::{
     semantic_target_at_position_with_deadline,
 };
 
-pub(crate) use api::unified_diff;
 pub use api::{
     patch_ast_node, patch_ast_node_at_position, patch_ast_node_at_position_from_path,
     patch_ast_node_at_position_from_path_with_timeout, patch_ast_node_at_position_with_timeout,
@@ -51,6 +50,7 @@ pub use api::{
     preview_patch_ast_node_at_position_with_timeout, preview_patch_ast_node_from_path,
     preview_patch_ast_node_from_path_with_timeout, preview_patch_ast_node_with_timeout,
 };
+pub(crate) use api::{patch_ast_node_with_deadline, unified_diff};
 
 use anyhow::{Result, bail};
 
