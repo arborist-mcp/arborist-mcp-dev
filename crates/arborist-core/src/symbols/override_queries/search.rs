@@ -51,6 +51,26 @@ pub fn search_symbols_with_overrides_filtered_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_symbols_with_overrides_filtered_with_deadline(
+        workspace_root,
+        file_overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        &deadline,
+    )
+}
+
+pub(crate) fn search_symbols_with_overrides_filtered_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -65,20 +85,19 @@ pub fn search_symbols_with_overrides_filtered_with_timeout(
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )
 }
 
-pub fn search_symbols_from_index_with_overrides_filtered_with_timeout(
+pub(crate) fn search_symbols_from_index_with_overrides_filtered_with_deadline(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
     query: &str,
     limit: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolSearchResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -94,7 +113,7 @@ pub fn search_symbols_from_index_with_overrides_filtered_with_timeout(
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )
 }
 
@@ -108,6 +127,26 @@ pub fn search_symbols_context_with_overrides_filtered_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_symbols_context_with_overrides_filtered_with_deadline(
+        workspace_root,
+        file_overrides,
+        query,
+        limit,
+        file_path_contains,
+        node_kind,
+        &deadline,
+    )
+}
+
+pub(crate) fn search_symbols_context_with_overrides_filtered_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchContextResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -123,20 +162,19 @@ pub fn search_symbols_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
-pub fn search_symbols_context_from_index_with_overrides_filtered_with_timeout(
+pub(crate) fn search_symbols_context_from_index_with_overrides_filtered_with_deadline(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
     query: &str,
     limit: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolSearchContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -153,7 +191,7 @@ pub fn search_symbols_context_from_index_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -171,6 +209,33 @@ pub fn search_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_symbols_neighborhood_context_with_overrides_filtered_with_deadline(
+        workspace_root,
+        file_overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_symbols_neighborhood_context_with_overrides_filtered_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchNeighborhoodContextResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -189,12 +254,12 @@ pub fn search_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_with_timeout(
+pub(crate) fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_with_deadline(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
     query: &str,
@@ -204,9 +269,8 @@ pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_wi
     max_nodes: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -226,7 +290,7 @@ pub fn search_symbols_neighborhood_context_from_index_with_overrides_filtered_wi
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
@@ -244,6 +308,33 @@ pub fn search_symbols_discovery_context_with_overrides_filtered_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    search_symbols_discovery_context_with_overrides_filtered_with_deadline(
+        workspace_root,
+        file_overrides,
+        query,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_symbols_discovery_context_with_overrides_filtered_with_deadline(
+    workspace_root: &Path,
+    file_overrides: &BTreeMap<String, String>,
+    query: &str,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolSearchDiscoveryContextResult> {
     let timeout_ms = deadline.remaining_timeout_ms("workspace symbol loading")?;
     let (resolved_symbols, indexed_files) = resolve_workspace_symbols_with_overrides_with_timeout(
         workspace_root,
@@ -262,12 +353,12 @@ pub fn search_symbols_discovery_context_with_overrides_filtered_with_timeout(
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_timeout(
+pub(crate) fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_deadline(
     db_path: &Path,
     file_overrides: &BTreeMap<String, String>,
     query: &str,
@@ -277,9 +368,8 @@ pub fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_
     max_nodes: usize,
     file_path_contains: Option<&str>,
     node_kind: Option<&str>,
-    timeout_ms: Option<u64>,
+    deadline: &TraceQueryDeadline,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
     let timeout_ms = deadline.remaining_timeout_ms("index symbol loading")?;
     let (resolved_symbols, indexed_files) =
         load_normalized_symbol_index_with_overrides_with_timeout(
@@ -299,7 +389,7 @@ pub fn search_symbols_discovery_context_from_index_with_overrides_filtered_with_
         file_path_contains,
         node_kind,
         Some(file_overrides),
-        &deadline,
+        deadline,
     )
 }
 

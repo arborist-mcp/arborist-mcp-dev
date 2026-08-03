@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::super::{
-    SourceQueryRoot, with_source_query_context, with_source_query_context_with_timeout,
+    SourceQueryRoot, with_source_query_context, with_source_query_context_with_trace_deadline,
 };
 use crate::model::*;
 
@@ -32,18 +32,18 @@ pub fn search_symbols_from_index_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.search_symbols_with_timeout(
+        |context, deadline| {
+            context.search_symbols_with_deadline(
                 query,
                 limit,
                 file_path_contains,
                 node_kind,
-                timeout_ms,
+                deadline,
             )
         },
     )
@@ -60,18 +60,18 @@ pub fn search_symbols_context_from_index_with_source_filtered_with_timeout(
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.search_symbols_context_with_timeout(
+        |context, deadline| {
+            context.search_symbols_context_with_deadline(
                 query,
                 limit,
                 file_path_contains,
                 node_kind,
-                timeout_ms,
+                deadline,
             )
         },
     )
@@ -91,13 +91,13 @@ pub fn search_symbols_neighborhood_context_from_index_with_source_filtered_with_
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchNeighborhoodContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.search_symbols_neighborhood_context_with_timeout(
+        |context, deadline| {
+            context.search_symbols_neighborhood_context_with_deadline(
                 query,
                 limit,
                 direction,
@@ -105,7 +105,7 @@ pub fn search_symbols_neighborhood_context_from_index_with_source_filtered_with_
                 max_nodes,
                 file_path_contains,
                 node_kind,
-                timeout_ms,
+                deadline,
             )
         },
     )
@@ -125,13 +125,13 @@ pub fn search_symbols_discovery_context_from_index_with_source_filtered_with_tim
     node_kind: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<SymbolSearchDiscoveryContextResult> {
-    with_source_query_context_with_timeout(
+    with_source_query_context_with_trace_deadline(
         SourceQueryRoot::Index(db_path),
         path,
         source,
         timeout_ms,
-        |context, timeout_ms| {
-            context.search_symbols_discovery_context_with_timeout(
+        |context, deadline| {
+            context.search_symbols_discovery_context_with_deadline(
                 query,
                 limit,
                 direction,
@@ -139,7 +139,7 @@ pub fn search_symbols_discovery_context_from_index_with_source_filtered_with_tim
                 max_nodes,
                 file_path_contains,
                 node_kind,
-                timeout_ms,
+                deadline,
             )
         },
     )

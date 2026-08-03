@@ -181,6 +181,36 @@ mod tests {
     }
 
     #[test]
+    fn source_search_query_preserves_deadline_after_overlay_setup() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after the Unix epoch")
+            .as_nanos();
+        let workspace =
+            std::env::temp_dir().join(format!("arborist-source-search-deadline-{unique}"));
+        let path = workspace.join("module.py");
+        fs::create_dir_all(&workspace).expect("temporary workspace should be created");
+        fs::write(&path, "def helper():\n    return 1\n")
+            .expect("temporary source file should be written");
+
+        let error = with_source_query_context_with_trace_deadline(
+            SourceQueryRoot::Workspace(&workspace),
+            &path,
+            "def helper():\n    return 2\n",
+            Some(100),
+            |context, deadline| {
+                thread::sleep(Duration::from_millis(150));
+                context.search_symbols_with_deadline("helper", 10, None, None, deadline)
+            },
+        )
+        .expect_err("source search query should retain the deadline created before overlay setup");
+
+        fs::remove_dir_all(&workspace).expect("temporary workspace should be removed");
+        assert!(error.to_string().contains("workspace symbol loading"));
+        assert!(error.to_string().contains("trace timeout exceeded"));
+    }
+
+    #[test]
     fn source_query_families_reject_zero_timeout_before_overlay_setup() {
         let workspace = Path::new("missing-workspace");
         let path = Path::new("../outside.py");
