@@ -40,6 +40,10 @@ pub use sarif::{export_patch_diagnostics_sarif, export_patch_diagnostics_sarif_w
 #[cfg(test)]
 pub(crate) use sarif::{export_patch_diagnostics_sarif_with_deadline, sarif_artifact_uri};
 pub use workspace_context::*;
+pub(crate) use workspace_context::{
+    validate_patch_with_trace_context_at_position_with_deadline,
+    validate_patch_with_trace_context_with_deadline,
+};
 
 pub const MAX_PATCH_ANALYSIS_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 
