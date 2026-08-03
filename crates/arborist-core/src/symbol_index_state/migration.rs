@@ -5,9 +5,10 @@ use rusqlite::Connection;
 
 use crate::index_migration;
 use crate::index_schema::{
-    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, load_optional_metadata_value,
-    load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root,
-    load_symbol_index_workspace_root_with_deadline, require_legacy_symbol_index_schema,
+    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
+    load_optional_metadata_value, load_optional_metadata_value_with_deadline,
+    load_symbol_index_workspace_root, load_symbol_index_workspace_root_with_deadline,
+    require_legacy_symbol_index_schema, require_older_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
@@ -76,8 +77,10 @@ fn migrate_symbol_index_inner(
         require_symbol_index_tables(&connection, &db_path)?;
         if schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
             require_previous_symbol_index_schema(&connection, &db_path)?;
-        } else {
+        } else if schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
             require_legacy_symbol_index_schema(&connection, &db_path)?;
+        } else {
+            require_older_symbol_index_schema(&connection, &db_path)?;
         }
         check_optional_deadline(deadline, "validating migratable symbol index schema")?;
         let workspace_root = match deadline {

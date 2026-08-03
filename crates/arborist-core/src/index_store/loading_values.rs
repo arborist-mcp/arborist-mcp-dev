@@ -5,6 +5,7 @@ use rusqlite::{Row, types::Type};
 use serde::de::{self, DeserializeOwned, MapAccess, Visitor};
 
 use crate::semantic::semantic_parent_path;
+use crate::symbol_index_model::ReferenceFact;
 
 pub(super) fn nonempty_string_from_row(
     row: &Row<'_>,
@@ -104,6 +105,28 @@ pub(crate) fn string_list_from_json_column(
         ));
     }
     Ok(values)
+}
+
+pub(super) fn reference_facts_from_json_column(
+    json: &str,
+    column: usize,
+) -> rusqlite::Result<Vec<ReferenceFact>> {
+    let facts: Vec<ReferenceFact> = json_from_column(json, column)?;
+    if facts.iter().any(|fact| {
+        fact.spelling.trim().is_empty()
+            || fact.spelling.chars().any(char::is_control)
+            || fact.call_arities.as_ref().is_some_and(BTreeSet::is_empty)
+    }) {
+        return Err(rusqlite::Error::FromSqlConversionFailure(
+            column,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid reference_facts_json entry",
+            )),
+        ));
+    }
+    Ok(facts)
 }
 
 pub(super) fn call_arities_from_json_column(
@@ -206,4 +229,24 @@ fn integer_conversion_error(column: usize, message: String) -> rusqlite::Error {
             message,
         )),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reference_facts_from_json_column;
+
+    #[test]
+    fn reference_facts_reject_legacy_control_character_spellings() {
+        let error = reference_facts_from_json_column(
+            r#"[{"spelling":"\u001farborist-rvalue-this:adjust","call_arities":[1],"language_details":"none"}]"#,
+            0,
+        )
+        .expect_err("legacy encoded spellings must not be persisted as structured facts");
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid reference_facts_json entry")
+        );
+    }
 }

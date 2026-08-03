@@ -4,10 +4,11 @@ use anyhow::{Result, anyhow};
 
 use crate::index_migration;
 use crate::index_schema::{
-    PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION, SYMBOL_INDEX_SCHEMA_VERSION,
-    load_indexed_files_metadata_with_deadline, load_optional_metadata_value_with_deadline,
-    load_symbol_index_workspace_root_with_deadline, open_symbol_index_read_only,
-    require_current_symbol_index_schema, require_legacy_symbol_index_schema,
+    LEGACY_SYMBOL_INDEX_SCHEMA_VERSION, PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION,
+    SYMBOL_INDEX_SCHEMA_VERSION, load_indexed_files_metadata_with_deadline,
+    load_optional_metadata_value_with_deadline, load_symbol_index_workspace_root_with_deadline,
+    open_symbol_index_read_only, require_current_symbol_index_schema,
+    require_legacy_symbol_index_schema, require_older_symbol_index_schema,
     require_previous_symbol_index_schema, require_symbol_index_tables,
 };
 use crate::index_store::{
@@ -117,8 +118,10 @@ pub fn inspect_symbol_index_with_timeout(
         let schema_validation =
             if health.schema_version.as_deref() == Some(PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION) {
                 require_previous_symbol_index_schema(&connection, &db_path)
-            } else {
+            } else if health.schema_version.as_deref() == Some(LEGACY_SYMBOL_INDEX_SCHEMA_VERSION) {
                 require_legacy_symbol_index_schema(&connection, &db_path)
+            } else {
+                require_older_symbol_index_schema(&connection, &db_path)
             };
         if let Err(error) = schema_validation {
             health.issues.push(error.to_string());

@@ -6,12 +6,12 @@ use rusqlite::{Connection, types::Type};
 pub(super) use super::loading_values::nonempty_string_from_row;
 use super::loading_values::{
     byte_range_from_row, call_arities_from_json_column, optional_nonempty_string_from_row,
-    string_list_from_json_column, validated_scope_path,
+    reference_facts_from_json_column, string_list_from_json_column, validated_scope_path,
 };
 use crate::deadline::DeadlineCheck;
 use crate::index_schema::load_indexed_files_metadata_with_deadline;
 use crate::model::{SymbolMeta, SymbolMetaInit};
-use crate::symbol_index_model::{IndexedSymbol, reference_facts_from_legacy, symbol_base_name};
+use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn load_indexed_symbols_grouped_by_file(
@@ -21,7 +21,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json
+                reference_call_arities_json, reference_facts_json
          FROM symbols
          ORDER BY file_path, semantic_path",
     )
@@ -35,11 +35,32 @@ pub(crate) fn load_indexed_symbols_grouped_by_file_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json
+                reference_call_arities_json, reference_facts_json
          FROM symbols
          ORDER BY file_path, semantic_path",
         Some(deadline),
     )
+}
+
+pub(crate) fn validate_previous_indexed_symbols(connection: &Connection) -> Result<()> {
+    validate_previous_indexed_symbols_with_deadline(connection, None)
+}
+
+pub(crate) fn validate_previous_indexed_symbols_with_deadline(
+    connection: &Connection,
+    deadline: Option<&dyn DeadlineCheck>,
+) -> Result<()> {
+    load_indexed_symbols_grouped_by_file_with_query_and_deadline(
+        connection,
+        "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
+                signature, parameters_json, return_type, docstring, reference_names_json,
+                reference_call_arities_json, '[]' AS reference_facts_json
+         FROM symbols
+         ORDER BY file_path, semantic_path",
+        deadline,
+    )
+    .context("invalid persisted previous symbol row")?;
+    Ok(())
 }
 
 pub(crate) fn validate_legacy_indexed_symbols(connection: &Connection) -> Result<()> {
@@ -54,7 +75,7 @@ pub(crate) fn validate_legacy_indexed_symbols_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                '{}' AS reference_call_arities_json
+                '{}' AS reference_call_arities_json, '[]' AS reference_facts_json
          FROM symbols
          ORDER BY file_path, semantic_path",
         deadline,
@@ -80,6 +101,7 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         let parameters_json: String = row.get(8)?;
         let reference_names_json: String = row.get(11)?;
         let reference_call_arities_json: String = row.get(12)?;
+        let reference_facts_json: String = row.get(13)?;
         let parameters = string_list_from_json_column(&parameters_json, 8, "parameters_json")?;
         let reference_names: std::collections::BTreeSet<_> =
             string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?
@@ -107,7 +129,7 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
             .strip_prefix(&overload_prefix)
             .is_some_and(|suffix| suffix.starts_with("overload["));
         let scope_path = validated_scope_path(row, 2, &semantic_path)?;
-        let reference_facts = reference_facts_from_legacy(&reference_names, &call_arities_by_name);
+        let reference_facts = reference_facts_from_json_column(&reference_facts_json, 13)?;
         Ok(IndexedSymbol {
             symbol_id,
             base_name: symbol_base_name(&semantic_path),

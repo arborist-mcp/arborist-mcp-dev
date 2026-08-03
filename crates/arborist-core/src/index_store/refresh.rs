@@ -48,8 +48,8 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
             "INSERT INTO symbols (
                 symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, dependencies_json,
-                references_json, reference_names_json, reference_call_arities_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                references_json, reference_names_json, reference_call_arities_json, reference_facts_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         )?;
 
         for symbol in &changed_symbols {
@@ -73,6 +73,7 @@ pub(crate) fn persist_symbol_refresh(context: SymbolRefreshPersistence<'_>) -> R
                 serde_json::to_string(&symbol.references)?,
                 serde_json::to_string(&reference_names(raw_symbol))?,
                 serde_json::to_string(&raw_symbol.call_arities_by_name)?,
+                serde_json::to_string(&raw_symbol.reference_facts)?,
             ])?;
         }
     }

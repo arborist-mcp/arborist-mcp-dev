@@ -8,9 +8,10 @@ use super::tables::{
     ensure_symbols_column, ensure_symbols_file_path_index, ensure_symbols_primary_key_layout,
 };
 
-pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
-pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
-pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
+pub(crate) const SYMBOL_INDEX_SCHEMA_VERSION: &str = "5";
+pub(crate) const PREVIOUS_SYMBOL_INDEX_SCHEMA_VERSION: &str = "4";
+pub(crate) const LEGACY_SYMBOL_INDEX_SCHEMA_VERSION: &str = "3";
+pub(crate) const OLDER_SYMBOL_INDEX_SCHEMA_VERSION: &str = "2";
 pub(crate) const OLDEST_SYMBOL_INDEX_SCHEMA_VERSION: &str = "1";
 
 pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
@@ -37,6 +38,7 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
             reference_call_arities_json TEXT NOT NULL DEFAULT '{}',
+            reference_facts_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY (symbol_id, file_path, start_byte, end_byte)
         );
         CREATE TABLE IF NOT EXISTS file_state (
@@ -51,6 +53,18 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
         &mut symbol_columns,
         "reference_names_json",
         "ALTER TABLE symbols ADD COLUMN reference_names_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "reference_call_arities_json",
+        "ALTER TABLE symbols ADD COLUMN reference_call_arities_json TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "reference_facts_json",
+        "ALTER TABLE symbols ADD COLUMN reference_facts_json TEXT NOT NULL DEFAULT '[]'",
     )?;
     if ensure_symbols_column(
         connection,

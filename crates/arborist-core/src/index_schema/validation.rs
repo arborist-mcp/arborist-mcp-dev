@@ -89,7 +89,7 @@ pub(crate) fn require_current_symbol_index_schema(
     require_symbols_file_path_index(connection, db_path)
 }
 
-pub(crate) fn require_legacy_symbol_index_schema(
+pub(crate) fn require_older_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
@@ -102,11 +102,26 @@ pub(crate) fn require_legacy_symbol_index_schema(
     )
 }
 
-pub(crate) fn require_previous_symbol_index_schema(
+pub(crate) fn require_legacy_symbol_index_schema(
     connection: &Connection,
     db_path: &Path,
 ) -> Result<()> {
     require_symbol_index_schema_structure_v3(connection, db_path)?;
+    require_current_symbols_primary_key_and_index(connection, db_path)
+}
+
+pub(crate) fn require_previous_symbol_index_schema(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
+    require_symbol_index_schema_structure_v4(connection, db_path)?;
+    require_current_symbols_primary_key_and_index(connection, db_path)
+}
+
+fn require_current_symbols_primary_key_and_index(
+    connection: &Connection,
+    db_path: &Path,
+) -> Result<()> {
     require_table_primary_key_layout(
         connection,
         db_path,
@@ -122,6 +137,17 @@ pub(crate) fn require_previous_symbol_index_schema(
 }
 
 fn require_symbol_index_schema_structure(connection: &Connection, db_path: &Path) -> Result<()> {
+    require_symbol_index_schema_structure_v4(connection, db_path)?;
+    require_table_columns(connection, db_path, "symbols", &["reference_facts_json"])?;
+    require_table_column_types(
+        connection,
+        db_path,
+        "symbols",
+        &[("reference_facts_json", "TEXT")],
+    )
+}
+
+fn require_symbol_index_schema_structure_v4(connection: &Connection, db_path: &Path) -> Result<()> {
     require_symbol_index_schema_structure_v3(connection, db_path)?;
     require_table_columns(
         connection,

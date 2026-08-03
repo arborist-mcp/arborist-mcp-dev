@@ -32,8 +32,8 @@ fn inspect_symbol_index_reports_healthy_persisted_index() {
     assert_eq!(health.response_schema_version, "4");
     assert!(health.exists);
     assert!(health.ok);
-    assert_eq!(health.schema_version.as_deref(), Some("4"));
-    assert_eq!(health.expected_schema_version, "4");
+    assert_eq!(health.schema_version.as_deref(), Some("5"));
+    assert_eq!(health.expected_schema_version, "5");
     assert!(!health.migration.required);
     assert_eq!(health.migration.action, "none");
     assert_eq!(

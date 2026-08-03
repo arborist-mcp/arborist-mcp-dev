@@ -476,7 +476,7 @@ for response shapes, error behavior, and examples.
 - Python/C workspace symbol graph indexing, listing, searching, reading,
   tracing, bounded neighborhood context, and optional cooperative budgets for
   direct read and trace queries.
-- SQLite-backed persisted symbol indexes with transactional v1-v3-to-v4 schema
+- SQLite-backed persisted symbol indexes with transactional v1-v4-to-v5 schema
   migration plus source reindexing, health inspection, response schema versioning,
   stale/missing/unreadable/unindexed file diagnostics, bounded workspace scans,
   optional per-file byte limits and cooperative time budgets, partial refresh,
