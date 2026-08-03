@@ -702,7 +702,7 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Complete Phase 1 registry migration: route detection, grammar selection,
   and supported-language reporting through descriptors and capabilities while
   preserving `.h` as C by default.
-- [ ] Complete Phase 2 adapter composition without changing existing public
+- [x] Complete Phase 2 adapter composition without changing existing public
   protocol behavior.
 - [ ] Complete Phase 3 structured reference facts and persisted analysis
   provenance before adding the first JavaScript/TypeScript adapter.

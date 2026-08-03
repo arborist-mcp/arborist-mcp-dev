@@ -1,6 +1,6 @@
 # Multi-Language Support Design
 
-**Status:** Phase 1 implemented; phases 2-5 remain proposed
+**Status:** Phases 1-2 implemented; phases 3-5 remain proposed
 **Audience:** Arborist core, PyO3, gateway, and release maintainers
 **Scope:** Rust core architecture for adding source languages without weakening existing Python, C, and C++ behavior.
 
