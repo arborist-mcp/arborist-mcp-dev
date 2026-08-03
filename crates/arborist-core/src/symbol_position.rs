@@ -2,12 +2,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::deadline::DeadlineCheck;
-use crate::language::{normalize_path, offset_for_position, parse_document, read_source};
-use crate::model::{LanguageId, Position, SymbolMeta};
-use crate::semantic::{
-    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, python_display_byte_range,
-    semantic_path,
+use crate::language::{
+    builtin_language_registry, normalize_path, offset_for_position, parse_document, read_source,
 };
+use crate::model::{Position, SymbolMeta};
+use crate::semantic::ascend_to_symbol;
 use anyhow::{Result, anyhow};
 
 mod selection;
@@ -49,24 +48,15 @@ pub(crate) fn resolve_symbol_at_position_with_deadline<'a>(
     })?;
     check_position_deadline(deadline, "resolving symbol position")?;
 
-    let (symbol_id, semantic_path, byte_range) = match document.language_id {
-        LanguageId::Python => {
-            let semantic_path = semantic_path(symbol_node, &source)?;
-            let byte_range = python_display_byte_range(symbol_node);
-            (semantic_path.clone(), semantic_path, byte_range)
-        }
-        LanguageId::C | LanguageId::Cpp => {
-            let semantic_path = c_semantic_path(file_path, symbol_node, &source)?
-                .ok_or_else(|| anyhow!("position does not resolve to a C semantic symbol"))?;
-            let symbol_id = c_symbol_id_for_node(file_path, symbol_node, &source)?
-                .ok_or_else(|| anyhow!("position does not resolve to a C symbol id"))?;
-            (
-                symbol_id,
-                semantic_path,
-                (symbol_node.start_byte(), symbol_node.end_byte()),
-            )
-        }
-    };
+    let identity = builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .position_symbol_identity(file_path, symbol_node, &source)?;
+    let (symbol_id, semantic_path, byte_range) = (
+        identity.symbol_id,
+        identity.semantic_path,
+        identity.byte_range,
+    );
     check_position_deadline(deadline, "resolving symbol position")?;
 
     selection::choose_symbol_at_location_with_deadline(

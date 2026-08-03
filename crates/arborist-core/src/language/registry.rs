@@ -3,7 +3,7 @@ use std::ops::{BitOr, BitOrAssign};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use tree_sitter::{Language, Node, Tree};
 
 use super::{C_LANGUAGE_EXTENSIONS, CPP_LANGUAGE_EXTENSIONS, ParsedDocument};
@@ -71,6 +71,12 @@ impl LanguageDescriptor {
     }
 }
 
+pub(crate) struct PositionSymbolIdentity {
+    pub(crate) symbol_id: String,
+    pub(crate) semantic_path: String,
+    pub(crate) byte_range: (usize, usize),
+}
+
 pub(crate) trait LanguageAdapter: Sync {
     fn descriptor(&self) -> &'static LanguageDescriptor;
 
@@ -94,6 +100,28 @@ pub(crate) trait LanguageAdapter: Sync {
     ) -> Result<Option<Node<'tree>>>;
 
     fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>>;
+
+    fn position_symbol_identity(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity>;
+
+    fn semantic_path_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>>;
+
+    fn symbol_id_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>>;
 
     fn extract_symbols(
         &self,
@@ -251,6 +279,39 @@ impl LanguageAdapter for PythonAdapter {
         crate::semantic::ascend_python_to_symbol(node)
     }
 
+    fn position_symbol_identity(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        let semantic_path = crate::semantic::semantic_path(node, source)?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: crate::semantic::python_display_byte_range(node),
+        })
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        _path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        crate::semantic::semantic_path(node, source).map(Some)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        crate::semantic::python_symbol_id_for_node(path, node, source, deadline).map(Some)
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -297,6 +358,42 @@ impl LanguageAdapter for CAdapter {
 
     fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
         crate::semantic::ascend_c_to_symbol(node)
+    }
+
+    fn position_symbol_identity(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        let semantic_path = crate::semantic::c_semantic_path(path, node, source)?
+            .ok_or_else(|| anyhow!("position does not resolve to a C semantic symbol"))?;
+        let symbol_id = crate::semantic::c_symbol_id_for_node(path, node, source)?
+            .ok_or_else(|| anyhow!("position does not resolve to a C symbol id"))?;
+        Ok(PositionSymbolIdentity {
+            symbol_id,
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        crate::semantic::c_semantic_path(path, node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        crate::semantic::c_symbol_id_for_node(path, node, source)
     }
 
     fn extract_symbols(
@@ -346,6 +443,34 @@ impl LanguageAdapter for CppAdapter {
 
     fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
         C_ADAPTER.ascend_to_symbol(node)
+    }
+
+    fn position_symbol_identity(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        C_ADAPTER.position_symbol_identity(path, node, source)
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        C_ADAPTER.semantic_path_for_node(path, node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        C_ADAPTER.symbol_id_for_node(path, node, source, deadline)
     }
 
     fn extract_symbols(

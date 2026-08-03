@@ -8,13 +8,11 @@ use super::python_replacement::{
 };
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    ParsedDocument, normalize_absolute_path, offset_for_position, parse_document, position_from,
+    ParsedDocument, builtin_language_registry, normalize_absolute_path, offset_for_position,
+    parse_document, position_from,
 };
 use crate::model::{LanguageId, Position, ValidationIssue};
-use crate::semantic::{
-    ascend_to_symbol, c_semantic_path, c_symbol_id_for_node, find_semantic_node_with_deadline,
-    python_symbol_id_for_node, semantic_path,
-};
+use crate::semantic::{ascend_to_symbol, find_semantic_node_with_deadline};
 
 pub(crate) struct PreparedPatchReplacement {
     pub(crate) start_byte: usize,
@@ -62,11 +60,11 @@ pub(crate) fn semantic_target_at_position_with_deadline(
     })?;
 
     check_deadline(deadline, "position target resolution")?;
-    match document.language_id {
-        LanguageId::Python => python_symbol_id_for_node(&path, symbol_node, source, deadline),
-        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(&path, symbol_node, source)?
-            .ok_or_else(|| anyhow!("position does not resolve to a C symbol id")),
-    }
+    builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .symbol_id_for_node(&path, symbol_node, source, deadline)?
+        .ok_or_else(|| anyhow!("position does not resolve to a C symbol id"))
 }
 
 pub(crate) fn prepare_patch_replacement(
@@ -141,11 +139,11 @@ pub(super) fn resolve_symbol_path(
     node: Node<'_>,
     source: &str,
 ) -> Result<String> {
-    match language_id {
-        LanguageId::Python => semantic_path(node, source),
-        LanguageId::C | LanguageId::Cpp => c_semantic_path(path, node, source)?
-            .ok_or_else(|| anyhow!("failed to resolve patched C symbol path")),
-    }
+    builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .semantic_path_for_node(path, node, source)?
+        .ok_or_else(|| anyhow!("failed to resolve patched C symbol path"))
 }
 
 pub(super) fn resolve_symbol_id(
@@ -155,11 +153,11 @@ pub(super) fn resolve_symbol_id(
     source: &str,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<String> {
-    match language_id {
-        LanguageId::Python => python_symbol_id_for_node(path, node, source, deadline),
-        LanguageId::C | LanguageId::Cpp => c_symbol_id_for_node(path, node, source)?
-            .ok_or_else(|| anyhow!("failed to resolve patched C symbol id")),
-    }
+    builtin_language_registry()
+        .adapter(language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .symbol_id_for_node(path, node, source, deadline)?
+        .ok_or_else(|| anyhow!("failed to resolve patched C symbol id"))
 }
 
 fn semantic_target_info(
