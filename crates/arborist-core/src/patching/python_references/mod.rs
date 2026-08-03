@@ -35,15 +35,7 @@ use self::targets::{
     collect_python_reference_targets, collect_python_reference_targets_with_deadline,
 };
 
-pub(super) fn collect_python_reference_validation(
-    path: &Path,
-    source: &str,
-    symbol_node: Node<'_>,
-) -> Result<ReferenceValidation> {
-    collect_python_reference_validation_with_deadline(path, source, symbol_node, None)
-}
-
-pub(super) fn collect_python_reference_validation_with_deadline(
+pub(crate) fn collect_python_reference_validation_with_deadline(
     path: &Path,
     source: &str,
     symbol_node: Node<'_>,

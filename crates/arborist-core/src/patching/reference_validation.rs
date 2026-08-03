@@ -3,14 +3,10 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{
-    c_validation::{collect_c_reference_validation, collect_c_reference_validation_with_deadline},
-    python_references,
-};
 use crate::deadline::DeadlineCheck;
-use crate::language::{ParsedDocument, contains_node};
+use crate::language::{ParsedDocument, builtin_language_registry, contains_node};
 use crate::model::{
-    LanguageId, SymbolSummary, ValidationAmbiguity, ValidationBinding, ValidationBindingDecision,
+    SymbolSummary, ValidationAmbiguity, ValidationBinding, ValidationBindingDecision,
 };
 
 #[derive(Default)]
@@ -37,29 +33,10 @@ pub(super) fn collect_reference_validation_with_deadline(
     symbol_node: Node<'_>,
     deadline: Option<&dyn DeadlineCheck>,
 ) -> Result<ReferenceValidation> {
-    match document.language_id {
-        LanguageId::Python => match deadline {
-            Some(deadline) => python_references::collect_python_reference_validation_with_deadline(
-                path,
-                source,
-                symbol_node,
-                Some(deadline),
-            ),
-            None => {
-                python_references::collect_python_reference_validation(path, source, symbol_node)
-            }
-        },
-        LanguageId::C | LanguageId::Cpp => match deadline {
-            Some(deadline) => collect_c_reference_validation_with_deadline(
-                path,
-                document,
-                source,
-                symbol_node,
-                Some(deadline),
-            ),
-            None => collect_c_reference_validation(path, document, source, symbol_node),
-        },
-    }
+    builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter")
+        .collect_patch_reference_validation(path, document, source, symbol_node, deadline)
 }
 
 pub(crate) fn unresolved_binding_decision(name: &str) -> ValidationBindingDecision {

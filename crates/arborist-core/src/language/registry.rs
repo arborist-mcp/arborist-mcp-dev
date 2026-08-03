@@ -143,6 +143,15 @@ pub(crate) trait LanguageAdapter: Sync {
 
     fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool;
 
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation>;
+
     fn query_capture_owner(
         &self,
         path: &Path,
@@ -381,6 +390,22 @@ impl LanguageAdapter for PythonAdapter {
         Ok(None)
     }
 
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        _document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        crate::patching::python_references::collect_python_reference_validation_with_deadline(
+            path,
+            source,
+            symbol_node,
+            deadline,
+        )
+    }
+
     fn query_capture_owner(
         &self,
         _path: &Path,
@@ -507,6 +532,23 @@ impl LanguageAdapter for CAdapter {
         crate::semantic::c_symbol_nodes(path, root, source).map(Some)
     }
 
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        crate::patching::c_validation::collect_c_reference_validation_with_deadline(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
+        )
+    }
+
     fn query_capture_owner(
         &self,
         path: &Path,
@@ -620,6 +662,17 @@ impl LanguageAdapter for CppAdapter {
         source: &str,
     ) -> Result<Option<Vec<Node<'tree>>>> {
         C_ADAPTER.query_owner_candidates(path, root, source)
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        C_ADAPTER.collect_patch_reference_validation(path, document, source, symbol_node, deadline)
     }
 
     fn query_capture_owner(

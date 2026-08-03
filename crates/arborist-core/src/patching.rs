@@ -1,10 +1,10 @@
 mod api;
-mod c_validation;
+pub(crate) mod c_validation;
 mod commit_gate;
 mod python_bindings;
 mod python_imports;
 mod python_patterns;
-mod python_references;
+pub(crate) mod python_references;
 pub(crate) mod python_replacement;
 mod python_visibility;
 mod reference_validation;

@@ -30,15 +30,6 @@ use references::{
     collect_c_references_with_deadline,
 };
 
-pub(crate) fn collect_c_reference_validation(
-    path: &Path,
-    document: &ParsedDocument,
-    source: &str,
-    symbol_node: Node<'_>,
-) -> Result<ReferenceValidation> {
-    collect_c_reference_validation_with_deadline(path, document, source, symbol_node, None)
-}
-
 pub(crate) fn collect_c_reference_validation_with_deadline(
     path: &Path,
     document: &ParsedDocument,
