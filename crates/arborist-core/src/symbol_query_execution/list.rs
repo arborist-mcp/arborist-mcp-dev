@@ -125,15 +125,35 @@ pub(crate) fn list_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    list_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+pub(crate) fn list_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolListContextResult> {
     let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut reads = Vec::with_capacity(list.symbols.len());
     let mut source_cache = BTreeMap::new();
 
@@ -199,15 +219,42 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListDiscoveryContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    list_discovery_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn list_discovery_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolListDiscoveryContextResult> {
     let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut reads = Vec::with_capacity(list.symbols.len());
     let mut contexts = Vec::with_capacity(list.symbols.len());
     let mut source_cache = BTreeMap::new();
@@ -235,7 +282,7 @@ pub(crate) fn list_discovery_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                &deadline,
+                deadline,
                 &mut source_cache,
             )?,
         );
@@ -291,15 +338,42 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
     timeout_ms: Option<u64>,
 ) -> Result<SymbolListNeighborhoodContextResult> {
     let deadline = TraceQueryDeadline::new(timeout_ms)?;
+    list_neighborhood_context_from_symbols_with_deadline(
+        resolved_symbols,
+        indexed_files,
+        limit,
+        direction,
+        max_depth,
+        max_nodes,
+        file_path_contains,
+        node_kind,
+        file_overrides,
+        &deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn list_neighborhood_context_from_symbols_with_deadline(
+    resolved_symbols: &[SymbolMeta],
+    indexed_files: usize,
+    limit: usize,
+    direction: TraceDirection,
+    max_depth: usize,
+    max_nodes: usize,
+    file_path_contains: Option<&str>,
+    node_kind: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: &TraceQueryDeadline,
+) -> Result<SymbolListNeighborhoodContextResult> {
     let list = list_from_symbols_with_deadline(
         resolved_symbols,
         indexed_files,
         limit,
         file_path_contains,
         node_kind,
-        &deadline,
+        deadline,
     )?;
-    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(&deadline))?;
+    let resolved_map = resolved_symbol_ref_map_with_deadline(resolved_symbols, Some(deadline))?;
     let mut contexts = Vec::with_capacity(list.symbols.len());
     let mut source_cache = BTreeMap::new();
 
@@ -320,7 +394,7 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
                 max_depth,
                 max_nodes,
                 file_overrides,
-                &deadline,
+                deadline,
                 &mut source_cache,
             )?,
         );
@@ -334,8 +408,18 @@ pub(crate) fn list_neighborhood_context_from_symbols_with_timeout(
 
 #[cfg(test)]
 mod tests {
-    use super::list_from_symbols_with_deadline;
+    use super::{list_context_from_symbols_with_deadline, list_from_symbols_with_deadline};
     use crate::symbol_trace::TraceQueryDeadline;
+
+    #[test]
+    fn list_context_reuses_the_callers_deadline() {
+        let deadline = TraceQueryDeadline::expired_for_tests(1);
+
+        let error = list_context_from_symbols_with_deadline(&[], 0, 1, None, None, None, &deadline)
+            .expect_err("symbol listing context should honor an already-expired deadline");
+
+        assert!(error.to_string().contains("symbol listing"));
+    }
 
     #[test]
     fn list_reuses_the_callers_deadline() {

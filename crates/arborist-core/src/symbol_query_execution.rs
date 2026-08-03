@@ -15,10 +15,10 @@ mod search;
 mod trace;
 
 pub(crate) use list::{
-    list_context_from_symbols, list_context_from_symbols_with_timeout,
-    list_discovery_context_from_symbols, list_discovery_context_from_symbols_with_timeout,
-    list_from_symbols, list_from_symbols_with_timeout, list_neighborhood_context_from_symbols,
-    list_neighborhood_context_from_symbols_with_timeout,
+    list_context_from_symbols, list_context_from_symbols_with_deadline,
+    list_discovery_context_from_symbols, list_discovery_context_from_symbols_with_deadline,
+    list_from_symbols, list_from_symbols_with_deadline, list_neighborhood_context_from_symbols,
+    list_neighborhood_context_from_symbols_with_deadline,
 };
 pub(crate) use read::{
     read_symbol_at_position_from_symbols_with_timeout,
