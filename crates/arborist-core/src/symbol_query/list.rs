@@ -5,6 +5,7 @@ use crate::model::{
     SymbolListContextResult, SymbolListDiscoveryContextResult, SymbolListNeighborhoodContextResult,
     SymbolListResult, TraceDirection,
 };
+use crate::symbol_trace::TraceQueryDeadline;
 use crate::symbols;
 
 impl SymbolQueryContext {
@@ -15,26 +16,37 @@ impl SymbolQueryContext {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListContextResult> {
-        self.dispatch_with_timeout(
-            timeout_ms,
-            |workspace_root, overrides, timeout_ms| {
-                symbols::list_symbols_context_with_overrides_filtered_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.list_symbols_context_with_deadline(limit, file_path_contains, node_kind, &deadline)
+    }
+
+    pub(crate) fn list_symbols_context_with_deadline(
+        &self,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolListContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::list_symbols_context_with_overrides_filtered_with_deadline(
                     workspace_root,
                     overrides,
                     limit,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides, timeout_ms| {
-                symbols::list_symbols_context_from_index_with_overrides_filtered_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::list_symbols_context_from_index_with_overrides_filtered_with_deadline(
                     db_path,
                     overrides,
                     limit,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -51,10 +63,33 @@ impl SymbolQueryContext {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListNeighborhoodContextResult> {
-        self.dispatch_with_timeout(
-            timeout_ms,
-            |workspace_root, overrides, timeout_ms| {
-                symbols::list_symbols_neighborhood_context_with_overrides_filtered_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.list_symbols_neighborhood_context_with_deadline(
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            file_path_contains,
+            node_kind,
+            &deadline,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn list_symbols_neighborhood_context_with_deadline(
+        &self,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolListNeighborhoodContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::list_symbols_neighborhood_context_with_overrides_filtered_with_deadline(
                     workspace_root,
                     overrides,
                     limit,
@@ -63,11 +98,11 @@ impl SymbolQueryContext {
                     max_nodes,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides, timeout_ms| {
-                symbols::list_symbols_neighborhood_context_from_index_with_overrides_filtered_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::list_symbols_neighborhood_context_from_index_with_overrides_filtered_with_deadline(
                     db_path,
                     overrides,
                     limit,
@@ -76,7 +111,7 @@ impl SymbolQueryContext {
                     max_nodes,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -93,10 +128,33 @@ impl SymbolQueryContext {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListDiscoveryContextResult> {
-        self.dispatch_with_timeout(
-            timeout_ms,
-            |workspace_root, overrides, timeout_ms| {
-                symbols::list_symbols_discovery_context_with_overrides_filtered_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.list_symbols_discovery_context_with_deadline(
+            limit,
+            direction,
+            max_depth,
+            max_nodes,
+            file_path_contains,
+            node_kind,
+            &deadline,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn list_symbols_discovery_context_with_deadline(
+        &self,
+        limit: usize,
+        direction: TraceDirection,
+        max_depth: usize,
+        max_nodes: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolListDiscoveryContextResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::list_symbols_discovery_context_with_overrides_filtered_with_deadline(
                     workspace_root,
                     overrides,
                     limit,
@@ -105,11 +163,11 @@ impl SymbolQueryContext {
                     max_nodes,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides, timeout_ms| {
-                symbols::list_symbols_discovery_context_from_index_with_overrides_filtered_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::list_symbols_discovery_context_from_index_with_overrides_filtered_with_deadline(
                     db_path,
                     overrides,
                     limit,
@@ -118,7 +176,7 @@ impl SymbolQueryContext {
                     max_nodes,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
@@ -131,26 +189,37 @@ impl SymbolQueryContext {
         node_kind: Option<&str>,
         timeout_ms: Option<u64>,
     ) -> Result<SymbolListResult> {
-        self.dispatch_with_timeout(
-            timeout_ms,
-            |workspace_root, overrides, timeout_ms| {
-                symbols::list_symbols_with_overrides_filtered_with_timeout(
+        let deadline = TraceQueryDeadline::new(timeout_ms)?;
+        self.list_symbols_with_deadline(limit, file_path_contains, node_kind, &deadline)
+    }
+
+    pub(crate) fn list_symbols_with_deadline(
+        &self,
+        limit: usize,
+        file_path_contains: Option<&str>,
+        node_kind: Option<&str>,
+        deadline: &TraceQueryDeadline,
+    ) -> Result<SymbolListResult> {
+        self.dispatch_with_deadline(
+            deadline,
+            |workspace_root, overrides, deadline| {
+                symbols::list_symbols_with_overrides_filtered_with_deadline(
                     workspace_root,
                     overrides,
                     limit,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
-            |db_path, overrides, timeout_ms| {
-                symbols::list_symbols_from_index_with_overrides_filtered_with_timeout(
+            |db_path, overrides, deadline| {
+                symbols::list_symbols_from_index_with_overrides_filtered_with_deadline(
                     db_path,
                     overrides,
                     limit,
                     file_path_contains,
                     node_kind,
-                    timeout_ms,
+                    deadline,
                 )
             },
         )
