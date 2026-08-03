@@ -62,28 +62,6 @@ pub(crate) fn trace_from_symbols_with_deadline(
     trace_from_symbol_with_deadline(resolved_symbols, indexed_files, symbol, direction, deadline)
 }
 
-pub(crate) fn trace_neighborhood_from_symbols_with_timeout(
-    resolved_symbols: &[SymbolMeta],
-    indexed_files: usize,
-    symbol_path: &str,
-    direction: TraceDirection,
-    max_depth: usize,
-    max_nodes: usize,
-    timeout_ms: Option<u64>,
-) -> Result<TraceSymbolNeighborhoodResult> {
-    validate_trace_symbol_path(symbol_path)?;
-    let deadline = TraceQueryDeadline::new(timeout_ms)?;
-    trace_neighborhood_from_symbols_with_deadline(
-        resolved_symbols,
-        indexed_files,
-        symbol_path,
-        direction,
-        max_depth,
-        max_nodes,
-        &deadline,
-    )
-}
-
 pub(crate) fn trace_neighborhood_from_symbols_with_deadline(
     resolved_symbols: &[SymbolMeta],
     indexed_files: usize,

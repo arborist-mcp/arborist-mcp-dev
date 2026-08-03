@@ -37,13 +37,13 @@ pub(crate) use search::{
     search_neighborhood_context_from_symbols_with_timeout,
 };
 pub(crate) use trace::{
-    trace_from_symbols_with_deadline, trace_from_symbols_with_timeout,
-    trace_neighborhood_from_symbols_with_deadline, trace_neighborhood_from_symbols_with_timeout,
+    trace_from_symbols_with_deadline, trace_neighborhood_from_symbols_with_deadline,
     trace_symbol_graph_at_position_from_symbols_with_deadline,
-    trace_symbol_graph_at_position_from_symbols_with_timeout,
     trace_symbol_neighborhood_at_position_from_symbols_with_deadline,
-    trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
 };
+
+#[cfg(test)]
+pub(crate) use trace::trace_from_symbols_with_timeout;
 
 pub(crate) fn read_symbol_from_meta(
     symbol: &SymbolMeta,

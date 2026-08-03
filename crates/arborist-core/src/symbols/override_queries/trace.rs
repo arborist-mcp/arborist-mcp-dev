@@ -9,9 +9,9 @@ use crate::model::{
 };
 use crate::symbol_index_workspace::resolve_workspace_symbols_with_overrides_with_timeout;
 use crate::symbol_query_execution::{
-    trace_from_symbols_with_timeout, trace_neighborhood_from_symbols_with_timeout,
-    trace_symbol_graph_at_position_from_symbols_with_timeout,
-    trace_symbol_neighborhood_at_position_from_symbols_with_timeout,
+    trace_from_symbols_with_deadline, trace_neighborhood_from_symbols_with_deadline,
+    trace_symbol_graph_at_position_from_symbols_with_deadline,
+    trace_symbol_neighborhood_at_position_from_symbols_with_deadline,
 };
 use crate::symbol_trace::TraceQueryDeadline;
 
@@ -34,13 +34,12 @@ pub fn trace_symbol_graph_with_overrides_and_timeout(
         file_overrides,
         timeout_ms,
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_from_symbols_with_timeout(
+    trace_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         symbol_path,
         direction,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -60,15 +59,14 @@ pub fn trace_symbol_neighborhood_with_overrides_and_timeout(
         file_overrides,
         timeout_ms,
     )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_neighborhood_from_symbols_with_timeout(
+    trace_neighborhood_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         symbol_path,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -107,15 +105,14 @@ pub fn trace_symbol_graph_at_position_with_overrides_and_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_symbol_graph_at_position_from_symbols_with_timeout(
+    trace_symbol_graph_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         direction,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -161,8 +158,7 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
             file_path,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
+    trace_symbol_neighborhood_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -171,7 +167,7 @@ pub fn trace_symbol_neighborhood_at_position_with_overrides_and_timeout(
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -190,13 +186,12 @@ pub fn trace_symbol_graph_from_index_with_overrides_and_timeout(
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_from_symbols_with_timeout(
+    trace_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         symbol_path,
         direction,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -217,15 +212,14 @@ pub fn trace_symbol_neighborhood_from_index_with_overrides_and_timeout(
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_neighborhood_from_symbols_with_timeout(
+    trace_neighborhood_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         symbol_path,
         direction,
         max_depth,
         max_nodes,
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -264,15 +258,14 @@ pub fn trace_symbol_graph_at_position_from_index_with_overrides_and_timeout(
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_symbol_graph_at_position_from_symbols_with_timeout(
+    trace_symbol_graph_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
         position,
         direction,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
 
@@ -318,8 +311,7 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides_and_timeo
             file_overrides,
             timeout_ms,
         )?;
-    let timeout_ms = deadline.remaining_timeout_ms("override symbol loading")?;
-    trace_symbol_neighborhood_at_position_from_symbols_with_timeout(
+    trace_symbol_neighborhood_at_position_from_symbols_with_deadline(
         &resolved_symbols,
         indexed_files,
         &file_path,
@@ -328,6 +320,6 @@ pub fn trace_symbol_neighborhood_at_position_from_index_with_overrides_and_timeo
         max_depth,
         max_nodes,
         Some(file_overrides),
-        timeout_ms,
+        &deadline,
     )
 }
