@@ -346,8 +346,9 @@ completed item can land in its own commit unless two changes are inseparable.
 - [x] Reuse one exact `TraceQueryDeadline` across nested in-memory trace,
   list, search, and read-context execution; source-overlay trace, list,
   search, direct-read, context-read, and position-read dispatch; trace-backed
-  and virtual trace-backed patch construction, graph expansion, and
-  read-context expansion; and outer live, persisted-index, and override list,
+  and virtual trace-backed patch construction; path/index/position trace,
+  graph, neighborhood, and discovery patch-validation delegation; graph
+  expansion and read-context expansion; and outer live, persisted-index, and override list,
   search, direct or position read, or trace expansion, instead of recreating
   rounded child budgets.
 - [x] Extend cooperative deadlines through live, override, persisted-index,
