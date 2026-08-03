@@ -6,7 +6,7 @@ use crate::language::{normalize_absolute_path, read_source};
 use crate::model::QueryCaptureResult;
 
 mod execution;
-mod owners;
+pub(crate) mod owners;
 mod validation;
 
 pub const DEFAULT_TREE_QUERY_MAX_CAPTURES: usize = 10_000;

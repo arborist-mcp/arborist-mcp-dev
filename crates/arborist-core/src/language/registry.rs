@@ -123,6 +123,21 @@ pub(crate) trait LanguageAdapter: Sync {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>>;
 
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>>;
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)>;
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -312,6 +327,25 @@ impl LanguageAdapter for PythonAdapter {
         crate::semantic::python_symbol_id_for_node(path, node, source, deadline).map(Some)
     }
 
+    fn query_owner_candidates<'tree>(
+        &self,
+        _path: &Path,
+        _root: Node<'tree>,
+        _source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        Ok(None)
+    }
+
+    fn query_capture_owner(
+        &self,
+        _path: &Path,
+        source: &str,
+        node: Node<'_>,
+        _candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        crate::query::owners::python_capture_owner(source, node)
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -396,6 +430,25 @@ impl LanguageAdapter for CAdapter {
         crate::semantic::c_symbol_id_for_node(path, node, source)
     }
 
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        crate::semantic::c_symbol_nodes(path, root, source).map(Some)
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        crate::query::owners::c_capture_owner(path, source, node, candidates.unwrap_or_default())
+    }
+
     fn extract_symbols(
         &self,
         path: &Path,
@@ -471,6 +524,25 @@ impl LanguageAdapter for CppAdapter {
         deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
         C_ADAPTER.symbol_id_for_node(path, node, source, deadline)
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        C_ADAPTER.query_owner_candidates(path, root, source)
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        C_ADAPTER.query_capture_owner(path, source, node, candidates)
     }
 
     fn extract_symbols(

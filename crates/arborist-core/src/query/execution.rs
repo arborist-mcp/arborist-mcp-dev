@@ -5,13 +5,12 @@ use anyhow::{Context, Result, bail};
 use tree_sitter::{Query, QueryCursor, QueryCursorOptions, StreamingIterator};
 
 use crate::language::{
-    language_for_id, normalize_absolute_path, normalize_path, parse_document_with_timeout,
-    position_from,
+    builtin_language_registry, language_for_id, normalize_absolute_path, normalize_path,
+    parse_document_with_timeout, position_from,
 };
-use crate::model::{LanguageId, QueryCaptureResult};
-use crate::semantic::c_symbol_nodes;
+use crate::model::QueryCaptureResult;
 
-use super::{DEFAULT_TREE_QUERY_MATCH_LIMIT, owners, validation};
+use super::{DEFAULT_TREE_QUERY_MATCH_LIMIT, validation};
 
 fn ensure_within_deadline(path: &Path, timeout_micros: u64, deadline: Instant) -> Result<()> {
     if Instant::now() >= deadline {
@@ -52,10 +51,10 @@ pub(super) fn execute_tree_query_with_timeout(
     ensure_within_deadline(&path, timeout_micros, deadline)?;
     let language = language_for_id(document.language_id);
     let root = document.tree.root_node();
-    let c_symbols = match document.language_id {
-        LanguageId::C | LanguageId::Cpp => Some(c_symbol_nodes(&path, root, source)?),
-        LanguageId::Python => None,
-    };
+    let adapter = builtin_language_registry()
+        .adapter(document.language_id)
+        .expect("every LanguageId must have a builtin language adapter");
+    let owner_candidates = adapter.query_owner_candidates(&path, root, source)?;
     ensure_within_deadline(&path, timeout_micros, deadline)?;
     let compiled = Query::new(&language, query)
         .with_context(|| format!("invalid Tree-sitter query for {}", normalize_path(&path)))?;
@@ -89,13 +88,8 @@ pub(super) fn execute_tree_query_with_timeout(
         }
         let capture = query_match.captures[*capture_index];
         let node = capture.node;
-        let (owner_symbol_id, owner_semantic_path, owner_scope_path) = owners::capture_owner(
-            &path,
-            source,
-            document.language_id,
-            node,
-            c_symbols.as_deref(),
-        )?;
+        let (owner_symbol_id, owner_semantic_path, owner_scope_path) =
+            adapter.query_capture_owner(&path, source, node, owner_candidates.as_deref())?;
         if Instant::now() >= deadline {
             timed_out = true;
             break;
