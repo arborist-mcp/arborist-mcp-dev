@@ -138,6 +138,38 @@ fn traces_csharp_global_type_alias_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_csharp_base_namespace_import_method_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let base = dir.join("Base.cs");
+    let derived = dir.join("Derived.cs");
+    fs::write(
+        &base,
+        "namespace Demo.Utility; class Base { public int Ping(int value) => value; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &derived,
+        "namespace Demo.App; class Derived { int Call(int value) => value; }\n",
+    )
+    .unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &derived,
+        Some(
+            "using Demo.Utility;\nnamespace Demo.App; class Derived : Base { int Call(int value) => base.Ping(value); }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&dir, "Demo::Utility::Base::Ping", TraceDirection::Callers)
+        .unwrap();
+    assert_eq!(trace.callers.len(), 1);
+    assert_eq!(trace.callers[0].symbol_id, "Demo::App::Derived::Call");
+}
+
+#[test]
 fn traces_csharp_base_alias_method_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let base = dir.join("Base.cs");

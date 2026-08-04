@@ -48,7 +48,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
-  and conservative `base(...)` constructor initializers and direct `base.Method()` calls with simple, `global::`, or file-local type-alias base types,
+  and conservative `base(...)` constructor initializers and direct `base.Method()` calls with simple, `global::`, file-local type-alias, or file-local namespace-import base types,
   globally namespace-qualified `global::...` static calls, simple same-namespace
   `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;` bare
@@ -67,7 +67,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple and `global::` base names, plus unique unshadowed aliases declared at file root or in the caller's exact namespace, are supported. Constructor targets must have an exact-arity, non-`params` match; `base.Method()` targets must be directly declared non-static methods with one exact-arity, non-`params` match. Generic, non-`global::` qualified, global-using alias, ambiguous/colliding alias, and namespace-import base types fail closed. When any C# source file
+  constructors are supported. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple and `global::` base names, plus unique unshadowed aliases or namespace imports declared at file root or in the caller's exact namespace, are supported. Constructor targets must have an exact-arity, non-`params` match; `base.Method()` targets must be directly declared non-static methods with one exact-arity, non-`params` match. Generic, non-`global::` qualified, global-using alias/import, ambiguous or colliding alias/import, and non-class/record namespace-import base types fail closed. When any C# source file
   changes, refresh conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only
   global-using files; unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member
   dispatch, overload type selection, and patch operations return

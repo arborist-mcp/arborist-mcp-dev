@@ -43,6 +43,7 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     pub(crate) semantic_type_path: String,
     pub(crate) is_global_qualified: bool,
     pub(crate) alias_name: Option<String>,
+    pub(crate) namespace_import_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -240,6 +241,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                     semantic_type_path: base_type.semantic_base_type_path,
                     is_global_qualified: base_type.is_global_qualified,
                     alias_name: None,
+                    namespace_import_paths: Vec::new(),
                 },
             )
             .is_some()
@@ -316,8 +318,9 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
     };
     if !binding.is_global_qualified && !binding.semantic_type_path.contains("::") {
         let local_name = binding.semantic_type_path.clone();
-        for scope_path in csharp_import_scope_paths(source_namespace_path) {
-            let key = (scope_path, local_name.clone());
+        let scope_paths = csharp_import_scope_paths(source_namespace_path);
+        for scope_path in &scope_paths {
+            let key = (scope_path.clone(), local_name.clone());
             if context.ambiguous_type_alias_names.contains(&key) {
                 return Ok(None);
             }
@@ -327,6 +330,18 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
                 binding.alias_name = Some(local_name);
                 break;
             }
+        }
+        if binding.alias_name.is_none() {
+            binding.namespace_import_paths = scope_paths
+                .into_iter()
+                .flat_map(|scope_path| {
+                    context
+                        .namespace_import_bindings
+                        .iter()
+                        .filter(move |candidate| candidate.scope_path == scope_path)
+                        .map(|candidate| candidate.semantic_namespace_path.clone())
+                })
+                .collect();
         }
     }
     Ok(Some(binding))

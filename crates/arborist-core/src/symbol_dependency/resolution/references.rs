@@ -996,23 +996,65 @@ fn csharp_base_type_path(
     }) {
         return None;
     }
-    let base_type_path = if binding.is_global_qualified {
-        binding.semantic_type_path.clone()
-    } else if !binding.semantic_type_path.contains("::") {
-        csharp_source_namespace_path(source_symbol, raw_symbols)?
-            .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
-            .unwrap_or_else(|| binding.semantic_type_path.clone())
-    } else {
+    if binding.is_global_qualified {
+        return csharp_unique_base_constructible_type_path(
+            raw_symbols,
+            &binding.semantic_type_path,
+        );
+    }
+    if binding.semantic_type_path.contains("::") {
         return None;
-    };
-    let type_candidates = raw_symbols
+    }
+
+    let base_type_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
+        .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
+        .unwrap_or_else(|| binding.semantic_type_path.clone());
+    let local_type_candidates = raw_symbols
         .iter()
         .filter(|candidate| {
-            candidate.semantic_path == base_type_path
-                && csharp_is_base_constructible_type(candidate)
+            candidate.semantic_path == base_type_path && csharp_is_type_declaration(candidate)
         })
         .count();
-    (type_candidates == 1).then_some(base_type_path)
+    if local_type_candidates != 0 {
+        return csharp_unique_base_constructible_type_path(raw_symbols, &base_type_path);
+    }
+
+    let mut imported_type_paths = BTreeSet::new();
+    for type_path in binding
+        .namespace_import_paths
+        .iter()
+        .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
+        .collect::<BTreeSet<_>>()
+    {
+        let candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => {}
+            [candidate] if csharp_is_base_constructible_type(candidate) => {
+                imported_type_paths.insert(type_path);
+            }
+            _ => return None,
+        }
+    }
+    (imported_type_paths.len() == 1).then(|| imported_type_paths.into_iter().next().unwrap())
+}
+
+fn csharp_unique_base_constructible_type_path(
+    raw_symbols: &[IndexedSymbol],
+    type_path: &str,
+) -> Option<String> {
+    let candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1 && csharp_is_base_constructible_type(candidates[0]))
+        .then(|| type_path.to_string())
 }
 
 fn csharp_base_constructor_target_path(

@@ -615,6 +615,150 @@ class ExactDerived : ExactBase {
 }
 
 #[test]
+fn traces_csharp_file_and_namespace_import_base_members_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo.Utility;
+class Base {
+    public Base(int value) {}
+    public int Ping(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("RootImport.cs"),
+        "using Demo.Utility;
+namespace Demo.App;
+class RootDerived : Base {
+    RootDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("NamespaceImport.cs"),
+        "namespace Demo.Exact {
+using Demo.Utility;
+class ExactDerived : Base {
+    ExactDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+}
+",
+    )
+    .unwrap();
+
+    for target in ["Demo::Utility::Base::Base", "Demo::Utility::Base::Ping"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::App::RootDerived::RootDerived",
+                    "Demo::Exact::ExactDerived::ExactDerived",
+                ]
+            } else {
+                [
+                    "Demo::App::RootDerived::Call",
+                    "Demo::Exact::ExactDerived::Call",
+                ]
+            }
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["Demo::Utility::Base::Base", "Demo::Utility::Base::Ping"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::App::RootDerived::RootDerived",
+                    "Demo::Exact::ExactDerived::ExactDerived",
+                ]
+            } else {
+                [
+                    "Demo::App::RootDerived::Call",
+                    "Demo::Exact::ExactDerived::Call",
+                ]
+            }
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_global_csharp_namespace_import_base_members() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Bases.cs"),
+        "namespace First { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+namespace Second { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Ambiguous.cs"),
+        "using First;
+using Second;
+namespace Demo.App;
+class AmbiguousDerived : Base {
+    AmbiguousDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Global.cs"),
+        "global using First;
+namespace Demo.Global;
+class GlobalDerived : Base {
+    GlobalDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::App::AmbiguousDerived::AmbiguousDerived",
+        "Demo::App::AmbiguousDerived::Call",
+        "Demo::Global::GlobalDerived::GlobalDerived",
+        "Demo::Global::GlobalDerived::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::App::AmbiguousDerived::AmbiguousDerived",
+        "Demo::App::AmbiguousDerived::Call",
+        "Demo::Global::GlobalDerived::GlobalDerived",
+        "Demo::Global::GlobalDerived::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn does_not_trace_ambiguous_or_colliding_csharp_base_alias_members() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
