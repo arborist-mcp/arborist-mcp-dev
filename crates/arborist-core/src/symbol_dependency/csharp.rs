@@ -42,6 +42,7 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
 pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     pub(crate) semantic_type_path: String,
     pub(crate) is_global_qualified: bool,
+    pub(crate) alias_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -238,6 +239,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                 CSharpBaseTypeBinding {
                     semantic_type_path: base_type.semantic_base_type_path,
                     is_global_qualified: base_type.is_global_qualified,
+                    alias_name: None,
                 },
             )
             .is_some()
@@ -294,6 +296,7 @@ fn insert_unique_csharp_type_alias_binding(
 pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_reference(
     source_file_path: &str,
     source_type_range: (usize, usize),
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -304,10 +307,29 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
         contexts_by_file,
         deadline,
     )?;
-    Ok(context
+    let Some(mut binding) = context
         .base_type_bindings_by_range
         .get(&source_type_range)
-        .cloned())
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    if !binding.is_global_qualified && !binding.semantic_type_path.contains("::") {
+        let local_name = binding.semantic_type_path.clone();
+        for scope_path in csharp_import_scope_paths(source_namespace_path) {
+            let key = (scope_path, local_name.clone());
+            if context.ambiguous_type_alias_names.contains(&key) {
+                return Ok(None);
+            }
+            if let Some(alias) = context.type_alias_bindings.get(&key) {
+                binding.semantic_type_path = alias.semantic_type_path.clone();
+                binding.is_global_qualified = true;
+                binding.alias_name = Some(local_name);
+                break;
+            }
+        }
+    }
+    Ok(Some(binding))
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_reference(

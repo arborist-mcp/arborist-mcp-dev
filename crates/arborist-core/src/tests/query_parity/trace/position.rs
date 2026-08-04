@@ -529,6 +529,166 @@ class GlobalDerived : global::Demo.Base {
 }
 
 #[test]
+fn traces_csharp_file_and_namespace_alias_base_members_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Base {
+    public Base(int value) {}
+    public int Ping(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("RootAlias.cs"),
+        "using RootBase = Demo.Base;
+namespace Demo.App;
+class RootDerived : RootBase {
+    RootDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("NamespaceAlias.cs"),
+        "namespace Demo.Exact {
+using ExactBase = Demo.Base;
+class ExactDerived : ExactBase {
+    ExactDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+}
+",
+    )
+    .unwrap();
+
+    for target in ["Demo::Base::Base", "Demo::Base::Ping"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::App::RootDerived::RootDerived",
+                    "Demo::Exact::ExactDerived::ExactDerived",
+                ]
+            } else {
+                [
+                    "Demo::App::RootDerived::Call",
+                    "Demo::Exact::ExactDerived::Call",
+                ]
+            }
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["Demo::Base::Base", "Demo::Base::Ping"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::App::RootDerived::RootDerived",
+                    "Demo::Exact::ExactDerived::ExactDerived",
+                ]
+            } else {
+                [
+                    "Demo::App::RootDerived::Call",
+                    "Demo::Exact::ExactDerived::Call",
+                ]
+            }
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_colliding_csharp_base_alias_members() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+namespace Other { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Ambiguous.cs"),
+        "using BaseAlias = Demo.Base;
+using BaseAlias = Other.Base;
+namespace Demo.App;
+class AmbiguousDerived : BaseAlias {
+    AmbiguousDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Collision.cs"),
+        "using BaseAlias = Demo.Base;
+namespace Demo.Collision;
+class BaseAlias {}
+class CollisionDerived : BaseAlias {
+    CollisionDerived() : base() {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalAlias.cs"),
+        "global using BaseAlias = Demo.Base;
+namespace Demo.Global;
+class GlobalAliasDerived : BaseAlias {
+    GlobalAliasDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::App::AmbiguousDerived::AmbiguousDerived",
+        "Demo::App::AmbiguousDerived::Call",
+        "Demo::Collision::CollisionDerived::CollisionDerived",
+        "Demo::Collision::CollisionDerived::Call",
+        "Demo::Global::GlobalAliasDerived::GlobalAliasDerived",
+        "Demo::Global::GlobalAliasDerived::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::App::AmbiguousDerived::AmbiguousDerived",
+        "Demo::App::AmbiguousDerived::Call",
+        "Demo::Collision::CollisionDerived::CollisionDerived",
+        "Demo::Collision::CollisionDerived::Call",
+        "Demo::Global::GlobalAliasDerived::GlobalAliasDerived",
+        "Demo::Global::GlobalAliasDerived::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn does_not_trace_ambiguous_or_qualified_csharp_base_member_calls() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

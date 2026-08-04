@@ -331,6 +331,7 @@ fn resolve_reference_path_with_deadline<'a>(
             let Some(base_type_binding) = csharp_source_base_type_binding(
                 source_symbol,
                 raw_symbols,
+                source_namespace_path,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -364,6 +365,7 @@ fn resolve_reference_path_with_deadline<'a>(
             let Some(base_type_binding) = csharp_source_base_type_binding(
                 source_symbol,
                 raw_symbols,
+                source_namespace_path,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -966,6 +968,7 @@ fn csharp_source_type_declaration<'a>(
 fn csharp_source_base_type_binding(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -976,6 +979,7 @@ fn csharp_source_base_type_binding(
     resolve_csharp_base_type_binding_for_reference(
         &source_symbol.file_path,
         source_type.byte_range,
+        source_namespace_path,
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
@@ -987,6 +991,11 @@ fn csharp_base_type_path(
     raw_symbols: &[IndexedSymbol],
     binding: &CSharpBaseTypeBinding,
 ) -> Option<String> {
+    if binding.alias_name.as_deref().is_some_and(|alias_name| {
+        !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols)
+    }) {
+        return None;
+    }
     let base_type_path = if binding.is_global_qualified {
         binding.semantic_type_path.clone()
     } else if !binding.semantic_type_path.contains("::") {
