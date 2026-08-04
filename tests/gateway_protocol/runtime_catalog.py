@@ -6,14 +6,28 @@ from arborist_mcp import gateway as gateway_module
 
 
 class GatewayRuntimeCatalogTestsMixin:
-    def test_live_initialize_reports_cpp_support(self) -> None:
+    def test_live_initialize_reports_builtin_language_support(self) -> None:
         result = self.assert_jsonrpc_ok(
             self.call_gateway(self.make_live_gateway(), "initialize", {}, request_id=0),
             request_id=0,
         )
 
         assert isinstance(result, dict)
-        self.assertEqual(result["supportedLanguages"], ["python", "c", "cpp"])
+        self.assertEqual(
+            result["supportedLanguages"],
+            [
+                "python",
+                "c",
+                "cpp",
+                "csharp",
+                "javascript",
+                "typescript",
+                "tsx",
+                "rust",
+                "go",
+                "java",
+            ],
+        )
 
     def test_initialize_still_reports_tools(self) -> None:
         class StubCore:
