@@ -28,13 +28,20 @@ Current layers:
 
 ## Language Support
 
-Arborist currently supports Python, C, and C++ source files. Language routing
-is extension-based:
+Arborist uses extension-based routing with explicit per-language capabilities:
 
-- Python: `.py`, `.pyi`
-- C grammar: `.c`, `.h`
+- Python: `.py`, `.pyi` — semantic skeletons, indexing, tracing, patching, and queries.
+- C grammar: `.c`, `.h` — semantic skeletons, indexing, tracing, patching, and queries.
 - C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.tpp`, `.tcc`, `.ipp`, `.inl`,
-  `.hpp`, `.hh`, `.hxx`, `.h++`
+  `.hpp`, `.hh`, `.hxx`, `.h++` — semantic skeletons, indexing, tracing, patching, and queries.
+- JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
+  conservative direct-call tracing, static local dependency refresh, structural patching,
+  and queries.
+- TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
+  JavaScript.
+- Rust: `.rs` — Tree-sitter parsing and raw queries only. Skeletons, indexing,
+  dependencies, tracing, and patching are explicitly unavailable until the Rust adapter
+  gains those capabilities.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -478,8 +485,11 @@ for response shapes, error behavior, and examples.
   direct read and trace queries.
 - JavaScript, TypeScript, and TSX Tree-sitter parsing, query execution,
   semantic skeletons, conservative direct-call tracing through local named imports
-  and named re-export chains, and static local module dependency refresh;
-  default/namespace resolution and patching remain capability-gated until their adapters land.
+  and named re-export chains, static local module dependency refresh, and structural
+  patching with syntax-level validation; default/namespace resolution and language-specific
+  reference-binding validation remain deferred.
+- Rust Tree-sitter parsing and raw query execution, with non-query operations kept
+  capability-gated pending the Rust semantic adapter.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -491,13 +501,21 @@ for response shapes, error behavior, and examples.
 
 ## Current Status
 
-Phase 1 is complete for the Python/C read path. The current Phase 2 foundation
-includes patch validation, trace-backed validation, VFS-backed editor flows,
-persisted indexes, source overlays, index health inspection, and generated MCP
-tool schemas.
+The multi-language adapter substrate is implemented through Phase 4: Python,
+C, C++, JavaScript, TypeScript, and TSX use the registry and explicit
+capabilities. JavaScript-family adapters provide semantic skeletons, indexing,
+conservative local-module tracing, structural patching, source overlays, and
+persisted-index coverage. Phase 5 has started with Rust parsing and raw query
+support; Rust semantic analysis remains deliberately capability-gated.
 
 Remaining larger work includes:
 
+- Building Rust discovery/indexing, module dependencies, and conservative trace
+  support before enabling Rust patching.
+- Adding Go and Java one language at a time after their adapter contracts and
+  workspace assumptions are documented.
+- Completing JavaScript/TypeScript default and namespace module resolution plus
+  language-specific patch binding validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
 - Reducing PyO3 wrapper repetition with parameter/context objects.
 - Extending C++ semantic support beyond overload-aware callable identities to

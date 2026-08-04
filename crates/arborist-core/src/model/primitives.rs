@@ -20,6 +20,7 @@ pub enum LanguageId {
     #[serde(rename = "typescript")]
     TypeScript,
     Tsx,
+    Rust,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

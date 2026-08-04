@@ -16,6 +16,7 @@ const PYTHON_EXTENSIONS: &[&str] = &["py", "pyi"];
 const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "jsx", "mjs", "cjs"];
 const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "mts", "cts"];
 const TSX_EXTENSIONS: &[&str] = &["tsx"];
+const RUST_EXTENSIONS: &[&str] = &["rs"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -209,13 +210,14 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 6] = [
+        let adapters: [&'static dyn LanguageAdapter; 7] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
             &JAVASCRIPT_ADAPTER,
             &TYPESCRIPT_ADAPTER,
             &TSX_ADAPTER,
+            &RUST_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -337,6 +339,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::JavaScript => "javascript",
         LanguageId::TypeScript => "typescript",
         LanguageId::Tsx => "tsx",
+        LanguageId::Rust => "rust",
     }
 }
 
@@ -410,6 +413,14 @@ static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "tsx-patching-v1",
     grammar: tsx_grammar,
 };
+static RUST_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Rust,
+    display_name: "Rust",
+    extensions: RUST_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "rust-syntax-v1",
+    grammar: rust_grammar,
+};
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
@@ -422,6 +433,9 @@ static TYPESCRIPT_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
 };
 static TSX_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
     descriptor: &TSX_DESCRIPTOR,
+};
+static RUST_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &RUST_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -608,6 +622,169 @@ fn javascript_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Opt
     crate::semantic::javascript::javascript_symbol_name(node, source)?
         .map(|name| crate::semantic::javascript::javascript_semantic_path(node, source, &name))
         .transpose()
+}
+
+struct SyntaxOnlyAdapter {
+    descriptor: &'static LanguageDescriptor,
+}
+
+impl SyntaxOnlyAdapter {
+    fn unsupported<T>(&self, operation: &str) -> Result<T> {
+        bail!(
+            "{} does not support {operation}",
+            self.descriptor.display_name
+        )
+    }
+}
+
+impl LanguageAdapter for SyntaxOnlyAdapter {
+    fn descriptor(&self) -> &'static LanguageDescriptor {
+        self.descriptor
+    }
+
+    fn build_semantic_skeleton(
+        &self,
+        _path: &Path,
+        _source: &str,
+        _tree: &Tree,
+        _depth_limit: usize,
+        _expand_nodes: &[String],
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<SemanticSkeleton> {
+        self.unsupported("semantic skeletons")
+    }
+
+    fn find_semantic_node<'tree>(
+        &self,
+        _path: &Path,
+        _tree: &'tree Tree,
+        _source: &str,
+        _target_path: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<Node<'tree>>> {
+        self.unsupported("semantic symbol lookup")
+    }
+
+    fn ascend_to_symbol<'tree>(&self, _node: Node<'tree>) -> Option<Node<'tree>> {
+        None
+    }
+
+    fn position_symbol_identity(
+        &self,
+        _path: &Path,
+        _node: Node<'_>,
+        _source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        self.unsupported("symbol positions")
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        _path: &Path,
+        _node: Node<'_>,
+        _source: &str,
+    ) -> Result<Option<String>> {
+        self.unsupported("semantic skeletons")
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        _path: &Path,
+        _node: Node<'_>,
+        _source: &str,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        self.unsupported("symbol positions")
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        false
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        _path: &Path,
+        _root: Node<'tree>,
+        _source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        Ok(None)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        node
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        _source: &str,
+        _start_byte: usize,
+        _end_byte: usize,
+        _node_kind: &str,
+        _new_code: &str,
+    ) -> Result<String> {
+        self.unsupported("patch targeting")
+    }
+
+    fn replacement_preserves_required_wrappers(
+        &self,
+        _node_kind: &str,
+        _replacement: &str,
+    ) -> bool {
+        false
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        _semantic_target: &str,
+        _resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        resolved_symbol_id
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        _path: &Path,
+        _document: &ParsedDocument,
+        _source: &str,
+        _symbol_node: Node<'_>,
+        _deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        self.unsupported("patch validation")
+    }
+
+    fn query_capture_owner(
+        &self,
+        _path: &Path,
+        _source: &str,
+        _node: Node<'_>,
+        _candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        Ok((None, None, None))
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        false
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        _path: &Path,
+        _root: Node<'_>,
+        _source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        self.unsupported("file dependency extraction")
+    }
+
+    fn extract_symbols(
+        &self,
+        _path: &Path,
+        _source: &str,
+        _document: &ParsedDocument,
+        _deadline: Option<&WorkspaceScanDeadline>,
+    ) -> Result<Vec<IndexedSymbol>> {
+        self.unsupported("symbol indexing")
+    }
 }
 
 impl LanguageAdapter for PythonAdapter {
@@ -1148,4 +1325,8 @@ fn typescript_grammar() -> Language {
 
 fn tsx_grammar() -> Language {
     tree_sitter_typescript::LANGUAGE_TSX.into()
+}
+
+fn rust_grammar() -> Language {
+    tree_sitter_rust::LANGUAGE.into()
 }

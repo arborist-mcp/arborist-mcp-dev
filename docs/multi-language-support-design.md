@@ -1,6 +1,6 @@
 # Multi-Language Support Design
 
-**Status:** Phases 1-3 implemented; Phase 4 is in progress; Phase 5 remains proposed
+**Status:** Phases 1-4 implemented; Phase 5 is in progress
 **Audience:** Arborist core, PyO3, gateway, and release maintainers
 **Scope:** Rust core architecture for adding source languages without weakening existing Python, C, and C++ behavior.
 
@@ -700,7 +700,7 @@ Explicitly defer arbitrary dynamic import/require behavior, bundler aliases, `ev
 
 ### Phase 5: Rust, Go, and Java
 
-Add one language per reviewable sequence. Each language starts with discovery and indexing, then gains dependency and trace capability only after dedicated fixtures establish safe behavior.
+Add one language per reviewable sequence. Each language starts with discovery and indexing, then gains dependency and trace capability only after dedicated fixtures establish safe behavior. The first Rust slice registers `.rs` parsing and raw Tree-sitter queries only; semantic skeletons, indexing, dependencies, tracing, and patching remain capability-gated until their dedicated adapters land.
 
 Suggested order:
 

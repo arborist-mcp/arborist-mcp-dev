@@ -72,6 +72,21 @@ fn collect_source_files_includes_javascript_and_typescript_after_indexing_suppor
 }
 
 #[test]
+fn collect_source_files_skips_rust_until_symbol_indexing_is_supported() {
+    let workspace = temporary_dir();
+    let python = workspace.join("indexed.py");
+    let rust = workspace.join("query_only.rs");
+    fs::write(&python, "def indexed():\n    return 1\n").unwrap();
+    fs::write(&rust, "pub fn query_only() -> i32 { 1 }\n").unwrap();
+
+    let files =
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
+            .expect("query-only Rust files should not count toward symbol indexing limits");
+
+    assert_eq!(files, vec![python]);
+}
+
+#[test]
 fn collect_source_files_rejects_workspace_file_limit_overflow() {
     let workspace = temporary_dir();
     fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();

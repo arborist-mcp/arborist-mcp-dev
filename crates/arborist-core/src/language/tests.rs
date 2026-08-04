@@ -36,6 +36,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("MTS", LanguageId::TypeScript),
         ("CTS", LanguageId::TypeScript),
         ("TSX", LanguageId::Tsx),
+        ("RS", LanguageId::Rust),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -49,7 +50,15 @@ fn detect_language_accepts_uppercase_extensions() {
 fn supported_languages_reports_cpp() {
     assert_eq!(
         supported_languages(),
-        vec!["python", "c", "cpp", "javascript", "typescript", "tsx"]
+        vec![
+            "python",
+            "c",
+            "cpp",
+            "javascript",
+            "typescript",
+            "tsx",
+            "rust",
+        ]
     );
 }
 
@@ -62,6 +71,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::JavaScript, "javascript"),
         (LanguageId::TypeScript, "typescript"),
         (LanguageId::Tsx, "tsx"),
+        (LanguageId::Rust, "rust"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -185,6 +195,58 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
             );
         }
     }
+}
+
+#[test]
+fn rust_syntax_adapter_exposes_tree_queries_only() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::Rust).unwrap();
+
+    assert_eq!(descriptor.display_name, "Rust");
+    assert_eq!(descriptor.extensions, &["rs"]);
+    assert_eq!(descriptor.analysis_revision, "rust-syntax-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(!descriptor.capabilities.contains(capability));
+    }
+    let error = registry
+        .require_capability(
+            LanguageId::Rust,
+            LanguageCapabilities::SEMANTIC_SKELETON,
+            "semantic skeleton requests",
+        )
+        .expect_err("Rust syntax-only support must reject semantic skeleton requests");
+    assert!(
+        error
+            .to_string()
+            .contains("Rust does not support semantic skeletons")
+    );
+}
+
+#[test]
+fn parse_document_uses_rust_grammar_and_recovers_from_invalid_source() {
+    let document = parse_document(
+        Path::new("sample.rs"),
+        "pub fn add(left: i32, right: i32) -> i32 { left + right }",
+    )
+    .unwrap();
+    assert_eq!(document.language_id, LanguageId::Rust);
+    assert!(!document.tree.root_node().has_error());
+
+    let malformed = parse_document(Path::new("broken.rs"), "fn broken( {").unwrap();
+    assert_eq!(malformed.language_id, LanguageId::Rust);
+    assert!(malformed.tree.root_node().has_error());
 }
 
 #[test]

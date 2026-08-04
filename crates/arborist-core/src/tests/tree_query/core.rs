@@ -50,7 +50,7 @@ fn execute_tree_query_rejects_capture_limit_overflow() {
 }
 
 #[test]
-fn executes_tree_queries_for_javascript_and_typescript_syntax_only_adapters() {
+fn executes_tree_queries_for_javascript_typescript_and_rust_adapters() {
     for (path, source, query, expected) in [
         (
             "sample.js",
@@ -69,6 +69,12 @@ fn executes_tree_queries_for_javascript_and_typescript_syntax_only_adapters() {
             "export const App = () => <main>ready</main>;",
             "(identifier) @name",
             "App",
+        ),
+        (
+            "sample.rs",
+            "pub fn add(left: i32, right: i32) -> i32 { left + right }",
+            "(function_item name: (identifier) @name)",
+            "add",
         ),
     ] {
         let captures = execute_tree_query(Path::new(path), source, query).unwrap();

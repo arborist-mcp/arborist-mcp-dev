@@ -19,13 +19,20 @@ As of this revision, `tools/list` returns 58 tools:
 
 ## Language Support
 
-Arborist currently supports Python, C, and C++ source files. Language routing
-is based on case-insensitive file extensions:
+Arborist uses case-insensitive extension routing with explicit per-language capabilities:
 
-- Python: `.py`, `.pyi`
-- C grammar: `.c`, `.h`
+- Python: `.py`, `.pyi` — semantic skeletons, indexing, tracing, patching, and queries.
+- C grammar: `.c`, `.h` — semantic skeletons, indexing, tracing, patching, and queries.
 - C++ grammar: `.cc`, `.cpp`, `.cxx`, `.c++`, `.tpp`, `.tcc`, `.ipp`, `.inl`,
-  `.hpp`, `.hh`, `.hxx`, `.h++`
+  `.hpp`, `.hh`, `.hxx`, `.h++` — semantic skeletons, indexing, tracing, patching, and queries.
+- JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs` — semantic skeletons, indexing,
+  conservative direct-call tracing, static local dependency refresh, structural patching,
+  and queries.
+- TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
+  JavaScript.
+- Rust: `.rs` — Tree-sitter parsing and raw queries only. Semantic skeletons, indexing,
+  dependencies, tracing, and patching return an explicit unsupported-operation error until
+  the Rust adapter gains those capabilities.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
