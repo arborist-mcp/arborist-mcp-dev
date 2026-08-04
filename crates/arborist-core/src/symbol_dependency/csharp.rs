@@ -440,6 +440,9 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
     )?;
     for scope_path in csharp_import_scope_paths(source_namespace_path) {
         let key = (scope_path, local_type_name.to_string());
+        if context.ambiguous_type_alias_names.contains(&key) {
+            return Ok(None);
+        }
         if let Some(binding) = context.type_alias_bindings.get(&key) {
             return Ok(Some((method_name.to_string(), binding.clone())));
         }
@@ -475,9 +478,14 @@ pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_refe
 }
 
 fn csharp_import_scope_paths(source_namespace_path: Option<&str>) -> Vec<Option<String>> {
-    let mut scope_paths = source_namespace_path
-        .map(|source_namespace_path| vec![Some(source_namespace_path.to_string())])
-        .unwrap_or_default();
+    let mut scope_paths = Vec::new();
+    let mut current_scope_path = source_namespace_path;
+    while let Some(scope_path) = current_scope_path {
+        scope_paths.push(Some(scope_path.to_string()));
+        current_scope_path = scope_path
+            .rsplit_once("::")
+            .map(|(parent_path, _)| parent_path);
+    }
     scope_paths.push(None);
     scope_paths
 }

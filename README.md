@@ -65,8 +65,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`, and root-level `global using Fully.Qualified.Namespace;`
   calls contributed by any scanned C# source file (including directive-only files), and root-level `global using Alias = Fully.Qualified.Type;`
   calls contributed by any scanned C# source file (including directive-only files). Type aliases, static imports, and namespace imports may appear at file root or
-  directly in a block/file-scoped namespace; an exact namespace alias shadows a root alias with the same local
-  name, while root and exact namespace static/ordinary imports are both considered.
+  directly in a block/file-scoped namespace; aliases are resolved from the caller's namespace through enclosing
+  namespaces to file root, with the nearest binding taking precedence, while static/ordinary imports from each
+  of those scopes are considered.
   Same-type unqualified/`this.` forms require a unique same-file, exact-arity, non-`params` declaration. Globally
   qualified, simple same-namespace, and imported static calls may resolve one unique workspace declaration. Imported
   targets must resolve to one indexed type. Duplicate aliases within the same scope, duplicate imports, same-file
@@ -558,13 +559,12 @@ for response shapes, error behavior, and examples.
   `Type.Method()` static calls across the workspace, including from nested source types, type aliases and static imports at file
   root or directly in block/file-scoped namespaces, root-level `global using static` imports from any scanned source file
   (including directive-only files), root-level global namespace-import `Type.Method()` calls and global type-alias calls from any scanned source file,
-  and namespace-import `Type.Method()` calls. Exact namespace
-  aliases shadow root aliases; root and exact namespace static/ordinary imports are both considered; same-type
-  unqualified/`this.` forms remain same-file. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple, `global::`, and exact unshadowed qualified base names, plus unique unshadowed aliases or namespace imports declared at file root, in the caller's exact namespace, or as root-level global usings contributed by scanned C# sources (including directive-only files), are supported. A qualified name fails closed when its first segment is an alias or when a source-namespace-relative type could shadow it. Constructor targets must have an exact-arity, non-`params` match. `base.Method()` walks only a unique class/record ancestor chain when no nearer indexed method has the same name; the first indexed method found must be one non-static, exact-arity, non-`params` method. Generic, ambiguous or colliding alias/import, non-class/record namespace-import base types, cycles, and nearer static, `params`, ambiguous, or arity-mismatched methods fail closed. Imported and qualified static targets must be unique, static,
+  and namespace-import `Type.Method()` calls. Aliases resolve from the caller namespace through enclosing
+  namespaces to file root, with the nearest binding taking precedence; static and ordinary imports from each
+  of those scopes are considered; same-type unqualified/`this.` forms remain same-file. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple, `global::`, and exact unshadowed qualified base names, plus unique unshadowed aliases or namespace imports declared at file root, in the caller's namespace or an enclosing namespace, or as root-level global usings contributed by scanned C# sources (including directive-only files), are supported. A qualified name fails closed when its first segment is an alias or when a source-namespace-relative type could shadow it. Constructor targets must have an exact-arity, non-`params` match. `base.Method()` walks only a unique class/record ancestor chain when no nearer indexed method has the same name; the first indexed method found must be one non-static, exact-arity, non-`params` method. Generic, ambiguous or colliding alias/import, non-class/record namespace-import base types, cycles, and nearer static, `params`, ambiguous, or arity-mismatched methods fail closed. Imported and qualified static targets must be unique, static,
   exact-arity, and non-`params`; ambiguous imports/types and shadowed receivers fail closed. When any C# source file
   changes, refresh conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only
-  global-using files; unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member
-  dispatch, overload type selection, and
+  global-using files; unchanged C# source files are not reindexed. Other member dispatch, overload type selection, and
   patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports

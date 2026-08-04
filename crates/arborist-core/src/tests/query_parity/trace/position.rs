@@ -1572,6 +1572,142 @@ fn does_not_trace_ambiguous_csharp_namespace_scoped_type_alias_static_calls() {
 }
 
 #[test]
+fn traces_csharp_outer_namespace_imports_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Helpers.cs"),
+        "namespace Demo.Utility {
+    class Helper { public static int Utility(int value) => value; }
+    class Base { public int Ping(int value) => value; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Callers.cs"),
+        "namespace Demo {
+    using HelperAlias = Demo.Utility.Helper;
+    using BaseAlias = Demo.Utility.Base;
+    using static Demo.Utility.Helper;
+    using Demo.Utility;
+
+    namespace App {
+        class AliasCaller { int Call(int value) => HelperAlias.Utility(value); }
+        class StaticCaller { int Call(int value) => Utility(value); }
+        class NamespaceCaller { int Call(int value) => Helper.Utility(value); }
+        class Derived : BaseAlias { int Call(int value) => base.Ping(value); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected_callers) in [
+        (
+            "Demo::Utility::Helper::Utility",
+            vec![
+                "Demo::App::AliasCaller::Call",
+                "Demo::App::NamespaceCaller::Call",
+                "Demo::App::StaticCaller::Call",
+            ],
+        ),
+        (
+            "Demo::Utility::Base::Ping",
+            vec!["Demo::App::Derived::Call"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected_callers) in [
+        (
+            "Demo::Utility::Helper::Utility",
+            vec![
+                "Demo::App::AliasCaller::Call",
+                "Demo::App::NamespaceCaller::Call",
+                "Demo::App::StaticCaller::Call",
+            ],
+        ),
+        (
+            "Demo::Utility::Base::Ping",
+            vec!["Demo::App::Derived::Call"],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_csharp_inner_ambiguous_alias_through_outer_namespace() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Helpers.cs"),
+        "namespace Demo.Utility {
+    class First { public static int Utility(int value) => value; }
+    class Second { public static int Utility(int value) => value; }
+    class Third { public static int Utility(int value) => value; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo {
+    using HelperAlias = Demo.Utility.First;
+    namespace App {
+        using HelperAlias = Demo.Utility.Second;
+        using HelperAlias = Demo.Utility.Third;
+        namespace Feature {
+            class Caller { int Call(int value) => HelperAlias.Utility(value); }
+        }
+    }
+}
+",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(
+        &dir,
+        "Demo::App::Feature::Caller::Call",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "Demo::App::Feature::Caller::Call",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_csharp_namespace_scoped_static_import_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");

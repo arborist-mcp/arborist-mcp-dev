@@ -56,8 +56,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`, and root-level `global using Fully.Qualified.Namespace;`
   calls contributed by any scanned C# source file (including directive-only files), and root-level `global using Alias = Fully.Qualified.Type;`
   calls contributed by any scanned C# source file (including directive-only files). Type aliases, static imports, and namespace
-  imports may appear at file root or directly in a block/file-scoped namespace; an exact namespace alias shadows a
-  root alias with the same local name, while root and exact namespace static/ordinary imports are both considered.
+  imports may appear at file root or directly in a block/file-scoped namespace; aliases are resolved from the caller's namespace through enclosing
+  namespaces to file root, with the nearest binding taking precedence, while static/ordinary imports from each
+  of those scopes are considered.
   Same-type unqualified/`this.`
   forms require a unique same-file, exact-arity, non-`params` declaration. Globally qualified, simple same-namespace,
   and imported static calls may resolve one unique workspace declaration. Imported targets must resolve to one indexed
@@ -67,10 +68,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple, `global::`, and exact unshadowed qualified base names, plus unique unshadowed aliases or namespace imports declared at file root, in the caller's exact namespace, or as root-level global usings contributed by scanned C# sources (including directive-only files), are supported. A qualified name fails closed when its first segment is an alias or when a source-namespace-relative type could shadow it. Constructor targets must have an exact-arity, non-`params` match. `base.Method()` walks only a unique class/record ancestor chain when no nearer indexed method has the same name; the first indexed method found must be one non-static, exact-arity, non-`params` method. Generic, ambiguous or colliding alias/import, non-class/record namespace-import base types, cycles, and nearer static, `params`, ambiguous, or arity-mismatched methods fail closed. When any C# source file
+  constructors are supported. `base(...)` and `base.Method()` require one unique class/record base declaration. Simple, `global::`, and exact unshadowed qualified base names, plus unique unshadowed aliases or namespace imports declared at file root, in the caller's namespace or an enclosing namespace, or as root-level global usings contributed by scanned C# sources (including directive-only files), are supported. A qualified name fails closed when its first segment is an alias or when a source-namespace-relative type could shadow it. Constructor targets must have an exact-arity, non-`params` match. `base.Method()` walks only a unique class/record ancestor chain when no nearer indexed method has the same name; the first indexed method found must be one non-static, exact-arity, non-`params` method. Generic, ambiguous or colliding alias/import, non-class/record namespace-import base types, cycles, and nearer static, `params`, ambiguous, or arity-mismatched methods fail closed. When any C# source file
   changes, refresh conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only
-  global-using files; unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member
-  dispatch, overload type selection, and patch operations return
+  global-using files; unchanged C# source files are not reindexed. Other member dispatch, overload type selection, and patch operations return
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
