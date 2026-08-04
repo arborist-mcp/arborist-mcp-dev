@@ -446,9 +446,10 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0,
     ),
-    analysis_revision: "java-index-v1",
+    analysis_revision: "java-deps-v1",
     grammar: java_grammar,
 };
 
@@ -1225,7 +1226,7 @@ impl LanguageAdapter for JavaAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1234,8 +1235,8 @@ impl LanguageAdapter for JavaAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::java_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

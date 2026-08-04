@@ -55,10 +55,11 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   package imports, using an explicit alias or the imported package's declared name. Module-root imports,
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
-- Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, and declaration indexing for package-qualified
-  classes, interfaces, enums, annotation types, methods, and constructors. Dependency refresh,
-  reference tracing, overload resolution, and patch operations remain capability-gated while Java
-  workspace and resolution assumptions are established.
+- Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
+  conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
+  file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
+  constructors are indexed by package-qualified paths. Wildcard, static, missing, and ambiguous
+  imports; reference tracing; overload resolution; and patch operations remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -520,10 +521,10 @@ for response shapes, error behavior, and examples.
   or the imported package's declared name. Module-root imports, external modules, `replace`, `go.work`,
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
-- Java Tree-sitter parsing, raw query execution, semantic skeletons, and declaration indexing for package-qualified
-  classes, interfaces, enums, annotation types, methods, and constructors. Dependencies, tracing,
-  overload resolution, and patching remain capability-gated pending dedicated Java resolution
-  fixtures.
+- Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
+  conservative refresh for unique explicit non-static imports mapped to a local `.java` file under
+  an ancestor source root. Wildcard, static, missing, and ambiguous imports, tracing, overload
+  resolution, and patching remain capability-gated pending dedicated Java resolution fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -546,8 +547,10 @@ Tree-sitter queries, semantic skeletons, conservative declaration indexing, sour
 static local-package dependency refresh under the nearest valid simple `go.mod` module path, and
 same-file bare plus unambiguous local-package imported-function direct-call graph tracing. Java
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
-semantic skeletons for top-level and nested Java declarations. General
-cross-file/package/import resolution, method dispatch, and patch features remain deliberately
+semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
+conservative refresh for unique explicit non-static imports that map to a local `.java` file under
+an ancestor source root. General cross-file/package/import resolution, method dispatch, and patch
+features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.
 
