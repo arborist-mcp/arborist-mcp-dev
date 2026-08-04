@@ -297,6 +297,19 @@ fn resolve_reference_path_with_deadline<'a>(
                 true,
             ));
         }
+        if let Some(target_path) =
+            csharp_simple_type_static_target_path(reference_name, source_symbol, raw_symbols)
+        {
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                source_symbol,
+                call_arity,
+                "method_declaration",
+                true,
+            ));
+        }
         let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
             if method_name.is_empty() || method_name.contains('.') {
                 return Ok(None);
@@ -696,6 +709,67 @@ fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<St
         return None;
     }
     Some(format!("{}::{method_name}", type_path.replace('.', "::")))
+}
+
+fn csharp_simple_type_static_target_path(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let (type_name, method_name) = reference_name.split_once('.')?;
+    if type_name.is_empty()
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || type_name == "this"
+        || type_name.starts_with("global::")
+    {
+        return None;
+    }
+    let source_type_path = source_symbol.scope_path.as_deref()?;
+    let source_type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == source_type_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .count();
+    if source_type_candidates != 1 {
+        return None;
+    }
+    let namespace_path = source_type_path.rsplit_once("::").map(|(parent, _)| parent);
+    if let Some(parent_type_path) = namespace_path
+        && raw_symbols.iter().any(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == parent_type_path
+                && csharp_is_type_declaration(candidate)
+        })
+    {
+        return None;
+    }
+    let target_type_path = namespace_path
+        .map(|namespace_path| format!("{namespace_path}::{type_name}"))
+        .unwrap_or_else(|| type_name.to_string());
+    let target_type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == target_type_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .count();
+    (target_type_candidates == 1).then(|| format!("{target_type_path}::{method_name}"))
+}
+
+fn csharp_is_type_declaration(symbol: &IndexedSymbol) -> bool {
+    matches!(
+        symbol.node_kind.as_str(),
+        "class_declaration"
+            | "struct_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+    )
 }
 
 fn csharp_method_is_static(symbol: &IndexedSymbol) -> bool {

@@ -166,7 +166,7 @@ fn collect_direct_same_type_calls_from_node(
         && let Some(function) = node.child_by_field_name("function")
         && let Some(arguments) = node.child_by_field_name("arguments")
         && let Some(name) = csharp_direct_invocation_name(function, source)?
-        && !bindings.contains(&name)
+        && !csharp_reference_is_shadowed(&name, bindings)
     {
         let mut cursor = arguments.walk();
         let arity = arguments.named_children(&mut cursor).count();
@@ -199,10 +199,28 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("this.{name}")));
         }
+        if receiver.kind() == "identifier" {
+            return csharp_simple_type_static_invocation_name(receiver, member, source);
+        }
         return csharp_global_qualified_static_invocation_name(receiver, member, source);
     }
 
     csharp_invocation_member_name(node, source)
+}
+
+fn csharp_simple_type_static_invocation_name(
+    receiver: Node<'_>,
+    member: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let receiver_name = crate::language::node_text(receiver, source)?.trim();
+    if receiver_name.is_empty() {
+        return Ok(None);
+    }
+    let Some(member_name) = csharp_invocation_member_name(member, source)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{receiver_name}.{member_name}")))
 }
 
 fn csharp_global_qualified_static_invocation_name(
@@ -224,6 +242,11 @@ fn csharp_global_qualified_static_invocation_name(
         return Ok(None);
     };
     Ok(Some(format!("global::{type_path}.{member_name}")))
+}
+
+fn csharp_reference_is_shadowed(name: &str, bindings: &BTreeSet<String>) -> bool {
+    let binding_name = name.split_once('.').map_or(name, |(receiver, _)| receiver);
+    bindings.contains(binding_name)
 }
 
 fn csharp_invocation_member_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -285,11 +308,75 @@ fn collect_local_bindings(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
     }
 
     let mut bindings = BTreeSet::new();
+    collect_enclosing_type_bindings(symbol_node, source, &mut bindings)?;
     let mut cursor = symbol_node.walk();
     for child in symbol_node.named_children(&mut cursor) {
         collect(child, source, &mut bindings)?;
     }
     Ok(bindings)
+}
+
+fn collect_enclosing_type_bindings(
+    symbol_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    fn insert_name(node: Node<'_>, source: &str, bindings: &mut BTreeSet<String>) -> Result<()> {
+        let name = crate::language::node_text(node, source)?.trim();
+        if !name.is_empty() {
+            bindings.insert(name.to_string());
+        }
+        Ok(())
+    }
+
+    fn collect(
+        node: Node<'_>,
+        root: Node<'_>,
+        source: &str,
+        bindings: &mut BTreeSet<String>,
+    ) -> Result<()> {
+        if node != root && is_csharp_symbol_node(node) {
+            return Ok(());
+        }
+        if node.kind() == "variable_declarator"
+            && let Some(name) = node.child_by_field_name("name")
+        {
+            insert_name(name, source, bindings)?;
+        }
+        if matches!(
+            node.kind(),
+            "property_declaration" | "event_declaration" | "type_parameter"
+        ) && let Some(name) = node.child_by_field_name("name")
+        {
+            insert_name(name, source, bindings)?;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect(child, root, source, bindings)?;
+        }
+        Ok(())
+    }
+
+    let mut current = symbol_node.parent();
+    while let Some(node) = current {
+        if is_csharp_type_declaration(node) {
+            return collect(node, node, source, bindings);
+        }
+        current = node.parent();
+    }
+    Ok(())
+}
+
+fn is_csharp_type_declaration(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "class_declaration"
+            | "struct_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+    )
 }
 
 #[cfg(test)]
@@ -361,7 +448,7 @@ public record Entry(string Name);
     }
 
     #[test]
-    fn collects_only_unshadowed_unqualified_csharp_method_calls() {
+    fn collects_conservative_csharp_direct_call_facts() {
         let source = r#"
 using System;
 
@@ -371,7 +458,8 @@ class GlobalHelper {
     public int Instance() => 1;
 }
 
-class Counter {
+class Counter<T> {
+    GlobalHelper GlobalHelper { get; } = new GlobalHelper();
     Counter() {}
     Counter(int value) : this() {}
     Counter(string value) : base() {}
@@ -385,9 +473,16 @@ class Counter {
     int GlobalStaticCaller() => global::GlobalHelper.Utility();
     int GlobalGenericStaticCaller() => global::GlobalHelper.GenericUtility<int>();
     int GlobalInstanceCaller() => global::GlobalHelper.Instance();
+    int TypeParameterShadow() => T.Equals(default);
+    int MemberShadow() => GlobalHelper.Instance();
+    int LocalShadow() { var GlobalHelper = new GlobalHelper(); return GlobalHelper.Instance(); }
     int ParameterShadow(Func<int> Helper) => Helper();
     int LocalFunctionShadow() { int Helper() => 2; return Helper(); }
     int LambdaShadow() => ((Func<int, int>)(Helper => Helper())).Invoke(1);
+}
+
+class SimpleCaller {
+    int SimpleStaticCaller() => GlobalHelper.Utility();
 }
 "#;
         let path = Path::new("Counter.cs");
@@ -451,6 +546,13 @@ class Counter {
             references("Counter::GlobalInstanceCaller"),
             ["global::GlobalHelper.Instance".to_string()].into()
         );
+        assert_eq!(
+            references("SimpleCaller::SimpleStaticCaller"),
+            ["GlobalHelper.Utility".to_string()].into()
+        );
+        assert!(references("Counter::TypeParameterShadow").is_empty());
+        assert!(references("Counter::MemberShadow").is_empty());
+        assert!(references("Counter::LocalShadow").is_empty());
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());
         assert!(references("Counter::LambdaShadow").is_empty());

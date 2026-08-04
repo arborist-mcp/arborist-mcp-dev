@@ -266,7 +266,7 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "class GlobalHelper {\n    public static int Utility(int value) => value;\n    public static int Flexible(params int[] values) => values.Length;\n    public int Instance(int value) => value;\n}\nclass Counter {\n    Counter() {}\n    Counter(int value) : this() {}\n    Counter(string value) : base() {}\n    Counter(params int[] values) {}\n    Counter(bool first, bool second) : this(1, 2) {}\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n    int GlobalStaticCaller() => global::GlobalHelper.Utility(1);\n    int GlobalInstanceCaller() => global::GlobalHelper.Instance(1);\n    int GlobalParamsCaller() => global::GlobalHelper.Flexible(1);\n}\n",
+        "class GlobalHelper {\n    public static int Utility(int value) => value;\n    public static int Flexible(params int[] values) => values.Length;\n    public int Instance(int value) => value;\n}\nclass Counter {\n    Counter() {}\n    Counter(int value) : this() {}\n    Counter(string value) : base() {}\n    Counter(params int[] values) {}\n    Counter(bool first, bool second) : this(1, 2) {}\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n    int GlobalStaticCaller() => global::GlobalHelper.Utility(1);\n    int GlobalInstanceCaller() => global::GlobalHelper.Instance(1);\n    int GlobalParamsCaller() => global::GlobalHelper.Flexible(1);\n}\nclass SimpleCaller {\n    int LocalStaticCaller() => GlobalHelper.Utility(1);\n    int LocalInstanceCaller() => GlobalHelper.Instance(1);\n    int LocalParamsCaller() => GlobalHelper.Flexible(1);\n}\nclass Outer {\n    class Nested {\n        int NestedStaticCaller() => GlobalHelper.Utility(1);\n    }\n}\nclass MemberShadowCaller {\n    GlobalHelper GlobalHelper { get; } = new GlobalHelper();\n    int MemberShadow() => GlobalHelper.Instance(1);\n}\n",
     )
     .unwrap();
 
@@ -354,17 +354,31 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
 
     let static_target = "GlobalHelper::Utility";
     let static_live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
-    assert_eq!(static_live.callers.len(), 1);
+    assert_eq!(static_live.callers.len(), 2);
     assert_eq!(
-        static_live.callers[0].symbol_id,
-        "Counter::GlobalStaticCaller"
+        static_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Counter::GlobalStaticCaller",
+            "SimpleCaller::LocalStaticCaller"
+        ]
     );
     let static_persisted =
         trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
-    assert_eq!(static_persisted.callers.len(), 1);
+    assert_eq!(static_persisted.callers.len(), 2);
     assert_eq!(
-        static_persisted.callers[0].symbol_id,
-        "Counter::GlobalStaticCaller"
+        static_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Counter::GlobalStaticCaller",
+            "SimpleCaller::LocalStaticCaller"
+        ]
     );
 
     for target in ["GlobalHelper::Instance", "GlobalHelper::Flexible"] {
