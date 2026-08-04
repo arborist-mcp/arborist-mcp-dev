@@ -8,6 +8,7 @@ use super::super::csharp::{
     CSharpGlobalImportContext, CSharpImportContext, CSharpNamespaceImportBinding,
     CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
     csharp_type_alias_name_is_ambiguous_for_reference,
+    resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
     resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_static_type_imports_for_reference,
@@ -391,7 +392,7 @@ fn resolve_reference_path_with_deadline<'a>(
             if !csharp_namespace_import_type_is_unshadowed(type_name, source_symbol, raw_symbols) {
                 return Ok(None);
             }
-            let namespace_imports = resolve_csharp_namespace_imports_for_reference(
+            let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
                 &source_symbol.file_path,
                 type_name,
                 source_namespace_path,
@@ -399,6 +400,12 @@ fn resolve_reference_path_with_deadline<'a>(
                 csharp_import_contexts_by_file,
                 deadline,
             )?;
+            if let Some(csharp_global_import_context) = csharp_global_import_context {
+                namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+                    type_name,
+                    csharp_global_import_context,
+                ));
+            }
             return Ok(resolve_csharp_namespace_imported_static_method(
                 raw_symbols,
                 semantic_path_index,

@@ -5,8 +5,8 @@ use anyhow::Result;
 
 use crate::language::{
     csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    csharp_global_static_type_imports, detect_language, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    csharp_global_namespace_imports, csharp_global_static_type_imports, detect_language,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -39,6 +39,7 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpGlobalImportContext {
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
+    namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
 
 pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_overrides_and_deadline(
@@ -47,6 +48,7 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CSharpGlobalImportContext> {
     let mut static_type_import_bindings = Vec::new();
+    let mut namespace_import_bindings = Vec::new();
     let mut visited_paths = BTreeSet::new();
 
     for source_file_path in source_file_paths {
@@ -91,10 +93,20 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
                 semantic_type_path,
             });
         }
+        for semantic_namespace_path in csharp_global_namespace_imports(root, &source)? {
+            if let Some(deadline) = deadline {
+                deadline.check("extracting C# global namespace import bindings")?;
+            }
+            namespace_import_bindings.push(CSharpNamespaceImportBinding {
+                scope_path: None,
+                semantic_namespace_path,
+            });
+        }
     }
 
     Ok(CSharpGlobalImportContext {
         static_type_import_bindings,
+        namespace_import_bindings,
     })
 }
 
@@ -327,6 +339,16 @@ pub(in crate::symbol_dependency) fn resolve_csharp_namespace_imports_for_referen
                 .cloned()
         })
         .collect())
+}
+
+pub(in crate::symbol_dependency) fn resolve_csharp_global_namespace_imports_for_reference(
+    reference_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> Vec<CSharpNamespaceImportBinding> {
+    if reference_name.is_empty() || reference_name.contains('.') {
+        return Vec::new();
+    }
+    context.namespace_import_bindings.clone()
 }
 
 fn csharp_import_context_from_cache(

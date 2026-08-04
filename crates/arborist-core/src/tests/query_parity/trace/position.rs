@@ -980,6 +980,111 @@ fn does_not_trace_ambiguous_csharp_global_static_import_calls() {
 }
 
 #[test]
+fn traces_csharp_global_namespace_import_calls_from_directive_only_file_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Helper.cs"),
+        "namespace Demo.Utility;
+class Helper {
+    public static int Utility(int value) => value;
+    public static int Flexible(params int[] values) => values.Length;
+    public int Instance(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using Demo.Utility;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo.App;
+class Caller {
+    int Call() => Helper.Utility(1);
+    int InstanceCall() => Helper.Instance(1);
+    int ParamsCall() => Helper.Flexible(1);
+}
+",
+    )
+    .unwrap();
+
+    let static_target = "Demo::Utility::Helper::Utility";
+    let live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    for target in [
+        "Demo::Utility::Helper::Instance",
+        "Demo::Utility::Helper::Flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_global_namespace_import_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("First.cs"),
+        "namespace Demo.First; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Second.cs"),
+        "namespace Demo.Second; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("FirstGlobal.cs"),
+        "global using Demo.First;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SecondGlobal.cs"),
+        "global using Demo.Second;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo.App; class Caller { int Call() => Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "Demo::App::Caller::Call", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::App::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_csharp_file_static_import_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");

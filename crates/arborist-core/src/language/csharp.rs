@@ -127,6 +127,31 @@ pub(crate) fn csharp_global_static_type_imports(
     Ok(imports)
 }
 
+pub(crate) fn csharp_global_namespace_imports(root: Node<'_>, source: &str) -> Result<Vec<String>> {
+    let mut imports = Vec::new();
+    let mut cursor = root.walk();
+    for directive in root.named_children(&mut cursor) {
+        if directive.kind() != "using_directive" {
+            continue;
+        }
+        let directive_text = node_text(directive, source)?.trim();
+        if !is_global_namespace_directive(directive_text)
+            || directive.child_by_field_name("name").is_some()
+        {
+            continue;
+        }
+        let mut children_cursor = directive.walk();
+        let Some(target) = directive.named_children(&mut children_cursor).next() else {
+            continue;
+        };
+        let target_path = node_text(target, source)?.trim();
+        if let Some(semantic_namespace_path) = csharp_qualified_type_semantic_path(target_path) {
+            imports.push(semantic_namespace_path);
+        }
+    }
+    Ok(imports)
+}
+
 fn csharp_scoped_using_directives<'tree>(
     root: Node<'tree>,
     source: &str,
@@ -255,6 +280,15 @@ fn is_global_static_type_directive(directive_text: &str) -> bool {
             .any(|token| token == "unsafe")
 }
 
+fn is_global_namespace_directive(directive_text: &str) -> bool {
+    directive_text.starts_with("global using ")
+        && !directive_text.starts_with("global using static ")
+        && !directive_text.contains('=')
+        && !directive_text
+            .split_whitespace()
+            .any(|token| token == "unsafe")
+}
+
 fn csharp_qualified_type_semantic_path(type_path: &str) -> Option<String> {
     let type_path = type_path.strip_prefix("global::").unwrap_or(type_path);
     if type_path.is_empty()
@@ -279,7 +313,8 @@ mod tests {
 
     use super::{
         csharp_file_namespace_imports, csharp_file_static_type_imports,
-        csharp_file_type_alias_imports, csharp_global_static_type_imports,
+        csharp_file_type_alias_imports, csharp_global_namespace_imports,
+        csharp_global_static_type_imports,
     };
     use crate::language::parse_document;
 
@@ -408,6 +443,28 @@ class Caller {}
                 "Demo::Utility::Helper".to_string(),
                 "Demo::Utility::GlobalHelper".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn collects_only_safe_root_global_namespace_imports() {
+        let source = r#"
+global using Demo.Utility;
+global using global::Demo.Shared;
+global using static Demo.Utility.Helper;
+global using Demo.Utility.Generic<int>;
+global using unsafe Demo.Unsafe;
+global using Alias = Demo.Utility.Helper;
+using Demo.File;
+
+namespace Demo.App;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("Caller.cs"), source).unwrap();
+
+        assert_eq!(
+            csharp_global_namespace_imports(document.tree.root_node(), source).unwrap(),
+            vec!["Demo::Utility".to_string(), "Demo::Shared".to_string()]
         );
     }
 
