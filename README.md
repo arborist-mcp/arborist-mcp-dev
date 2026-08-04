@@ -74,8 +74,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   considered only when no same-type method has the bare call's name; namespace imports are considered only when the
   caller's namespace has no type of the receiver name anywhere in the workspace. Simple type receivers must not be
   shadowed by a local, parameter, type parameter, or type member. Block and file-scoped namespaces, classes, structs,
-  interfaces, enums, records, methods, and constructors are supported. Outer-namespace alias/import inheritance,
-  dependency refresh, other member dispatch, overload type selection, and patching remain explicitly
+  interfaces, enums, records, methods, and constructors are supported. When any C# source file changes, refresh
+  conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only global-using files;
+  unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member dispatch, overload
+  type selection, and patching remain explicitly
   unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
@@ -560,8 +562,10 @@ for response shapes, error behavior, and examples.
   aliases shadow root aliases; root and exact namespace static/ordinary imports are both considered; same-type
   unqualified/`this.` forms remain same-file. `base(...)` requires one unique class/record base declaration and one exact-arity,
   non-`params` constructor; generic, non-`global::` qualified, alias, and namespace-import base types fail closed. Imported and qualified static targets must be unique, static,
-  exact-arity, and non-`params`; ambiguous imports/types and shadowed receivers fail closed. Outer-namespace
-  alias/import inheritance, dependency refresh, other member dispatch, overload type selection, and
+  exact-arity, and non-`params`; ambiguous imports/types and shadowed receivers fail closed. When any C# source file
+  changes, refresh conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only
+  global-using files; unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member
+  dispatch, overload type selection, and
   patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports

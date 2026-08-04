@@ -68,8 +68,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
   constructors are supported. `base(...)` requires one unique class/record base declaration and one exact-arity, non-`params`
-  constructor; generic, non-`global::` qualified, alias, and namespace-import base types fail closed. Outer-namespace alias/import inheritance, dependency refresh, other
-  member dispatch, overload type selection, and patch operations return
+  constructor; generic, non-`global::` qualified, alias, and namespace-import base types fail closed. When any C# source file
+  changes, refresh conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only
+  global-using files; unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member
+  dispatch, overload type selection, and patch operations return
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

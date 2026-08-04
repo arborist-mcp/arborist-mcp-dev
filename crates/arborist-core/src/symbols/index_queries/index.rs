@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -20,7 +20,7 @@ use crate::language::{
 };
 use crate::model::SymbolIndexStats;
 use crate::symbol_dependency::{
-    assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
+    RefreshResolutionInputs, assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
     refresh_resolved_symbol_subgraph,
 };
 use crate::symbol_extractor::index_symbols_from_document_with_deadline;
@@ -277,14 +277,18 @@ pub fn refresh_symbol_index_for_file_with_limits(
         .cloned()
         .collect::<Vec<_>>();
     deadline.check("resolving refreshed symbols")?;
+    let source_file_paths = file_states.keys().map(PathBuf::from).collect::<Vec<_>>();
     let (resolved_map, impacted_paths) = refresh_resolved_symbol_subgraph(
         &raw_symbols,
         &old_resolved_map,
         &old_changed_symbols,
         &new_changed_symbols,
         &changed_file_paths,
-        None,
-        Some(&deadline),
+        RefreshResolutionInputs {
+            source_file_paths: &source_file_paths,
+            file_overrides: None,
+            deadline: Some(&deadline),
+        },
     )?;
     deadline.check("resolving refreshed symbols")?;
     let resolved_symbols = materialize_resolved_symbol_rows(&raw_symbols, &resolved_map);

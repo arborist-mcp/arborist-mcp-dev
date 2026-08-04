@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow, bail};
 
@@ -17,8 +17,8 @@ use crate::language::{normalize_path, parse_document, parse_document_with_timeou
 use crate::model::SymbolMeta;
 use crate::source_overlay::normalize_source_overrides_for_workspace;
 use crate::symbol_dependency::{
-    assign_symbol_ids, assign_symbol_ids_with_deadline, materialize_resolved_symbol_rows,
-    refresh_resolved_symbol_subgraph,
+    RefreshResolutionInputs, assign_symbol_ids, assign_symbol_ids_with_deadline,
+    materialize_resolved_symbol_rows, refresh_resolved_symbol_subgraph,
 };
 use crate::symbol_extractor::{
     index_symbols_from_document, index_symbols_from_document_with_deadline,
@@ -266,14 +266,24 @@ fn load_symbol_index_with_overrides_internal(
         .filter(|symbol| changed_file_paths.contains(&symbol.file_path))
         .cloned()
         .collect::<Vec<_>>();
+    let source_file_paths = persisted_file_states
+        .keys()
+        .chain(file_overrides.keys())
+        .map(PathBuf::from)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let (resolved_map, _) = refresh_resolved_symbol_subgraph(
         &raw_symbols,
         &old_resolved_map,
         &old_changed_symbols,
         &new_changed_symbols,
         &changed_file_paths,
-        Some(&file_overrides),
-        deadline,
+        RefreshResolutionInputs {
+            source_file_paths: &source_file_paths,
+            file_overrides: Some(&file_overrides),
+            deadline,
+        },
     )?;
     if let Some(deadline) = deadline {
         deadline.check("resolving indexed override symbols")?;

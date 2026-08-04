@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use super::c::CIncludeContext;
-use super::csharp::CSharpImportContext;
+use super::csharp::{
+    CSharpImportContext, csharp_global_import_context_for_files_with_overrides_and_deadline,
+};
 use super::go::GoImportContext;
 use super::java::JavaImportContext;
 use super::resolution::{
@@ -14,15 +17,25 @@ use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
+pub(crate) struct RefreshResolutionInputs<'a> {
+    pub(crate) source_file_paths: &'a [PathBuf],
+    pub(crate) file_overrides: Option<&'a BTreeMap<String, String>>,
+    pub(crate) deadline: Option<&'a WorkspaceScanDeadline>,
+}
+
 pub(crate) fn refresh_resolved_symbol_subgraph(
     raw_symbols: &[IndexedSymbol],
     old_resolved_map: &BTreeMap<String, SymbolMeta>,
     old_changed_symbols: &[IndexedSymbol],
     new_changed_symbols: &[IndexedSymbol],
     changed_file_paths: &BTreeSet<String>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    deadline: Option<&WorkspaceScanDeadline>,
+    inputs: RefreshResolutionInputs<'_>,
 ) -> Result<(BTreeMap<String, SymbolMeta>, BTreeSet<String>)> {
+    let RefreshResolutionInputs {
+        source_file_paths,
+        file_overrides,
+        deadline,
+    } = inputs;
     let name_index = build_name_index(raw_symbols);
     if let Some(deadline) = deadline {
         deadline.check("building refresh symbol indexes")?;
@@ -36,13 +49,30 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         deadline.check("building refresh symbol indexes")?;
     }
     let representative_raw_symbols = raw_symbol_map(raw_symbols);
+    let refresh_csharp_symbols = changed_file_paths.iter().any(|path| path_is_csharp(path));
     let impacted_ids = impacted_symbol_ids(
         raw_symbols,
         old_changed_symbols,
         new_changed_symbols,
         old_resolved_map,
         changed_file_paths,
+        refresh_csharp_symbols,
     );
+    let csharp_global_import_context = if impacted_ids.iter().any(|symbol_id| {
+        representative_raw_symbols
+            .get(symbol_id)
+            .is_some_and(indexed_symbol_is_csharp)
+    }) {
+        Some(
+            csharp_global_import_context_for_files_with_overrides_and_deadline(
+                source_file_paths,
+                file_overrides,
+                deadline,
+            )?,
+        )
+    } else {
+        None
+    };
 
     let mut resolved_map = old_resolved_map.clone();
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
@@ -86,7 +116,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
-                None,
+                csharp_global_import_context.as_ref(),
                 deadline,
             )?);
         }
@@ -193,6 +223,7 @@ fn impacted_symbol_ids(
     new_changed_symbols: &[IndexedSymbol],
     old_resolved_map: &BTreeMap<String, SymbolMeta>,
     changed_file_paths: &BTreeSet<String>,
+    refresh_csharp_symbols: bool,
 ) -> BTreeSet<String> {
     let impacted_names: BTreeSet<_> = old_changed_symbols
         .iter()
@@ -216,6 +247,14 @@ fn impacted_symbol_ids(
         .chain(new_changed_symbols.iter())
         .map(|symbol| symbol.symbol_id.clone())
         .collect();
+    if refresh_csharp_symbols {
+        impacted_ids.extend(
+            raw_symbols
+                .iter()
+                .filter(|symbol| indexed_symbol_is_csharp(symbol))
+                .map(|symbol| symbol.symbol_id.clone()),
+        );
+    }
 
     for symbol in raw_symbols {
         if changed_file_paths.contains(&symbol.file_path) {
@@ -243,6 +282,17 @@ fn impacted_symbol_ids(
     }
 
     impacted_ids
+}
+
+fn path_is_csharp(path: &str) -> bool {
+    matches!(
+        crate::language::detect_language(Path::new(path)),
+        Ok(LanguageId::CSharp)
+    )
+}
+
+fn indexed_symbol_is_csharp(symbol: &IndexedSymbol) -> bool {
+    path_is_csharp(&symbol.file_path)
 }
 
 fn reference_impacted_paths(
@@ -287,7 +337,7 @@ mod tests {
 
     use crate::workspace_scan::WorkspaceScanDeadline;
 
-    use super::refresh_resolved_symbol_subgraph;
+    use super::{RefreshResolutionInputs, refresh_resolved_symbol_subgraph};
 
     #[test]
     fn refresh_subgraph_rejects_expired_deadline_before_building_indexes() {
@@ -302,8 +352,11 @@ mod tests {
             &[],
             &[],
             &BTreeSet::new(),
-            None,
-            Some(&deadline),
+            RefreshResolutionInputs {
+                source_file_paths: &[],
+                file_overrides: None,
+                deadline: Some(&deadline),
+            },
         )
         .expect_err("expired deadline should stop subgraph refresh");
 
