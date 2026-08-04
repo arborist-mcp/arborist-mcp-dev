@@ -5,8 +5,9 @@ use anyhow::Result;
 
 use crate::language::{
     csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    csharp_global_namespace_imports, csharp_global_static_type_imports, detect_language,
-    normalize_path, parse_document, parse_document_with_timeout, read_source,
+    csharp_global_namespace_imports, csharp_global_static_type_imports,
+    csharp_global_type_alias_imports, detect_language, normalize_path, parse_document,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -38,6 +39,8 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpGlobalImportContext {
+    type_alias_bindings: BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
+    ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -47,6 +50,8 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CSharpGlobalImportContext> {
+    let mut type_alias_bindings = BTreeMap::new();
+    let mut ambiguous_type_alias_names = BTreeSet::new();
     let mut static_type_import_bindings = Vec::new();
     let mut namespace_import_bindings = Vec::new();
     let mut visited_paths = BTreeSet::new();
@@ -84,6 +89,18 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
         if root.has_error() {
             continue;
         }
+        for (local_name, semantic_type_path) in csharp_global_type_alias_imports(root, &source)? {
+            if let Some(deadline) = deadline {
+                deadline.check("extracting C# global type alias bindings")?;
+            }
+            insert_unique_csharp_type_alias_binding(
+                &mut type_alias_bindings,
+                &mut ambiguous_type_alias_names,
+                None,
+                local_name,
+                CSharpTypeAliasBinding { semantic_type_path },
+            );
+        }
         for semantic_type_path in csharp_global_static_type_imports(root, &source)? {
             if let Some(deadline) = deadline {
                 deadline.check("extracting C# global static import bindings")?;
@@ -105,9 +122,41 @@ pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_
     }
 
     Ok(CSharpGlobalImportContext {
+        type_alias_bindings,
+        ambiguous_type_alias_names,
         static_type_import_bindings,
         namespace_import_bindings,
     })
+}
+
+pub(in crate::symbol_dependency) fn resolve_csharp_global_type_alias_binding_for_reference(
+    reference_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> Option<(String, CSharpTypeAliasBinding)> {
+    let (local_type_name, method_name) = reference_name.split_once('.')?;
+    if local_type_name.is_empty() || method_name.is_empty() || method_name.contains('.') {
+        return None;
+    }
+    let binding = context
+        .type_alias_bindings
+        .get(&(None, local_type_name.to_string()))?
+        .clone();
+    Some((method_name.to_string(), binding))
+}
+
+pub(in crate::symbol_dependency) fn csharp_global_type_alias_name_is_ambiguous(
+    reference_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> bool {
+    let Some((local_type_name, method_name)) = reference_name.split_once('.') else {
+        return false;
+    };
+    if local_type_name.is_empty() || method_name.is_empty() || method_name.contains('.') {
+        return false;
+    }
+    context
+        .ambiguous_type_alias_names
+        .contains(&(None, local_type_name.to_string()))
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_global_static_type_imports_for_reference(

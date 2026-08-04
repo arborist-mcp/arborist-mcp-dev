@@ -152,6 +152,42 @@ pub(crate) fn csharp_global_namespace_imports(root: Node<'_>, source: &str) -> R
     Ok(imports)
 }
 
+pub(crate) fn csharp_global_type_alias_imports(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<(String, String)>> {
+    let mut imports = Vec::new();
+    let mut cursor = root.walk();
+    for directive in root.named_children(&mut cursor) {
+        if directive.kind() != "using_directive" {
+            continue;
+        }
+        let directive_text = node_text(directive, source)?.trim();
+        if !is_global_type_alias_directive(directive_text) {
+            continue;
+        }
+        let Some(name) = directive.child_by_field_name("name") else {
+            continue;
+        };
+        let local_name = node_text(name, source)?.trim();
+        if !is_safe_csharp_identifier(local_name) {
+            continue;
+        }
+        let mut children_cursor = directive.walk();
+        let Some(target) = directive
+            .named_children(&mut children_cursor)
+            .find(|child| *child != name)
+        else {
+            continue;
+        };
+        let target_path = node_text(target, source)?.trim();
+        if let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) {
+            imports.push((local_name.to_string(), semantic_type_path));
+        }
+    }
+    Ok(imports)
+}
+
 fn csharp_scoped_using_directives<'tree>(
     root: Node<'tree>,
     source: &str,
@@ -289,6 +325,14 @@ fn is_global_namespace_directive(directive_text: &str) -> bool {
             .any(|token| token == "unsafe")
 }
 
+fn is_global_type_alias_directive(directive_text: &str) -> bool {
+    directive_text.starts_with("global using ")
+        && directive_text.contains('=')
+        && !directive_text
+            .split_whitespace()
+            .any(|token| matches!(token, "static" | "unsafe"))
+}
+
 fn csharp_qualified_type_semantic_path(type_path: &str) -> Option<String> {
     let type_path = type_path.strip_prefix("global::").unwrap_or(type_path);
     if type_path.is_empty()
@@ -314,7 +358,7 @@ mod tests {
     use super::{
         csharp_file_namespace_imports, csharp_file_static_type_imports,
         csharp_file_type_alias_imports, csharp_global_namespace_imports,
-        csharp_global_static_type_imports,
+        csharp_global_static_type_imports, csharp_global_type_alias_imports,
     };
     use crate::language::parse_document;
 
@@ -465,6 +509,37 @@ class Caller {}
         assert_eq!(
             csharp_global_namespace_imports(document.tree.root_node(), source).unwrap(),
             vec!["Demo::Utility".to_string(), "Demo::Shared".to_string()]
+        );
+    }
+
+    #[test]
+    fn collects_only_safe_root_global_type_alias_imports() {
+        let source = r#"
+global using HelperAlias = Demo.Utility.Helper;
+global using GlobalAlias = global::Demo.Utility.GlobalHelper;
+global using static Demo.Utility.Helper;
+global using Demo.Utility;
+global using GenericAlias = Demo.Utility.Generic<int>;
+global using unsafe UnsafeAlias = Demo.Utility.UnsafeHelper;
+using FileAlias = Demo.Utility.FileHelper;
+
+namespace Demo.App;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("Caller.cs"), source).unwrap();
+
+        assert_eq!(
+            csharp_global_type_alias_imports(document.tree.root_node(), source).unwrap(),
+            vec![
+                (
+                    "HelperAlias".to_string(),
+                    "Demo::Utility::Helper".to_string()
+                ),
+                (
+                    "GlobalAlias".to_string(),
+                    "Demo::Utility::GlobalHelper".to_string(),
+                ),
+            ]
         );
     }
 

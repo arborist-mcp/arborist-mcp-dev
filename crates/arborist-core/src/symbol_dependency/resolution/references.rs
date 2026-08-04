@@ -7,9 +7,10 @@ use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides
 use super::super::csharp::{
     CSharpGlobalImportContext, CSharpImportContext, CSharpNamespaceImportBinding,
     CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
-    csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_global_type_alias_name_is_ambiguous, csharp_type_alias_name_is_ambiguous_for_reference,
     resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
+    resolve_csharp_global_type_alias_binding_for_reference,
     resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
@@ -365,6 +366,35 @@ fn resolve_reference_path_with_deadline<'a>(
             deadline,
         )? {
             return Ok(None);
+        }
+        if let Some(csharp_global_import_context) = csharp_global_import_context
+            && csharp_global_type_alias_name_is_ambiguous(
+                reference_name,
+                csharp_global_import_context,
+            )
+        {
+            return Ok(None);
+        }
+        if let Some(csharp_global_import_context) = csharp_global_import_context
+            && let Some((method_name, binding)) =
+                resolve_csharp_global_type_alias_binding_for_reference(
+                    reference_name,
+                    csharp_global_import_context,
+                )
+        {
+            let Some((alias_name, _)) = reference_name.split_once('.') else {
+                return Ok(None);
+            };
+            if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+                return Ok(None);
+            }
+            return Ok(resolve_csharp_imported_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &binding,
+                &method_name,
+                call_arity,
+            ));
         }
         if let Some(target_path) =
             csharp_simple_type_static_target_path(reference_name, source_symbol, raw_symbols)

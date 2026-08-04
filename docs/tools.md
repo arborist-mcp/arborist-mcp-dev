@@ -53,6 +53,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;` bare
   method calls contributed by any scanned C# source file (including directive-only files), and file-root
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`, and root-level `global using Fully.Qualified.Namespace;`
+  calls contributed by any scanned C# source file (including directive-only files), and root-level `global using Alias = Fully.Qualified.Type;`
   calls contributed by any scanned C# source file (including directive-only files). Type aliases, static imports, and namespace
   imports may appear at file root or directly in a block/file-scoped namespace; an exact namespace alias shadows a
   root alias with the same local name, while root and exact namespace static/ordinary imports are both considered.
@@ -65,7 +66,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. Outer-namespace alias/import inheritance, `global using` aliases, dependency refresh, other
+  constructors are supported. Outer-namespace alias/import inheritance, dependency refresh, other
   member dispatch, overload type selection, and patch operations return
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.
