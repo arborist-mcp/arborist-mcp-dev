@@ -266,7 +266,7 @@ fn traces_csharp_same_type_direct_calls_in_live_workspace_and_persisted_index() 
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "class Counter {\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n}\n",
+        "class Counter {\n    Counter() {}\n    Counter(int value) : this() {}\n    Counter(string value) : base() {}\n    Counter(params int[] values) {}\n    Counter(bool first, bool second) : this(1, 2) {}\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n}\n",
     )
     .unwrap();
 
@@ -318,6 +318,39 @@ fn traces_csharp_same_type_direct_calls_in_live_workspace_and_persisted_index() 
         trace_symbol_graph_from_index(&db_path, "Counter::Flexible", TraceDirection::Callers)
             .unwrap();
     assert!(params_target.callers.is_empty());
+
+    let constructor_target = "Counter::Counter";
+    let delegated_constructor_id = format!(
+        "{}::Counter::Counter#overload[2]",
+        normalize_path(&source_path)
+    );
+    let constructor_live =
+        trace_symbol_graph(&dir, constructor_target, TraceDirection::Callers).unwrap();
+    assert_eq!(constructor_live.callers.len(), 1);
+    assert_eq!(
+        constructor_live.callers[0].symbol_id,
+        delegated_constructor_id
+    );
+    let constructor_persisted =
+        trace_symbol_graph_from_index(&db_path, constructor_target, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(constructor_persisted.callers.len(), 1);
+    assert_eq!(
+        constructor_persisted.callers[0].symbol_id,
+        delegated_constructor_id
+    );
+
+    let params_constructor_id = format!(
+        "{}::Counter::Counter#overload[4]",
+        normalize_path(&source_path)
+    );
+    let params_constructor_live =
+        trace_symbol_graph(&dir, &params_constructor_id, TraceDirection::Callers).unwrap();
+    assert!(params_constructor_live.callers.is_empty());
+    let params_constructor_persisted =
+        trace_symbol_graph_from_index(&db_path, &params_constructor_id, TraceDirection::Callers)
+            .unwrap();
+    assert!(params_constructor_persisted.callers.is_empty());
 }
 
 #[test]

@@ -94,21 +94,62 @@ fn collect_direct_same_type_calls(symbol_node: Node<'_>, source: &str) -> Result
     ) {
         return Ok((BTreeSet::new(), BTreeMap::new()));
     }
-    let Some(body) = symbol_node.child_by_field_name("body") else {
-        return Ok((BTreeSet::new(), BTreeMap::new()));
-    };
-
     let bindings = collect_local_bindings(symbol_node, source)?;
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
-    collect_direct_same_type_calls_from_node(
-        body,
-        source,
-        &bindings,
+    collect_this_constructor_initializer_call(
+        symbol_node,
         &mut references,
         &mut call_arities_by_name,
-    )?;
+    );
+    if let Some(body) = symbol_node.child_by_field_name("body") {
+        collect_direct_same_type_calls_from_node(
+            body,
+            source,
+            &bindings,
+            &mut references,
+            &mut call_arities_by_name,
+        )?;
+    }
     Ok((references, call_arities_by_name))
+}
+
+fn collect_this_constructor_initializer_call(
+    symbol_node: Node<'_>,
+    references: &mut ReferenceNames,
+    call_arities_by_name: &mut CallAritiesByName,
+) {
+    if symbol_node.kind() != "constructor_declaration" {
+        return;
+    }
+    let mut cursor = symbol_node.walk();
+    let Some(initializer) = symbol_node
+        .named_children(&mut cursor)
+        .find(|node| node.kind() == "constructor_initializer")
+    else {
+        return;
+    };
+    let mut initializer_cursor = initializer.walk();
+    if !initializer
+        .children(&mut initializer_cursor)
+        .any(|node| node.kind() == "this")
+    {
+        return;
+    }
+    let mut arguments_cursor = initializer.walk();
+    let Some(arguments) = initializer
+        .named_children(&mut arguments_cursor)
+        .find(|node| node.kind() == "argument_list")
+    else {
+        return;
+    };
+    let mut argument_cursor = arguments.walk();
+    let arity = arguments.named_children(&mut argument_cursor).count();
+    references.insert("this".to_string());
+    call_arities_by_name
+        .entry("this".to_string())
+        .or_default()
+        .insert(arity);
 }
 
 fn collect_direct_same_type_calls_from_node(
@@ -304,6 +345,9 @@ public record Entry(string Name);
 using System;
 
 class Counter {
+    Counter() {}
+    Counter(int value) : this() {}
+    Counter(string value) : base() {}
     int Helper() => 1;
     T Generic<T>() => default;
     int Caller() => Helper();
@@ -330,6 +374,27 @@ class Counter {
                 .references_by_name
                 .clone()
         };
+        let delegated_constructor = symbols
+            .iter()
+            .find(|symbol| {
+                symbol.semantic_path == "Counter::Counter" && symbol.parameters == ["int value"]
+            })
+            .unwrap();
+        assert_eq!(
+            delegated_constructor.references_by_name,
+            ["this".to_string()].into()
+        );
+        assert_eq!(
+            delegated_constructor.call_arities_by_name,
+            [("this".to_string(), [0].into())].into()
+        );
+        let base_constructor = symbols
+            .iter()
+            .find(|symbol| {
+                symbol.semantic_path == "Counter::Counter" && symbol.parameters == ["string value"]
+            })
+            .unwrap();
+        assert!(base_constructor.references_by_name.is_empty());
         assert_eq!(references("Counter::Caller"), ["Helper".to_string()].into());
         assert_eq!(
             references("Counter::GenericCaller"),
