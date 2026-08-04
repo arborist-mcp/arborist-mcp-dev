@@ -232,7 +232,7 @@ fn go_adapter_exposes_skeleton_and_indexing_without_dependencies_tracing_or_patc
 
     assert_eq!(descriptor.display_name, "Go");
     assert_eq!(descriptor.extensions, &["go"]);
-    assert_eq!(descriptor.analysis_revision, "go-index-v1");
+    assert_eq!(descriptor.analysis_revision, "go-index-v2");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,

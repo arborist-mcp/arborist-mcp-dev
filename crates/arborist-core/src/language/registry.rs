@@ -433,7 +433,7 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Go",
     extensions: GO_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_SUPPORT,
-    analysis_revision: "go-index-v1",
+    analysis_revision: "go-index-v2",
     grammar: go_grammar,
 };
 
@@ -649,6 +649,13 @@ fn javascript_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Opt
 fn rust_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
     crate::semantic::rust::rust_symbol_name(node, source)?
         .map(|name| crate::semantic::rust::rust_semantic_path(node, source, &name))
+        .transpose()
+        .map(Option::flatten)
+}
+
+fn go_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    crate::semantic::go::go_symbol_name(node, source)?
+        .map(|name| crate::semantic::go::go_semantic_path(node, source, &name))
         .transpose()
         .map(Option::flatten)
 }
@@ -892,30 +899,37 @@ impl LanguageAdapter for GoAdapter {
 
     fn position_symbol_identity(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
     ) -> Result<PositionSymbolIdentity> {
-        self.syntax.position_symbol_identity(path, node, source)
+        let semantic_path = go_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a Go symbol with a stable semantic path")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
     }
 
     fn semantic_path_for_node(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
     ) -> Result<Option<String>> {
-        self.syntax.semantic_path_for_node(path, node, source)
+        go_semantic_path_for_node(node, source)
     }
 
     fn symbol_id_for_node(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
-        deadline: Option<&dyn DeadlineCheck>,
+        _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
-        self.syntax.symbol_id_for_node(path, node, source, deadline)
+        go_semantic_path_for_node(node, source)
     }
 
     fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {

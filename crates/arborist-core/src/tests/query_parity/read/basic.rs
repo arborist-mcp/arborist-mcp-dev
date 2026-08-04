@@ -147,3 +147,32 @@ fn reads_c_symbol_at_position_for_declaration_and_definition_exactly() {
         "int helper(int value) {\n    return value + 1;\n}"
     );
 }
+
+#[test]
+fn reads_go_symbol_at_position_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    let source = "package metrics\n\ntype Counter struct { value int }\nfunc (counter *Counter) Increment(amount int) int { return counter.value + amount }\n";
+    fs::write(&source_path, source).unwrap();
+
+    let position = Position { row: 3, column: 0 };
+    let live = read_symbol_at_position(&dir, &source_path, &position).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, "Counter::Increment");
+    assert_eq!(live.symbol.semantic_path, "Counter::Increment");
+    assert_eq!(
+        live.source,
+        "func (counter *Counter) Increment(amount int) int { return counter.value + amount }"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = read_symbol_at_position_from_index(&db_path, &source_path, &position).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, "Counter::Increment");
+    assert_eq!(persisted.symbol.semantic_path, "Counter::Increment");
+    assert_eq!(
+        persisted.source,
+        "func (counter *Counter) Increment(amount int) int { return counter.value + amount }"
+    );
+}

@@ -39,8 +39,8 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   returns an explicit unsupported-operation error.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
-  types. Package dependency, trace, source-position identity, and patch operations return explicit
-  unsupported-operation errors.
+  types, selected by semantic path or source position. Package dependency, trace, and patch operations
+  return explicit unsupported-operation errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
