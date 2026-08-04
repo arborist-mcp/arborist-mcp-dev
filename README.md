@@ -41,9 +41,11 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing,
   and conservative local-module dependency refresh through unambiguous out-of-line `mod`
-  declarations. It also provides conservative graph tracing for unshadowed, direct calls to
-  functions declared in the same source-file module. Trait-implementation members are not indexed,
-  `use` paths do not create dependency edges, and patching remains explicitly unavailable.
+  declarations. It also provides conservative graph tracing for unshadowed bare direct calls to
+  functions in the same source-file module and qualified direct calls to functions in inline modules
+  in the same source file. Trait-implementation members are not indexed, `use` paths do not create
+  dependency edges, and out-of-line module, Cargo, and import resolution remain unavailable. Patching
+  remains explicitly unavailable.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -492,9 +494,10 @@ for response shapes, error behavior, and examples.
   reference-binding validation remain deferred.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
-  It also traces unshadowed direct calls to functions declared in the same source-file module.
-  Trait-implementation members are not indexed, and `use` paths do not create dependency edges.
-  Patching remains capability-gated.
+  It traces unshadowed bare direct calls to functions in the same source-file module and
+  qualified direct calls to functions in inline modules in the same source file. Trait-implementation
+  members are not indexed, `use` paths do not create dependency edges, and out-of-line module, Cargo,
+  and import resolution remain unavailable. Patching remains capability-gated.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -511,13 +514,14 @@ C, C++, JavaScript, TypeScript, and TSX use the registry and explicit
 capabilities. JavaScript-family adapters provide semantic skeletons, indexing,
 conservative local-module tracing, structural patching, source overlays, and
 persisted-index coverage. Phase 5 now includes Rust parsing, raw queries, semantic skeletons,
-conservative declaration indexing, local module dependency refresh, and conservative local
-direct-call graph tracing and position identity; Rust patching remains deliberately
-capability-gated.
+conservative declaration indexing, local module dependency refresh, and conservative bare and
+inline-module-qualified direct-call graph tracing plus position identity; Rust patching remains
+deliberately capability-gated.
 
 Remaining larger work includes:
 
-- Adding carefully-scoped Rust cross-module trace resolution before considering Rust patching.
+- Adding carefully-scoped Rust out-of-line-module, Cargo, and import trace resolution before
+  considering Rust patching.
 - Adding Go and Java one language at a time after their adapter contracts and
   workspace assumptions are documented.
 - Completing JavaScript/TypeScript default and namespace module resolution plus

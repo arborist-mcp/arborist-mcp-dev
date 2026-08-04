@@ -194,3 +194,29 @@ fn traces_rust_unshadowed_local_direct_calls_in_live_workspace_and_persisted_ind
     assert_eq!(persisted_at_position.symbol.symbol_id, "api::helper");
     assert_eq!(persisted_at_position.callers[0].symbol_id, "api::caller");
 }
+
+#[test]
+fn traces_rust_qualified_inline_module_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "fn caller() { api::helper(); }\n\nmod api {\n    pub fn helper() {}\n}\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "api::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, "api::helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "api::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, "api::helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}

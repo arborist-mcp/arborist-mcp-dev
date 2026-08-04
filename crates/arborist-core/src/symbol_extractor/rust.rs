@@ -95,25 +95,34 @@ fn collect_direct_local_calls(
     let Some(body) = symbol_node.child_by_field_name("body") else {
         return Ok(BTreeSet::new());
     };
-    let Some(local_functions) = local_module_function_paths(symbol_node, source)? else {
-        return Ok(BTreeSet::new());
-    };
-    if local_functions.is_empty() {
+    let local_functions = local_module_function_paths(symbol_node, source)?.unwrap_or_default();
+    let qualified_functions = source_file_module_function_paths(symbol_node, source)?;
+    if local_functions.is_empty() && qualified_functions.is_empty() {
         return Ok(BTreeSet::new());
     }
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
-    let mut references = BTreeSet::new();
-    collect_direct_local_calls_from_node(
-        body,
+    let context = RustDirectCallContext {
         source,
         deadline,
-        &local_functions,
-        &bindings,
-        &mut references,
-    )?;
+        local_functions: &local_functions,
+        qualified_functions: &qualified_functions,
+        module_components: rust_inline_module_path_components(symbol_node, source)?,
+        bindings: &bindings,
+    };
+    let mut references = BTreeSet::new();
+    collect_direct_local_calls_from_node(body, &context, &mut references)?;
     Ok(references)
+}
+
+struct RustDirectCallContext<'a> {
+    source: &'a str,
+    deadline: Option<&'a WorkspaceScanDeadline>,
+    local_functions: &'a BTreeMap<String, String>,
+    qualified_functions: &'a BTreeMap<String, String>,
+    module_components: Option<Vec<String>>,
+    bindings: &'a BTreeSet<String>,
 }
 
 fn local_module_function_paths(
@@ -145,6 +154,45 @@ fn local_module_function_paths(
             .filter_map(|(name, paths)| (paths.len() == 1).then(|| (name, paths[0].clone())))
             .collect(),
     ))
+}
+
+fn source_file_module_function_paths(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut paths_by_name = BTreeMap::<String, Vec<String>>::new();
+    collect_source_file_module_function_paths(root, source, &mut paths_by_name)?;
+    Ok(paths_by_name
+        .into_iter()
+        .filter_map(|(path, candidates)| {
+            (candidates.len() == 1).then(|| (path, candidates[0].clone()))
+        })
+        .collect())
+}
+
+fn collect_source_file_module_function_paths(
+    node: Node<'_>,
+    source: &str,
+    paths_by_name: &mut BTreeMap<String, Vec<String>>,
+) -> Result<()> {
+    if node.kind() == "function_item"
+        && local_module_function_container(node).is_some()
+        && let Some(name) = rust_symbol_name(node, source)?
+        && let Some(path) = rust_semantic_path(node, source, &name)?
+    {
+        paths_by_name.entry(path.clone()).or_default().push(path);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_source_file_module_function_paths(child, source, paths_by_name)?;
+    }
+    Ok(())
 }
 
 fn local_module_function_container(symbol_node: Node<'_>) -> Option<Node<'_>> {
@@ -221,13 +269,10 @@ fn collect_pattern_bindings(
 
 fn collect_direct_local_calls_from_node(
     node: Node<'_>,
-    source: &str,
-    deadline: Option<&WorkspaceScanDeadline>,
-    local_functions: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &RustDirectCallContext<'_>,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
-    if let Some(deadline) = deadline {
+    if let Some(deadline) = context.deadline {
         deadline.check("collecting Rust direct calls")?;
     }
     if matches!(
@@ -238,12 +283,20 @@ fn collect_direct_local_calls_from_node(
     }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
-        && function.kind() == "identifier"
     {
-        let name = node_text(function, source)?.trim();
-        if !name.is_empty()
-            && !bindings.contains(name)
-            && let Some(path) = local_functions.get(name)
+        if function.kind() == "identifier" {
+            let name = node_text(function, context.source)?.trim();
+            if !name.is_empty()
+                && !context.bindings.contains(name)
+                && let Some(path) = context.local_functions.get(name)
+            {
+                references.insert(path.clone());
+            }
+        } else if function.kind() == "scoped_identifier"
+            && let Some(module_components) = context.module_components.as_deref()
+            && let Some(path) =
+                rust_qualified_call_target_path(function, module_components, context.source)?
+            && let Some(path) = context.qualified_functions.get(&path)
         {
             references.insert(path.clone());
         }
@@ -251,16 +304,65 @@ fn collect_direct_local_calls_from_node(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_direct_local_calls_from_node(
-            child,
-            source,
-            deadline,
-            local_functions,
-            bindings,
-            references,
-        )?;
+        collect_direct_local_calls_from_node(child, context, references)?;
     }
     Ok(())
+}
+
+fn rust_inline_module_path_components(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<Option<Vec<String>>> {
+    let mut components = Vec::new();
+    let mut current = symbol_node.parent();
+    while let Some(parent) = current {
+        if parent.kind() == "mod_item" {
+            let Some(name) = rust_symbol_name(parent, source)? else {
+                return Ok(None);
+            };
+            components.push(name);
+        }
+        current = parent.parent();
+    }
+    components.reverse();
+    Ok(Some(components))
+}
+
+fn rust_qualified_call_target_path(
+    function: Node<'_>,
+    module_components: &[String],
+    source: &str,
+) -> Result<Option<String>> {
+    let spelling = node_text(function, source)?.trim();
+    if spelling.is_empty() {
+        return Ok(None);
+    }
+    let components = spelling.split("::").collect::<Vec<_>>();
+    if components.iter().any(|component| component.is_empty()) {
+        return Ok(None);
+    }
+
+    let mut module_components = module_components.to_vec();
+    let mut components = components.into_iter();
+    match components.next() {
+        Some("crate") => module_components.clear(),
+        Some("self") => {}
+        Some("super") => {
+            let mut parent_count = 1;
+            while matches!(components.clone().next(), Some("super")) {
+                components.next();
+                parent_count += 1;
+            }
+            if parent_count > module_components.len() {
+                return Ok(None);
+            }
+            module_components.truncate(module_components.len() - parent_count);
+        }
+        Some(first) => module_components.push(first.to_string()),
+        None => return Ok(None),
+    }
+    module_components.extend(components.map(str::to_string));
+    Ok((!module_components.is_empty()).then(|| module_components.join("::")))
 }
 
 #[cfg(test)]
@@ -309,6 +411,118 @@ mod api {
         assert_eq!(
             root_caller.references_by_name,
             ["root_helper".to_string()].into()
+        );
+    }
+
+    #[test]
+    fn indexes_qualified_calls_between_inline_modules() {
+        let source = r#"
+fn root_helper() {}
+
+fn crate_caller() {
+    crate::root_helper();
+}
+
+fn caller() {
+    api::helper();
+}
+
+mod api {
+    fn helper() {}
+
+    fn self_caller() {
+        self::helper();
+    }
+
+    mod nested {
+        fn caller() {
+            super::helper();
+        }
+
+        mod leaf {
+            fn caller() {
+                super::super::helper();
+            }
+        }
+    }
+}
+"#;
+        let path = Path::new("src/api.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for (caller_path, callee_path) in [
+            ("crate_caller", "root_helper"),
+            ("caller", "api::helper"),
+            ("api::self_caller", "api::helper"),
+            ("api::nested::caller", "api::helper"),
+            ("api::nested::leaf::caller", "api::helper"),
+        ] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(
+                caller.references_by_name,
+                [callee_path.to_string()].into(),
+                "unexpected references for {caller_path}",
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_index_qualified_calls_to_out_of_line_modules() {
+        let source = r#"
+mod api;
+
+fn caller() {
+    api::helper();
+}
+"#;
+        let path = Path::new("src/lib.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+        assert!(caller.references_by_name.is_empty());
+    }
+
+    #[test]
+    fn resolves_qualified_calls_from_nested_functions_relative_to_their_module() {
+        let source = r#"
+fn root_helper() {}
+
+fn outer() {
+    fn nested() {
+        self::root_helper();
+        super::root_helper();
+    }
+}
+
+mod outer {
+    fn root_helper() {}
+}
+"#;
+        let path = Path::new("src/api.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let nested = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "outer::nested")
+            .unwrap();
+        assert_eq!(
+            nested.references_by_name,
+            ["root_helper".to_string()].into(),
         );
     }
 
