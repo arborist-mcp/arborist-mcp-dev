@@ -4,6 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
+use super::super::csharp::{
+    CSharpImportContext, CSharpTypeAliasBinding, resolve_csharp_type_alias_binding_for_reference,
+};
 use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
 use super::super::java::{
     JavaImportBinding, JavaImportContext, resolve_java_import_binding_for_reference,
@@ -96,6 +99,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -108,6 +112,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         javascript_import_contexts_by_file,
         go_import_contexts_by_file,
         java_import_contexts_by_file,
+        csharp_import_contexts_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
@@ -125,6 +130,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -176,6 +182,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     javascript_import_contexts_by_file,
                     go_import_contexts_by_file,
                     java_import_contexts_by_file,
+                    csharp_import_contexts_by_file,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -195,6 +202,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             javascript_import_contexts_by_file,
             go_import_contexts_by_file,
             java_import_contexts_by_file,
+            csharp_import_contexts_by_file,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -221,6 +229,7 @@ fn resolve_reference_path_with_deadline<'a>(
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -287,7 +296,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 raw_symbols,
                 semantic_path_index,
                 &target_path,
-                source_symbol,
+                Some(source_symbol),
                 call_arity,
                 CSharpCandidateRequirements {
                     node_kind: "constructor_declaration",
@@ -301,13 +310,34 @@ fn resolve_reference_path_with_deadline<'a>(
                 raw_symbols,
                 semantic_path_index,
                 &target_path,
-                source_symbol,
+                Some(source_symbol),
                 call_arity,
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
                     require_static: true,
                     require_same_file: false,
                 },
+            ));
+        }
+        if let Some((method_name, binding)) = resolve_csharp_type_alias_binding_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            let Some((alias_name, _)) = reference_name.split_once('.') else {
+                return Ok(None);
+            };
+            if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+                return Ok(None);
+            }
+            return Ok(resolve_csharp_imported_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &binding,
+                &method_name,
+                call_arity,
             ));
         }
         if let Some(target_path) =
@@ -317,7 +347,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 raw_symbols,
                 semantic_path_index,
                 &target_path,
-                source_symbol,
+                Some(source_symbol),
                 call_arity,
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
@@ -342,7 +372,7 @@ fn resolve_reference_path_with_deadline<'a>(
             raw_symbols,
             semantic_path_index,
             &target_path,
-            source_symbol,
+            Some(source_symbol),
             call_arity,
             CSharpCandidateRequirements {
                 node_kind: "method_declaration",
@@ -693,7 +723,7 @@ fn resolve_csharp_candidate(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     target_path: &str,
-    source_symbol: &IndexedSymbol,
+    source_symbol: Option<&IndexedSymbol>,
     call_arity: usize,
     requirements: CSharpCandidateRequirements,
 ) -> Option<String> {
@@ -704,7 +734,8 @@ fn resolve_csharp_candidate(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            (!requirements.require_same_file || candidate.file_path == source_symbol.file_path)
+            (!requirements.require_same_file
+                || source_symbol.is_some_and(|source| candidate.file_path == source.file_path))
                 && candidate.node_kind == requirements.node_kind
                 && candidate.parameters.len() == call_arity
                 && !candidate
@@ -797,6 +828,50 @@ fn csharp_method_is_static(symbol: &IndexedSymbol) -> bool {
         .is_some_and(|signature| signature.split_whitespace().any(|part| part == "static"))
 }
 
+fn csharp_alias_name_is_unshadowed(
+    alias_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> bool {
+    !raw_symbols.iter().any(|candidate| {
+        candidate.file_path == source_symbol.file_path
+            && candidate.base_name == alias_name
+            && csharp_is_type_declaration(candidate)
+    })
+}
+
+fn resolve_csharp_imported_static_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    binding: &CSharpTypeAliasBinding,
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let type_candidates = semantic_path_index
+        .get(&binding.semantic_type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+        .count();
+    if type_candidates != 1 {
+        return None;
+    }
+    let target_path = format!("{}::{method_name}", binding.semantic_type_path);
+    resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        None,
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: true,
+            require_same_file: false,
+        },
+    )
+}
+
 fn resolve_java_imported_static_method(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -873,6 +948,7 @@ mod tests {
             None,
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
+            &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),

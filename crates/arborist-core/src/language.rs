@@ -1,4 +1,5 @@
 mod c;
+mod csharp;
 mod go;
 mod io;
 mod java;
@@ -17,6 +18,7 @@ pub use c::{
 pub(crate) use c::{
     c_include_targets_before, c_local_include_dependency_paths, extension_case_candidates,
 };
+pub(crate) use csharp::csharp_file_type_alias_imports;
 pub(crate) use go::{go_local_package_dependency_paths, go_local_package_imports};
 pub(crate) use java::{
     java_local_explicit_static_member_imports, java_local_explicit_type_imports,

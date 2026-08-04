@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::Result;
 
 use super::c::CIncludeContext;
+use super::csharp::CSharpImportContext;
 use super::go::GoImportContext;
 use super::java::JavaImportContext;
 use super::resolution::{
@@ -49,6 +50,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::<String, GoImportContext>::new();
     let mut java_import_contexts_by_file = BTreeMap::<String, JavaImportContext>::new();
+    let mut csharp_import_contexts_by_file = BTreeMap::<String, CSharpImportContext>::new();
     for symbol in old_changed_symbols {
         resolved_map.remove(&symbol.symbol_id);
     }
@@ -83,6 +85,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
+                &mut csharp_import_contexts_by_file,
                 deadline,
             )?);
         }

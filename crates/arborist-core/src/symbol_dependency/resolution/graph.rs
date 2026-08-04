@@ -26,6 +26,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
+    let mut csharp_import_contexts_by_file = BTreeMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -41,6 +42,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
+                &mut csharp_import_contexts_by_file,
             ));
         }
     }
@@ -98,6 +100,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
+    let mut csharp_import_contexts_by_file = BTreeMap::new();
 
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;
@@ -114,6 +117,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
+                &mut csharp_import_contexts_by_file,
                 Some(deadline),
             )?);
             deadline.check("resolving symbol dependencies")?;

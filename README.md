@@ -57,13 +57,16 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   resolution, method dispatch, and patching remain unavailable or capability-gated.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
-  constructor initializers, globally namespace-qualified `global::...` static calls, and simple same-namespace
-  `Type.Method()` static calls from non-nested types. Local forms target a unique same-file, exact-arity,
-  non-`params` declaration; globally qualified static calls may resolve one unique workspace declaration.
-  Simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
-  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are
-  supported. Dependency refresh, other member dispatch, overload type selection, and
-  patching remain explicitly unavailable until dedicated C# adapter slices establish their contracts and fixtures.
+  constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
+  `Type.Method()` static calls from non-nested types, and file-root `using Alias = Fully.Qualified.Type;`
+  alias calls of the form `Alias.Method()`. Local forms target a unique same-file, exact-arity, non-`params`
+  declaration; globally qualified and file-root alias calls may resolve one unique workspace static declaration.
+  Alias targets must resolve to one indexed type, duplicate aliases or same-file type-name collisions fail closed,
+  and simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
+  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are supported.
+  Dependency refresh, namespace-scoped aliases, `global using`, `using static`, ordinary imports, other member
+  dispatch, overload type selection, and patching remain explicitly unavailable until dedicated C# adapter slices
+  establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,
