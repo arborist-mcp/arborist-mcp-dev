@@ -433,6 +433,35 @@ impl Counter {
 }
 
 #[test]
+fn builds_csharp_skeleton_through_public_entrypoint() {
+    let source = r#"
+namespace Demo.Tools;
+
+public class Counter {
+    public Counter(int initial) {}
+    public int Increment(int amount) => amount;
+}
+"#;
+    let skeleton = get_semantic_skeleton(Path::new("Counter.cs"), source, 4, &[]).unwrap();
+
+    assert_eq!(
+        skeleton.available_paths,
+        vec![
+            "Demo::Tools::Counter",
+            "Demo::Tools::Counter::Counter",
+            "Demo::Tools::Counter::Increment",
+        ]
+    );
+    let increment = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Demo::Tools::Counter::Increment")
+        .unwrap();
+    assert_eq!(increment.parameters, vec!["int amount"]);
+    assert_eq!(increment.return_type.as_deref(), Some("int"));
+}
+
+#[test]
 fn builds_go_skeleton_through_public_entrypoint() {
     let source = r#"
 package metrics

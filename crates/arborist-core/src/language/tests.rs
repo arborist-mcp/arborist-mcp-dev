@@ -207,20 +207,20 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn csharp_adapter_exposes_tree_queries_without_semantic_capabilities() {
+fn csharp_adapter_exposes_tree_queries_and_semantic_skeletons() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::CSharp).unwrap();
 
     assert_eq!(descriptor.display_name, "C#");
     assert_eq!(descriptor.extensions, &["cs"]);
-    assert_eq!(descriptor.analysis_revision, "csharp-query-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "csharp-skeleton-v1");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
