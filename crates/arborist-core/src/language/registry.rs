@@ -422,7 +422,7 @@ static RUST_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Rust",
     extensions: RUST_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "rust-trace-v1",
+    analysis_revision: "rust-trace-v2",
     grammar: rust_grammar,
 };
 
@@ -630,6 +630,13 @@ fn javascript_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Opt
         .transpose()
 }
 
+fn rust_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    crate::semantic::rust::rust_symbol_name(node, source)?
+        .map(|name| crate::semantic::rust::rust_semantic_path(node, source, &name))
+        .transpose()
+        .map(Option::flatten)
+}
+
 struct RustAdapter {
     syntax: SyntaxOnlyAdapter,
 }
@@ -682,30 +689,37 @@ impl LanguageAdapter for RustAdapter {
 
     fn position_symbol_identity(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
     ) -> Result<PositionSymbolIdentity> {
-        self.syntax.position_symbol_identity(path, node, source)
+        let semantic_path = rust_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a Rust symbol with a stable semantic path")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
     }
 
     fn semantic_path_for_node(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
     ) -> Result<Option<String>> {
-        self.syntax.semantic_path_for_node(path, node, source)
+        rust_semantic_path_for_node(node, source)
     }
 
     fn symbol_id_for_node(
         &self,
-        path: &Path,
+        _path: &Path,
         node: Node<'_>,
         source: &str,
-        deadline: Option<&dyn DeadlineCheck>,
+        _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
-        self.syntax.symbol_id_for_node(path, node, source, deadline)
+        rust_semantic_path_for_node(node, source)
     }
 
     fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {

@@ -169,6 +169,13 @@ fn traces_rust_unshadowed_local_direct_calls_in_live_workspace_and_persisted_ind
     assert_eq!(live.callers.len(), 1);
     assert_eq!(live.callers[0].symbol_id, "api::caller");
 
+    let position = Position { row: 2, column: 11 };
+    let live_at_position =
+        trace_symbol_graph_at_position(&dir, &source_path, &position, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(live_at_position.symbol.symbol_id, "api::helper");
+    assert_eq!(live_at_position.callers[0].symbol_id, "api::caller");
+
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "api::helper", TraceDirection::Callers).unwrap();
@@ -176,4 +183,14 @@ fn traces_rust_unshadowed_local_direct_calls_in_live_workspace_and_persisted_ind
     assert_eq!(persisted.symbol.symbol_id, "api::helper");
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "api::caller");
+
+    let persisted_at_position = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &source_path,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_at_position.symbol.symbol_id, "api::helper");
+    assert_eq!(persisted_at_position.callers[0].symbol_id, "api::caller");
 }
