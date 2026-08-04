@@ -268,13 +268,21 @@ fn resolve_reference_path_with_deadline<'a>(
         let Some(call_arity) = call_context.arity else {
             return Ok(None);
         };
-        if reference_name.contains('.') {
-            return Ok(None);
-        }
+        let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
+            if method_name.is_empty() || method_name.contains('.') {
+                return Ok(None);
+            }
+            method_name
+        } else {
+            if reference_name.contains('.') {
+                return Ok(None);
+            }
+            reference_name
+        };
         let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
         };
-        let target_path = format!("{scope_path}::{reference_name}");
+        let target_path = format!("{scope_path}::{method_name}");
         let candidates = semantic_path_index
             .get(&target_path)
             .into_iter()

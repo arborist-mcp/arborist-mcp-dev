@@ -260,13 +260,13 @@ fn traces_java_unqualified_same_type_calls_in_live_workspace_and_persisted_index
 }
 
 #[test]
-fn traces_csharp_unqualified_same_type_calls_in_live_workspace_and_persisted_index() {
+fn traces_csharp_same_type_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "class Counter {\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n}\n",
+        "class Counter {\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n}\n",
     )
     .unwrap();
 
@@ -274,16 +274,37 @@ fn traces_csharp_unqualified_same_type_calls_in_live_workspace_and_persisted_ind
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.indexed_files, 1);
     assert_eq!(live.symbol.symbol_id, helper_path);
-    assert_eq!(live.callers.len(), 1);
-    assert_eq!(live.callers[0].symbol_id, "Counter::Caller");
+    assert_eq!(live.callers.len(), 3);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Counter::Caller",
+            "Counter::ExplicitThis",
+            "Counter::ExplicitThisParameterShadow"
+        ]
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(persisted.indexed_files, 1);
     assert_eq!(persisted.symbol.symbol_id, helper_path);
-    assert_eq!(persisted.callers.len(), 1);
-    assert_eq!(persisted.callers[0].symbol_id, "Counter::Caller");
+    assert_eq!(persisted.callers.len(), 3);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Counter::Caller",
+            "Counter::ExplicitThis",
+            "Counter::ExplicitThisParameterShadow"
+        ]
+    );
 
     let overloaded_id = format!(
         "{}::Counter::First#overload[2]",

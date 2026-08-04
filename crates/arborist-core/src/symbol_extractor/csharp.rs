@@ -124,7 +124,7 @@ fn collect_direct_same_type_calls_from_node(
     if node.kind() == "invocation_expression"
         && let Some(function) = node.child_by_field_name("function")
         && let Some(arguments) = node.child_by_field_name("arguments")
-        && let Some(name) = csharp_unqualified_invocation_name(function, source)?
+        && let Some(name) = csharp_direct_invocation_name(function, source)?
         && !bindings.contains(&name)
     {
         let mut cursor = arguments.walk();
@@ -146,7 +146,25 @@ fn collect_direct_same_type_calls_from_node(
     Ok(())
 }
 
-fn csharp_unqualified_invocation_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() == "member_access_expression" {
+        let Some(receiver) = node.child_by_field_name("expression") else {
+            return Ok(None);
+        };
+        if receiver.kind() != "this" {
+            return Ok(None);
+        }
+        let Some(member) = node.child_by_field_name("name") else {
+            return Ok(None);
+        };
+        return csharp_invocation_member_name(member, source)
+            .map(|name| name.map(|name| format!("this.{name}")));
+    }
+
+    csharp_invocation_member_name(node, source)
+}
+
+fn csharp_invocation_member_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let identifier = match node.kind() {
         "identifier" => Some(node),
         "generic_name" => {
@@ -291,6 +309,8 @@ class Counter {
     int Caller() => Helper();
     int GenericCaller() => Generic<int>();
     int ExplicitThis() => this.Helper();
+    int ExplicitThisParameterShadow(Func<int> Helper) => this.Helper();
+    int Other(Counter counter) => counter.Helper();
     int ParameterShadow(Func<int> Helper) => Helper();
     int LocalFunctionShadow() { int Helper() => 2; return Helper(); }
     int LambdaShadow() => ((Func<int, int>)(Helper => Helper())).Invoke(1);
@@ -315,7 +335,15 @@ class Counter {
             references("Counter::GenericCaller"),
             ["Generic".to_string()].into()
         );
-        assert!(references("Counter::ExplicitThis").is_empty());
+        assert_eq!(
+            references("Counter::ExplicitThis"),
+            ["this.Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::ExplicitThisParameterShadow"),
+            ["this.Helper".to_string()].into()
+        );
+        assert!(references("Counter::Other").is_empty());
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());
         assert!(references("Counter::LambdaShadow").is_empty());
