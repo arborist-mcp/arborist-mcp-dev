@@ -222,6 +222,44 @@ fn traces_rust_qualified_inline_module_calls_in_live_workspace_and_persisted_ind
 }
 
 #[test]
+fn traces_java_unqualified_same_type_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;\nclass Counter {\n    int helper() { return 1; }\n    int caller() { return helper(); }\n    int first(int value) { return value; }\n    long first(long value) { return value; }\n    long ambiguous() { return first(1L); }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Counter::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Counter::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, helper_path);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+
+    let overloaded_id = format!(
+        "{}::com::example::Counter::first#overload[2]",
+        normalize_path(&source_path)
+    );
+    let overloaded =
+        trace_symbol_graph_from_index(&db_path, &overloaded_id, TraceDirection::Callers).unwrap();
+    assert!(overloaded.callers.is_empty());
+}
+
+#[test]
 fn traces_go_unshadowed_same_file_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

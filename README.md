@@ -58,8 +58,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
   file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
-  constructors are indexed by package-qualified paths. Wildcard, static, missing, and ambiguous
-  imports; reference tracing; overload resolution; and patch operations remain capability-gated.
+  constructors are indexed by package-qualified paths. It also traces unqualified calls to a single
+  same-type, same-file, non-varargs method with a unique arity match. Wildcard, static, missing, and
+  ambiguous imports; type/member dispatch; overloaded-call selection; and patch operations remain
+  capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -523,8 +525,10 @@ for response shapes, error behavior, and examples.
   unavailable; patching remains capability-gated.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for unique explicit non-static imports mapped to a local `.java` file under
-  an ancestor source root. Wildcard, static, missing, and ambiguous imports, tracing, overload
-  resolution, and patching remain capability-gated pending dedicated Java resolution fixtures.
+  an ancestor source root. It traces unqualified calls only when one same-type, same-file,
+  non-varargs method matches the call arity. Wildcard, static, missing, and ambiguous imports;
+  type/member dispatch; overloaded-call selection; and patching remain capability-gated pending
+  dedicated Java resolution fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -549,7 +553,8 @@ same-file bare plus unambiguous local-package imported-function direct-call grap
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for unique explicit non-static imports that map to a local `.java` file under
-an ancestor source root. General cross-file/package/import resolution, method dispatch, and patch
+an ancestor source root, plus unqualified calls to a unique same-type, same-file non-varargs method
+with a matching arity. General cross-file/package/import resolution, type/member dispatch, and patch
 features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.

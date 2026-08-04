@@ -447,9 +447,10 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
-            | LanguageCapabilities::FILE_DEPENDENCIES.0,
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
+            | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "java-deps-v1",
+    analysis_revision: "java-local-trace-v1",
     grammar: java_grammar,
 };
 
