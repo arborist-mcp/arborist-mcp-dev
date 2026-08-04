@@ -969,6 +969,120 @@ class Derived : Demo.Base {
 }
 
 #[test]
+fn traces_csharp_ancestor_base_methods_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Grand.cs"),
+        "namespace Demo.Utility;
+class Grand {
+    public int Ping(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Parent.cs"),
+        "using GrandAlias = Demo.Utility.Grand;
+namespace Demo.Middle;
+class Parent : GrandAlias {}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "using Demo.Middle;
+namespace Demo.App;
+class Derived : Parent {
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "Demo::Utility::Grand::Ping", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::Derived::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "Demo::Utility::Grand::Ping",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::App::Derived::Call");
+}
+
+#[test]
+fn does_not_trace_ambiguous_cyclic_or_shadowed_csharp_ancestor_base_methods() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Shadowed.cs"),
+        "namespace Demo.Shadowed;
+class Grand { public int Ping(int value) => value; }
+class Parent : Grand { public int Ping() => 0; }
+class Derived : Parent { int Call(int value) => base.Ping(value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Cycle.cs"),
+        "namespace Demo.Cycle;
+class First : Second {}
+class Second : First {}
+class Derived : First { int Call(int value) => base.Ping(value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AmbiguousFirst.cs"),
+        "namespace Demo.Ambiguous; class Grand { public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AmbiguousSecond.cs"),
+        "namespace Demo.Ambiguous; class Grand { public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AmbiguousDerived.cs"),
+        "namespace Demo.Ambiguous;
+class Parent : Grand {}
+class Derived : Parent { int Call(int value) => base.Ping(value); }
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Shadowed::Derived::Call",
+        "Demo::Cycle::Derived::Call",
+        "Demo::Ambiguous::Derived::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::Shadowed::Derived::Call",
+        "Demo::Cycle::Derived::Call",
+        "Demo::Ambiguous::Derived::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn does_not_trace_shadowed_csharp_qualified_base_members() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

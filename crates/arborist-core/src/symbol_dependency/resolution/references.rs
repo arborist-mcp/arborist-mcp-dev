@@ -378,9 +378,16 @@ fn resolve_reference_path_with_deadline<'a>(
             let Some(target_path) = csharp_base_method_target_path(
                 source_symbol,
                 raw_symbols,
+                semantic_path_index,
                 &base_type_binding,
                 method_name,
-            ) else {
+                call_arity,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
                 return Ok(None);
             };
             return Ok(resolve_csharp_candidate(
@@ -990,6 +997,26 @@ fn csharp_source_base_type_binding(
     )
 }
 
+fn csharp_base_type_binding_for_type(
+    source_type: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let source_namespace_path = csharp_source_namespace_path(source_type, raw_symbols).flatten();
+    resolve_csharp_base_type_binding_for_reference(
+        &source_type.file_path,
+        source_type.byte_range,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
+}
+
 fn csharp_base_type_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
@@ -1095,14 +1122,83 @@ fn csharp_base_constructor_target_path(
     Some(format!("{base_type_path}::{base_type_name}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn csharp_base_method_target_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
     binding: &CSharpBaseTypeBinding,
     method_name: &str,
-) -> Option<String> {
-    let base_type_path = csharp_base_type_path(source_symbol, raw_symbols, binding)?;
-    Some(format!("{base_type_path}::{method_name}"))
+    call_arity: usize,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(mut base_type_path) = csharp_base_type_path(source_symbol, raw_symbols, binding)
+    else {
+        return Ok(None);
+    };
+    let mut visited_type_paths = BTreeSet::new();
+
+    loop {
+        if !visited_type_paths.insert(base_type_path.clone()) {
+            return Ok(None);
+        }
+        let Some(type_indexes) = semantic_path_index.get(&base_type_path) else {
+            return Ok(None);
+        };
+        let type_indexes = type_indexes
+            .iter()
+            .copied()
+            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+
+        let method_path = format!("{base_type_path}::{method_name}");
+        let methods = semantic_path_index
+            .get(&method_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+            .collect::<Vec<_>>();
+        if !methods.is_empty() {
+            let matching_methods = methods
+                .iter()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.parameters.len() == call_arity
+                        && !candidate.parameters.iter().any(|parameter| {
+                            parameter.split_whitespace().any(|part| part == "params")
+                        })
+                        && !csharp_method_is_static(candidate)
+                })
+                .collect::<Vec<_>>();
+            return Ok((matching_methods.len() == 1).then_some(method_path));
+        }
+
+        let source_type = &raw_symbols[type_indexes[0]];
+        let Some(next_binding) = csharp_base_type_binding_for_type(
+            source_type,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(next_type_path) = csharp_base_type_path(source_type, raw_symbols, &next_binding)
+        else {
+            return Ok(None);
+        };
+        base_type_path = next_type_path;
+    }
 }
 
 fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
@@ -1189,32 +1285,40 @@ fn csharp_source_namespace_path<'a>(
     source_symbol: &'a IndexedSymbol,
     raw_symbols: &'a [IndexedSymbol],
 ) -> Option<Option<&'a str>> {
-    let mut type_path = source_symbol.scope_path.as_deref()?;
-    if raw_symbols
-        .iter()
-        .filter(|candidate| {
-            candidate.file_path == source_symbol.file_path
-                && candidate.semantic_path == type_path
-                && csharp_is_type_declaration(candidate)
-        })
-        .count()
-        != 1
+    let Some(mut type_path) = source_symbol.scope_path.as_deref() else {
+        return csharp_is_type_declaration(source_symbol).then_some(None);
+    };
+    if !csharp_is_type_declaration(source_symbol)
+        && raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == type_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .count()
+            != 1
     {
         return None;
     }
 
     loop {
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == type_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        match type_candidates {
+            0 => return Some(Some(type_path)),
+            1 => {}
+            _ => return None,
+        }
         let Some((parent_path, _)) = type_path.rsplit_once("::") else {
             return Some(None);
         };
-        let parent_is_type = raw_symbols.iter().any(|candidate| {
-            candidate.file_path == source_symbol.file_path
-                && candidate.semantic_path == parent_path
-                && csharp_is_type_declaration(candidate)
-        });
-        if !parent_is_type {
-            return Some(Some(parent_path));
-        }
         type_path = parent_path;
     }
 }
