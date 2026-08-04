@@ -51,6 +51,7 @@ use crate::workspace_scan::WorkspaceScanDeadline;
 struct CSharpCandidateRequirements {
     node_kind: &'static str,
     require_static: bool,
+    require_instance: bool,
     require_same_file: bool,
 }
 
@@ -318,6 +319,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "constructor_declaration",
                     require_static: false,
+                    require_instance: false,
                     require_same_file: true,
                 },
             ));
@@ -326,13 +328,9 @@ fn resolve_reference_path_with_deadline<'a>(
             if source_symbol.node_kind != "constructor_declaration" {
                 return Ok(None);
             }
-            let Some(source_type) = csharp_source_type_declaration(source_symbol, raw_symbols)
-            else {
-                return Ok(None);
-            };
-            let Some(base_type_binding) = resolve_csharp_base_type_binding_for_reference(
-                &source_symbol.file_path,
-                source_type.byte_range,
+            let Some(base_type_binding) = csharp_source_base_type_binding(
+                source_symbol,
+                raw_symbols,
                 file_overrides,
                 csharp_import_contexts_by_file,
                 deadline,
@@ -354,6 +352,43 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "constructor_declaration",
                     require_static: false,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            ));
+        }
+        if let Some(method_name) = reference_name.strip_prefix("base.") {
+            if method_name.is_empty() || method_name.contains('.') {
+                return Ok(None);
+            }
+            let Some(base_type_binding) = csharp_source_base_type_binding(
+                source_symbol,
+                raw_symbols,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(target_path) = csharp_base_method_target_path(
+                source_symbol,
+                raw_symbols,
+                &base_type_binding,
+                method_name,
+            ) else {
+                return Ok(None);
+            };
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                call_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: false,
+                    require_instance: true,
                     require_same_file: false,
                 },
             ));
@@ -368,6 +403,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
                     require_static: true,
+                    require_instance: false,
                     require_same_file: false,
                 },
             ));
@@ -445,6 +481,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
                     require_static: true,
+                    require_instance: false,
                     require_same_file: false,
                 },
             ));
@@ -515,6 +552,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
                     require_static: false,
+                    require_instance: false,
                     require_same_file: true,
                 },
             ));
@@ -903,6 +941,7 @@ fn resolve_csharp_candidate(
                     .iter()
                     .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
                 && (!requirements.require_static || csharp_method_is_static(candidate))
+                && (!requirements.require_instance || !csharp_method_is_static(candidate))
         })
         .collect::<Vec<_>>();
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
@@ -924,7 +963,26 @@ fn csharp_source_type_declaration<'a>(
     (candidates.len() == 1).then_some(candidates[0])
 }
 
-fn csharp_base_constructor_target_path(
+fn csharp_source_base_type_binding(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let Some(source_type) = csharp_source_type_declaration(source_symbol, raw_symbols) else {
+        return Ok(None);
+    };
+    resolve_csharp_base_type_binding_for_reference(
+        &source_symbol.file_path,
+        source_type.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn csharp_base_type_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     binding: &CSharpBaseTypeBinding,
@@ -945,11 +1003,27 @@ fn csharp_base_constructor_target_path(
                 && csharp_is_base_constructible_type(candidate)
         })
         .count();
-    if type_candidates != 1 {
-        return None;
-    }
+    (type_candidates == 1).then_some(base_type_path)
+}
+
+fn csharp_base_constructor_target_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+) -> Option<String> {
+    let base_type_path = csharp_base_type_path(source_symbol, raw_symbols, binding)?;
     let base_type_name = base_type_path.rsplit("::").next()?;
     Some(format!("{base_type_path}::{base_type_name}"))
+}
+
+fn csharp_base_method_target_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+    method_name: &str,
+) -> Option<String> {
+    let base_type_path = csharp_base_type_path(source_symbol, raw_symbols, binding)?;
+    Some(format!("{base_type_path}::{method_name}"))
 }
 
 fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
@@ -1187,6 +1261,7 @@ fn resolve_csharp_imported_static_method(
         CSharpCandidateRequirements {
             node_kind: "method_declaration",
             require_static: true,
+            require_instance: false,
             require_same_file: false,
         },
     )

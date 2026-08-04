@@ -448,37 +448,120 @@ class ParamsDerived : Base { ParamsDerived() : base(1, 2) {} }
 }
 
 #[test]
-fn does_not_trace_ambiguous_or_qualified_csharp_base_constructor_calls() {
+fn traces_csharp_direct_base_methods_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
     fs::write(
-        dir.join("First.cs"),
-        "namespace Demo; class Base { public Base(int value) {} }
-",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("Second.cs"),
-        "namespace Demo; class Base { public Base(int value) {} }
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Base {
+    public int Ping(int value) => value;
+    public int Flexible(params int[] values) => values.Length;
+    public static int Static(int value) => value;
+    public int First(int value) => value;
+    public long First(long value) => value;
+}
 ",
     )
     .unwrap();
     fs::write(
         dir.join("Derived.cs"),
-        "namespace Demo; class Derived : Base { Derived(int value) : base(value) {} }
+        "namespace Demo;
+class SimpleDerived : Base {
+    int Call(int value) => base.Ping(value);
+    int ParamsCaller() => base.Flexible(1);
+    int StaticCaller() => base.Static(1);
+    int Ambiguous() => base.First(1);
+}
+class GlobalDerived : global::Demo.Base {
+    int GlobalCall(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Base::Ping";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::GlobalDerived::GlobalCall",
+            "Demo::SimpleDerived::Call"
+        ]
+    );
+    for caller in [
+        "Demo::SimpleDerived::ParamsCaller",
+        "Demo::SimpleDerived::StaticCaller",
+        "Demo::SimpleDerived::Ambiguous",
+    ] {
+        let trace = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(trace.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::GlobalDerived::GlobalCall",
+            "Demo::SimpleDerived::Call"
+        ]
+    );
+    for caller in [
+        "Demo::SimpleDerived::ParamsCaller",
+        "Demo::SimpleDerived::StaticCaller",
+        "Demo::SimpleDerived::Ambiguous",
+    ] {
+        let trace =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(trace.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_qualified_csharp_base_member_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("First.cs"),
+        "namespace Demo; class Base { public Base(int value) {} public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Second.cs"),
+        "namespace Demo; class Base { public Base(int value) {} public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Demo; class Derived : Base { Derived(int value) : base(value) {} int Call(int value) => base.Ping(value); }
 ",
     )
     .unwrap();
     fs::write(
         dir.join("Qualified.cs"),
-        "namespace Other; class QualifiedDerived : Demo.Base { QualifiedDerived(int value) : base(value) {} }
+        "namespace Other; class QualifiedDerived : Demo.Base { QualifiedDerived(int value) : base(value) {} int Call(int value) => base.Ping(value); }
 ",
     )
     .unwrap();
 
     for caller in [
         "Demo::Derived::Derived",
+        "Demo::Derived::Call",
         "Other::QualifiedDerived::QualifiedDerived",
+        "Other::QualifiedDerived::Call",
     ] {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert!(live.callees.is_empty());
@@ -487,7 +570,9 @@ fn does_not_trace_ambiguous_or_qualified_csharp_base_constructor_calls() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     for caller in [
         "Demo::Derived::Derived",
+        "Demo::Derived::Call",
         "Other::QualifiedDerived::QualifiedDerived",
+        "Other::QualifiedDerived::Call",
     ] {
         let persisted =
             trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();

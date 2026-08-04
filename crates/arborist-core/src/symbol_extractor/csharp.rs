@@ -196,6 +196,10 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("this.{name}")));
         }
+        if receiver.kind() == "base" {
+            return csharp_invocation_member_name(member, source)
+                .map(|name| name.map(|name| format!("base.{name}")));
+        }
         if receiver.kind() == "identifier" {
             return csharp_simple_type_static_invocation_name(receiver, member, source);
         }
@@ -455,7 +459,11 @@ class GlobalHelper {
     public int Instance() => 1;
 }
 
-class Counter<T> {
+class Base {
+    public int BaseHelper() => 1;
+}
+
+class Counter<T> : Base {
     GlobalHelper GlobalHelper { get; } = new GlobalHelper();
     Counter() {}
     Counter(int value) : this() {}
@@ -466,6 +474,7 @@ class Counter<T> {
     int GenericCaller() => Generic<int>();
     int ExplicitThis() => this.Helper();
     int ExplicitThisParameterShadow(Func<int> Helper) => this.Helper();
+    int BaseCaller() => base.BaseHelper();
     int Other(Counter counter) => counter.Helper();
     int GlobalStaticCaller() => global::GlobalHelper.Utility();
     int GlobalGenericStaticCaller() => global::GlobalHelper.GenericUtility<int>();
@@ -536,6 +545,10 @@ class SimpleCaller {
         assert_eq!(
             references("Counter::ExplicitThisParameterShadow"),
             ["this.Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::BaseCaller"),
+            ["base.BaseHelper".to_string()].into()
         );
         assert!(references("Counter::Other").is_empty());
         assert_eq!(
