@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
 use crate::language::{
     csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    detect_language, normalize_path, parse_document, parse_document_with_timeout, read_source,
+    csharp_global_static_type_imports, detect_language, normalize_path, parse_document,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -33,6 +34,78 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
     ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in crate::symbol_dependency) struct CSharpGlobalImportContext {
+    static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
+}
+
+pub(in crate::symbol_dependency) fn csharp_global_import_context_for_files_with_overrides_and_deadline(
+    source_file_paths: &[PathBuf],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<CSharpGlobalImportContext> {
+    let mut static_type_import_bindings = Vec::new();
+    let mut visited_paths = BTreeSet::new();
+
+    for source_file_path in source_file_paths {
+        if let Some(deadline) = deadline {
+            deadline.check("reading C# global import context")?;
+        }
+        let normalized_file_path = normalize_path(source_file_path);
+        if !visited_paths.insert(normalized_file_path.clone()) {
+            continue;
+        }
+        let path = Path::new(&normalized_file_path);
+        if detect_language(path).ok() != Some(LanguageId::CSharp) {
+            continue;
+        }
+        let source = file_overrides
+            .and_then(|overrides| overrides.get(&normalized_file_path))
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| read_source(path))?;
+        if let Some(deadline) = deadline {
+            deadline.check("parsing C# global import context")?;
+        }
+        let document = if let Some(deadline) = deadline {
+            parse_document_with_timeout(
+                path,
+                &source,
+                deadline.remaining_timeout_micros("parsing C# global import context")?,
+            )?
+        } else {
+            parse_document(path, &source)?
+        };
+        let root = document.tree.root_node();
+        if root.has_error() {
+            continue;
+        }
+        for semantic_type_path in csharp_global_static_type_imports(root, &source)? {
+            if let Some(deadline) = deadline {
+                deadline.check("extracting C# global static import bindings")?;
+            }
+            static_type_import_bindings.push(CSharpStaticTypeImportBinding {
+                scope_path: None,
+                semantic_type_path,
+            });
+        }
+    }
+
+    Ok(CSharpGlobalImportContext {
+        static_type_import_bindings,
+    })
+}
+
+pub(in crate::symbol_dependency) fn resolve_csharp_global_static_type_imports_for_reference(
+    reference_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> Vec<CSharpStaticTypeImportBinding> {
+    if reference_name.is_empty() || reference_name.contains('.') {
+        return Vec::new();
+    }
+    context.static_type_import_bindings.clone()
 }
 
 fn csharp_import_context_for_file_with_overrides_and_deadline(

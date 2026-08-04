@@ -43,7 +43,7 @@ pub(crate) fn resolve_workspace_symbols(workspace_root: &Path) -> Result<(Vec<Sy
     let indexed_paths = collect_source_files(workspace_root)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index(&indexed_paths, None)?;
-    let resolved_symbols = resolve_symbol_dependencies(&raw_symbols);
+    let resolved_symbols = resolve_symbol_dependencies(&raw_symbols, &indexed_paths);
     Ok((resolved_symbols, indexed_files))
 }
 
@@ -59,8 +59,12 @@ pub(crate) fn resolve_workspace_symbols_with_timeout(
     let indexed_paths = collect_source_files_with_deadline(workspace_root, limits, &deadline)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index_with_deadline(&indexed_paths, None, limits, &deadline)?;
-    let resolved_symbols =
-        resolve_symbol_dependencies_with_overrides_with_deadline(&raw_symbols, None, &deadline)?;
+    let resolved_symbols = resolve_symbol_dependencies_with_overrides_with_deadline(
+        &raw_symbols,
+        &indexed_paths,
+        None,
+        &deadline,
+    )?;
     Ok((resolved_symbols, indexed_files))
 }
 
@@ -76,8 +80,11 @@ pub(crate) fn resolve_workspace_symbols_with_overrides(
     append_override_paths(&mut indexed_paths, &file_overrides, limits.max_files)?;
     let indexed_files = indexed_paths.len();
     let raw_symbols = build_workspace_index(&indexed_paths, Some(&file_overrides))?;
-    let resolved_symbols =
-        resolve_symbol_dependencies_with_overrides(&raw_symbols, Some(&file_overrides));
+    let resolved_symbols = resolve_symbol_dependencies_with_overrides(
+        &raw_symbols,
+        &indexed_paths,
+        Some(&file_overrides),
+    );
     Ok((resolved_symbols, indexed_files))
 }
 
@@ -110,6 +117,7 @@ pub(crate) fn resolve_workspace_symbols_with_overrides_with_timeout(
     )?;
     let resolved_symbols = resolve_symbol_dependencies_with_overrides_with_deadline(
         &raw_symbols,
+        &indexed_paths,
         Some(&file_overrides),
         &deadline,
     )?;

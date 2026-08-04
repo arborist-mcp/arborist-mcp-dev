@@ -5,8 +5,10 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
-    CSharpImportContext, CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding,
-    CSharpTypeAliasBinding, csharp_type_alias_name_is_ambiguous_for_reference,
+    CSharpGlobalImportContext, CSharpImportContext, CSharpNamespaceImportBinding,
+    CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
+    csharp_type_alias_name_is_ambiguous_for_reference,
+    resolve_csharp_global_static_type_imports_for_reference,
     resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
@@ -104,6 +106,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -117,6 +120,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         go_import_contexts_by_file,
         java_import_contexts_by_file,
         csharp_import_contexts_by_file,
+        csharp_global_import_context,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
@@ -135,6 +139,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -187,6 +192,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     go_import_contexts_by_file,
                     java_import_contexts_by_file,
                     csharp_import_contexts_by_file,
+                    csharp_global_import_context,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -207,6 +213,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             go_import_contexts_by_file,
             java_import_contexts_by_file,
             csharp_import_contexts_by_file,
+            csharp_global_import_context,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -234,6 +241,7 @@ fn resolve_reference_path_with_deadline<'a>(
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -437,7 +445,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 },
             ));
         }
-        let static_type_imports = resolve_csharp_static_type_imports_for_reference(
+        let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
             &source_symbol.file_path,
             reference_name,
             source_namespace_path,
@@ -445,6 +453,12 @@ fn resolve_reference_path_with_deadline<'a>(
             csharp_import_contexts_by_file,
             deadline,
         )?;
+        if let Some(csharp_global_import_context) = csharp_global_import_context {
+            static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
+                reference_name,
+                csharp_global_import_context,
+            ));
+        }
         return Ok(resolve_csharp_static_type_imported_method(
             raw_symbols,
             semantic_path_index,
@@ -1133,6 +1147,7 @@ mod tests {
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
+            None,
             Some(&deadline),
         )
         .expect_err("expired reference resolution should fail before lookup");

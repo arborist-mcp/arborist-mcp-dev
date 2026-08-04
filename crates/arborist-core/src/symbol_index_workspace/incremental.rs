@@ -51,11 +51,11 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     let mut rebuilt_files = 0;
     let mut reused_files = 0;
 
-    for path in indexed_paths {
+    for path in &indexed_paths {
         deadline.check("indexing workspace files")?;
-        validate_source_file_size(&path, limits)?;
-        let source = read_source(&path)?;
-        let normalized_path = normalize_path(&path);
+        validate_source_file_size(path, limits)?;
+        let source = read_source(path)?;
+        let normalized_path = normalize_path(path);
         let fingerprint = source_fingerprint(&source);
 
         file_states.push(PersistedFileState {
@@ -74,12 +74,12 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
         }
 
         let document = parse_document_with_timeout(
-            &path,
+            path,
             &source,
             deadline.remaining_timeout_micros("parsing workspace files")?,
         )?;
         raw_symbols.extend(index_symbols_from_document_with_deadline(
-            &path,
+            path,
             &source,
             &document,
             Some(deadline),
@@ -90,8 +90,12 @@ pub(crate) fn resolve_workspace_symbols_incremental_with_deadline(
     deadline.check("assigning symbol identities")?;
     assign_symbol_ids_with_deadline(&mut raw_symbols, deadline)?;
     deadline.check("resolving workspace symbols")?;
-    let resolved_symbols =
-        resolve_symbol_dependencies_with_overrides_with_deadline(&raw_symbols, None, deadline)?;
+    let resolved_symbols = resolve_symbol_dependencies_with_overrides_with_deadline(
+        &raw_symbols,
+        &indexed_paths,
+        None,
+        deadline,
+    )?;
     Ok((
         raw_symbols,
         resolved_symbols,

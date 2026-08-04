@@ -86,6 +86,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
+                None,
                 deadline,
             )?);
         }

@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::PathBuf;
 
 use anyhow::Result;
 
@@ -6,15 +7,20 @@ use crate::model::{SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
+use super::super::csharp::csharp_global_import_context_for_files_with_overrides_and_deadline;
 use super::indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
 use super::{resolve_dependencies_for_symbol, resolve_dependencies_for_symbol_with_deadline};
 
-pub(crate) fn resolve_symbol_dependencies(raw_symbols: &[IndexedSymbol]) -> Vec<SymbolMeta> {
-    resolve_symbol_dependencies_with_overrides(raw_symbols, None)
+pub(crate) fn resolve_symbol_dependencies(
+    raw_symbols: &[IndexedSymbol],
+    source_file_paths: &[PathBuf],
+) -> Vec<SymbolMeta> {
+    resolve_symbol_dependencies_with_overrides(raw_symbols, source_file_paths, None)
 }
 
 pub(crate) fn resolve_symbol_dependencies_with_overrides(
     raw_symbols: &[IndexedSymbol],
+    source_file_paths: &[PathBuf],
     file_overrides: Option<&BTreeMap<String, String>>,
 ) -> Vec<SymbolMeta> {
     let name_index = build_name_index(raw_symbols);
@@ -27,6 +33,13 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
     let mut csharp_import_contexts_by_file = BTreeMap::new();
+    let csharp_global_import_context =
+        csharp_global_import_context_for_files_with_overrides_and_deadline(
+            source_file_paths,
+            file_overrides,
+            None,
+        )
+        .expect("dependency resolution without a deadline cannot fail");
 
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -43,6 +56,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
+                Some(&csharp_global_import_context),
             ));
         }
     }
@@ -87,6 +101,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
 
 pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     raw_symbols: &[IndexedSymbol],
+    source_file_paths: &[PathBuf],
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: &WorkspaceScanDeadline,
 ) -> Result<Vec<SymbolMeta>> {
@@ -101,6 +116,12 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
     let mut csharp_import_contexts_by_file = BTreeMap::new();
+    let csharp_global_import_context =
+        csharp_global_import_context_for_files_with_overrides_and_deadline(
+            source_file_paths,
+            file_overrides,
+            Some(deadline),
+        )?;
 
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;
@@ -118,6 +139,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &mut go_import_contexts_by_file,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
+                Some(&csharp_global_import_context),
                 Some(deadline),
             )?);
             deadline.check("resolving symbol dependencies")?;
@@ -178,8 +200,9 @@ mod tests {
             timeout_ms: Some(1),
         };
 
-        let error = resolve_symbol_dependencies_with_overrides_with_deadline(&[], None, &deadline)
-            .expect_err("expired dependency resolution should fail before indexing");
+        let error =
+            resolve_symbol_dependencies_with_overrides_with_deadline(&[], &[], None, &deadline)
+                .expect_err("expired dependency resolution should fail before indexing");
         assert!(
             error
                 .to_string()
