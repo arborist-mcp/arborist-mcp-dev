@@ -9,6 +9,11 @@ pub(crate) struct CSharpFileTypeAliasImport {
     pub(crate) semantic_type_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CSharpFileStaticTypeImport {
+    pub(crate) semantic_type_path: String,
+}
+
 pub(crate) fn csharp_file_type_alias_imports(
     root: Node<'_>,
     source: &str,
@@ -49,8 +54,50 @@ pub(crate) fn csharp_file_type_alias_imports(
     Ok(imports)
 }
 
+pub(crate) fn csharp_file_static_type_imports(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<CSharpFileStaticTypeImport>> {
+    let mut imports = Vec::new();
+    let mut cursor = root.walk();
+    for directive in root.named_children(&mut cursor) {
+        if directive.kind() != "using_directive" {
+            continue;
+        }
+        let directive_text = node_text(directive, source)?.trim();
+        if !is_file_static_type_directive(directive_text)
+            || directive.child_by_field_name("name").is_some()
+        {
+            continue;
+        }
+        let mut children_cursor = directive.walk();
+        let Some(target) = directive.named_children(&mut children_cursor).next() else {
+            continue;
+        };
+        let target_path = node_text(target, source)?.trim();
+        let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
+            continue;
+        };
+        imports.push(CSharpFileStaticTypeImport { semantic_type_path });
+    }
+    Ok(imports)
+}
+
 fn is_file_type_alias_directive(directive_text: &str) -> bool {
     directive_text.starts_with("using ")
+        && !directive_text.starts_with("global using ")
+        && !directive_text
+            .split_whitespace()
+            .any(|token| token == "unsafe")
+}
+
+fn is_file_static_type_directive(directive_text: &str) -> bool {
+    directive_text.starts_with("using static ")
+        && directive_text
+            .split_whitespace()
+            .filter(|token| *token == "static")
+            .count()
+            == 1
         && !directive_text.starts_with("global using ")
         && !directive_text
             .split_whitespace()
@@ -79,7 +126,7 @@ fn is_safe_csharp_identifier(identifier: &str) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::csharp_file_type_alias_imports;
+    use super::{csharp_file_static_type_imports, csharp_file_type_alias_imports};
     use crate::language::parse_document;
 
     #[test]
@@ -106,6 +153,41 @@ class Caller {}
                 },
                 super::CSharpFileTypeAliasImport {
                     local_name: "GlobalAlias".to_string(),
+                    semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
+                },
+            ]
+        );
+
+        assert_eq!(
+            csharp_file_static_type_imports(document.tree.root_node(), source).unwrap(),
+            Vec::<super::CSharpFileStaticTypeImport>::new()
+        );
+    }
+
+    #[test]
+    fn collects_only_safe_file_static_type_imports() {
+        let source = r#"
+using static Demo.Utility.Helper;
+using static global::Demo.Utility.GlobalHelper;
+global using static Demo.Utility.ProjectHelper;
+using static unsafe Demo.Utility.UnsafeHelper;
+using static static Demo.Utility.DuplicateStaticHelper;
+using static Demo.Utility.GenericHelper<int>;
+using Demo.Utility;
+
+namespace Demo.App;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("Caller.cs"), source).unwrap();
+        let imports = csharp_file_static_type_imports(document.tree.root_node(), source).unwrap();
+
+        assert_eq!(
+            imports,
+            vec![
+                super::CSharpFileStaticTypeImport {
+                    semantic_type_path: "Demo::Utility::Helper".to_string(),
+                },
+                super::CSharpFileStaticTypeImport {
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
                 },
             ]

@@ -587,6 +587,131 @@ class CollidingAlias { int Call() => HelperAlias.Utility(1); }
 }
 
 #[test]
+fn traces_csharp_file_static_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo.Utility;
+class Helper {
+    public static int Utility(int value) => value;
+    public static int Flexible(params int[] values) => values.Length;
+    public int Instance(int value) => value;
+}
+class Unrelated { public static int Other(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "using static Demo.Utility.Helper;
+using static Demo.Utility.Unrelated;
+namespace Demo.App;
+class Caller {
+    int Call() => Utility(1);
+    int InstanceCall() => Instance(1);
+    int ParamsCall() => Flexible(1);
+}
+class LocalNameBlocksImport {
+    int Utility() => 1;
+    int Call() => Utility(1);
+}
+",
+    )
+    .unwrap();
+
+    let static_target = "Demo::Utility::Helper::Utility";
+    let live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    for target in [
+        "Demo::Utility::Helper::Instance",
+        "Demo::Utility::Helper::Flexible",
+        "Demo::App::LocalNameBlocksImport::Utility",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_file_static_import_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("First.cs"),
+        "namespace Demo.Utility; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Second.cs"),
+        "namespace Demo.Utility; class Helper { public static int Utility(int value) => value; }
+class Other { public static int Utility(int value) => value; }
+class UniqueHelper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AmbiguousType.cs"),
+        "using static Demo.Utility.Helper;
+namespace Demo.App; class AmbiguousType { int Call() => Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("MultipleImports.cs"),
+        "using static Demo.Utility.Other;
+using static Demo.Utility.UniqueHelper;
+namespace Demo.App; class MultipleImports { int Call() => Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("DuplicateImport.cs"),
+        "using static Demo.Utility.UniqueHelper;
+using static Demo.Utility.UniqueHelper;
+namespace Demo.App; class DuplicateImport { int Call() => Utility(1); }
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::App::AmbiguousType::Call",
+        "Demo::App::MultipleImports::Call",
+        "Demo::App::DuplicateImport::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty());
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::App::AmbiguousType::Call",
+        "Demo::App::MultipleImports::Call",
+        "Demo::App::DuplicateImport::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty());
+    }
+}
+
+#[test]
 fn traces_java_explicit_this_method_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.java");

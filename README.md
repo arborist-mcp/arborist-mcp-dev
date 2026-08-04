@@ -58,13 +58,15 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
-  `Type.Method()` static calls from non-nested types, and file-root `using Alias = Fully.Qualified.Type;`
-  alias calls of the form `Alias.Method()`. Local forms target a unique same-file, exact-arity, non-`params`
-  declaration; globally qualified and file-root alias calls may resolve one unique workspace static declaration.
-  Alias targets must resolve to one indexed type, duplicate aliases or same-file type-name collisions fail closed,
-  and simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
-  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are supported.
-  Dependency refresh, namespace-scoped aliases, `global using`, `using static`, ordinary imports, other member
+  `Type.Method()` static calls from non-nested types, file-root `using Alias = Fully.Qualified.Type;` alias
+  calls of the form `Alias.Method()`, and file-root `using static Fully.Qualified.Type;` bare method calls.
+  Local forms target a unique same-file, exact-arity, non-`params` declaration; globally qualified, alias, and
+  static-import calls may resolve one unique workspace static declaration. Alias and static-import targets must
+  resolve to one indexed type. Duplicate aliases, duplicate static imports, same-file type-name collisions, and
+  competing static-import targets fail closed; static imports are considered only when no same-type method has the
+  bare call's name. Simple type receivers must not be shadowed by a local, parameter, type parameter, or type
+  member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors
+  are supported. Dependency refresh, namespace-scoped aliases, `global using`, ordinary imports, other member
   dispatch, overload type selection, and patching remain explicitly unavailable until dedicated C# adapter slices
   establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

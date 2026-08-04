@@ -5,7 +5,9 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
-    CSharpImportContext, CSharpTypeAliasBinding, resolve_csharp_type_alias_binding_for_reference,
+    CSharpImportContext, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
+    resolve_csharp_static_type_imports_for_reference,
+    resolve_csharp_type_alias_binding_for_reference,
 };
 use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
 use super::super::java::{
@@ -356,29 +358,56 @@ fn resolve_reference_path_with_deadline<'a>(
                 },
             ));
         }
-        let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
-            if method_name.is_empty() || method_name.contains('.') {
-                return Ok(None);
-            }
-            method_name
-        } else {
-            if reference_name.contains('.') {
-                return Ok(None);
-            }
-            reference_name
-        };
+        let (method_name, has_explicit_this_receiver) =
+            if let Some(method_name) = reference_name.strip_prefix("this.") {
+                if method_name.is_empty() || method_name.contains('.') {
+                    return Ok(None);
+                }
+                (method_name, true)
+            } else {
+                if reference_name.contains('.') {
+                    return Ok(None);
+                }
+                (reference_name, false)
+            };
         let target_path = format!("{scope_path}::{method_name}");
-        return Ok(resolve_csharp_candidate(
+        let has_same_type_method = semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .any(|index| {
+                let candidate = &raw_symbols[index];
+                candidate.file_path == source_symbol.file_path
+                    && candidate.node_kind == "method_declaration"
+            });
+        if has_explicit_this_receiver || has_same_type_method {
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                call_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: false,
+                    require_same_file: true,
+                },
+            ));
+        }
+        let static_type_imports = resolve_csharp_static_type_imports_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?;
+        return Ok(resolve_csharp_static_type_imported_method(
             raw_symbols,
             semantic_path_index,
-            &target_path,
-            Some(source_symbol),
+            &static_type_imports,
+            method_name,
             call_arity,
-            CSharpCandidateRequirements {
-                node_kind: "method_declaration",
-                require_static: false,
-                require_same_file: true,
-            },
         ));
     }
     if language_id == Some(LanguageId::Java) {
@@ -838,6 +867,46 @@ fn csharp_alias_name_is_unshadowed(
             && candidate.base_name == alias_name
             && csharp_is_type_declaration(candidate)
     })
+}
+
+fn resolve_csharp_static_type_imported_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    bindings: &[CSharpStaticTypeImportBinding],
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    for binding in bindings {
+        let type_candidates = semantic_path_index
+            .get(&binding.semantic_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .count();
+        if type_candidates != 1 {
+            return None;
+        }
+        let target_path = format!("{}::{method_name}", binding.semantic_type_path);
+        candidates.extend(
+            semantic_path_index
+                .get(&target_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.node_kind == "method_declaration"
+                        && candidate.parameters.len() == call_arity
+                        && !candidate.parameters.iter().any(|parameter| {
+                            parameter.split_whitespace().any(|part| part == "params")
+                        })
+                        && csharp_method_is_static(candidate)
+                }),
+        );
+    }
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
 fn resolve_csharp_imported_static_method(
