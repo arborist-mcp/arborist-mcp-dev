@@ -846,28 +846,7 @@ fn csharp_simple_type_static_target_path(
     {
         return None;
     }
-    let source_type_path = source_symbol.scope_path.as_deref()?;
-    let source_type_candidates = raw_symbols
-        .iter()
-        .filter(|candidate| {
-            candidate.file_path == source_symbol.file_path
-                && candidate.semantic_path == source_type_path
-                && csharp_is_type_declaration(candidate)
-        })
-        .count();
-    if source_type_candidates != 1 {
-        return None;
-    }
-    let namespace_path = source_type_path.rsplit_once("::").map(|(parent, _)| parent);
-    if let Some(parent_type_path) = namespace_path
-        && raw_symbols.iter().any(|candidate| {
-            candidate.file_path == source_symbol.file_path
-                && candidate.semantic_path == parent_type_path
-                && csharp_is_type_declaration(candidate)
-        })
-    {
-        return None;
-    }
+    let namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
     let target_type_path = namespace_path
         .map(|namespace_path| format!("{namespace_path}::{type_name}"))
         .unwrap_or_else(|| type_name.to_string());

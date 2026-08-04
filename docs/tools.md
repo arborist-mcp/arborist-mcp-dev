@@ -49,7 +49,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
-  `Type.Method()` static calls from non-nested types, explicit type-alias calls of the form `Alias.Method()`,
+  `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, and file-root
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Type aliases, static imports, and namespace
   imports may appear at file root or directly in a block/file-scoped namespace; an exact namespace alias shadows a

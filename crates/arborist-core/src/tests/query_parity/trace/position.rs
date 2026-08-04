@@ -354,7 +354,7 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
 
     let static_target = "GlobalHelper::Utility";
     let static_live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
-    assert_eq!(static_live.callers.len(), 2);
+    assert_eq!(static_live.callers.len(), 3);
     assert_eq!(
         static_live
             .callers
@@ -363,12 +363,13 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
             .collect::<Vec<_>>(),
         [
             "Counter::GlobalStaticCaller",
+            "Outer::Nested::NestedStaticCaller",
             "SimpleCaller::LocalStaticCaller"
         ]
     );
     let static_persisted =
         trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
-    assert_eq!(static_persisted.callers.len(), 2);
+    assert_eq!(static_persisted.callers.len(), 3);
     assert_eq!(
         static_persisted
             .callers
@@ -377,6 +378,7 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
             .collect::<Vec<_>>(),
         [
             "Counter::GlobalStaticCaller",
+            "Outer::Nested::NestedStaticCaller",
             "SimpleCaller::LocalStaticCaller"
         ]
     );

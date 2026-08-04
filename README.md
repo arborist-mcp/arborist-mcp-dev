@@ -58,7 +58,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
-  `Type.Method()` static calls from non-nested types, explicit type-alias calls of the form `Alias.Method()`,
+  `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, and file-root `using Fully.Qualified.Namespace;` calls
   of the form `Type.Method()`. Type aliases, static imports, and namespace imports may appear at file root or
   directly in a block/file-scoped namespace; an exact namespace alias shadows a root alias with the same local
@@ -548,7 +548,7 @@ for response shapes, error behavior, and examples.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, unique simple same-namespace
-  `Type.Method()` static calls across the workspace from non-nested types, type aliases and static imports at file
+  `Type.Method()` static calls across the workspace, including from nested source types, type aliases and static imports at file
   root or directly in block/file-scoped namespaces, and namespace-import `Type.Method()` calls. Exact namespace
   aliases shadow root aliases; root and exact namespace static/ordinary imports are both considered; same-type
   unqualified/`this.` forms remain same-file. Imported and qualified static targets must be unique, static,
