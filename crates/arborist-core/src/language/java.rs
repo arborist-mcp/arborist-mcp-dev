@@ -14,15 +14,28 @@ pub(crate) struct JavaLocalTypeImport {
     pub(crate) source_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JavaLocalStaticMemberImport {
+    pub(crate) local_name: String,
+    pub(crate) semantic_type_path: String,
+    pub(crate) source_path: PathBuf,
+}
+
 pub(crate) fn java_local_file_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
-    Ok(java_local_explicit_type_imports(path, root, source)?
+    let mut dependencies = java_local_explicit_type_imports(path, root, source)?
         .into_iter()
         .map(|import| import.source_path)
-        .collect())
+        .collect::<BTreeSet<_>>();
+    dependencies.extend(
+        java_local_explicit_static_member_imports(path, root, source)?
+            .into_iter()
+            .map(|import| import.source_path),
+    );
+    Ok(dependencies)
 }
 
 pub(crate) fn java_local_explicit_type_imports(
@@ -37,7 +50,7 @@ pub(crate) fn java_local_explicit_type_imports(
         if node.kind() != "import_declaration" {
             continue;
         }
-        let Some(import_path) = java_explicit_import_path(node, source)? else {
+        let Some(import_path) = java_explicit_type_import_path(node, source)? else {
             continue;
         };
         let Some(source_path) = resolve_unique_java_source_path(path, &import_path) else {
@@ -62,11 +75,59 @@ pub(crate) fn java_local_explicit_type_imports(
     Ok(imports)
 }
 
-fn java_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<String>> {
-    let text = node_text(node, source)?.trim();
-    if text.split_whitespace().nth(1) == Some("static") {
-        return Ok(None);
+pub(crate) fn java_local_explicit_static_member_imports(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<JavaLocalStaticMemberImport>> {
+    let normalized_path = normalize_absolute_path(path)?;
+    let mut imports = Vec::new();
+    let mut cursor = root.walk();
+    for node in root.named_children(&mut cursor) {
+        if node.kind() != "import_declaration" {
+            continue;
+        }
+        let Some(import_path) = java_explicit_static_member_import_path(node, source)? else {
+            continue;
+        };
+        let Some((type_path, local_name)) = import_path.rsplit_once('.') else {
+            continue;
+        };
+        if type_path.is_empty() || local_name.is_empty() {
+            continue;
+        }
+        let Some(source_path) = resolve_unique_java_source_path(path, type_path) else {
+            continue;
+        };
+        if source_path == normalized_path {
+            continue;
+        }
+        imports.push(JavaLocalStaticMemberImport {
+            local_name: local_name.to_string(),
+            semantic_type_path: type_path.replace('.', "::"),
+            source_path,
+        });
     }
+    Ok(imports)
+}
+
+fn java_explicit_type_import_path(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some((is_static, import_path)) = java_explicit_import_path(node, source)? else {
+        return Ok(None);
+    };
+    Ok((!is_static).then_some(import_path))
+}
+
+fn java_explicit_static_member_import_path(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some((is_static, import_path)) = java_explicit_import_path(node, source)? else {
+        return Ok(None);
+    };
+    Ok(is_static.then_some(import_path))
+}
+
+fn java_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<(bool, String)>> {
+    let text = node_text(node, source)?.trim();
+    let is_static = text.split_whitespace().nth(1) == Some("static");
 
     let mut cursor = node.walk();
     let children = node.named_children(&mut cursor).collect::<Vec<_>>();
@@ -83,7 +144,7 @@ fn java_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<Stri
     if import_path.is_empty() || !is_safe_java_qualified_name(&import_path) {
         return Ok(None);
     }
-    Ok(Some(import_path))
+    Ok(Some((is_static, import_path)))
 }
 
 fn resolve_unique_java_source_path(path: &Path, import_path: &str) -> Option<PathBuf> {
@@ -153,7 +214,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{java_local_explicit_type_imports, java_local_file_dependency_paths};
+    use super::{
+        java_local_explicit_static_member_imports, java_local_explicit_type_imports,
+        java_local_file_dependency_paths,
+    };
     use crate::language::parse_document;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -164,6 +228,7 @@ mod tests {
         let source_path = root.join("src/com/example/Main.java");
         let helper_path = root.join("src/com/example/Helper.java");
         let widget_path = root.join("src/com/example/types/Widget.java");
+        let static_helper_path = root.join("src/com/example/StaticHelper.java");
         let mismatched_helper_path = root.join("src/com/example/com/example/Helper.java");
         fs::create_dir_all(source_path.parent().unwrap()).unwrap();
         fs::create_dir_all(widget_path.parent().unwrap()).unwrap();
@@ -171,11 +236,16 @@ mod tests {
         fs::write(&helper_path, "package com.example; class Helper {}\n").unwrap();
         fs::write(&widget_path, "package com.example.types; class Widget {}\n").unwrap();
         fs::write(
+            &static_helper_path,
+            "package com.example; class StaticHelper {}\n",
+        )
+        .unwrap();
+        fs::write(
             &mismatched_helper_path,
             "package unrelated; class Helper {}\n",
         )
         .unwrap();
-        let source = "package com.example;\nimport com.example.Helper;\nimport com.example.types.Widget;\nimport static com.example.Helper.VALUE;\nimport com.example.Missing;\n";
+        let source = "package com.example;\nimport com.example.Helper;\nimport com.example.types.Widget;\nimport static com.example.StaticHelper.utility;\nimport static com.example.StaticHelper.*;\nimport com.example.Missing;\n";
         fs::write(&source_path, source).unwrap();
         let document = parse_document(&source_path, source).unwrap();
 
@@ -185,9 +255,13 @@ mod tests {
 
         assert_eq!(
             dependencies,
-            [helper_path.clone(), widget_path.clone()]
-                .into_iter()
-                .collect()
+            [
+                helper_path.clone(),
+                static_helper_path.clone(),
+                widget_path.clone(),
+            ]
+            .into_iter()
+            .collect()
         );
         assert_eq!(
             java_local_explicit_type_imports(&source_path, document.tree.root_node(), source)
@@ -204,6 +278,19 @@ mod tests {
                     source_path: widget_path,
                 },
             ]
+        );
+        assert_eq!(
+            java_local_explicit_static_member_imports(
+                &source_path,
+                document.tree.root_node(),
+                source,
+            )
+            .unwrap(),
+            vec![super::JavaLocalStaticMemberImport {
+                local_name: "utility".to_string(),
+                semantic_type_path: "com::example::StaticHelper".to_string(),
+                source_path: static_helper_path,
+            }]
         );
         let _ = fs::remove_dir_all(root);
     }

@@ -210,7 +210,7 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
 
     assert_eq!(descriptor.display_name, "Java");
     assert_eq!(descriptor.extensions, &["java"]);
-    assert_eq!(descriptor.analysis_revision, "java-this-trace-v1");
+    assert_eq!(descriptor.analysis_revision, "java-static-import-trace-v1");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,

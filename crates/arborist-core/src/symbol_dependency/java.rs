@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    detect_language, java_local_explicit_type_imports, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    detect_language, java_local_explicit_static_member_imports, java_local_explicit_type_imports,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -18,7 +18,8 @@ pub(in crate::symbol_dependency) struct JavaImportBinding {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct JavaImportContext {
-    bindings: BTreeMap<String, JavaImportBinding>,
+    type_bindings: BTreeMap<String, JavaImportBinding>,
+    static_method_bindings: BTreeMap<String, JavaImportBinding>,
 }
 
 fn java_import_context_for_file_with_overrides_and_deadline(
@@ -56,28 +57,58 @@ fn java_import_context_for_file_with_overrides_and_deadline(
         return Ok(JavaImportContext::default());
     }
 
-    let mut bindings = BTreeMap::new();
-    let mut ambiguous_names = BTreeSet::new();
+    let mut type_bindings = BTreeMap::new();
+    let mut ambiguous_type_names = BTreeSet::new();
     for import in java_local_explicit_type_imports(path, root, &source)? {
         if let Some(deadline) = deadline {
-            deadline.check("extracting Java import bindings")?;
+            deadline.check("extracting Java type import bindings")?;
         }
-        if ambiguous_names.contains(&import.local_name) {
-            continue;
-        }
-        let binding = JavaImportBinding {
-            semantic_path: import.semantic_path,
-            source_path: normalize_path(&import.source_path),
-        };
-        if bindings
-            .insert(import.local_name.clone(), binding)
-            .is_some()
-        {
-            bindings.remove(&import.local_name);
-            ambiguous_names.insert(import.local_name);
-        }
+        insert_unique_java_import_binding(
+            &mut type_bindings,
+            &mut ambiguous_type_names,
+            import.local_name,
+            JavaImportBinding {
+                semantic_path: import.semantic_path,
+                source_path: normalize_path(&import.source_path),
+            },
+        );
     }
-    Ok(JavaImportContext { bindings })
+
+    let mut static_method_bindings = BTreeMap::new();
+    let mut ambiguous_static_method_names = BTreeSet::new();
+    for import in java_local_explicit_static_member_imports(path, root, &source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting Java static import bindings")?;
+        }
+        insert_unique_java_import_binding(
+            &mut static_method_bindings,
+            &mut ambiguous_static_method_names,
+            import.local_name,
+            JavaImportBinding {
+                semantic_path: import.semantic_type_path,
+                source_path: normalize_path(&import.source_path),
+            },
+        );
+    }
+    Ok(JavaImportContext {
+        type_bindings,
+        static_method_bindings,
+    })
+}
+
+fn insert_unique_java_import_binding(
+    bindings: &mut BTreeMap<String, JavaImportBinding>,
+    ambiguous_names: &mut BTreeSet<String>,
+    local_name: String,
+    binding: JavaImportBinding,
+) {
+    if ambiguous_names.contains(&local_name) {
+        return;
+    }
+    if bindings.insert(local_name.clone(), binding).is_some() {
+        bindings.remove(&local_name);
+        ambiguous_names.insert(local_name);
+    }
 }
 
 pub(in crate::symbol_dependency) fn resolve_java_import_binding_for_reference(
@@ -100,10 +131,30 @@ pub(in crate::symbol_dependency) fn resolve_java_import_binding_for_reference(
         contexts_by_file,
         deadline,
     )?;
-    let Some(binding) = context.bindings.get(local_type_name) else {
+    let Some(binding) = context.type_bindings.get(local_type_name) else {
         return Ok(None);
     };
     Ok(Some((method_name.to_string(), binding.clone())))
+}
+
+pub(in crate::symbol_dependency) fn resolve_java_static_method_import_binding_for_reference(
+    source_file_path: &str,
+    reference_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaImportBinding>> {
+    if reference_name.is_empty() || reference_name.contains('.') {
+        return Ok(None);
+    }
+
+    let context = java_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context.static_method_bindings.get(reference_name).cloned())
 }
 
 fn java_import_context_from_cache(

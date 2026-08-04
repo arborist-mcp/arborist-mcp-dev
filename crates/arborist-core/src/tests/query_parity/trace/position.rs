@@ -290,6 +290,83 @@ fn traces_java_explicit_this_method_calls_in_live_workspace_and_persisted_index(
 }
 
 #[test]
+fn traces_java_explicit_local_static_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let helper_path = source_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example;\nimport static com.example.Helper.utility;\nimport static com.example.Helper.instance;\nclass Main {\n    int caller() { return utility(1); }\n    int nonStatic() { return instance(1); }\n}\nclass Competing {\n    int utility(long value) { return (int) value; }\n    int caller() { return utility(1); }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package com.example;\nclass Helper {\n    static int utility(int value) { return value; }\n    int instance(int value) { return value; }\n}\n",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::utility";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+
+    let instance_symbol = "com::example::Helper::instance";
+    let live_instance = trace_symbol_graph(&dir, instance_symbol, TraceDirection::Callers).unwrap();
+    assert!(live_instance.callers.is_empty());
+    let persisted_instance =
+        trace_symbol_graph_from_index(&db_path, instance_symbol, TraceDirection::Callers).unwrap();
+    assert!(persisted_instance.callers.is_empty());
+}
+
+#[test]
+fn ignores_ambiguous_java_explicit_static_import_calls_in_live_and_persisted_indexes() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let first_path = source_dir.join("First.java");
+    let second_path = source_dir.join("Second.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example;\nimport static com.example.First.utility;\nimport static com.example.Second.utility;\nclass Main { int caller() { return utility(1); } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &first_path,
+        "package com.example; class First { static int utility(int value) { return value; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_path,
+        "package com.example; class Second { static int utility(int value) { return value; } }\n",
+    )
+    .unwrap();
+
+    let first_symbol = "com::example::First::utility";
+    let live = trace_symbol_graph(&dir, first_symbol, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, first_symbol, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_java_explicit_local_import_static_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");

@@ -5,7 +5,10 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
-use super::super::java::{JavaImportContext, resolve_java_import_binding_for_reference};
+use super::super::java::{
+    JavaImportBinding, JavaImportContext, resolve_java_import_binding_for_reference,
+    resolve_java_static_method_import_binding_for_reference,
+};
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
@@ -270,30 +273,13 @@ fn resolve_reference_path_with_deadline<'a>(
             java_import_contexts_by_file,
             deadline,
         )? {
-            let target_path = format!("{}::{method_name}", binding.semantic_path);
-            let candidates = semantic_path_index
-                .get(&target_path)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|index| {
-                    let candidate = &raw_symbols[*index];
-                    candidate.file_path == binding.source_path
-                        && candidate.node_kind == "method_declaration"
-                        && candidate
-                            .signature
-                            .as_deref()
-                            .is_some_and(java_method_signature_is_static)
-                        && candidate.parameters.len() == call_arity
-                        && !candidate
-                            .parameters
-                            .iter()
-                            .any(|parameter| parameter.contains("..."))
-                })
-                .collect::<Vec<_>>();
-            return Ok(
-                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
-            );
+            return Ok(resolve_java_imported_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &binding,
+                &method_name,
+                call_arity,
+            ));
         }
 
         let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
@@ -308,7 +294,7 @@ fn resolve_reference_path_with_deadline<'a>(
             return Ok(None);
         };
         let target_path = format!("{scope_path}::{method_name}");
-        let candidates = semantic_path_index
+        let same_type_candidates = semantic_path_index
             .get(&target_path)
             .into_iter()
             .flatten()
@@ -317,14 +303,42 @@ fn resolve_reference_path_with_deadline<'a>(
                 let candidate = &raw_symbols[*index];
                 candidate.file_path == source_symbol.file_path
                     && candidate.node_kind == "method_declaration"
-                    && candidate.parameters.len() == call_arity
+            })
+            .collect::<Vec<_>>();
+        let candidates = same_type_candidates
+            .iter()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.parameters.len() == call_arity
                     && !candidate
                         .parameters
                         .iter()
                         .any(|parameter| parameter.contains("..."))
             })
             .collect::<Vec<_>>();
-        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+        if !same_type_candidates.is_empty() || method_name != reference_name {
+            return Ok(
+                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
+        let Some(binding) = resolve_java_static_method_import_binding_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(resolve_java_imported_static_method(
+            raw_symbols,
+            semantic_path_index,
+            &binding,
+            reference_name,
+            call_arity,
+        ));
     }
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
         python_reference_lookup(reference_name)
@@ -584,6 +598,37 @@ fn resolve_reference_path_with_deadline<'a>(
         deadline.check("ranking reference candidates")?;
     }
     Ok(selected)
+}
+
+fn resolve_java_imported_static_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    binding: &JavaImportBinding,
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let target_path = format!("{}::{method_name}", binding.semantic_path);
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == binding.source_path
+                && candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_static)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
 fn java_method_signature_is_static(signature: &str) -> bool {

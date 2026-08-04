@@ -56,15 +56,16 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
-  file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
-  constructors are indexed by package-qualified paths. It traces unqualified and `this.method()`
-  calls to a single same-type, same-file, non-varargs method with a unique arity match, plus
-  `Type.method()` calls
-  through a unique explicit non-static local type import when the type name is unshadowed and the
-  imported static method has a unique exact arity match. Wildcard/static imports, missing or
-  ambiguous imports, instance/member dispatch, overloaded-call selection, and patch operations
-  remain capability-gated.
+  conservative dependency refresh for explicit local type imports and single-member `import static`
+  imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,
+  interfaces, enums, annotation types, methods, and constructors are indexed by package-qualified
+  paths. It traces unqualified and `this.method()` calls to a single same-type, same-file,
+  non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
+  non-static local type import when the type name is unshadowed; and bare calls through a unique
+  explicit local static-method import when no same-type method has that name. Imported targets must
+  be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
+  field/type imports, missing or ambiguous imports, instance/member dispatch, overloaded-call
+  selection, and patch operations remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -527,14 +528,15 @@ for response shapes, error behavior, and examples.
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
-  conservative refresh for unique explicit non-static imports mapped to a local `.java` file under
-  an ancestor source root. It traces unqualified and `this.method()` calls when one same-type,
-  same-file, non-varargs method matches the call arity, and `Type.method()` calls only through a
-  unique explicit non-static
-  local type import with an unshadowed type name and a unique imported static-method arity match.
-  Wildcard/static imports, missing or ambiguous imports, instance/member dispatch,
-  overloaded-call selection, and patching remain capability-gated pending dedicated Java resolution
-  fixtures.
+  conservative refresh for explicit local type imports and single-member `import static` imports
+  whose owning type maps to a local `.java` file under an ancestor source root. It traces
+  unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches
+  the call arity; `Type.method()` through a unique explicit non-static local type import with an
+  unshadowed type name; and a bare call through a unique explicit local static-method import only
+  when no same-type method has that name. Imported targets require a unique static-method arity
+  match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
+  imports, instance/member dispatch, overloaded-call selection, and patching remain capability-gated
+  pending dedicated Java resolution fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -558,11 +560,12 @@ static local-package dependency refresh under the nearest valid simple `go.mod` 
 same-file bare plus unambiguous local-package imported-function direct-call graph tracing. Java
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
-conservative refresh for unique explicit non-static imports that map to a local `.java` file under
-an ancestor source root, plus unqualified and `this.method()` calls to a unique same-type,
-same-file non-varargs method with a matching arity and `Type.method()` calls through a unique
-explicit local type import to an
-unshadowed static method with an exact arity. General cross-file/package/import resolution,
+conservative refresh for explicit local type imports and single-member `import static` imports
+whose owning type maps to a local `.java` file under an ancestor source root. It traces unqualified
+and `this.method()` calls to a unique same-type, same-file non-varargs method with a matching arity,
+`Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
+unique explicit local static-method imports only when no same-type method has that name. Imported
+trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
 instance/member dispatch, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.

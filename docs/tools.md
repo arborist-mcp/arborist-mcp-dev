@@ -47,15 +47,16 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
-  file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
-  constructors use package-qualified paths. It traces unqualified and `this.method()` calls only
-  when one same-type, same-file, non-varargs method has the call arity, and `Type.method()` only
-  through a unique
-  explicit non-static local type import with an unshadowed type name and a unique imported static
-  method arity match. Wildcard/static imports, missing or ambiguous imports, instance/member
-  dispatch, overloaded-call selection, and patch operations return explicit unsupported-operation
-  errors.
+  conservative dependency refresh for explicit local type imports and single-member `import static`
+  imports whose owning type maps to a local `.java` file under an ancestor source root. Classes,
+  interfaces, enums, annotation types, methods, and constructors use package-qualified paths. It
+  traces unqualified and `this.method()` calls only when one same-type, same-file, non-varargs
+  method has the call arity; `Type.method()` through a unique explicit non-static local type import
+  with an unshadowed type name; and a bare call through a unique explicit local static-method import
+  only when no same-type method has that name. Imported targets require a unique static-method arity
+  match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
+  imports, instance/member dispatch, overloaded-call selection, and patch operations return explicit
+  unsupported-operation errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover
