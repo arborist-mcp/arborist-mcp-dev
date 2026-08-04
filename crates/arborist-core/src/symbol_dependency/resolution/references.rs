@@ -1007,7 +1007,7 @@ fn csharp_base_type_path(
         );
     }
     if binding.semantic_type_path.contains("::") {
-        return None;
+        return csharp_unshadowed_qualified_base_type_path(source_symbol, raw_symbols, binding);
     }
 
     let base_type_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
@@ -1045,6 +1045,30 @@ fn csharp_base_type_path(
         }
     }
     (imported_type_paths.len() == 1).then(|| imported_type_paths.into_iter().next().unwrap())
+}
+
+fn csharp_unshadowed_qualified_base_type_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+) -> Option<String> {
+    let base_type_path = binding.semantic_type_path.as_str();
+    if let Some(mut namespace_path) = csharp_source_namespace_path(source_symbol, raw_symbols)? {
+        loop {
+            let relative_type_path = format!("{namespace_path}::{base_type_path}");
+            if raw_symbols.iter().any(|candidate| {
+                candidate.semantic_path == relative_type_path
+                    && csharp_is_type_declaration(candidate)
+            }) {
+                return None;
+            }
+            let Some((parent_namespace_path, _)) = namespace_path.rsplit_once("::") else {
+                break;
+            };
+            namespace_path = parent_namespace_path;
+        }
+    }
+    csharp_unique_base_constructible_type_path(raw_symbols, base_type_path)
 }
 
 fn csharp_unique_base_constructible_type_path(

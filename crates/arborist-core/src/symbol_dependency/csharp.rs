@@ -350,7 +350,26 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
     else {
         return Ok(None);
     };
-    if !binding.is_global_qualified && !binding.semantic_type_path.contains("::") {
+    if !binding.is_global_qualified && binding.semantic_type_path.contains("::") {
+        let Some(first_segment) = binding.semantic_type_path.split("::").next() else {
+            return Ok(None);
+        };
+        for scope_path in csharp_import_scope_paths(source_namespace_path) {
+            let key = (scope_path, first_segment.to_string());
+            if context.ambiguous_type_alias_names.contains(&key)
+                || context.type_alias_bindings.contains_key(&key)
+            {
+                return Ok(None);
+            }
+        }
+        if let Some(global_import_context) = global_import_context
+            && (csharp_global_base_type_alias_is_ambiguous(first_segment, global_import_context)
+                || resolve_csharp_global_base_type_alias(first_segment, global_import_context)
+                    .is_some())
+        {
+            return Ok(None);
+        }
+    } else if !binding.is_global_qualified {
         let local_name = binding.semantic_type_path.clone();
         let scope_paths = csharp_import_scope_paths(source_namespace_path);
         for scope_path in &scope_paths {

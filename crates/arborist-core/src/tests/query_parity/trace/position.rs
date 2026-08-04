@@ -908,6 +908,124 @@ class CollisionDerived : BaseAlias {
 }
 
 #[test]
+fn traces_csharp_unshadowed_qualified_base_members_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Base {
+    public Base(int value) {}
+    public int Ping(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Other;
+class Derived : Demo.Base {
+    Derived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for target in ["Demo::Base::Base", "Demo::Base::Ping"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                ["Other::Derived::Derived"]
+            } else {
+                ["Other::Derived::Call"]
+            }
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["Demo::Base::Base", "Demo::Base::Ping"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                ["Other::Derived::Derived"]
+            } else {
+                ["Other::Derived::Call"]
+            }
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_shadowed_csharp_qualified_base_members() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Bases.cs"),
+        "namespace Demo { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+namespace Other { class Base { public Base(int value) {} public int Ping(int value) => value; } }
+namespace App { namespace Demo { class Base { public Base(int value) {} public int Ping(int value) => value; } } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Alias.cs"),
+        "using Demo = Other;
+namespace App;
+class AliasDerived : Demo.Base {
+    AliasDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Relative.cs"),
+        "namespace App;
+class RelativeDerived : Demo.Base {
+    RelativeDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "App::AliasDerived::AliasDerived",
+        "App::AliasDerived::Call",
+        "App::RelativeDerived::RelativeDerived",
+        "App::RelativeDerived::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "App::AliasDerived::AliasDerived",
+        "App::AliasDerived::Call",
+        "App::RelativeDerived::RelativeDerived",
+        "App::RelativeDerived::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn does_not_trace_ambiguous_or_qualified_csharp_base_member_calls() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
