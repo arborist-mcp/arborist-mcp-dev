@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::normalize_path;
+use crate::language::{node_text, normalize_path};
 use crate::semantic::go::{
     go_parameters, go_return_type, go_semantic_path, go_signature, go_symbol_name,
     is_go_symbol_node,
@@ -35,7 +35,7 @@ fn collect_symbols(
         deadline.check("extracting Go symbols")?;
     }
     if is_go_symbol_node(node)
-        && let Some(symbol) = indexed_symbol(path, source, node)?
+        && let Some(symbol) = indexed_symbol(path, source, node, deadline)?
     {
         symbols.push(symbol);
     }
@@ -47,7 +47,12 @@ fn collect_symbols(
     Ok(())
 }
 
-fn indexed_symbol(path: &Path, source: &str, node: Node<'_>) -> Result<Option<IndexedSymbol>> {
+fn indexed_symbol(
+    path: &Path,
+    source: &str,
+    node: Node<'_>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<IndexedSymbol>> {
     let Some(name) = go_symbol_name(node, source)? else {
         return Ok(None);
     };
@@ -57,7 +62,7 @@ fn indexed_symbol(path: &Path, source: &str, node: Node<'_>) -> Result<Option<In
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let references_by_name = BTreeSet::new();
+    let references_by_name = collect_direct_local_calls(node, source, deadline)?;
     let call_arities_by_name = BTreeMap::new();
 
     Ok(Some(IndexedSymbol {
@@ -79,6 +84,208 @@ fn indexed_symbol(path: &Path, source: &str, node: Node<'_>) -> Result<Option<In
     }))
 }
 
+fn collect_direct_local_calls(
+    symbol_node: Node<'_>,
+    source: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<BTreeSet<String>> {
+    if !matches!(
+        symbol_node.kind(),
+        "function_declaration" | "method_declaration"
+    ) {
+        return Ok(BTreeSet::new());
+    }
+    let Some(body) = symbol_node.child_by_field_name("body") else {
+        return Ok(BTreeSet::new());
+    };
+    let local_functions = source_file_function_paths(symbol_node, source)?;
+    if local_functions.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+
+    let mut bindings = BTreeSet::new();
+    collect_function_bindings(symbol_node, source, &mut bindings)?;
+    let mut references = BTreeSet::new();
+    collect_direct_local_calls_from_node(
+        body,
+        source,
+        deadline,
+        &local_functions,
+        &bindings,
+        &mut references,
+    )?;
+    Ok(references)
+}
+
+fn source_file_function_paths(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut paths_by_name = BTreeMap::<String, Vec<String>>::new();
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() != "function_declaration" {
+            continue;
+        }
+        let Some(name) = go_symbol_name(child, source)? else {
+            continue;
+        };
+        let Some(path) = go_semantic_path(child, source, &name)? else {
+            continue;
+        };
+        paths_by_name.entry(name).or_default().push(path);
+    }
+
+    Ok(paths_by_name
+        .into_iter()
+        .filter_map(|(name, paths)| (paths.len() == 1).then(|| (name, paths[0].clone())))
+        .collect())
+}
+
+fn collect_function_bindings(
+    symbol_node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    for field_name in ["receiver", "parameters"] {
+        if let Some(parameters) = symbol_node.child_by_field_name(field_name) {
+            collect_parameter_bindings(parameters, source, bindings)?;
+        }
+    }
+    if let Some(body) = symbol_node.child_by_field_name("body") {
+        collect_body_bindings(body, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn collect_parameter_bindings(
+    parameters: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        collect_field_name_bindings(parameter, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn collect_body_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    if node.kind() == "function_literal" {
+        return Ok(());
+    }
+    match node.kind() {
+        "var_spec" | "const_spec" | "parameter_declaration" | "variadic_parameter_declaration" => {
+            collect_field_name_bindings(node, source, bindings)?
+        }
+        "short_var_declaration" | "range_clause" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                collect_expression_list_identifier_bindings(left, source, bindings)?;
+            }
+        }
+        "type_switch_statement" => {
+            if let Some(alias) = node.child_by_field_name("alias") {
+                collect_expression_list_identifier_bindings(alias, source, bindings)?;
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_body_bindings(child, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn collect_field_name_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for name in node.children_by_field_name("name", &mut cursor) {
+        collect_identifier_binding(name, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn collect_expression_list_identifier_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "identifier" {
+            collect_identifier_binding(child, source, bindings)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_identifier_binding(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut BTreeSet<String>,
+) -> Result<()> {
+    let name = node_text(node, source)?.trim();
+    if !name.is_empty() && name != "_" {
+        bindings.insert(name.to_string());
+    }
+    Ok(())
+}
+
+fn collect_direct_local_calls_from_node(
+    node: Node<'_>,
+    source: &str,
+    deadline: Option<&WorkspaceScanDeadline>,
+    local_functions: &BTreeMap<String, String>,
+    bindings: &BTreeSet<String>,
+    references: &mut BTreeSet<String>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("collecting Go direct calls")?;
+    }
+    if node.kind() == "function_literal" {
+        return Ok(());
+    }
+    if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+        && function.kind() == "identifier"
+    {
+        let name = node_text(function, source)?.trim();
+        if !name.is_empty()
+            && !bindings.contains(name)
+            && let Some(path) = local_functions.get(name)
+        {
+            references.insert(path.clone());
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_direct_local_calls_from_node(
+            child,
+            source,
+            deadline,
+            local_functions,
+            bindings,
+            references,
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -87,15 +294,22 @@ mod tests {
     use crate::language::parse_document;
 
     #[test]
-    fn indexes_go_named_types_functions_and_methods_without_references() {
+    fn indexes_go_named_types_functions_methods_and_unshadowed_direct_calls() {
         let source = r#"
 package metrics
 
 type Counter struct { value int }
 type Alias = Counter
 
+func helper() int { return 1 }
+func direct() int { return helper() }
+func shadowed_parameter(helper func() int) int { return helper() }
+func shadowed_variable() int {
+    helper := func() int { return 2 }
+    return helper()
+}
 func NewCounter(value int) Counter { return Counter{value: value} }
-func (counter *Counter) Increment(amount int) int { return counter.value + amount }
+func (counter *Counter) Increment(amount int) int { return helper() + amount }
 "#;
         let path = Path::new("metrics.go");
         let document = parse_document(path, source).unwrap();
@@ -107,7 +321,16 @@ func (counter *Counter) Increment(amount int) int { return counter.value + amoun
                 .iter()
                 .map(|symbol| symbol.semantic_path.as_str())
                 .collect::<Vec<_>>(),
-            vec!["Counter", "Alias", "NewCounter", "Counter::Increment"]
+            vec![
+                "Counter",
+                "Alias",
+                "helper",
+                "direct",
+                "shadowed_parameter",
+                "shadowed_variable",
+                "NewCounter",
+                "Counter::Increment",
+            ]
         );
         let increment = symbols
             .iter()
@@ -115,7 +338,23 @@ func (counter *Counter) Increment(amount int) int { return counter.value + amoun
             .unwrap();
         assert_eq!(increment.parameters, vec!["amount int"]);
         assert_eq!(increment.return_type.as_deref(), Some("int"));
-        assert!(increment.references_by_name.is_empty());
-        assert!(increment.reference_facts.is_empty());
+        assert_eq!(increment.references_by_name, ["helper".to_string()].into());
+
+        for caller_path in ["direct", "Counter::Increment"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(caller.references_by_name, ["helper".to_string()].into());
+            assert_eq!(caller.reference_facts.len(), 1);
+        }
+        for caller_path in ["shadowed_parameter", "shadowed_variable"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert!(caller.references_by_name.is_empty(), "{caller_path}");
+            assert!(caller.reference_facts.is_empty(), "{caller_path}");
+        }
     }
 }

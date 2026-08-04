@@ -187,7 +187,7 @@ fn resolve_reference_path_with_deadline<'a>(
         deadline.check("resolving reference candidates")?;
     }
     let call_arity = call_context.arity;
-    if language_id == Some(LanguageId::Rust) {
+    if matches!(language_id, Some(LanguageId::Rust | LanguageId::Go)) {
         let candidates = semantic_path_index
             .get(reference_name)
             .into_iter()

@@ -48,8 +48,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   remains explicitly unavailable.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local
-  receiver types, selected by semantic path or source position. Package dependency refresh, tracing,
-  and patching remain capability-gated.
+  receiver types, selected by semantic path or source position. It also traces unshadowed bare direct
+  calls to top-level functions declared in the same source file. Package dependency refresh,
+  cross-file/package/import resolution, method dispatch, and patching remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -504,8 +505,9 @@ for response shapes, error behavior, and examples.
   and import resolution remain unavailable. Patching remains capability-gated.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
-  types, selected by semantic path or source position. Package dependency refresh, trace, and patch
-  capabilities remain gated.
+  types, selected by semantic path or source position. It traces unshadowed bare direct calls to
+  top-level functions declared in the same source file. Package dependency refresh,
+  cross-file/package/import resolution, method dispatch, and patch capabilities remain gated.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -524,8 +526,9 @@ conservative local-module tracing, structural patching, source overlays, and
 persisted-index coverage. Phase 5 now includes Rust parsing, raw queries, semantic skeletons,
 conservative declaration indexing, local module dependency refresh, and conservative bare and
 inline-module-qualified direct-call graph tracing plus position identity. Go now has parsing, raw
-Tree-sitter queries, semantic skeletons, conservative declaration indexing, and source-position
-identity; package dependency, trace, and patch features remain deliberately capability-gated.
+Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
+and same-file bare direct-call graph tracing; package dependency, cross-file/package/import resolution,
+method dispatch, and patch features remain deliberately capability-gated.
 
 Remaining larger work includes:
 

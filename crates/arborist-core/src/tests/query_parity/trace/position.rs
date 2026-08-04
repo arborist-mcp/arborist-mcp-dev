@@ -220,3 +220,74 @@ fn traces_rust_qualified_inline_module_calls_in_live_workspace_and_persisted_ind
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
 }
+
+#[test]
+fn traces_go_unshadowed_same_file_direct_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\nfunc caller() int { return helper() }\nfunc helper() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "helper", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, "helper");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    let position = Position { row: 3, column: 5 };
+    let live_at_position =
+        trace_symbol_graph_at_position(&dir, &source_path, &position, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(live_at_position.symbol.symbol_id, "helper");
+    assert_eq!(live_at_position.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, "helper");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+
+    let persisted_at_position = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &source_path,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_at_position.symbol.symbol_id, "helper");
+    assert_eq!(persisted_at_position.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn does_not_trace_go_direct_calls_across_source_files() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let helper_path = dir.join("helper.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc caller() int { return helper() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package metrics\n\nfunc helper() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "helper", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert!(persisted.callers.is_empty());
+}

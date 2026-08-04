@@ -432,8 +432,8 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Go,
     display_name: "Go",
     extensions: GO_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_SUPPORT,
-    analysis_revision: "go-index-v2",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
+    analysis_revision: "go-trace-v1",
     grammar: go_grammar,
 };
 
