@@ -712,6 +712,150 @@ namespace Demo.App; class DuplicateImport { int Call() => Utility(1); }
 }
 
 #[test]
+fn traces_csharp_file_namespace_import_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo.Utility;
+class Helper {
+    public static int Utility(int value) => value;
+    public static int Flexible(params int[] values) => values.Length;
+    public int Instance(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "using Demo.Utility;
+namespace Demo.App;
+class Caller {
+    int Call() => Helper.Utility(1);
+    int InstanceCall() => Helper.Instance(1);
+    int ParamsCall() => Helper.Flexible(1);
+    int Shadowed(int Helper) => Helper.Utility(1);
+}
+",
+    )
+    .unwrap();
+
+    let static_target = "Demo::Utility::Helper::Utility";
+    let live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    for target in [
+        "Demo::Utility::Helper::Instance",
+        "Demo::Utility::Helper::Flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_shadowed_csharp_file_namespace_import_static_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Utility.cs"),
+        "namespace Demo.Utility; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Shared.cs"),
+        "namespace Demo.Shared; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Local.cs"),
+        "namespace Demo.App; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("FirstDuplicate.cs"),
+        "namespace Demo.Duplicate; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SecondDuplicate.cs"),
+        "namespace Demo.Duplicate; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("MultipleImports.cs"),
+        "using Demo.Utility;
+using Demo.Shared;
+namespace Demo.Client; class MultipleImports { int Call() => Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("DuplicateImport.cs"),
+        "using Demo.Utility;
+using Demo.Utility;
+namespace Demo.Client; class DuplicateImport { int Call() => Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SameNamespace.cs"),
+        "using Demo.Utility;
+namespace Demo.App; class SameNamespace { int Call() => Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("DuplicateType.cs"),
+        "using Demo.Duplicate;
+namespace Demo.Client; class DuplicateType { int Call() => Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Client::MultipleImports::Call",
+        "Demo::Client::DuplicateImport::Call",
+        "Demo::App::SameNamespace::Call",
+        "Demo::Client::DuplicateType::Call",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty());
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::Client::MultipleImports::Call",
+        "Demo::Client::DuplicateImport::Call",
+        "Demo::App::SameNamespace::Call",
+        "Demo::Client::DuplicateType::Call",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty());
+    }
+}
+
+#[test]
 fn traces_java_explicit_this_method_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.java");

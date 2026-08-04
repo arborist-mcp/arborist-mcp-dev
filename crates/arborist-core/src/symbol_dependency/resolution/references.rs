@@ -5,7 +5,8 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
-    CSharpImportContext, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
+    CSharpImportContext, CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding,
+    CSharpTypeAliasBinding, resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
 };
@@ -356,6 +357,32 @@ fn resolve_reference_path_with_deadline<'a>(
                     require_static: true,
                     require_same_file: true,
                 },
+            ));
+        }
+        if let Some((type_name, method_name)) = reference_name.split_once('.')
+            && !type_name.is_empty()
+            && type_name != "this"
+            && !type_name.starts_with("global::")
+            && !method_name.is_empty()
+            && !method_name.contains('.')
+        {
+            if !csharp_namespace_import_type_is_unshadowed(type_name, source_symbol, raw_symbols) {
+                return Ok(None);
+            }
+            let namespace_imports = resolve_csharp_namespace_imports_for_reference(
+                &source_symbol.file_path,
+                type_name,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            return Ok(resolve_csharp_namespace_imported_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &namespace_imports,
+                type_name,
+                method_name,
+                call_arity,
             ));
         }
         let (method_name, has_explicit_this_receiver) =
@@ -857,6 +884,56 @@ fn csharp_method_is_static(symbol: &IndexedSymbol) -> bool {
         .is_some_and(|signature| signature.split_whitespace().any(|part| part == "static"))
 }
 
+fn csharp_namespace_import_type_is_unshadowed(
+    type_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> bool {
+    let Some(namespace_path) = csharp_source_namespace_path(source_symbol, raw_symbols) else {
+        return false;
+    };
+    let target_path = namespace_path
+        .map(|namespace_path| format!("{namespace_path}::{type_name}"))
+        .unwrap_or_else(|| type_name.to_string());
+    !raw_symbols.iter().any(|candidate| {
+        candidate.semantic_path == target_path && csharp_is_type_declaration(candidate)
+    })
+}
+
+fn csharp_source_namespace_path<'a>(
+    source_symbol: &'a IndexedSymbol,
+    raw_symbols: &'a [IndexedSymbol],
+) -> Option<Option<&'a str>> {
+    let mut type_path = source_symbol.scope_path.as_deref()?;
+    if raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == type_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .count()
+        != 1
+    {
+        return None;
+    }
+
+    loop {
+        let Some((parent_path, _)) = type_path.rsplit_once("::") else {
+            return Some(None);
+        };
+        let parent_is_type = raw_symbols.iter().any(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == parent_path
+                && csharp_is_type_declaration(candidate)
+        });
+        if !parent_is_type {
+            return Some(Some(parent_path));
+        }
+        type_path = parent_path;
+    }
+}
+
 fn csharp_alias_name_is_unshadowed(
     alias_name: &str,
     source_symbol: &IndexedSymbol,
@@ -867,6 +944,48 @@ fn csharp_alias_name_is_unshadowed(
             && candidate.base_name == alias_name
             && csharp_is_type_declaration(candidate)
     })
+}
+
+fn resolve_csharp_namespace_imported_static_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    bindings: &[CSharpNamespaceImportBinding],
+    type_name: &str,
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    for binding in bindings {
+        let target_type_path = format!("{}::{type_name}", binding.semantic_namespace_path);
+        let type_candidates = semantic_path_index
+            .get(&target_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .count();
+        if type_candidates > 1 {
+            return None;
+        }
+        let target_path = format!("{target_type_path}::{method_name}");
+        candidates.extend(
+            semantic_path_index
+                .get(&target_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.node_kind == "method_declaration"
+                        && candidate.parameters.len() == call_arity
+                        && !candidate.parameters.iter().any(|parameter| {
+                            parameter.split_whitespace().any(|part| part == "params")
+                        })
+                        && csharp_method_is_static(candidate)
+                }),
+        );
+    }
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
 fn resolve_csharp_static_type_imported_method(

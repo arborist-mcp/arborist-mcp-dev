@@ -50,16 +50,18 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
   `Type.Method()` static calls from non-nested types, file-root `using Alias = Fully.Qualified.Type;` alias
-  calls of the form `Alias.Method()`, and file-root `using static Fully.Qualified.Type;` bare method calls.
-  Local forms target a unique same-file, exact-arity, non-`params` declaration; globally qualified, alias, and
-  static-import calls may resolve one unique workspace static declaration. Alias and static-import targets must
-  resolve to one indexed type. Duplicate aliases, duplicate static imports, same-file type-name collisions, and
-  competing static-import targets fail closed; static imports are considered only when no same-type method has the
-  bare call's name. Simple type receivers must not be shadowed by a local, parameter, type parameter, or type
-  member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors
-  are supported. Dependency refresh, namespace-scoped aliases, `global using`, ordinary imports, other member
-  dispatch, overload type selection, and patch operations return explicit unsupported-operation errors until
-  dedicated C# adapter slices establish their contracts and fixtures.
+  calls of the form `Alias.Method()`, file-root `using static Fully.Qualified.Type;` bare method calls, and
+  file-root `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Local forms target a unique
+  same-file, exact-arity, non-`params` declaration; globally qualified and imported calls may resolve one unique
+  workspace static declaration. Imported targets must resolve to one indexed type. Duplicate aliases, duplicate
+  imports, same-file type-name collisions, competing imported targets, and ambiguous imported type declarations
+  fail closed. Static imports are considered only when no same-type method has the bare call's name; namespace
+  imports are considered only when the caller's namespace has no type of the receiver name anywhere in the workspace.
+  Simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
+  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are supported.
+  Dependency refresh, namespace-scoped imports, `global using`, other member dispatch, overload type selection,
+  and patch operations return explicit unsupported-operation errors until dedicated C# adapter slices establish
+  their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type maps to a local `.java` file under an ancestor source root. Classes,

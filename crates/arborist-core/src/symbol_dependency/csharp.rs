@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::language::{
-    csharp_file_static_type_imports, csharp_file_type_alias_imports, detect_language,
-    normalize_path, parse_document, parse_document_with_timeout, read_source,
+    csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
+    detect_language, normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -20,10 +20,16 @@ pub(in crate::symbol_dependency) struct CSharpStaticTypeImportBinding {
     pub(crate) semantic_type_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
+    pub(crate) semantic_namespace_path: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpImportContext {
     type_alias_bindings: BTreeMap<String, CSharpTypeAliasBinding>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
+    namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
 
 fn csharp_import_context_for_file_with_overrides_and_deadline(
@@ -85,9 +91,19 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             semantic_type_path: import.semantic_type_path,
         });
     }
+    let mut namespace_import_bindings = Vec::new();
+    for import in csharp_file_namespace_imports(root, &source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting C# namespace import bindings")?;
+        }
+        namespace_import_bindings.push(CSharpNamespaceImportBinding {
+            semantic_namespace_path: import.semantic_namespace_path,
+        });
+    }
     Ok(CSharpImportContext {
         type_alias_bindings,
         static_type_import_bindings,
+        namespace_import_bindings,
     })
 }
 
@@ -150,6 +166,26 @@ pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_refer
         deadline,
     )?;
     Ok(context.static_type_import_bindings)
+}
+
+pub(in crate::symbol_dependency) fn resolve_csharp_namespace_imports_for_reference(
+    source_file_path: &str,
+    reference_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Vec<CSharpNamespaceImportBinding>> {
+    if reference_name.is_empty() || reference_name.contains('.') {
+        return Ok(Vec::new());
+    }
+
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context.namespace_import_bindings)
 }
 
 fn csharp_import_context_from_cache(
