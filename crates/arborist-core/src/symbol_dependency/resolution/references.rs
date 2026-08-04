@@ -6,7 +6,8 @@ use anyhow::Result;
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
     CSharpImportContext, CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding,
-    CSharpTypeAliasBinding, resolve_csharp_namespace_imports_for_reference,
+    CSharpTypeAliasBinding, csharp_type_alias_name_is_ambiguous_for_reference,
+    resolve_csharp_namespace_imports_for_reference,
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
 };
@@ -343,6 +344,15 @@ fn resolve_reference_path_with_deadline<'a>(
                 call_arity,
             ));
         }
+        if csharp_type_alias_name_is_ambiguous_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(None);
+        }
         if let Some(target_path) =
             csharp_simple_type_static_target_path(reference_name, source_symbol, raw_symbols)
         {
@@ -355,7 +365,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 CSharpCandidateRequirements {
                     node_kind: "method_declaration",
                     require_static: true,
-                    require_same_file: true,
+                    require_same_file: false,
                 },
             ));
         }
@@ -858,9 +868,7 @@ fn csharp_simple_type_static_target_path(
     let target_type_candidates = raw_symbols
         .iter()
         .filter(|candidate| {
-            candidate.file_path == source_symbol.file_path
-                && candidate.semantic_path == target_type_path
-                && csharp_is_type_declaration(candidate)
+            candidate.semantic_path == target_type_path && csharp_is_type_declaration(candidate)
         })
         .count();
     (target_type_candidates == 1).then(|| format!("{target_type_path}::{method_name}"))

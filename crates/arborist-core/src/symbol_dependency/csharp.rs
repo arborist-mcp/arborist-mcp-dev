@@ -28,6 +28,7 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpImportContext {
     type_alias_bindings: BTreeMap<String, CSharpTypeAliasBinding>,
+    ambiguous_type_alias_names: BTreeSet<String>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -102,6 +103,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
     }
     Ok(CSharpImportContext {
         type_alias_bindings,
+        ambiguous_type_alias_names: ambiguous_alias_names,
         static_type_import_bindings,
         namespace_import_bindings,
     })
@@ -146,6 +148,29 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
         return Ok(None);
     };
     Ok(Some((method_name.to_string(), binding.clone())))
+}
+
+pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_reference(
+    source_file_path: &str,
+    reference_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<bool> {
+    let Some((local_type_name, method_name)) = reference_name.split_once('.') else {
+        return Ok(false);
+    };
+    if local_type_name.is_empty() || method_name.is_empty() || method_name.contains('.') {
+        return Ok(false);
+    }
+
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context.ambiguous_type_alias_names.contains(local_type_name))
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_reference(
