@@ -58,8 +58,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
   file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
-  constructors are indexed by package-qualified paths. It traces unqualified calls to a single
-  same-type, same-file, non-varargs method with a unique arity match, plus `Type.method()` calls
+  constructors are indexed by package-qualified paths. It traces unqualified and `this.method()`
+  calls to a single same-type, same-file, non-varargs method with a unique arity match, plus
+  `Type.method()` calls
   through a unique explicit non-static local type import when the type name is unshadowed and the
   imported static method has a unique exact arity match. Wildcard/static imports, missing or
   ambiguous imports, instance/member dispatch, overloaded-call selection, and patch operations
@@ -527,8 +528,9 @@ for response shapes, error behavior, and examples.
   unavailable; patching remains capability-gated.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for unique explicit non-static imports mapped to a local `.java` file under
-  an ancestor source root. It traces unqualified calls when one same-type, same-file, non-varargs
-  method matches the call arity, and `Type.method()` calls only through a unique explicit non-static
+  an ancestor source root. It traces unqualified and `this.method()` calls when one same-type,
+  same-file, non-varargs method matches the call arity, and `Type.method()` calls only through a
+  unique explicit non-static
   local type import with an unshadowed type name and a unique imported static-method arity match.
   Wildcard/static imports, missing or ambiguous imports, instance/member dispatch,
   overloaded-call selection, and patching remain capability-gated pending dedicated Java resolution
@@ -557,8 +559,9 @@ same-file bare plus unambiguous local-package imported-function direct-call grap
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for unique explicit non-static imports that map to a local `.java` file under
-an ancestor source root, plus unqualified calls to a unique same-type, same-file non-varargs method
-with a matching arity and `Type.method()` calls through a unique explicit local type import to an
+an ancestor source root, plus unqualified and `this.method()` calls to a unique same-type,
+same-file non-varargs method with a matching arity and `Type.method()` calls through a unique
+explicit local type import to an
 unshadowed static method with an exact arity. General cross-file/package/import resolution,
 instance/member dispatch, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence

@@ -143,6 +143,9 @@ fn collect_direct_local_calls_from_node(
                 (!object_name.is_empty() && !qualified_call_exclusions.contains(object_name))
                     .then(|| format!("{object_name}.{name}"))
             }
+            Some(object) if object.kind() == "this" && !name.is_empty() => {
+                Some(format!("this.{name}"))
+            }
             Some(_) => None,
         };
         if let Some(reference) = reference {
