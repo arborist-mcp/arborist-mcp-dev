@@ -4,7 +4,9 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::deadline::DeadlineCheck;
-use crate::language::{builtin_language_registry, normalize_path, parse_document};
+use crate::language::{
+    LanguageCapabilities, builtin_language_registry, normalize_path, parse_document,
+};
 use crate::model::{
     PatchAstNodeResult, PatchCommitGateReport, PatchValidationReport, ValidationIssue,
 };
@@ -62,6 +64,11 @@ pub(crate) fn build_patch_result_with_deadline(
     } = input;
     check_deadline(deadline, "updated source parse")?;
     let virtual_document = parse_document(path, &updated_source)?;
+    builtin_language_registry().require_capability(
+        virtual_document.language_id,
+        LanguageCapabilities::PATCH_VALIDATION,
+        "patch validation",
+    )?;
     check_deadline(deadline, "syntax validation")?;
     let mut syntax_errors = collect_syntax_errors_with_deadline(
         virtual_document.tree.root_node(),

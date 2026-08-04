@@ -129,20 +129,15 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
             LanguageId::JavaScript,
             "JavaScript",
             &["js", "jsx", "mjs", "cjs"][..],
-            "javascript-reexport-resolution-v1",
+            "javascript-patching-v1",
         ),
         (
             LanguageId::TypeScript,
             "TypeScript",
             &["ts", "mts", "cts"][..],
-            "typescript-reexport-resolution-v1",
+            "typescript-patching-v1",
         ),
-        (
-            LanguageId::Tsx,
-            "TSX",
-            &["tsx"][..],
-            "tsx-reexport-resolution-v1",
-        ),
+        (LanguageId::Tsx, "TSX", &["tsx"][..], "tsx-patching-v1"),
     ] {
         let descriptor = registry.descriptor(language_id).unwrap();
         assert_eq!(descriptor.display_name, display_name);
@@ -174,9 +169,14 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
                 .contains(LanguageCapabilities::FILE_DEPENDENCIES)
         );
         assert!(
-            !descriptor
+            descriptor
                 .capabilities
                 .contains(LanguageCapabilities::PATCH_TARGETING)
+        );
+        assert!(
+            descriptor
+                .capabilities
+                .contains(LanguageCapabilities::PATCH_VALIDATION)
         );
         for extension in extensions {
             assert_eq!(

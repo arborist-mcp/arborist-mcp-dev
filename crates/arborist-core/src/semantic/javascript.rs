@@ -182,6 +182,26 @@ pub(crate) fn is_javascript_symbol_node(node: Node<'_>) -> bool {
     ) || is_javascript_callable_variable_declarator(node)
 }
 
+pub(crate) fn javascript_patch_replacement_node(node: Node<'_>) -> Node<'_> {
+    let declaration = if node.kind() == "variable_declarator" {
+        node.parent()
+            .filter(|parent| {
+                matches!(
+                    parent.kind(),
+                    "lexical_declaration" | "variable_declaration"
+                )
+            })
+            .unwrap_or(node)
+    } else {
+        node
+    };
+
+    declaration
+        .parent()
+        .filter(|parent| parent.kind() == "export_statement")
+        .unwrap_or(declaration)
+}
+
 pub(crate) fn javascript_symbol_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let name = node.child_by_field_name("name");
     name.map(|name| node_text(name, source).map(str::trim).map(str::to_string))

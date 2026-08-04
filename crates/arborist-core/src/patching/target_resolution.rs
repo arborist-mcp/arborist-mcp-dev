@@ -5,8 +5,8 @@ use tree_sitter::Node;
 
 use crate::deadline::DeadlineCheck;
 use crate::language::{
-    ParsedDocument, builtin_language_registry, normalize_absolute_path, offset_for_position,
-    parse_document, position_from,
+    LanguageCapabilities, ParsedDocument, builtin_language_registry, normalize_absolute_path,
+    offset_for_position, parse_document, position_from,
 };
 use crate::model::{LanguageId, Position, ValidationIssue};
 use crate::semantic::{ascend_to_symbol, find_semantic_node_with_deadline};
@@ -36,6 +36,11 @@ pub(crate) fn semantic_target_at_position_with_deadline(
     let path = normalize_absolute_path(path)?;
     check_deadline(deadline, "position target parse")?;
     let document = parse_document(&path, source)?;
+    builtin_language_registry().require_capability(
+        document.language_id,
+        LanguageCapabilities::PATCH_TARGETING,
+        "position patch target resolution",
+    )?;
     check_deadline(deadline, "position target lookup")?;
     let byte_offset = offset_for_position(source, position)?;
     let node =
@@ -163,6 +168,11 @@ fn semantic_target_info(
     validate_semantic_target(semantic_target)?;
     check_deadline(deadline, "semantic target parse")?;
     let document = parse_document(path, source)?;
+    builtin_language_registry().require_capability(
+        document.language_id,
+        LanguageCapabilities::PATCH_TARGETING,
+        "semantic patch target resolution",
+    )?;
     check_deadline(deadline, "semantic target lookup")?;
     let target_node = find_semantic_node_with_deadline(
         document.language_id,

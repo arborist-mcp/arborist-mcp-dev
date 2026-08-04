@@ -683,7 +683,7 @@ Introduce `ReferenceFact`, adapt Python/C/C++ extraction, and update the resolve
 
 Add `tree-sitter-javascript` and `tree-sitter-typescript` using the repository's existing dependency and lockfile conventions. Implement the first external adapter with a conservative initial capability set.
 
-The first delivered slices register JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.mts`, `.cts`), and TSX (`.tsx`) grammars for parsing, Tree-sitter queries, semantic skeletons, conservative direct-call symbol indexing/tracing, static local module dependency extraction, direct calls through static local named imports, and direct named re-export chains. Star re-export/default/namespace import resolution and patch capabilities remain explicitly withheld until their language adapters are implemented.
+The first delivered slices register JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.mts`, `.cts`), and TSX (`.tsx`) grammars for parsing, Tree-sitter queries, semantic skeletons, conservative direct-call symbol indexing/tracing, static local module dependency extraction, direct calls through static local named imports, direct named re-export chains, and structural patching. The first patch slice supports semantic and position targets with syntax-level validation; language-specific JavaScript/TypeScript reference-binding validation remains deferred. Star re-export/default/namespace import resolution remains explicitly withheld until its adapter support is implemented.
 
 Initial scope:
 

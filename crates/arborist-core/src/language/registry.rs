@@ -35,6 +35,11 @@ impl LanguageCapabilities {
         Self(Self::INDEXED_TRACE_SUPPORT.0 | Self::SEMANTIC_SKELETON.0);
     pub const INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT: Self =
         Self(Self::INDEXED_SKELETON_TRACE_SUPPORT.0 | Self::FILE_DEPENDENCIES.0);
+    pub const PATCHABLE_INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT: Self = Self(
+        Self::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT.0
+            | Self::PATCH_TARGETING.0
+            | Self::PATCH_VALIDATION.0,
+    );
 
     pub const FULL_CURRENT_SUPPORT: Self = Self(
         Self::TREE_QUERY.0
@@ -385,24 +390,24 @@ static JAVASCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::JavaScript,
     display_name: "JavaScript",
     extensions: JAVASCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "javascript-reexport-resolution-v1",
+    capabilities: LanguageCapabilities::PATCHABLE_INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "javascript-patching-v1",
     grammar: javascript_grammar,
 };
 static TYPESCRIPT_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::TypeScript,
     display_name: "TypeScript",
     extensions: TYPESCRIPT_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "typescript-reexport-resolution-v1",
+    capabilities: LanguageCapabilities::PATCHABLE_INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "typescript-patching-v1",
     grammar: typescript_grammar,
 };
 static TSX_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Tsx,
     display_name: "TSX",
     extensions: TSX_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "tsx-reexport-resolution-v1",
+    capabilities: LanguageCapabilities::PATCHABLE_INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "tsx-patching-v1",
     grammar: tsx_grammar,
 };
 
@@ -421,16 +426,6 @@ static TSX_ADAPTER: JavaScriptFamilyAdapter = JavaScriptFamilyAdapter {
 
 struct JavaScriptFamilyAdapter {
     descriptor: &'static LanguageDescriptor,
-}
-
-impl JavaScriptFamilyAdapter {
-    fn unsupported<T>(&self, operation: &str) -> Result<T> {
-        bail!(
-            "{} does not support {} yet",
-            self.descriptor.display_name,
-            operation
-        )
-    }
 }
 
 impl LanguageAdapter for JavaScriptFamilyAdapter {
@@ -527,7 +522,7 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
     }
 
     fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
-        node
+        crate::semantic::javascript::javascript_patch_replacement_node(node)
     }
 
     fn normalize_patch_replacement(
@@ -536,9 +531,9 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
         _start_byte: usize,
         _end_byte: usize,
         _node_kind: &str,
-        _new_code: &str,
+        new_code: &str,
     ) -> Result<String> {
-        self.unsupported("patch targeting")
+        Ok(new_code.to_string())
     }
 
     fn replacement_preserves_required_wrappers(
@@ -546,7 +541,7 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
         _node_kind: &str,
         _replacement: &str,
     ) -> bool {
-        false
+        true
     }
 
     fn reconcile_patch_symbol_id(
@@ -566,7 +561,7 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
         _symbol_node: Node<'_>,
         _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<crate::patching::ReferenceValidation> {
-        self.unsupported("patch validation")
+        Ok(crate::patching::ReferenceValidation::default())
     }
 
     fn query_capture_owner(
