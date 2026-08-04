@@ -22,6 +22,7 @@ pub enum LanguageId {
     Tsx,
     Rust,
     Go,
+    Java,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

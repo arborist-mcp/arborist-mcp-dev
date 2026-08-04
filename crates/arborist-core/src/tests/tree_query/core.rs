@@ -50,7 +50,7 @@ fn execute_tree_query_rejects_capture_limit_overflow() {
 }
 
 #[test]
-fn executes_tree_queries_for_javascript_typescript_rust_and_go_adapters() {
+fn executes_tree_queries_for_javascript_typescript_rust_go_and_java_adapters() {
     for (path, source, query, expected) in [
         (
             "sample.js",
@@ -81,6 +81,12 @@ fn executes_tree_queries_for_javascript_typescript_rust_and_go_adapters() {
             "package sample\nfunc Add(left int, right int) int { return left + right }\n",
             "(function_declaration name: (identifier) @name)",
             "Add",
+        ),
+        (
+            "Sample.java",
+            "class Sample { int add(int left, int right) { return left + right; } }",
+            "(method_declaration name: (identifier) @name)",
+            "add",
         ),
     ] {
         let captures = execute_tree_query(Path::new(path), source, query).unwrap();

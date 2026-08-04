@@ -38,6 +38,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("TSX", LanguageId::Tsx),
         ("RS", LanguageId::Rust),
         ("GO", LanguageId::Go),
+        ("JAVA", LanguageId::Java),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -60,6 +61,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "tsx",
             "rust",
             "go",
+            "java",
         ]
     );
 }
@@ -75,6 +77,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Tsx, "tsx"),
         (LanguageId::Rust, "rust"),
         (LanguageId::Go, "go"),
+        (LanguageId::Java, "java"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -201,6 +204,31 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
+fn java_adapter_exposes_only_raw_tree_queries() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::Java).unwrap();
+
+    assert_eq!(descriptor.display_name, "Java");
+    assert_eq!(descriptor.extensions, &["java"]);
+    assert_eq!(descriptor.analysis_revision, "java-query-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(!descriptor.capabilities.contains(capability));
+    }
+}
+
+#[test]
 fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Rust).unwrap();
@@ -262,6 +290,19 @@ fn parse_document_uses_go_grammar_and_recovers_from_invalid_source() {
 
     let malformed = parse_document(Path::new("broken.go"), "package sample\nfunc broken(").unwrap();
     assert_eq!(malformed.language_id, LanguageId::Go);
+    assert!(malformed.tree.root_node().has_error());
+}
+
+#[test]
+fn parse_document_uses_java_grammar_and_recovers_from_invalid_source() {
+    let path = Path::new("Sample.java");
+    let source = "class Sample { void run() { System.out.println(1); } }";
+    let document = parse_document(path, source).unwrap();
+    assert_eq!(document.language_id, LanguageId::Java);
+    assert_eq!(document.tree.root_node().kind(), "program");
+
+    let malformed = parse_document(path, "class Sample {").unwrap();
+    assert_eq!(malformed.language_id, LanguageId::Java);
     assert!(malformed.tree.root_node().has_error());
 }
 

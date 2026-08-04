@@ -18,6 +18,7 @@ const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "mts", "cts"];
 const TSX_EXTENSIONS: &[&str] = &["tsx"];
 const RUST_EXTENSIONS: &[&str] = &["rs"];
 const GO_EXTENSIONS: &[&str] = &["go"];
+const JAVA_EXTENSIONS: &[&str] = &["java"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -215,7 +216,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 8] = [
+        let adapters: [&'static dyn LanguageAdapter; 9] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -224,6 +225,7 @@ impl LanguageRegistry {
             &TSX_ADAPTER,
             &RUST_ADAPTER,
             &GO_ADAPTER,
+            &JAVA_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -347,6 +349,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Tsx => "tsx",
         LanguageId::Rust => "rust",
         LanguageId::Go => "go",
+        LanguageId::Java => "java",
     }
 }
 
@@ -436,6 +439,14 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "go-import-trace-v1",
     grammar: go_grammar,
 };
+static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Java,
+    display_name: "Java",
+    extensions: JAVA_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "java-query-v1",
+    grammar: java_grammar,
+};
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
@@ -458,6 +469,9 @@ static GO_ADAPTER: GoAdapter = GoAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &GO_DESCRIPTOR,
     },
+};
+static JAVA_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &JAVA_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -1744,4 +1758,8 @@ fn rust_grammar() -> Language {
 
 fn go_grammar() -> Language {
     tree_sitter_go::LANGUAGE.into()
+}
+
+fn java_grammar() -> Language {
+    tree_sitter_java::LANGUAGE.into()
 }
