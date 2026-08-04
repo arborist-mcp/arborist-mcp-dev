@@ -46,8 +46,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   in the same source file. Trait-implementation members are not indexed, `use` paths do not create
   dependency edges, and out-of-line module, Cargo, and import resolution remain unavailable. Patching
   remains explicitly unavailable.
-- Go: `.go` — Tree-sitter parsing and raw queries only. Semantic skeletons, symbol indexing,
-  dependency refresh, tracing, and patching remain capability-gated.
+- Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
+  indexing for named type specifications and aliases, functions, and methods with named local
+  receiver types. Package dependency refresh, tracing, source-position identity, and patching remain
+  capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -500,8 +502,10 @@ for response shapes, error behavior, and examples.
   qualified direct calls to functions in inline modules in the same source file. Trait-implementation
   members are not indexed, `use` paths do not create dependency edges, and out-of-line module, Cargo,
   and import resolution remain unavailable. Patching remains capability-gated.
-- Go Tree-sitter parsing and raw query execution. Its semantic skeleton, symbol indexing,
-  dependency refresh, trace, and patch capabilities remain gated.
+- Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
+  indexing for named type specifications and aliases, functions, and methods with named local receiver
+  types. Package dependency refresh, trace, source-position identity, and patch capabilities remain
+  gated.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -519,8 +523,9 @@ capabilities. JavaScript-family adapters provide semantic skeletons, indexing,
 conservative local-module tracing, structural patching, source overlays, and
 persisted-index coverage. Phase 5 now includes Rust parsing, raw queries, semantic skeletons,
 conservative declaration indexing, local module dependency refresh, and conservative bare and
-inline-module-qualified direct-call graph tracing plus position identity. Go now has parsing and raw
-Tree-sitter query support; its semantic and indexing features remain deliberately capability-gated.
+inline-module-qualified direct-call graph tracing plus position identity. Go now has parsing, raw
+Tree-sitter queries, semantic skeletons, and conservative declaration indexing; package dependency,
+trace, source-position identity, and patch features remain deliberately capability-gated.
 
 Remaining larger work includes:
 

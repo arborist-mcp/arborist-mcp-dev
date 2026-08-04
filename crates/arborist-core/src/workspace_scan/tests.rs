@@ -72,18 +72,20 @@ fn collect_source_files_includes_javascript_and_typescript_after_indexing_suppor
 }
 
 #[test]
-fn collect_source_files_includes_rust_after_symbol_indexing_support_lands() {
+fn collect_source_files_includes_rust_and_go_after_symbol_indexing_support_lands() {
     let workspace = temporary_dir();
+    let go = workspace.join("indexed.go");
     let python = workspace.join("indexed.py");
     let rust = workspace.join("indexed.rs");
+    fs::write(&go, "package indexed\nfunc Indexed() int { return 1 }\n").unwrap();
     fs::write(&python, "def indexed():\n    return 1\n").unwrap();
     fs::write(&rust, "pub fn indexed() -> i32 { 1 }\n").unwrap();
 
     let files =
-        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(2))
-            .expect("indexed Rust files should be collected");
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(3))
+            .expect("indexed Rust and Go files should be collected");
 
-    assert_eq!(files, vec![python, rust]);
+    assert_eq!(files, vec![go, python, rust]);
 }
 
 #[test]

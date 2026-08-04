@@ -431,3 +431,26 @@ impl Counter {
     assert_eq!(increment.parameters, vec!["&self", "amount: u64"]);
     assert_eq!(increment.return_type.as_deref(), Some("u64"));
 }
+
+#[test]
+fn builds_go_skeleton_through_public_entrypoint() {
+    let source = r#"
+package metrics
+
+type Counter struct { value int }
+func (counter *Counter) Increment(amount int) int { return counter.value + amount }
+"#;
+    let skeleton = get_semantic_skeleton(Path::new("metrics.go"), source, 2, &[]).unwrap();
+
+    assert_eq!(
+        skeleton.available_paths,
+        vec!["Counter", "Counter::Increment"]
+    );
+    let increment = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Counter::Increment")
+        .unwrap();
+    assert_eq!(increment.parameters, vec!["amount int"]);
+    assert_eq!(increment.return_type.as_deref(), Some("int"));
+}

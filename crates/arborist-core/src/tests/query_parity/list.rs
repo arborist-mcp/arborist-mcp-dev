@@ -402,3 +402,35 @@ fn list_symbols_discovery_context_uses_dirty_vfs_overrides() {
         renamed_orchestrator_symbol.trim_end_matches('\n')
     );
 }
+
+#[test]
+fn lists_go_symbols_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct { value int }\nfunc NewCounter(value int) Counter { return Counter{value: value} }\nfunc (counter *Counter) Increment(amount int) int { return counter.value + amount }\n",
+    )
+    .unwrap();
+
+    let live = list_symbols(&dir, 10).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.total_symbols, 3);
+    assert!(
+        live.symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "Counter::Increment")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = list_symbols_from_index(&db_path, 10).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.total_symbols, 3);
+    assert!(
+        persisted
+            .symbols
+            .iter()
+            .any(|symbol| symbol.semantic_path == "Counter::Increment")
+    );
+}

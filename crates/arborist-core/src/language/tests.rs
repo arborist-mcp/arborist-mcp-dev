@@ -226,21 +226,21 @@ fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patch
 }
 
 #[test]
-fn go_adapter_exposes_tree_query_support_only() {
+fn go_adapter_exposes_skeleton_and_indexing_without_dependencies_tracing_or_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Go).unwrap();
 
     assert_eq!(descriptor.display_name, "Go");
     assert_eq!(descriptor.extensions, &["go"]);
-    assert_eq!(descriptor.analysis_revision, "go-query-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "go-index-v1");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,

@@ -432,8 +432,8 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Go,
     display_name: "Go",
     extensions: GO_EXTENSIONS,
-    capabilities: LanguageCapabilities::TREE_QUERY,
-    analysis_revision: "go-query-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_SUPPORT,
+    analysis_revision: "go-index-v1",
     grammar: go_grammar,
 };
 
@@ -454,8 +454,10 @@ static RUST_ADAPTER: RustAdapter = RustAdapter {
         descriptor: &RUST_DESCRIPTOR,
     },
 };
-static GO_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
-    descriptor: &GO_DESCRIPTOR,
+static GO_ADAPTER: GoAdapter = GoAdapter {
+    syntax: SyntaxOnlyAdapter {
+        descriptor: &GO_DESCRIPTOR,
+    },
 };
 
 struct JavaScriptFamilyAdapter {
@@ -838,6 +840,187 @@ impl LanguageAdapter for RustAdapter {
         )
     }
 }
+struct GoAdapter {
+    syntax: SyntaxOnlyAdapter,
+}
+
+impl LanguageAdapter for GoAdapter {
+    fn descriptor(&self) -> &'static LanguageDescriptor {
+        self.syntax.descriptor()
+    }
+
+    fn build_semantic_skeleton(
+        &self,
+        path: &Path,
+        source: &str,
+        tree: &Tree,
+        depth_limit: usize,
+        expand_nodes: &[String],
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<SemanticSkeleton> {
+        crate::semantic::go::build_go_skeleton(
+            path,
+            source,
+            tree,
+            depth_limit,
+            expand_nodes,
+            deadline,
+        )
+    }
+
+    fn find_semantic_node<'tree>(
+        &self,
+        path: &Path,
+        tree: &'tree Tree,
+        source: &str,
+        target_path: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<Node<'tree>>> {
+        crate::semantic::go::find_go_semantic_node(path, tree, source, target_path, deadline)
+    }
+
+    fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
+        let mut current = Some(node);
+        while let Some(candidate) = current {
+            if crate::semantic::go::is_go_symbol_node(candidate) {
+                return Some(candidate);
+            }
+            current = candidate.parent();
+        }
+        None
+    }
+
+    fn position_symbol_identity(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<PositionSymbolIdentity> {
+        self.syntax.position_symbol_identity(path, node, source)
+    }
+
+    fn semantic_path_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+    ) -> Result<Option<String>> {
+        self.syntax.semantic_path_for_node(path, node, source)
+    }
+
+    fn symbol_id_for_node(
+        &self,
+        path: &Path,
+        node: Node<'_>,
+        source: &str,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<Option<String>> {
+        self.syntax.symbol_id_for_node(path, node, source, deadline)
+    }
+
+    fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
+        self.syntax
+            .requires_exact_symbol_id_for_ambiguous_semantic_paths()
+    }
+
+    fn query_owner_candidates<'tree>(
+        &self,
+        path: &Path,
+        root: Node<'tree>,
+        source: &str,
+    ) -> Result<Option<Vec<Node<'tree>>>> {
+        self.syntax.query_owner_candidates(path, root, source)
+    }
+
+    fn patch_replacement_node<'tree>(&self, node: Node<'tree>) -> Node<'tree> {
+        self.syntax.patch_replacement_node(node)
+    }
+
+    fn normalize_patch_replacement(
+        &self,
+        source: &str,
+        start_byte: usize,
+        end_byte: usize,
+        node_kind: &str,
+        new_code: &str,
+    ) -> Result<String> {
+        self.syntax
+            .normalize_patch_replacement(source, start_byte, end_byte, node_kind, new_code)
+    }
+
+    fn replacement_preserves_required_wrappers(&self, node_kind: &str, replacement: &str) -> bool {
+        self.syntax
+            .replacement_preserves_required_wrappers(node_kind, replacement)
+    }
+
+    fn reconcile_patch_symbol_id(
+        &self,
+        semantic_target: &str,
+        resolved_path: &str,
+        resolved_symbol_id: String,
+    ) -> String {
+        self.syntax
+            .reconcile_patch_symbol_id(semantic_target, resolved_path, resolved_symbol_id)
+    }
+
+    fn collect_patch_reference_validation(
+        &self,
+        path: &Path,
+        document: &ParsedDocument,
+        source: &str,
+        symbol_node: Node<'_>,
+        deadline: Option<&dyn DeadlineCheck>,
+    ) -> Result<crate::patching::ReferenceValidation> {
+        self.syntax.collect_patch_reference_validation(
+            path,
+            document,
+            source,
+            symbol_node,
+            deadline,
+        )
+    }
+
+    fn query_capture_owner(
+        &self,
+        path: &Path,
+        source: &str,
+        node: Node<'_>,
+        candidates: Option<&[Node<'_>]>,
+    ) -> Result<(Option<String>, Option<String>, Option<String>)> {
+        self.syntax
+            .query_capture_owner(path, source, node, candidates)
+    }
+
+    fn supports_incremental_file_dependencies(&self) -> bool {
+        self.syntax.supports_incremental_file_dependencies()
+    }
+
+    fn collect_local_file_dependencies(
+        &self,
+        path: &Path,
+        root: Node<'_>,
+        source: &str,
+    ) -> Result<Vec<PathBuf>> {
+        self.syntax
+            .collect_local_file_dependencies(path, root, source)
+    }
+
+    fn extract_symbols(
+        &self,
+        path: &Path,
+        source: &str,
+        document: &ParsedDocument,
+        deadline: Option<&WorkspaceScanDeadline>,
+    ) -> Result<Vec<IndexedSymbol>> {
+        crate::symbol_extractor::go::index_go_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
+    }
+}
+
 struct SyntaxOnlyAdapter {
     descriptor: &'static LanguageDescriptor,
 }

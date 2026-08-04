@@ -7,6 +7,7 @@ use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) mod c;
+pub(crate) mod go;
 pub(crate) mod javascript;
 pub(crate) mod python;
 pub(crate) mod rust;
