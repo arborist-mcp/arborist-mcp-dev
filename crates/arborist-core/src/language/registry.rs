@@ -421,8 +421,8 @@ static RUST_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Rust,
     display_name: "Rust",
     extensions: RUST_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_SUPPORT,
-    analysis_revision: "rust-dependencies-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "rust-trace-v1",
     grammar: rust_grammar,
 };
 

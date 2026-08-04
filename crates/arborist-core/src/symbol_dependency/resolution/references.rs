@@ -187,6 +187,16 @@ fn resolve_reference_path_with_deadline<'a>(
         deadline.check("resolving reference candidates")?;
     }
     let call_arity = call_context.arity;
+    if language_id == Some(LanguageId::Rust) {
+        let candidates = semantic_path_index
+            .get(reference_name)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+            .collect::<Vec<_>>();
+        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+    }
     let (lookup_name, module_hint) = if language_id == Some(LanguageId::Python) {
         python_reference_lookup(reference_name)
     } else {

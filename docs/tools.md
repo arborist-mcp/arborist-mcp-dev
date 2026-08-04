@@ -32,8 +32,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   JavaScript.
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative local-module dependency refresh for unambiguous out-of-line `mod` declarations.
+  It traces unshadowed direct calls to functions declared in the same source-file module.
   Trait-implementation members are not indexed, and `use` paths do not contribute dependency edges.
-  Reference tracing and patching return an explicit unsupported-operation error.
+  Position-based tracing and patching return an explicit unsupported-operation error.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

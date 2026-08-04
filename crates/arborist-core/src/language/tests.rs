@@ -198,42 +198,28 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn rust_adapter_exposes_skeleton_indexing_and_dependencies_without_tracing_or_patching() {
+fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Rust).unwrap();
 
     assert_eq!(descriptor.display_name, "Rust");
     assert_eq!(descriptor.extensions, &["rs"]);
-    assert_eq!(descriptor.analysis_revision, "rust-dependencies-v1");
+    assert_eq!(descriptor.analysis_revision, "rust-trace-v1");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
     ] {
         assert!(descriptor.capabilities.contains(capability));
     }
     for capability in [
-        LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
         assert!(!descriptor.capabilities.contains(capability));
     }
-    let error = registry
-        .require_capability(
-            LanguageId::Rust,
-            LanguageCapabilities::REFERENCE_TRACE,
-            "reference trace requests",
-        )
-        .expect_err(
-            "Rust indexing support must reject reference tracing until direct calls resolve safely",
-        );
-    assert!(
-        error
-            .to_string()
-            .contains("Rust does not support reference tracing")
-    );
 }
 
 #[test]
