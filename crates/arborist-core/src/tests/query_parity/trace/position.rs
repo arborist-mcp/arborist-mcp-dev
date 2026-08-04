@@ -1019,6 +1019,138 @@ class Derived : Parent {
 }
 
 #[test]
+fn traces_csharp_generic_base_members_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo.Utility;
+class Base<T> {
+    public Base(int value) {}
+    public int Ping(int value) => value;
+}
+class Parent<T> : Base<T> {}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "using Demo.Utility;
+namespace Demo.App;
+class ImportedDerived : Base<int> {
+    ImportedDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+class AncestorDerived : Parent<string> {
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Qualified.cs"),
+        "namespace Other;
+class QualifiedDerived : global::Demo.Utility.Base<long> {
+    QualifiedDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected_callers) in [
+        (
+            "Demo::Utility::Base::Base",
+            vec![
+                "Demo::App::ImportedDerived::ImportedDerived",
+                "Other::QualifiedDerived::QualifiedDerived",
+            ],
+        ),
+        (
+            "Demo::Utility::Base::Ping",
+            vec![
+                "Demo::App::AncestorDerived::Call",
+                "Demo::App::ImportedDerived::Call",
+                "Other::QualifiedDerived::Call",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected_callers) in [
+        (
+            "Demo::Utility::Base::Base",
+            vec![
+                "Demo::App::ImportedDerived::ImportedDerived",
+                "Other::QualifiedDerived::QualifiedDerived",
+            ],
+        ),
+        (
+            "Demo::Utility::Base::Ping",
+            vec![
+                "Demo::App::AncestorDerived::Call",
+                "Demo::App::ImportedDerived::Call",
+                "Other::QualifiedDerived::Call",
+            ],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_generic_base_members() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Bases.cs"),
+        "namespace Demo;
+class Base<T> { public int Ping(int value) => value; }
+class Base<TFirst, TSecond> { public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Demo;
+class Derived : Base<int> { int Call(int value) => base.Ping(value); }
+",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Demo::Derived::Call", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Derived::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn does_not_trace_ambiguous_cyclic_or_shadowed_csharp_ancestor_base_methods() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

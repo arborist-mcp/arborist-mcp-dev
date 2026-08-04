@@ -49,7 +49,7 @@ pub(crate) fn csharp_file_base_types(
                     let base_type_text = node_text(base_type, source)?.trim();
                     let is_global_qualified = base_type_text.starts_with("global::");
                     if let Some(semantic_base_type_path) =
-                        csharp_qualified_type_semantic_path(base_type_text)
+                        csharp_base_type_semantic_path(base_type_text)
                     {
                         base_types.push(CSharpFileBaseType {
                             type_range: (node.start_byte(), node.end_byte()),
@@ -384,6 +384,54 @@ fn is_global_type_alias_directive(directive_text: &str) -> bool {
             .any(|token| matches!(token, "static" | "unsafe"))
 }
 
+fn csharp_base_type_semantic_path(type_path: &str) -> Option<String> {
+    csharp_qualified_type_semantic_path(&strip_csharp_generic_type_arguments(type_path)?)
+}
+
+fn strip_csharp_generic_type_arguments(type_path: &str) -> Option<String> {
+    let mut normalized = String::with_capacity(type_path.len());
+    let mut generic_argument_contents = Vec::new();
+    let mut generic_just_closed = false;
+
+    for character in type_path.chars() {
+        match character {
+            '<' if generic_just_closed => return None,
+            '<' => {
+                generic_argument_contents.push(false);
+                generic_just_closed = false;
+            }
+            '>' => {
+                let has_content = generic_argument_contents.pop()?;
+                if !has_content {
+                    return None;
+                }
+                if let Some(parent_has_content) = generic_argument_contents.last_mut() {
+                    *parent_has_content = true;
+                } else {
+                    generic_just_closed = true;
+                }
+            }
+            _ if generic_argument_contents.is_empty() => {
+                if generic_just_closed && (character.is_ascii_alphanumeric() || character == '_') {
+                    return None;
+                }
+                normalized.push(character);
+                if character == '.' {
+                    generic_just_closed = false;
+                }
+            }
+            _ if character.is_ascii_alphanumeric() || character == '_' => {
+                if let Some(has_content) = generic_argument_contents.last_mut() {
+                    *has_content = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    generic_argument_contents.is_empty().then_some(normalized)
+}
+
 fn csharp_qualified_type_semantic_path(type_path: &str) -> Option<String> {
     let type_path = type_path.strip_prefix("global::").unwrap_or(type_path);
     if type_path.is_empty()
@@ -414,6 +462,25 @@ mod tests {
     use crate::language::parse_document;
 
     #[test]
+    fn normalizes_safe_csharp_generic_base_type_paths() {
+        assert_eq!(
+            super::csharp_base_type_semantic_path("global::Demo.Outer<int>.Base<string>"),
+            Some("Demo::Outer::Base".to_string())
+        );
+        assert_eq!(
+            super::csharp_base_type_semantic_path("Base<System.Collections.Generic.List<int>>"),
+            Some("Base".to_string())
+        );
+        assert_eq!(super::csharp_base_type_semantic_path("Base<>"), None);
+        assert_eq!(super::csharp_base_type_semantic_path("Base<int>[]"), None);
+        assert_eq!(super::csharp_base_type_semantic_path("Base<int"), None);
+        assert_eq!(
+            super::csharp_base_type_semantic_path("Base<int>Suffix"),
+            None
+        );
+    }
+
+    #[test]
     fn collects_only_safe_csharp_base_types() {
         let source = r#"
 class Base {}
@@ -435,7 +502,12 @@ class GenericDerived : Base<int> {}
                     )
                 })
                 .collect::<Vec<_>>(),
-            [("Base", false), ("Demo::Base", true), ("Demo::Base", false),]
+            [
+                ("Base", false),
+                ("Demo::Base", true),
+                ("Demo::Base", false),
+                ("Base", false),
+            ]
         );
     }
 
