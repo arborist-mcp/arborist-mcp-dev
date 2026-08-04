@@ -18,6 +18,7 @@ pub(crate) struct CSharpFileStaticTypeImport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CSharpFileNamespaceImport {
+    pub(crate) scope_path: Option<String>,
     pub(crate) semantic_namespace_path: String,
 }
 
@@ -161,11 +162,7 @@ pub(crate) fn csharp_file_namespace_imports(
     source: &str,
 ) -> Result<Vec<CSharpFileNamespaceImport>> {
     let mut imports = Vec::new();
-    let mut cursor = root.walk();
-    for directive in root.named_children(&mut cursor) {
-        if directive.kind() != "using_directive" {
-            continue;
-        }
+    for (directive, scope_path) in csharp_scoped_using_directives(root, source)? {
         let directive_text = node_text(directive, source)?.trim();
         if !is_file_namespace_directive(directive_text)
             || directive.child_by_field_name("name").is_some()
@@ -181,6 +178,7 @@ pub(crate) fn csharp_file_namespace_imports(
             continue;
         };
         imports.push(CSharpFileNamespaceImport {
+            scope_path,
             semantic_namespace_path,
         });
     }
@@ -367,12 +365,46 @@ class Caller {}
             imports,
             vec![
                 super::CSharpFileNamespaceImport {
+                    scope_path: None,
                     semantic_namespace_path: "Demo::Utility".to_string(),
                 },
                 super::CSharpFileNamespaceImport {
+                    scope_path: None,
                     semantic_namespace_path: "Demo::Shared".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn collects_namespace_scoped_namespace_imports() {
+        let block_scoped_source = r#"
+namespace Demo.App {
+    using Demo.Utility;
+    class Caller {}
+}
+"#;
+        let document = parse_document(Path::new("BlockScoped.cs"), block_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_namespace_imports(document.tree.root_node(), block_scoped_source).unwrap(),
+            vec![super::CSharpFileNamespaceImport {
+                scope_path: Some("Demo::App".to_string()),
+                semantic_namespace_path: "Demo::Utility".to_string(),
+            }]
+        );
+
+        let file_scoped_source = r#"
+namespace Demo.App;
+using Demo.Utility;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("FileScoped.cs"), file_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_namespace_imports(document.tree.root_node(), file_scoped_source).unwrap(),
+            vec![super::CSharpFileNamespaceImport {
+                scope_path: Some("Demo::App".to_string()),
+                semantic_namespace_path: "Demo::Utility".to_string(),
+            }]
         );
     }
 

@@ -23,6 +23,7 @@ pub(in crate::symbol_dependency) struct CSharpStaticTypeImportBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
+    pub(crate) scope_path: Option<String>,
     pub(crate) semantic_namespace_path: String,
 }
 
@@ -101,6 +102,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             deadline.check("extracting C# namespace import bindings")?;
         }
         namespace_import_bindings.push(CSharpNamespaceImportBinding {
+            scope_path: import.scope_path,
             semantic_namespace_path: import.semantic_namespace_path,
         });
     }
@@ -227,6 +229,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_refer
 pub(in crate::symbol_dependency) fn resolve_csharp_namespace_imports_for_reference(
     source_file_path: &str,
     reference_name: &str,
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -241,7 +244,16 @@ pub(in crate::symbol_dependency) fn resolve_csharp_namespace_imports_for_referen
         contexts_by_file,
         deadline,
     )?;
-    Ok(context.namespace_import_bindings)
+    Ok(csharp_import_scope_paths(source_namespace_path)
+        .into_iter()
+        .flat_map(|scope_path| {
+            context
+                .namespace_import_bindings
+                .iter()
+                .filter(move |binding| binding.scope_path == scope_path)
+                .cloned()
+        })
+        .collect())
 }
 
 fn csharp_import_context_from_cache(

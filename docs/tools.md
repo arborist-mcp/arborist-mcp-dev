@@ -51,9 +51,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
   `Type.Method()` static calls from non-nested types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, and file-root
-  `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Type aliases and static imports may appear
-  at file root or directly in a block/file-scoped namespace; an exact namespace alias shadows a root alias with
-  the same local name, while root and exact namespace static imports are both considered. Same-type unqualified/`this.`
+  `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Type aliases, static imports, and namespace
+  imports may appear at file root or directly in a block/file-scoped namespace; an exact namespace alias shadows a
+  root alias with the same local name, while root and exact namespace static/ordinary imports are both considered.
+  Same-type unqualified/`this.`
   forms require a unique same-file, exact-arity, non-`params` declaration. Globally qualified, simple same-namespace,
   and imported static calls may resolve one unique workspace declaration. Imported targets must resolve to one indexed
   type. Duplicate aliases within the same scope, duplicate imports, same-file type-name collisions, competing
@@ -62,8 +63,8 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. Outer-namespace alias/static-import inheritance, namespace-scoped ordinary imports,
-  `global using`, dependency refresh, other member dispatch, overload type selection, and patch operations return
+  constructors are supported. Outer-namespace alias/import inheritance, `global using`, dependency refresh, other
+  member dispatch, overload type selection, and patch operations return
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
