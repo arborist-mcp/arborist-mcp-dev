@@ -432,8 +432,8 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Go,
     display_name: "Go",
     extensions: GO_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_TRACE_SUPPORT,
-    analysis_revision: "go-trace-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
+    analysis_revision: "go-dependencies-v1",
     grammar: go_grammar,
 };
 
@@ -1006,7 +1006,7 @@ impl LanguageAdapter for GoAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1015,8 +1015,8 @@ impl LanguageAdapter for GoAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::go_local_package_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

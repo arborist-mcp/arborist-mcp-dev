@@ -1,4 +1,5 @@
 mod c;
+mod go;
 mod io;
 mod javascript;
 mod parser;
@@ -15,6 +16,7 @@ pub use c::{
 pub(crate) use c::{
     c_include_targets_before, c_local_include_dependency_paths, extension_case_candidates,
 };
+pub(crate) use go::go_local_package_dependency_paths;
 pub(crate) use javascript::{
     javascript_local_module_dependency_paths,
     javascript_named_import_module_paths_with_overrides_and_check,
