@@ -5,6 +5,7 @@ use super::node_text;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CSharpFileTypeAliasImport {
+    pub(crate) scope_path: Option<String>,
     pub(crate) local_name: String,
     pub(crate) semantic_type_path: String,
 }
@@ -23,40 +24,99 @@ pub(crate) fn csharp_file_type_alias_imports(
     root: Node<'_>,
     source: &str,
 ) -> Result<Vec<CSharpFileTypeAliasImport>> {
+    fn collect_namespace_imports(
+        namespace: Node<'_>,
+        parent_scope_path: Option<&str>,
+        source: &str,
+        imports: &mut Vec<CSharpFileTypeAliasImport>,
+    ) -> Result<()> {
+        let Some(name) = namespace.child_by_field_name("name") else {
+            return Ok(());
+        };
+        let namespace_name = node_text(name, source)?.trim();
+        let Some(namespace_path) = csharp_qualified_type_semantic_path(namespace_name) else {
+            return Ok(());
+        };
+        let scope_path = parent_scope_path
+            .map(|parent_scope_path| format!("{parent_scope_path}::{namespace_path}"))
+            .unwrap_or(namespace_path);
+        let Some(body) = namespace.child_by_field_name("body") else {
+            return Ok(());
+        };
+        let mut cursor = body.walk();
+        for child in body.named_children(&mut cursor) {
+            if child.kind() == "using_directive" {
+                if let Some(import) = csharp_type_alias_import_from_directive(
+                    child,
+                    Some(scope_path.as_str()),
+                    source,
+                )? {
+                    imports.push(import);
+                }
+            } else if child.kind() == "namespace_declaration" {
+                collect_namespace_imports(child, Some(scope_path.as_str()), source, imports)?;
+            }
+        }
+        Ok(())
+    }
+
     let mut imports = Vec::new();
+    let mut root_scope_path = None;
     let mut cursor = root.walk();
-    for directive in root.named_children(&mut cursor) {
-        if directive.kind() != "using_directive" {
+    for child in root.named_children(&mut cursor) {
+        if child.kind() == "file_scoped_namespace_declaration" {
+            let Some(name) = child.child_by_field_name("name") else {
+                continue;
+            };
+            let namespace_name = node_text(name, source)?.trim();
+            root_scope_path = csharp_qualified_type_semantic_path(namespace_name);
             continue;
         }
-        let directive_text = node_text(directive, source)?.trim();
-        if !is_file_type_alias_directive(directive_text) {
-            continue;
+        if child.kind() == "using_directive" {
+            if let Some(import) =
+                csharp_type_alias_import_from_directive(child, root_scope_path.as_deref(), source)?
+            {
+                imports.push(import);
+            }
+        } else if child.kind() == "namespace_declaration" {
+            collect_namespace_imports(child, None, source, &mut imports)?;
         }
-        let Some(name) = directive.child_by_field_name("name") else {
-            continue;
-        };
-        let local_name = node_text(name, source)?.trim();
-        if !is_safe_csharp_identifier(local_name) {
-            continue;
-        }
-        let mut children_cursor = directive.walk();
-        let Some(target) = directive
-            .named_children(&mut children_cursor)
-            .find(|child| *child != name)
-        else {
-            continue;
-        };
-        let target_path = node_text(target, source)?.trim();
-        let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
-            continue;
-        };
-        imports.push(CSharpFileTypeAliasImport {
-            local_name: local_name.to_string(),
-            semantic_type_path,
-        });
     }
     Ok(imports)
+}
+
+fn csharp_type_alias_import_from_directive(
+    directive: Node<'_>,
+    scope_path: Option<&str>,
+    source: &str,
+) -> Result<Option<CSharpFileTypeAliasImport>> {
+    let directive_text = node_text(directive, source)?.trim();
+    if !is_file_type_alias_directive(directive_text) {
+        return Ok(None);
+    }
+    let Some(name) = directive.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let local_name = node_text(name, source)?.trim();
+    if !is_safe_csharp_identifier(local_name) {
+        return Ok(None);
+    }
+    let mut children_cursor = directive.walk();
+    let Some(target) = directive
+        .named_children(&mut children_cursor)
+        .find(|child| *child != name)
+    else {
+        return Ok(None);
+    };
+    let target_path = node_text(target, source)?.trim();
+    let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
+        return Ok(None);
+    };
+    Ok(Some(CSharpFileTypeAliasImport {
+        scope_path: scope_path.map(str::to_string),
+        local_name: local_name.to_string(),
+        semantic_type_path,
+    }))
 }
 
 pub(crate) fn csharp_file_static_type_imports(
@@ -196,10 +256,12 @@ class Caller {}
             imports,
             vec![
                 super::CSharpFileTypeAliasImport {
+                    scope_path: None,
                     local_name: "HelperAlias".to_string(),
                     semantic_type_path: "Demo::Utility::Helper".to_string(),
                 },
                 super::CSharpFileTypeAliasImport {
+                    scope_path: None,
                     local_name: "GlobalAlias".to_string(),
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
                 },
@@ -268,6 +330,40 @@ class Caller {}
                     semantic_namespace_path: "Demo::Shared".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn collects_namespace_scoped_type_alias_imports() {
+        let block_scoped_source = r#"
+namespace Demo.App {
+    using HelperAlias = Demo.Utility.Helper;
+    class Caller {}
+}
+"#;
+        let document = parse_document(Path::new("BlockScoped.cs"), block_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_type_alias_imports(document.tree.root_node(), block_scoped_source).unwrap(),
+            vec![super::CSharpFileTypeAliasImport {
+                scope_path: Some("Demo::App".to_string()),
+                local_name: "HelperAlias".to_string(),
+                semantic_type_path: "Demo::Utility::Helper".to_string(),
+            }]
+        );
+
+        let file_scoped_source = r#"
+namespace Demo.App;
+using HelperAlias = Demo.Utility.Helper;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("FileScoped.cs"), file_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_type_alias_imports(document.tree.root_node(), file_scoped_source).unwrap(),
+            vec![super::CSharpFileTypeAliasImport {
+                scope_path: Some("Demo::App".to_string()),
+                local_name: "HelperAlias".to_string(),
+                semantic_type_path: "Demo::Utility::Helper".to_string(),
+            }]
         );
     }
 }

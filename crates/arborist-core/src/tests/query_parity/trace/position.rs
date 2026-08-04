@@ -676,6 +676,101 @@ class CollidingAlias { int Call() => HelperAlias.Utility(1); }
 }
 
 #[test]
+fn traces_csharp_namespace_scoped_type_alias_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.cs");
+    let block_caller_path = dir.join("BlockCaller.cs");
+    let file_caller_path = dir.join("FileCaller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo.Utility { class Helper { public static int Utility(int value) => value; } }
+namespace Demo.Other { class Helper { public static int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &block_caller_path,
+        "using HelperAlias = Demo.Utility.Helper;
+namespace Demo.App {
+    using HelperAlias = Demo.Other.Helper;
+    class BlockCaller { int Call() => HelperAlias.Utility(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &file_caller_path,
+        "namespace Demo.File;
+using HelperAlias = Demo.Utility.Helper;
+class FileCaller { int Call() => HelperAlias.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let other_target = "Demo::Other::Helper::Utility";
+    let live = trace_symbol_graph(&dir, other_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::BlockCaller::Call");
+
+    let utility_target = "Demo::Utility::Helper::Utility";
+    let live = trace_symbol_graph(&dir, utility_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::File::FileCaller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, other_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "Demo::App::BlockCaller::Call"
+    );
+
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, utility_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "Demo::File::FileCaller::Call"
+    );
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_namespace_scoped_type_alias_static_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Helper.cs"),
+        "namespace Demo.Utility; class Helper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo.App {
+    using HelperAlias = Demo.Utility.Helper;
+    using HelperAlias = Demo.Other.Helper;
+    class Caller { int Call() => HelperAlias.Utility(1); }
+}
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "Demo::App::Caller::Call", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::App::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_csharp_file_static_import_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");

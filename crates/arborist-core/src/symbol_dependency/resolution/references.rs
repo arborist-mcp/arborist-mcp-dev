@@ -291,6 +291,8 @@ fn resolve_reference_path_with_deadline<'a>(
         let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
         };
+        let source_namespace_path =
+            csharp_source_namespace_path(source_symbol, raw_symbols).flatten();
         if reference_name == "this" {
             if source_symbol.node_kind != "constructor_declaration" {
                 return Ok(None);
@@ -326,6 +328,7 @@ fn resolve_reference_path_with_deadline<'a>(
         if let Some((method_name, binding)) = resolve_csharp_type_alias_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
+            source_namespace_path,
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
@@ -347,6 +350,7 @@ fn resolve_reference_path_with_deadline<'a>(
         if csharp_type_alias_name_is_ambiguous_for_reference(
             &source_symbol.file_path,
             reference_name,
+            source_namespace_path,
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,

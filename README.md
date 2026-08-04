@@ -58,19 +58,20 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
-  `Type.Method()` static calls from non-nested types, file-root `using Alias = Fully.Qualified.Type;` alias
-  calls of the form `Alias.Method()`, file-root `using static Fully.Qualified.Type;` bare method calls, and
-  file-root `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Same-type unqualified/`this.`
-  forms require a unique same-file, exact-arity, non-`params` declaration. Globally qualified, simple same-namespace,
-  and imported static calls may resolve one unique workspace declaration. Imported targets must resolve to one indexed
-  type. Duplicate aliases, duplicate imports, same-file type-name collisions, competing imported targets, and
-  ambiguous type declarations fail closed. Static imports are considered only when no same-type method has the bare
-  call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
-  anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
-  type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. Dependency refresh, namespace-scoped imports, `global using`, other member dispatch,
-  overload type selection, and patching remain explicitly unavailable until dedicated C# adapter slices establish their
-  contracts and fixtures.
+  `Type.Method()` static calls from non-nested types, explicit type-alias calls of the form `Alias.Method()`,
+  file-root `using static Fully.Qualified.Type;` bare method calls, and file-root
+  `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`. Type aliases may appear at file root or
+  directly in a block/file-scoped namespace; an exact namespace alias shadows a root alias with the same local name.
+  Same-type unqualified/`this.` forms require a unique same-file, exact-arity, non-`params` declaration. Globally
+  qualified, simple same-namespace, and imported static calls may resolve one unique workspace declaration. Imported
+  targets must resolve to one indexed type. Duplicate aliases within the same scope, duplicate imports, same-file
+  type-name collisions, competing imported targets, and ambiguous type declarations fail closed. Static imports are
+  considered only when no same-type method has the bare call's name; namespace imports are considered only when the
+  caller's namespace has no type of the receiver name anywhere in the workspace. Simple type receivers must not be
+  shadowed by a local, parameter, type parameter, or type member. Block and file-scoped namespaces, classes, structs,
+  interfaces, enums, records, methods, and constructors are supported. Dependency refresh, namespace-scoped static or
+  ordinary imports, `global using`, other member dispatch, overload type selection, and patching remain explicitly
+  unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,
@@ -546,12 +547,12 @@ for response shapes, error behavior, and examples.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, unique simple same-namespace
-  `Type.Method()` static calls across the workspace from non-nested types, file-root type aliases, file-root
-  `using static` bare calls, and file-root namespace-import `Type.Method()` calls. Same-type unqualified/`this.`
-  forms remain same-file; imported and qualified static targets must be unique, static, exact-arity, and non-`params`.
-  Ambiguous imports/types and shadowed receivers fail closed. Dependency refresh, namespace-scoped imports,
-  `global using`, other member dispatch, overload type selection, and patching remain capability-gated pending
-  dedicated C# adapter slices.
+  `Type.Method()` static calls across the workspace from non-nested types, type aliases at file root or directly in
+  block/file-scoped namespaces, file-root `using static` bare calls, and file-root namespace-import `Type.Method()`
+  calls. Exact namespace aliases shadow root aliases; same-type unqualified/`this.` forms remain same-file. Imported
+  and qualified static targets must be unique, static, exact-arity, and non-`params`; ambiguous imports/types and
+  shadowed receivers fail closed. Dependency refresh, namespace-scoped static/ordinary imports, `global using`, other
+  member dispatch, overload type selection, and patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports
   whose owning type maps to a local `.java` file under an ancestor source root. It traces

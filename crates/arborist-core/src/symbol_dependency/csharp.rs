@@ -27,8 +27,8 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpImportContext {
-    type_alias_bindings: BTreeMap<String, CSharpTypeAliasBinding>,
-    ambiguous_type_alias_names: BTreeSet<String>,
+    type_alias_bindings: BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
+    ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -77,6 +77,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
         insert_unique_csharp_type_alias_binding(
             &mut type_alias_bindings,
             &mut ambiguous_alias_names,
+            import.scope_path,
             import.local_name,
             CSharpTypeAliasBinding {
                 semantic_type_path: import.semantic_type_path,
@@ -110,23 +111,26 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
 }
 
 fn insert_unique_csharp_type_alias_binding(
-    bindings: &mut BTreeMap<String, CSharpTypeAliasBinding>,
-    ambiguous_names: &mut BTreeSet<String>,
+    bindings: &mut BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
+    ambiguous_names: &mut BTreeSet<(Option<String>, String)>,
+    scope_path: Option<String>,
     local_name: String,
     binding: CSharpTypeAliasBinding,
 ) {
-    if ambiguous_names.contains(&local_name) {
+    let key = (scope_path, local_name);
+    if ambiguous_names.contains(&key) {
         return;
     }
-    if bindings.insert(local_name.clone(), binding).is_some() {
-        bindings.remove(&local_name);
-        ambiguous_names.insert(local_name);
+    if bindings.insert(key.clone(), binding).is_some() {
+        bindings.remove(&key);
+        ambiguous_names.insert(key);
     }
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_reference(
     source_file_path: &str,
     reference_name: &str,
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -144,15 +148,19 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
         contexts_by_file,
         deadline,
     )?;
-    let Some(binding) = context.type_alias_bindings.get(local_type_name) else {
-        return Ok(None);
-    };
-    Ok(Some((method_name.to_string(), binding.clone())))
+    for scope_path in csharp_type_alias_scope_paths(source_namespace_path) {
+        let key = (scope_path, local_type_name.to_string());
+        if let Some(binding) = context.type_alias_bindings.get(&key) {
+            return Ok(Some((method_name.to_string(), binding.clone())));
+        }
+    }
+    Ok(None)
 }
 
 pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_reference(
     source_file_path: &str,
     reference_name: &str,
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -170,7 +178,18 @@ pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_refe
         contexts_by_file,
         deadline,
     )?;
-    Ok(context.ambiguous_type_alias_names.contains(local_type_name))
+    Ok(csharp_type_alias_scope_paths(source_namespace_path)
+        .into_iter()
+        .map(|scope_path| (scope_path, local_type_name.to_string()))
+        .any(|key| context.ambiguous_type_alias_names.contains(&key)))
+}
+
+fn csharp_type_alias_scope_paths(source_namespace_path: Option<&str>) -> Vec<Option<String>> {
+    let mut scope_paths = source_namespace_path
+        .map(|source_namespace_path| vec![Some(source_namespace_path.to_string())])
+        .unwrap_or_default();
+    scope_paths.push(None);
+    scope_paths
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_reference(
