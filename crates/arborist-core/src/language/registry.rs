@@ -32,6 +32,8 @@ impl LanguageCapabilities {
 
     pub const INDEXED_SKELETON_SUPPORT: Self =
         Self(Self::TREE_QUERY.0 | Self::SEMANTIC_SKELETON.0 | Self::SYMBOL_INDEX.0);
+    pub const INDEXED_SKELETON_DEPENDENCY_SUPPORT: Self =
+        Self(Self::INDEXED_SKELETON_SUPPORT.0 | Self::FILE_DEPENDENCIES.0);
     pub const INDEXED_TRACE_SUPPORT: Self =
         Self(Self::TREE_QUERY.0 | Self::SYMBOL_INDEX.0 | Self::REFERENCE_TRACE.0);
     pub const INDEXED_SKELETON_TRACE_SUPPORT: Self =
@@ -419,8 +421,8 @@ static RUST_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::Rust,
     display_name: "Rust",
     extensions: RUST_EXTENSIONS,
-    capabilities: LanguageCapabilities::INDEXED_SKELETON_SUPPORT,
-    analysis_revision: "rust-symbols-v1",
+    capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_SUPPORT,
+    analysis_revision: "rust-dependencies-v1",
     grammar: rust_grammar,
 };
 
@@ -780,7 +782,7 @@ impl LanguageAdapter for RustAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -789,8 +791,8 @@ impl LanguageAdapter for RustAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::rust_local_module_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(
