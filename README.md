@@ -55,9 +55,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   package imports, using an explicit alias or the imported package's declared name. Module-root imports,
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
-- Java: `.java` — Tree-sitter parsing and raw queries only. Semantic skeletons, symbol indexing,
-  dependency refresh, reference tracing, and patch operations remain capability-gated while the Java
-  adapter contract and workspace assumptions are established.
+- Java: `.java` — Tree-sitter parsing, raw queries, and semantic skeletons for package-qualified
+  classes, interfaces, enums, annotation types, methods, and constructors. Symbol indexing,
+  dependency refresh, reference tracing, overload identity, and patch operations remain
+  capability-gated while Java workspace and resolution assumptions are established.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -519,8 +520,10 @@ for response shapes, error behavior, and examples.
   or the imported package's declared name. Module-root imports, external modules, `replace`, `go.work`,
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
-- Java Tree-sitter parsing and raw query execution only; semantic skeletons, indexing, dependencies,
-  tracing, and patching remain capability-gated pending the Java adapter contract.
+- Java Tree-sitter parsing, raw query execution, and semantic skeletons for package-qualified
+  classes, interfaces, enums, annotation types, methods, and constructors. Indexing, dependencies,
+  tracing, overload identity, and patching remain capability-gated pending dedicated Java
+  resolution fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -542,7 +545,8 @@ inline-module-qualified direct-call graph tracing plus position identity. Go now
 Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
 static local-package dependency refresh under the nearest valid simple `go.mod` module path, and
 same-file bare plus unambiguous local-package imported-function direct-call graph tracing. Java
-now contributes extension routing and raw Tree-sitter query execution only. General
+now contributes extension routing, raw Tree-sitter query execution, and package-qualified
+semantic skeletons for top-level and nested Java declarations. General
 cross-file/package/import resolution, method dispatch, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.

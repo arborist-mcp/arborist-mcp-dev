@@ -204,20 +204,20 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn java_adapter_exposes_only_raw_tree_queries() {
+fn java_adapter_exposes_tree_queries_and_semantic_skeleton() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Java).unwrap();
 
     assert_eq!(descriptor.display_name, "Java");
     assert_eq!(descriptor.extensions, &["java"]);
-    assert_eq!(descriptor.analysis_revision, "java-query-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "java-skeleton-v1");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
