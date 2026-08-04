@@ -50,7 +50,7 @@ fn execute_tree_query_rejects_capture_limit_overflow() {
 }
 
 #[test]
-fn executes_tree_queries_for_javascript_typescript_and_rust_adapters() {
+fn executes_tree_queries_for_javascript_typescript_rust_and_go_adapters() {
     for (path, source, query, expected) in [
         (
             "sample.js",
@@ -75,6 +75,12 @@ fn executes_tree_queries_for_javascript_typescript_and_rust_adapters() {
             "pub fn add(left: i32, right: i32) -> i32 { left + right }",
             "(function_item name: (identifier) @name)",
             "add",
+        ),
+        (
+            "sample.go",
+            "package sample\nfunc Add(left int, right int) int { return left + right }\n",
+            "(function_declaration name: (identifier) @name)",
+            "Add",
         ),
     ] {
         let captures = execute_tree_query(Path::new(path), source, query).unwrap();

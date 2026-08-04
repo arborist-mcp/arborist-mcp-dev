@@ -17,6 +17,7 @@ const JAVASCRIPT_EXTENSIONS: &[&str] = &["js", "jsx", "mjs", "cjs"];
 const TYPESCRIPT_EXTENSIONS: &[&str] = &["ts", "mts", "cts"];
 const TSX_EXTENSIONS: &[&str] = &["tsx"];
 const RUST_EXTENSIONS: &[&str] = &["rs"];
+const GO_EXTENSIONS: &[&str] = &["go"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -214,7 +215,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 7] = [
+        let adapters: [&'static dyn LanguageAdapter; 8] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -222,6 +223,7 @@ impl LanguageRegistry {
             &TYPESCRIPT_ADAPTER,
             &TSX_ADAPTER,
             &RUST_ADAPTER,
+            &GO_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -344,6 +346,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::TypeScript => "typescript",
         LanguageId::Tsx => "tsx",
         LanguageId::Rust => "rust",
+        LanguageId::Go => "go",
     }
 }
 
@@ -425,6 +428,14 @@ static RUST_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "rust-trace-v3",
     grammar: rust_grammar,
 };
+static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Go,
+    display_name: "Go",
+    extensions: GO_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "go-query-v1",
+    grammar: go_grammar,
+};
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
@@ -442,6 +453,9 @@ static RUST_ADAPTER: RustAdapter = RustAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &RUST_DESCRIPTOR,
     },
+};
+static GO_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &GO_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -1529,4 +1543,8 @@ fn tsx_grammar() -> Language {
 
 fn rust_grammar() -> Language {
     tree_sitter_rust::LANGUAGE.into()
+}
+
+fn go_grammar() -> Language {
+    tree_sitter_go::LANGUAGE.into()
 }

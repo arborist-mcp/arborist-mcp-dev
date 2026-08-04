@@ -37,6 +37,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("CTS", LanguageId::TypeScript),
         ("TSX", LanguageId::Tsx),
         ("RS", LanguageId::Rust),
+        ("GO", LanguageId::Go),
     ] {
         assert_eq!(
             detect_language(Path::new(&format!("sample.{extension}"))).unwrap(),
@@ -47,7 +48,7 @@ fn detect_language_accepts_uppercase_extensions() {
 }
 
 #[test]
-fn supported_languages_reports_cpp() {
+fn supported_languages_reports_all_builtin_languages() {
     assert_eq!(
         supported_languages(),
         vec![
@@ -58,6 +59,7 @@ fn supported_languages_reports_cpp() {
             "typescript",
             "tsx",
             "rust",
+            "go",
         ]
     );
 }
@@ -72,6 +74,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::TypeScript, "typescript"),
         (LanguageId::Tsx, "tsx"),
         (LanguageId::Rust, "rust"),
+        (LanguageId::Go, "go"),
     ] {
         assert_eq!(
             serde_json::to_string(&language_id).unwrap(),
@@ -220,6 +223,46 @@ fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patch
     ] {
         assert!(!descriptor.capabilities.contains(capability));
     }
+}
+
+#[test]
+fn go_adapter_exposes_tree_query_support_only() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::Go).unwrap();
+
+    assert_eq!(descriptor.display_name, "Go");
+    assert_eq!(descriptor.extensions, &["go"]);
+    assert_eq!(descriptor.analysis_revision, "go-query-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(!descriptor.capabilities.contains(capability));
+    }
+}
+
+#[test]
+fn parse_document_uses_go_grammar_and_recovers_from_invalid_source() {
+    let document = parse_document(
+        Path::new("sample.go"),
+        "package sample\nfunc Add(left int, right int) int { return left + right }\n",
+    )
+    .unwrap();
+    assert_eq!(document.language_id, LanguageId::Go);
+    assert!(!document.tree.root_node().has_error());
+
+    let malformed = parse_document(Path::new("broken.go"), "package sample\nfunc broken(").unwrap();
+    assert_eq!(malformed.language_id, LanguageId::Go);
+    assert!(malformed.tree.root_node().has_error());
 }
 
 #[test]

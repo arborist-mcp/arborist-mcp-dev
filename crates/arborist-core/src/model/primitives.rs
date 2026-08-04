@@ -21,6 +21,7 @@ pub enum LanguageId {
     TypeScript,
     Tsx,
     Rust,
+    Go,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
