@@ -97,11 +97,7 @@ fn collect_direct_same_type_calls(symbol_node: Node<'_>, source: &str) -> Result
     let bindings = collect_local_bindings(symbol_node, source)?;
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
-    collect_this_constructor_initializer_call(
-        symbol_node,
-        &mut references,
-        &mut call_arities_by_name,
-    );
+    collect_constructor_initializer_call(symbol_node, &mut references, &mut call_arities_by_name);
     if let Some(body) = symbol_node.child_by_field_name("body") {
         collect_direct_same_type_calls_from_node(
             body,
@@ -114,7 +110,7 @@ fn collect_direct_same_type_calls(symbol_node: Node<'_>, source: &str) -> Result
     Ok((references, call_arities_by_name))
 }
 
-fn collect_this_constructor_initializer_call(
+fn collect_constructor_initializer_call(
     symbol_node: Node<'_>,
     references: &mut ReferenceNames,
     call_arities_by_name: &mut CallAritiesByName,
@@ -130,12 +126,12 @@ fn collect_this_constructor_initializer_call(
         return;
     };
     let mut initializer_cursor = initializer.walk();
-    if !initializer
+    let Some(receiver) = initializer
         .children(&mut initializer_cursor)
-        .any(|node| node.kind() == "this")
-    {
+        .find(|node| matches!(node.kind(), "this" | "base"))
+    else {
         return;
-    }
+    };
     let mut arguments_cursor = initializer.walk();
     let Some(arguments) = initializer
         .named_children(&mut arguments_cursor)
@@ -145,9 +141,10 @@ fn collect_this_constructor_initializer_call(
     };
     let mut argument_cursor = arguments.walk();
     let arity = arguments.named_children(&mut argument_cursor).count();
-    references.insert("this".to_string());
+    let receiver = receiver.kind().to_string();
+    references.insert(receiver.clone());
     call_arities_by_name
-        .entry("this".to_string())
+        .entry(receiver)
         .or_default()
         .insert(arity);
 }
@@ -519,7 +516,14 @@ class SimpleCaller {
                 symbol.semantic_path == "Counter::Counter" && symbol.parameters == ["string value"]
             })
             .unwrap();
-        assert!(base_constructor.references_by_name.is_empty());
+        assert_eq!(
+            base_constructor.references_by_name,
+            ["base".to_string()].into()
+        );
+        assert_eq!(
+            base_constructor.call_arities_by_name,
+            [("base".to_string(), [0].into())].into()
+        );
         assert_eq!(references("Counter::Caller"), ["Helper".to_string()].into());
         assert_eq!(
             references("Counter::GenericCaller"),

@@ -22,6 +22,57 @@ pub(crate) struct CSharpFileNamespaceImport {
     pub(crate) semantic_namespace_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CSharpFileBaseType {
+    pub(crate) type_range: (usize, usize),
+    pub(crate) semantic_base_type_path: String,
+    pub(crate) is_global_qualified: bool,
+}
+
+pub(crate) fn csharp_file_base_types(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<CSharpFileBaseType>> {
+    fn collect(
+        node: Node<'_>,
+        source: &str,
+        base_types: &mut Vec<CSharpFileBaseType>,
+    ) -> Result<()> {
+        if matches!(node.kind(), "class_declaration" | "record_declaration") {
+            let mut cursor = node.walk();
+            if let Some(base_list) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "base_list")
+            {
+                let mut base_list_cursor = base_list.walk();
+                if let Some(base_type) = base_list.named_children(&mut base_list_cursor).next() {
+                    let base_type_text = node_text(base_type, source)?.trim();
+                    let is_global_qualified = base_type_text.starts_with("global::");
+                    if let Some(semantic_base_type_path) =
+                        csharp_qualified_type_semantic_path(base_type_text)
+                    {
+                        base_types.push(CSharpFileBaseType {
+                            type_range: (node.start_byte(), node.end_byte()),
+                            semantic_base_type_path,
+                            is_global_qualified,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect(child, source, base_types)?;
+        }
+        Ok(())
+    }
+
+    let mut base_types = Vec::new();
+    collect(root, source, &mut base_types)?;
+    Ok(base_types)
+}
+
 pub(crate) fn csharp_file_type_alias_imports(
     root: Node<'_>,
     source: &str,
@@ -356,11 +407,37 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        csharp_file_namespace_imports, csharp_file_static_type_imports,
+        csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
         csharp_file_type_alias_imports, csharp_global_namespace_imports,
         csharp_global_static_type_imports, csharp_global_type_alias_imports,
     };
     use crate::language::parse_document;
+
+    #[test]
+    fn collects_only_safe_csharp_base_types() {
+        let source = r#"
+class Base {}
+class SimpleDerived : Base {}
+class GlobalDerived : global::Demo.Base {}
+class QualifiedDerived : Demo.Base {}
+class GenericDerived : Base<int> {}
+"#;
+        let document = parse_document(Path::new("Derived.cs"), source).unwrap();
+        let base_types = csharp_file_base_types(document.tree.root_node(), source).unwrap();
+
+        assert_eq!(
+            base_types
+                .iter()
+                .map(|base_type| {
+                    (
+                        base_type.semantic_base_type_path.as_str(),
+                        base_type.is_global_qualified,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [("Base", false), ("Demo::Base", true), ("Demo::Base", false),]
+        );
+    }
 
     #[test]
     fn collects_only_safe_file_type_alias_imports() {

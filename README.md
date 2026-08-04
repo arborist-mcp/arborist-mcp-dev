@@ -56,8 +56,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
-  constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
+  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
+  and conservative `base(...)` constructor initializers with simple or `global::` base types,
+  globally namespace-qualified `global::...` static calls, simple same-namespace
   `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;`
   bare method calls contributed by any scanned C# source file (including directive-only files), and file-root
@@ -549,14 +550,16 @@ for response shapes, error behavior, and examples.
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
-  conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
-  constructor initializers, globally namespace-qualified `global::...` static calls, unique simple same-namespace
+  conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
+  and conservative `base(...)` constructor initializers with simple or `global::` base types,
+  globally namespace-qualified `global::...` static calls, unique simple same-namespace
   `Type.Method()` static calls across the workspace, including from nested source types, type aliases and static imports at file
   root or directly in block/file-scoped namespaces, root-level `global using static` imports from any scanned source file
   (including directive-only files), root-level global namespace-import `Type.Method()` calls and global type-alias calls from any scanned source file,
   and namespace-import `Type.Method()` calls. Exact namespace
   aliases shadow root aliases; root and exact namespace static/ordinary imports are both considered; same-type
-  unqualified/`this.` forms remain same-file. Imported and qualified static targets must be unique, static,
+  unqualified/`this.` forms remain same-file. `base(...)` requires one unique class/record base declaration and one exact-arity,
+  non-`params` constructor; generic, non-`global::` qualified, alias, and namespace-import base types fail closed. Imported and qualified static targets must be unique, static,
   exact-arity, and non-`params`; ambiguous imports/types and shadowed receivers fail closed. Outer-namespace
   alias/import inheritance, dependency refresh, other member dispatch, overload type selection, and
   patching remain capability-gated pending dedicated C# adapter slices.

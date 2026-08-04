@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::language::{
-    csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    csharp_global_namespace_imports, csharp_global_static_type_imports,
-    csharp_global_type_alias_imports, detect_language, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
+    csharp_file_type_alias_imports, csharp_global_namespace_imports,
+    csharp_global_static_type_imports, csharp_global_type_alias_imports, detect_language,
+    normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -33,8 +33,15 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 pub(in crate::symbol_dependency) struct CSharpImportContext {
     type_alias_bindings: BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
     ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
+    base_type_bindings_by_range: BTreeMap<(usize, usize), CSharpBaseTypeBinding>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
+    pub(crate) semantic_type_path: String,
+    pub(crate) is_global_qualified: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -206,6 +213,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
 
     let mut type_alias_bindings = BTreeMap::new();
     let mut ambiguous_alias_names = BTreeSet::new();
+    let mut base_type_bindings_by_range = BTreeMap::new();
     for import in csharp_file_type_alias_imports(root, &source)? {
         if let Some(deadline) = deadline {
             deadline.check("extracting C# type alias bindings")?;
@@ -219,6 +227,23 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
                 semantic_type_path: import.semantic_type_path,
             },
         );
+    }
+    for base_type in csharp_file_base_types(root, &source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting C# base type bindings")?;
+        }
+        if base_type_bindings_by_range
+            .insert(
+                base_type.type_range,
+                CSharpBaseTypeBinding {
+                    semantic_type_path: base_type.semantic_base_type_path,
+                    is_global_qualified: base_type.is_global_qualified,
+                },
+            )
+            .is_some()
+        {
+            return Ok(CSharpImportContext::default());
+        }
     }
     let mut static_type_import_bindings = Vec::new();
     for import in csharp_file_static_type_imports(root, &source)? {
@@ -243,6 +268,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
     Ok(CSharpImportContext {
         type_alias_bindings,
         ambiguous_type_alias_names: ambiguous_alias_names,
+        base_type_bindings_by_range,
         static_type_import_bindings,
         namespace_import_bindings,
     })
@@ -263,6 +289,25 @@ fn insert_unique_csharp_type_alias_binding(
         bindings.remove(&key);
         ambiguous_names.insert(key);
     }
+}
+
+pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_reference(
+    source_file_path: &str,
+    source_type_range: (usize, usize),
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context
+        .base_type_bindings_by_range
+        .get(&source_type_range)
+        .cloned())
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_reference(

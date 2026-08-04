@@ -5,9 +5,10 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
-    CSharpGlobalImportContext, CSharpImportContext, CSharpNamespaceImportBinding,
-    CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
+    CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext,
+    CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
     csharp_global_type_alias_name_is_ambiguous, csharp_type_alias_name_is_ambiguous_for_reference,
+    resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
     resolve_csharp_global_type_alias_binding_for_reference,
@@ -318,6 +319,42 @@ fn resolve_reference_path_with_deadline<'a>(
                     node_kind: "constructor_declaration",
                     require_static: false,
                     require_same_file: true,
+                },
+            ));
+        }
+        if reference_name == "base" {
+            if source_symbol.node_kind != "constructor_declaration" {
+                return Ok(None);
+            }
+            let Some(source_type) = csharp_source_type_declaration(source_symbol, raw_symbols)
+            else {
+                return Ok(None);
+            };
+            let Some(base_type_binding) = resolve_csharp_base_type_binding_for_reference(
+                &source_symbol.file_path,
+                source_type.byte_range,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let Some(target_path) =
+                csharp_base_constructor_target_path(source_symbol, raw_symbols, &base_type_binding)
+            else {
+                return Ok(None);
+            };
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                call_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "constructor_declaration",
+                    require_static: false,
+                    require_same_file: false,
                 },
             ));
         }
@@ -869,6 +906,57 @@ fn resolve_csharp_candidate(
         })
         .collect::<Vec<_>>();
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+}
+
+fn csharp_source_type_declaration<'a>(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &'a [IndexedSymbol],
+) -> Option<&'a IndexedSymbol> {
+    let scope_path = source_symbol.scope_path.as_deref()?;
+    let candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == scope_path
+                && csharp_is_base_constructible_type(candidate)
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then_some(candidates[0])
+}
+
+fn csharp_base_constructor_target_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+) -> Option<String> {
+    let base_type_path = if binding.is_global_qualified {
+        binding.semantic_type_path.clone()
+    } else if !binding.semantic_type_path.contains("::") {
+        csharp_source_namespace_path(source_symbol, raw_symbols)?
+            .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
+            .unwrap_or_else(|| binding.semantic_type_path.clone())
+    } else {
+        return None;
+    };
+    let type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.semantic_path == base_type_path
+                && csharp_is_base_constructible_type(candidate)
+        })
+        .count();
+    if type_candidates != 1 {
+        return None;
+    }
+    let base_type_name = base_type_path.rsplit("::").next()?;
+    Some(format!("{base_type_path}::{base_type_name}"))
+}
+
+fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
+    matches!(
+        symbol.node_kind.as_str(),
+        "class_declaration" | "record_declaration"
+    )
 }
 
 fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<String> {

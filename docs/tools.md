@@ -47,8 +47,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
-  constructor initializers, globally namespace-qualified `global::...` static calls, simple same-namespace
+  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
+  and conservative `base(...)` constructor initializers with simple or `global::` base types,
+  globally namespace-qualified `global::...` static calls, simple same-namespace
   `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;` bare
   method calls contributed by any scanned C# source file (including directive-only files), and file-root
@@ -66,7 +67,8 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   call's name; namespace imports are considered only when the caller's namespace has no type of the receiver name
   anywhere in the workspace. Simple type receivers must not be shadowed by a local, parameter, type parameter, or
   type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors are supported. Outer-namespace alias/import inheritance, dependency refresh, other
+  constructors are supported. `base(...)` requires one unique class/record base declaration and one exact-arity, non-`params`
+  constructor; generic, non-`global::` qualified, alias, and namespace-import base types fail closed. Outer-namespace alias/import inheritance, dependency refresh, other
   member dispatch, overload type selection, and patch operations return
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.

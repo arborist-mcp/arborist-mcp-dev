@@ -19,9 +19,9 @@ pub(crate) use c::{
     c_include_targets_before, c_local_include_dependency_paths, extension_case_candidates,
 };
 pub(crate) use csharp::{
-    csharp_file_namespace_imports, csharp_file_static_type_imports, csharp_file_type_alias_imports,
-    csharp_global_namespace_imports, csharp_global_static_type_imports,
-    csharp_global_type_alias_imports,
+    csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
+    csharp_file_type_alias_imports, csharp_global_namespace_imports,
+    csharp_global_static_type_imports, csharp_global_type_alias_imports,
 };
 pub(crate) use go::{go_local_package_dependency_paths, go_local_package_imports};
 pub(crate) use java::{

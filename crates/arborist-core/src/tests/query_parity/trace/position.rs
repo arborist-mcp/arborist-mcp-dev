@@ -393,6 +393,109 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
 }
 
 #[test]
+fn traces_csharp_simple_and_global_base_constructor_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Base {
+    public Base(int value) {}
+    public Base(params int[] values) {}
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Demo;
+class SimpleDerived : Base { SimpleDerived(int value) : base(value) {} }
+class GlobalDerived : global::Demo.Base { GlobalDerived(int value) : base(value) {} }
+class ParamsDerived : Base { ParamsDerived() : base(1, 2) {} }
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Base::Base";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::GlobalDerived::GlobalDerived",
+            "Demo::SimpleDerived::SimpleDerived"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::GlobalDerived::GlobalDerived",
+            "Demo::SimpleDerived::SimpleDerived"
+        ]
+    );
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_qualified_csharp_base_constructor_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("First.cs"),
+        "namespace Demo; class Base { public Base(int value) {} }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Second.cs"),
+        "namespace Demo; class Base { public Base(int value) {} }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Demo; class Derived : Base { Derived(int value) : base(value) {} }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Qualified.cs"),
+        "namespace Other; class QualifiedDerived : Demo.Base { QualifiedDerived(int value) : base(value) {} }
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Derived::Derived",
+        "Other::QualifiedDerived::QualifiedDerived",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty());
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in [
+        "Demo::Derived::Derived",
+        "Other::QualifiedDerived::QualifiedDerived",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty());
+    }
+}
+
+#[test]
 fn traces_csharp_same_namespace_static_calls_across_files_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");
