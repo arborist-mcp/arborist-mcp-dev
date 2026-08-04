@@ -55,10 +55,12 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   package imports, using an explicit alias or the imported package's declared name. Module-root imports,
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
-- C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, and declaration indexing for
-  block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors. Dependency refresh, tracing, and patching remain explicitly unavailable until
-  dedicated C# adapter slices establish their contracts and fixtures.
+- C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
+  conservative tracing of unshadowed unqualified calls to a single same-type, same-file method with
+  an exact arity match. Block and file-scoped namespaces, classes, structs, interfaces, enums, records,
+  methods, and constructors are supported. Dependency refresh, explicit member dispatch, overload type
+  selection, and patching remain explicitly unavailable until dedicated C# adapter slices establish
+  their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,
@@ -531,9 +533,10 @@ for response shapes, error behavior, and examples.
   or the imported package's declared name. Module-root imports, external modules, `replace`, `go.work`,
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
-- C# Tree-sitter parsing, raw query execution, semantic skeletons, and declaration indexing for
-  namespace-qualified types, methods, and constructors. Dependency refresh, tracing, and patching
-  remain capability-gated pending dedicated C# adapter slices.
+- C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
+  conservative same-type, same-file tracing for unshadowed unqualified calls with a unique exact arity
+  match. Dependency refresh, explicit member dispatch, overload type selection, and patching remain
+  capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports
   whose owning type maps to a local `.java` file under an ancestor source root. It traces

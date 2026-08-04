@@ -46,10 +46,12 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   an explicit alias or the imported package's declared name. Module-root imports, external modules,
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
-- C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, and declaration indexing for
-  block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and
-  constructors. Dependency refresh, tracing, and patch operations return explicit unsupported-operation
-  errors until dedicated C# adapter slices establish their contracts and fixtures.
+- C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
+  conservative tracing of unshadowed unqualified calls to a single same-type, same-file method with an
+  exact arity match. Block and file-scoped namespaces, classes, structs, interfaces, enums, records,
+  methods, and constructors are supported. Dependency refresh, explicit member dispatch, overload type
+  selection, and patch operations return explicit unsupported-operation errors until dedicated C# adapter
+  slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type maps to a local `.java` file under an ancestor source root. Classes,

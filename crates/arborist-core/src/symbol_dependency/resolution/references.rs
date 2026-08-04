@@ -137,8 +137,10 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     details.explicit_member_receiver,
                 ),
             };
-        if matches!(language_id, Some(LanguageId::Cpp | LanguageId::Java))
-            && let Some(call_arities) = reference.call_arities.as_ref()
+        if matches!(
+            language_id,
+            Some(LanguageId::Cpp | LanguageId::Java | LanguageId::CSharp)
+        ) && let Some(call_arities) = reference.call_arities.as_ref()
         {
             for call_arity in call_arities {
                 if let Some(deadline) = deadline {
@@ -259,6 +261,35 @@ fn resolve_reference_path_with_deadline<'a>(
             .flatten()
             .copied()
             .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+            .collect::<Vec<_>>();
+        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+    }
+    if language_id == Some(LanguageId::CSharp) {
+        let Some(call_arity) = call_context.arity else {
+            return Ok(None);
+        };
+        if reference_name.contains('.') {
+            return Ok(None);
+        }
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let target_path = format!("{scope_path}::{reference_name}");
+        let candidates = semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.file_path == source_symbol.file_path
+                    && candidate.node_kind == "method_declaration"
+                    && candidate.parameters.len() == call_arity
+                    && !candidate
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
+            })
             .collect::<Vec<_>>();
         return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }

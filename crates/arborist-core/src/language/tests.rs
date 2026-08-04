@@ -207,23 +207,23 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn csharp_adapter_exposes_query_skeleton_and_index_capabilities() {
+fn csharp_adapter_exposes_query_skeleton_index_and_trace_capabilities() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::CSharp).unwrap();
 
     assert_eq!(descriptor.display_name, "C#");
     assert_eq!(descriptor.extensions, &["cs"]);
-    assert_eq!(descriptor.analysis_revision, "csharp-index-v1");
+    assert_eq!(descriptor.analysis_revision, "csharp-local-trace-v1");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::REFERENCE_TRACE,
     ] {
         assert!(descriptor.capabilities.contains(capability));
     }
     for capability in [
         LanguageCapabilities::FILE_DEPENDENCIES,
-        LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {
