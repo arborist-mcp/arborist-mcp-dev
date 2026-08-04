@@ -66,12 +66,14 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         .collect::<Vec<_>>();
     let javascript_ids_by_index = javascript_symbol_ids(raw_symbols, &javascript_indices);
 
-    let java_indices = languages
+    let java_like_indices = languages
         .iter()
         .enumerate()
-        .filter_map(|(index, language)| (*language == Some(LanguageId::Java)).then_some(index))
+        .filter_map(|(index, language)| {
+            matches!(language, Some(LanguageId::Java | LanguageId::CSharp)).then_some(index)
+        })
         .collect::<Vec<_>>();
-    let java_ids_by_index = java_symbol_ids(raw_symbols, &java_indices);
+    let java_like_ids_by_index = java_like_symbol_ids(raw_symbols, &java_like_indices);
 
     let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
     for (index, language) in languages.into_iter().enumerate() {
@@ -82,7 +84,7 @@ pub(crate) fn assign_symbol_ids_with_deadline(
             Some(symbol_id) => symbol_ids.push(symbol_id),
             None => match javascript_ids_by_index.get(&index) {
                 Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
-                None => match java_ids_by_index.get(&index) {
+                None => match java_like_ids_by_index.get(&index) {
                     Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
                     None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
                 },
@@ -144,7 +146,10 @@ fn javascript_symbol_ids(
     ids
 }
 
-fn java_symbol_ids(raw_symbols: &[IndexedSymbol], indices: &[usize]) -> HashMap<usize, String> {
+fn java_like_symbol_ids(
+    raw_symbols: &[IndexedSymbol],
+    indices: &[usize],
+) -> HashMap<usize, String> {
     let mut path_counts: HashMap<&str, usize> = HashMap::new();
     let mut groups: std::collections::BTreeMap<(&str, &str), Vec<usize>> =
         std::collections::BTreeMap::new();

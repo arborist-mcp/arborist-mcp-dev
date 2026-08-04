@@ -36,6 +36,64 @@ fn lists_symbols_in_live_workspace_and_persisted_index() {
 }
 
 #[test]
+fn lists_csharp_declarations_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        r#"
+namespace Demo.Tools;
+
+public class Counter {
+    public Counter(int initial) {}
+    public int Increment(int amount) => amount;
+    public int Increment(long amount) => (int)amount;
+}
+"#,
+    )
+    .unwrap();
+
+    let live = list_symbols(&dir, 10).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.total_symbols, 4);
+    assert_eq!(
+        live.symbols
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Demo::Tools::Counter",
+            "Demo::Tools::Counter::Counter",
+            "Demo::Tools::Counter::Increment",
+            "Demo::Tools::Counter::Increment",
+        ]
+    );
+    assert!(
+        live.symbols
+            .iter()
+            .filter(|symbol| symbol.semantic_path == "Demo::Tools::Counter::Increment")
+            .all(|symbol| symbol.symbol_id.contains("#overload["))
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = list_symbols_from_index(&db_path, 10).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.total_symbols, 4);
+    assert_eq!(
+        persisted
+            .symbols
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        live.symbols
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn list_symbols_filters_and_honors_limit() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");

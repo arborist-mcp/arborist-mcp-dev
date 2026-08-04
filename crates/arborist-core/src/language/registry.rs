@@ -461,9 +461,11 @@ static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "C#",
     extensions: CSHARP_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "csharp-skeleton-v1",
+    analysis_revision: "csharp-index-v1",
     grammar: csharp_grammar,
 };
 
@@ -1470,8 +1472,12 @@ impl LanguageAdapter for CSharpAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::csharp::index_csharp_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 
