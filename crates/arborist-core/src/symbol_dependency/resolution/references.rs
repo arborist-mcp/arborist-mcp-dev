@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
+use super::super::java::{JavaImportContext, resolve_java_import_binding_for_reference};
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
@@ -84,6 +85,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -95,6 +97,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         include_contexts_by_file,
         javascript_import_contexts_by_file,
         go_import_contexts_by_file,
+        java_import_contexts_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
@@ -111,6 +114,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -159,6 +163,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     include_contexts_by_file,
                     javascript_import_contexts_by_file,
                     go_import_contexts_by_file,
+                    java_import_contexts_by_file,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -177,6 +182,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             include_contexts_by_file,
             javascript_import_contexts_by_file,
             go_import_contexts_by_file,
+            java_import_contexts_by_file,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -202,6 +208,7 @@ fn resolve_reference_path_with_deadline<'a>(
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
@@ -253,10 +260,43 @@ fn resolve_reference_path_with_deadline<'a>(
         return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }
     if language_id == Some(LanguageId::Java) {
-        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        let Some(call_arity) = call_context.arity else {
             return Ok(None);
         };
-        let Some(call_arity) = call_context.arity else {
+        if let Some((method_name, binding)) = resolve_java_import_binding_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )? {
+            let target_path = format!("{}::{method_name}", binding.semantic_path);
+            let candidates = semantic_path_index
+                .get(&target_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.file_path == binding.source_path
+                        && candidate.node_kind == "method_declaration"
+                        && candidate
+                            .signature
+                            .as_deref()
+                            .is_some_and(java_method_signature_is_static)
+                        && candidate.parameters.len() == call_arity
+                        && !candidate
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.contains("..."))
+                })
+                .collect::<Vec<_>>();
+            return Ok(
+                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
+
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
         };
         let target_path = format!("{scope_path}::{reference_name}");
@@ -538,6 +578,10 @@ fn resolve_reference_path_with_deadline<'a>(
     Ok(selected)
 }
 
+fn java_method_signature_is_static(signature: &str) -> bool {
+    signature.split_whitespace().any(|token| token == "static")
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -579,6 +623,7 @@ mod tests {
             None,
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
+            &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             Some(&deadline),

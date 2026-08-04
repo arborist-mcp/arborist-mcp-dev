@@ -50,9 +50,11 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
   file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
   constructors use package-qualified paths. It traces unqualified calls only when one same-type,
-  same-file, non-varargs method has the call arity. Wildcard, static, missing, and ambiguous imports;
-  type/member dispatch; overloaded-call selection; and patch operations return explicit
-  unsupported-operation errors.
+  same-file, non-varargs method has the call arity, and `Type.method()` only through a unique
+  explicit non-static local type import with an unshadowed type name and a unique imported static
+  method arity match. Wildcard/static imports, missing or ambiguous imports, instance/member
+  dispatch, overloaded-call selection, and patch operations return explicit unsupported-operation
+  errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

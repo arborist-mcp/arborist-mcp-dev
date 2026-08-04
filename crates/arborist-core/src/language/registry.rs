@@ -450,7 +450,7 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "java-local-trace-v1",
+    analysis_revision: "java-local-import-trace-v1",
     grammar: java_grammar,
 };
 

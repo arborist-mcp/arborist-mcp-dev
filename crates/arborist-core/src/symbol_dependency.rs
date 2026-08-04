@@ -1,5 +1,6 @@
 mod c;
 mod go;
+mod java;
 mod javascript;
 mod refresh;
 mod resolution;

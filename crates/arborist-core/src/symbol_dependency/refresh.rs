@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use super::c::CIncludeContext;
 use super::go::GoImportContext;
+use super::java::JavaImportContext;
 use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
     raw_symbol_indexes_by_id, resolve_dependencies_for_symbol_with_deadline,
@@ -47,6 +48,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
     let mut include_contexts_by_file: HashMap<&str, Option<CIncludeContext>> = HashMap::new();
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::<String, GoImportContext>::new();
+    let mut java_import_contexts_by_file = BTreeMap::<String, JavaImportContext>::new();
     for symbol in old_changed_symbols {
         resolved_map.remove(&symbol.symbol_id);
     }
@@ -80,6 +82,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &mut include_contexts_by_file,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
+                &mut java_import_contexts_by_file,
                 deadline,
             )?);
         }

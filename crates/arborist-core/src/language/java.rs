@@ -7,13 +7,31 @@ use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path, parse_document};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JavaLocalTypeImport {
+    pub(crate) local_name: String,
+    pub(crate) semantic_path: String,
+    pub(crate) source_path: PathBuf,
+}
+
 pub(crate) fn java_local_file_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
+    Ok(java_local_explicit_type_imports(path, root, source)?
+        .into_iter()
+        .map(|import| import.source_path)
+        .collect())
+}
+
+pub(crate) fn java_local_explicit_type_imports(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<JavaLocalTypeImport>> {
     let normalized_path = normalize_absolute_path(path)?;
-    let mut dependencies = BTreeSet::new();
+    let mut imports = Vec::new();
     let mut cursor = root.walk();
     for node in root.named_children(&mut cursor) {
         if node.kind() != "import_declaration" {
@@ -22,14 +40,26 @@ pub(crate) fn java_local_file_dependency_paths(
         let Some(import_path) = java_explicit_import_path(node, source)? else {
             continue;
         };
-        let Some(resolved) = resolve_unique_java_source_path(path, &import_path) else {
+        let Some(source_path) = resolve_unique_java_source_path(path, &import_path) else {
             continue;
         };
-        if resolved != normalized_path {
-            dependencies.insert(resolved);
+        if source_path == normalized_path {
+            continue;
         }
+        let Some(local_name) = import_path
+            .rsplit('.')
+            .next()
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        imports.push(JavaLocalTypeImport {
+            local_name: local_name.to_string(),
+            semantic_path: import_path.replace('.', "::"),
+            source_path,
+        });
     }
-    Ok(dependencies)
+    Ok(imports)
 }
 
 fn java_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -123,7 +153,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::java_local_file_dependency_paths;
+    use super::{java_local_explicit_type_imports, java_local_file_dependency_paths};
     use crate::language::parse_document;
 
     static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -155,7 +185,25 @@ mod tests {
 
         assert_eq!(
             dependencies,
-            [helper_path, widget_path].into_iter().collect()
+            [helper_path.clone(), widget_path.clone()]
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(
+            java_local_explicit_type_imports(&source_path, document.tree.root_node(), source)
+                .unwrap(),
+            vec![
+                super::JavaLocalTypeImport {
+                    local_name: "Helper".to_string(),
+                    semantic_path: "com::example::Helper".to_string(),
+                    source_path: helper_path,
+                },
+                super::JavaLocalTypeImport {
+                    local_name: "Widget".to_string(),
+                    semantic_path: "com::example::types::Widget".to_string(),
+                    source_path: widget_path,
+                },
+            ]
         );
         let _ = fs::remove_dir_all(root);
     }

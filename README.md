@@ -58,10 +58,12 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for unique explicit non-static imports mapped to a local `.java`
   file under an ancestor source root. Classes, interfaces, enums, annotation types, methods, and
-  constructors are indexed by package-qualified paths. It also traces unqualified calls to a single
-  same-type, same-file, non-varargs method with a unique arity match. Wildcard, static, missing, and
-  ambiguous imports; type/member dispatch; overloaded-call selection; and patch operations remain
-  capability-gated.
+  constructors are indexed by package-qualified paths. It traces unqualified calls to a single
+  same-type, same-file, non-varargs method with a unique arity match, plus `Type.method()` calls
+  through a unique explicit non-static local type import when the type name is unshadowed and the
+  imported static method has a unique exact arity match. Wildcard/static imports, missing or
+  ambiguous imports, instance/member dispatch, overloaded-call selection, and patch operations
+  remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -525,10 +527,12 @@ for response shapes, error behavior, and examples.
   unavailable; patching remains capability-gated.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for unique explicit non-static imports mapped to a local `.java` file under
-  an ancestor source root. It traces unqualified calls only when one same-type, same-file,
-  non-varargs method matches the call arity. Wildcard, static, missing, and ambiguous imports;
-  type/member dispatch; overloaded-call selection; and patching remain capability-gated pending
-  dedicated Java resolution fixtures.
+  an ancestor source root. It traces unqualified calls when one same-type, same-file, non-varargs
+  method matches the call arity, and `Type.method()` calls only through a unique explicit non-static
+  local type import with an unshadowed type name and a unique imported static-method arity match.
+  Wildcard/static imports, missing or ambiguous imports, instance/member dispatch,
+  overloaded-call selection, and patching remain capability-gated pending dedicated Java resolution
+  fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -554,8 +558,9 @@ now contributes extension routing, raw Tree-sitter query execution, and package-
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for unique explicit non-static imports that map to a local `.java` file under
 an ancestor source root, plus unqualified calls to a unique same-type, same-file non-varargs method
-with a matching arity. General cross-file/package/import resolution, type/member dispatch, and patch
-features remain deliberately
+with a matching arity and `Type.method()` calls through a unique explicit local type import to an
+unshadowed static method with an exact arity. General cross-file/package/import resolution,
+instance/member dispatch, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.
 
@@ -564,8 +569,9 @@ Remaining larger work includes:
 - Adding carefully-scoped Rust out-of-line-module, Cargo, and import trace resolution before
   considering Rust patching.
 - Extending Go package/import trace resolution beyond direct local function calls only after
-  dedicated fixtures establish safe behavior; adding Java packages, imports, classes, interfaces,
-  methods, and overloads one bounded capability at a time after the adapter contract is established.
+  dedicated fixtures establish safe behavior.
+- Extending Java trace resolution beyond unique same-type calls and explicitly imported local static
+  methods only after dedicated fixtures establish safe behavior.
 - Completing JavaScript/TypeScript default and namespace module resolution plus
   language-specific patch binding validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.
