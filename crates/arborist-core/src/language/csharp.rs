@@ -12,6 +12,7 @@ pub(crate) struct CSharpFileTypeAliasImport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CSharpFileStaticTypeImport {
+    pub(crate) scope_path: Option<String>,
     pub(crate) semantic_type_path: String,
 }
 
@@ -24,62 +25,12 @@ pub(crate) fn csharp_file_type_alias_imports(
     root: Node<'_>,
     source: &str,
 ) -> Result<Vec<CSharpFileTypeAliasImport>> {
-    fn collect_namespace_imports(
-        namespace: Node<'_>,
-        parent_scope_path: Option<&str>,
-        source: &str,
-        imports: &mut Vec<CSharpFileTypeAliasImport>,
-    ) -> Result<()> {
-        let Some(name) = namespace.child_by_field_name("name") else {
-            return Ok(());
-        };
-        let namespace_name = node_text(name, source)?.trim();
-        let Some(namespace_path) = csharp_qualified_type_semantic_path(namespace_name) else {
-            return Ok(());
-        };
-        let scope_path = parent_scope_path
-            .map(|parent_scope_path| format!("{parent_scope_path}::{namespace_path}"))
-            .unwrap_or(namespace_path);
-        let Some(body) = namespace.child_by_field_name("body") else {
-            return Ok(());
-        };
-        let mut cursor = body.walk();
-        for child in body.named_children(&mut cursor) {
-            if child.kind() == "using_directive" {
-                if let Some(import) = csharp_type_alias_import_from_directive(
-                    child,
-                    Some(scope_path.as_str()),
-                    source,
-                )? {
-                    imports.push(import);
-                }
-            } else if child.kind() == "namespace_declaration" {
-                collect_namespace_imports(child, Some(scope_path.as_str()), source, imports)?;
-            }
-        }
-        Ok(())
-    }
-
     let mut imports = Vec::new();
-    let mut root_scope_path = None;
-    let mut cursor = root.walk();
-    for child in root.named_children(&mut cursor) {
-        if child.kind() == "file_scoped_namespace_declaration" {
-            let Some(name) = child.child_by_field_name("name") else {
-                continue;
-            };
-            let namespace_name = node_text(name, source)?.trim();
-            root_scope_path = csharp_qualified_type_semantic_path(namespace_name);
-            continue;
-        }
-        if child.kind() == "using_directive" {
-            if let Some(import) =
-                csharp_type_alias_import_from_directive(child, root_scope_path.as_deref(), source)?
-            {
-                imports.push(import);
-            }
-        } else if child.kind() == "namespace_declaration" {
-            collect_namespace_imports(child, None, source, &mut imports)?;
+    for (directive, scope_path) in csharp_scoped_using_directives(root, source)? {
+        if let Some(import) =
+            csharp_type_alias_import_from_directive(directive, scope_path.as_deref(), source)?
+        {
+            imports.push(import);
         }
     }
     Ok(imports)
@@ -124,11 +75,7 @@ pub(crate) fn csharp_file_static_type_imports(
     source: &str,
 ) -> Result<Vec<CSharpFileStaticTypeImport>> {
     let mut imports = Vec::new();
-    let mut cursor = root.walk();
-    for directive in root.named_children(&mut cursor) {
-        if directive.kind() != "using_directive" {
-            continue;
-        }
+    for (directive, scope_path) in csharp_scoped_using_directives(root, source)? {
         let directive_text = node_text(directive, source)?.trim();
         if !is_file_static_type_directive(directive_text)
             || directive.child_by_field_name("name").is_some()
@@ -143,9 +90,70 @@ pub(crate) fn csharp_file_static_type_imports(
         let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
             continue;
         };
-        imports.push(CSharpFileStaticTypeImport { semantic_type_path });
+        imports.push(CSharpFileStaticTypeImport {
+            scope_path,
+            semantic_type_path,
+        });
     }
     Ok(imports)
+}
+
+fn csharp_scoped_using_directives<'tree>(
+    root: Node<'tree>,
+    source: &str,
+) -> Result<Vec<(Node<'tree>, Option<String>)>> {
+    fn collect_namespace_using_directives<'tree>(
+        namespace: Node<'tree>,
+        parent_scope_path: Option<&str>,
+        source: &str,
+        directives: &mut Vec<(Node<'tree>, Option<String>)>,
+    ) -> Result<()> {
+        let Some(name) = namespace.child_by_field_name("name") else {
+            return Ok(());
+        };
+        let namespace_name = node_text(name, source)?.trim();
+        let Some(namespace_path) = csharp_qualified_type_semantic_path(namespace_name) else {
+            return Ok(());
+        };
+        let scope_path = parent_scope_path
+            .map(|parent_scope_path| format!("{parent_scope_path}::{namespace_path}"))
+            .unwrap_or(namespace_path);
+        let Some(body) = namespace.child_by_field_name("body") else {
+            return Ok(());
+        };
+        let mut cursor = body.walk();
+        for child in body.named_children(&mut cursor) {
+            if child.kind() == "using_directive" {
+                directives.push((child, Some(scope_path.clone())));
+            } else if child.kind() == "namespace_declaration" {
+                collect_namespace_using_directives(
+                    child,
+                    Some(scope_path.as_str()),
+                    source,
+                    directives,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut directives = Vec::new();
+    let mut root_scope_path = None;
+    let mut cursor = root.walk();
+    for child in root.named_children(&mut cursor) {
+        if child.kind() == "file_scoped_namespace_declaration" {
+            let Some(name) = child.child_by_field_name("name") else {
+                continue;
+            };
+            let namespace_name = node_text(name, source)?.trim();
+            root_scope_path = csharp_qualified_type_semantic_path(namespace_name);
+        } else if child.kind() == "using_directive" {
+            directives.push((child, root_scope_path.clone()));
+        } else if child.kind() == "namespace_declaration" {
+            collect_namespace_using_directives(child, None, source, &mut directives)?;
+        }
+    }
+    Ok(directives)
 }
 
 pub(crate) fn csharp_file_namespace_imports(
@@ -295,12 +303,47 @@ class Caller {}
             imports,
             vec![
                 super::CSharpFileStaticTypeImport {
+                    scope_path: None,
                     semantic_type_path: "Demo::Utility::Helper".to_string(),
                 },
                 super::CSharpFileStaticTypeImport {
+                    scope_path: None,
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn collects_namespace_scoped_static_type_imports() {
+        let block_scoped_source = r#"
+namespace Demo.App {
+    using static Demo.Utility.BlockHelpers;
+    class Caller {}
+}
+"#;
+        let document = parse_document(Path::new("BlockScoped.cs"), block_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_static_type_imports(document.tree.root_node(), block_scoped_source)
+                .unwrap(),
+            vec![super::CSharpFileStaticTypeImport {
+                scope_path: Some("Demo::App".to_string()),
+                semantic_type_path: "Demo::Utility::BlockHelpers".to_string(),
+            }]
+        );
+
+        let file_scoped_source = r#"
+namespace Demo.App;
+using static Demo.Utility.FileHelpers;
+class Caller {}
+"#;
+        let document = parse_document(Path::new("FileScoped.cs"), file_scoped_source).unwrap();
+        assert_eq!(
+            csharp_file_static_type_imports(document.tree.root_node(), file_scoped_source).unwrap(),
+            vec![super::CSharpFileStaticTypeImport {
+                scope_path: Some("Demo::App".to_string()),
+                semantic_type_path: "Demo::Utility::FileHelpers".to_string(),
+            }]
         );
     }
 

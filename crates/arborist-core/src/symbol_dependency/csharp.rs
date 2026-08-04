@@ -17,6 +17,7 @@ pub(in crate::symbol_dependency) struct CSharpTypeAliasBinding {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::symbol_dependency) struct CSharpStaticTypeImportBinding {
+    pub(crate) scope_path: Option<String>,
     pub(crate) semantic_type_path: String,
 }
 
@@ -90,6 +91,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             deadline.check("extracting C# static type import bindings")?;
         }
         static_type_import_bindings.push(CSharpStaticTypeImportBinding {
+            scope_path: import.scope_path,
             semantic_type_path: import.semantic_type_path,
         });
     }
@@ -148,7 +150,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
         contexts_by_file,
         deadline,
     )?;
-    for scope_path in csharp_type_alias_scope_paths(source_namespace_path) {
+    for scope_path in csharp_import_scope_paths(source_namespace_path) {
         let key = (scope_path, local_type_name.to_string());
         if let Some(binding) = context.type_alias_bindings.get(&key) {
             return Ok(Some((method_name.to_string(), binding.clone())));
@@ -178,13 +180,13 @@ pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_refe
         contexts_by_file,
         deadline,
     )?;
-    Ok(csharp_type_alias_scope_paths(source_namespace_path)
+    Ok(csharp_import_scope_paths(source_namespace_path)
         .into_iter()
         .map(|scope_path| (scope_path, local_type_name.to_string()))
         .any(|key| context.ambiguous_type_alias_names.contains(&key)))
 }
 
-fn csharp_type_alias_scope_paths(source_namespace_path: Option<&str>) -> Vec<Option<String>> {
+fn csharp_import_scope_paths(source_namespace_path: Option<&str>) -> Vec<Option<String>> {
     let mut scope_paths = source_namespace_path
         .map(|source_namespace_path| vec![Some(source_namespace_path.to_string())])
         .unwrap_or_default();
@@ -195,6 +197,7 @@ fn csharp_type_alias_scope_paths(source_namespace_path: Option<&str>) -> Vec<Opt
 pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_reference(
     source_file_path: &str,
     reference_name: &str,
+    source_namespace_path: Option<&str>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -209,7 +212,16 @@ pub(in crate::symbol_dependency) fn resolve_csharp_static_type_imports_for_refer
         contexts_by_file,
         deadline,
     )?;
-    Ok(context.static_type_import_bindings)
+    Ok(csharp_import_scope_paths(source_namespace_path)
+        .into_iter()
+        .flat_map(|scope_path| {
+            context
+                .static_type_import_bindings
+                .iter()
+                .filter(move |binding| binding.scope_path == scope_path)
+                .cloned()
+        })
+        .collect())
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_namespace_imports_for_reference(

@@ -439,6 +439,7 @@ fn resolve_reference_path_with_deadline<'a>(
         let static_type_imports = resolve_csharp_static_type_imports_for_reference(
             &source_symbol.file_path,
             reference_name,
+            source_namespace_path,
             file_overrides,
             csharp_import_contexts_by_file,
             deadline,
