@@ -444,9 +444,11 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Java",
     extensions: JAVA_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "java-skeleton-v1",
+    analysis_revision: "java-index-v1",
     grammar: java_grammar,
 };
 
@@ -1243,8 +1245,12 @@ impl LanguageAdapter for JavaAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::java::index_java_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 

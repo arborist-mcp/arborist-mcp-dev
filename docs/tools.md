@@ -46,9 +46,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   an explicit alias or the imported package's declared name. Module-root imports, external modules,
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
-- Java: `.java` — Tree-sitter parsing, raw queries, and semantic skeletons for package-qualified
-  classes, interfaces, enums, annotation types, methods, and constructors. Symbol indexing,
-  dependency refresh, reference tracing, overload identity, and patch operations return explicit
+- Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, and declaration indexing for
+  package-qualified classes, interfaces, enums, annotation types, methods, and constructors.
+  Dependency refresh, reference tracing, overload resolution, and patch operations return explicit
   unsupported-operation errors while Java workspace and resolution assumptions are established.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol

@@ -66,6 +66,13 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         .collect::<Vec<_>>();
     let javascript_ids_by_index = javascript_symbol_ids(raw_symbols, &javascript_indices);
 
+    let java_indices = languages
+        .iter()
+        .enumerate()
+        .filter_map(|(index, language)| (*language == Some(LanguageId::Java)).then_some(index))
+        .collect::<Vec<_>>();
+    let java_ids_by_index = java_symbol_ids(raw_symbols, &java_indices);
+
     let mut symbol_ids = Vec::with_capacity(raw_symbols.len());
     for (index, language) in languages.into_iter().enumerate() {
         if let Some(deadline) = deadline {
@@ -75,7 +82,10 @@ pub(crate) fn assign_symbol_ids_with_deadline(
             Some(symbol_id) => symbol_ids.push(symbol_id),
             None => match javascript_ids_by_index.get(&index) {
                 Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
-                None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+                None => match java_ids_by_index.get(&index) {
+                    Some(symbol_id) => symbol_ids.push(symbol_id.clone()),
+                    None => symbol_ids.push(symbol_id_for_index(index, raw_symbols, language)?),
+                },
             },
         }
     }
@@ -134,6 +144,51 @@ fn javascript_symbol_ids(
     ids
 }
 
+fn java_symbol_ids(raw_symbols: &[IndexedSymbol], indices: &[usize]) -> HashMap<usize, String> {
+    let mut path_counts: HashMap<&str, usize> = HashMap::new();
+    let mut groups: std::collections::BTreeMap<(&str, &str), Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for index in indices {
+        let symbol = &raw_symbols[*index];
+        *path_counts.entry(&symbol.semantic_path).or_default() += 1;
+        groups
+            .entry((&symbol.file_path, &symbol.semantic_path))
+            .or_default()
+            .push(*index);
+    }
+
+    let mut ids = HashMap::new();
+    for ((file_path, semantic_path), indexes) in &mut groups {
+        indexes.sort_by_key(|index| raw_symbols[*index].byte_range);
+        let identity_path = format!("{file_path}::{semantic_path}");
+        if indexes.len() == 1 {
+            let index = indexes[0];
+            let symbol_id = if path_counts[semantic_path] > 1 {
+                identity_path
+            } else {
+                (*semantic_path).to_string()
+            };
+            ids.insert(index, symbol_id);
+            continue;
+        }
+
+        let suffix = if indexes.iter().all(|index| {
+            matches!(
+                raw_symbols[*index].node_kind.as_str(),
+                "method_declaration" | "constructor_declaration"
+            )
+        }) {
+            "overload"
+        } else {
+            "definition"
+        };
+        for (ordinal, index) in indexes.iter().enumerate() {
+            ids.insert(*index, format!("{identity_path}#{suffix}[{}]", ordinal + 1));
+        }
+    }
+    ids
+}
+
 fn symbol_id_for_index(
     index: usize,
     raw_symbols: &[IndexedSymbol],
@@ -166,4 +221,106 @@ fn symbol_id_for_index(
     };
 
     Ok(format!("{anchor}::{}", symbol.base_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::assign_symbol_ids;
+    use crate::symbol_index_model::{IndexedSymbol, ReferenceFact};
+
+    fn java_symbol(
+        semantic_path: &str,
+        node_kind: &str,
+        byte_range: (usize, usize),
+    ) -> IndexedSymbol {
+        IndexedSymbol {
+            symbol_id: String::new(),
+            semantic_path: semantic_path.to_string(),
+            base_name: semantic_path.rsplit("::").next().unwrap().to_string(),
+            scope_path: semantic_path
+                .rsplit_once("::")
+                .map(|(scope, _)| scope.to_string()),
+            file_path: "Counter.java".to_string(),
+            node_kind: node_kind.to_string(),
+            byte_range,
+            signature: Some(semantic_path.to_string()),
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: None,
+            docstring: None,
+            reference_facts: Vec::<ReferenceFact>::new(),
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn assigns_file_qualified_overload_ids_for_java_methods_and_constructors() {
+        let mut symbols = vec![
+            java_symbol("com::example::Counter", "class_declaration", (0, 100)),
+            java_symbol(
+                "com::example::Counter::Counter",
+                "constructor_declaration",
+                (10, 30),
+            ),
+            java_symbol(
+                "com::example::Counter::Counter",
+                "constructor_declaration",
+                (31, 55),
+            ),
+            java_symbol(
+                "com::example::Counter::increment",
+                "method_declaration",
+                (56, 80),
+            ),
+            java_symbol(
+                "com::example::Counter::increment",
+                "method_declaration",
+                (81, 110),
+            ),
+        ];
+
+        assign_symbol_ids(&mut symbols).unwrap();
+
+        assert_eq!(symbols[0].symbol_id, "com::example::Counter");
+        assert_eq!(
+            symbols[1].symbol_id,
+            "Counter.java::com::example::Counter::Counter#overload[1]"
+        );
+        assert_eq!(
+            symbols[2].symbol_id,
+            "Counter.java::com::example::Counter::Counter#overload[2]"
+        );
+        assert_eq!(
+            symbols[3].symbol_id,
+            "Counter.java::com::example::Counter::increment#overload[1]"
+        );
+        assert_eq!(
+            symbols[4].symbol_id,
+            "Counter.java::com::example::Counter::increment#overload[2]"
+        );
+    }
+
+    #[test]
+    fn does_not_call_duplicate_java_types_overloads() {
+        let mut symbols = vec![
+            java_symbol("com::example::Kind", "enum_declaration", (0, 20)),
+            java_symbol("com::example::Kind", "enum_declaration", (21, 40)),
+        ];
+
+        assign_symbol_ids(&mut symbols).unwrap();
+
+        assert_eq!(
+            symbols
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "Counter.java::com::example::Kind#definition[1]",
+                "Counter.java::com::example::Kind#definition[2]",
+            ]
+        );
+    }
 }
