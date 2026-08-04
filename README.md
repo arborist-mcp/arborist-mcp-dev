@@ -51,9 +51,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   receiver types, selected by semantic path or source position. Static imports strictly below the
   nearest valid simple `go.mod` module path refresh the importing file when a direct `.go` file in
   the imported package directory changes. It also traces unshadowed bare direct calls to top-level
-  functions declared in the same source file. Module-root imports, external modules, `replace`,
-  `go.work`, vendoring, build tags, and cross-file/package/import resolution remain unavailable;
-  method dispatch and patching remain capability-gated.
+  functions declared in the same source file and unambiguous direct calls to functions through local
+  package imports, using an explicit alias or the imported package's declared name. Module-root imports,
+  external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
+  resolution, method dispatch, and patching remain unavailable or capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -511,9 +512,10 @@ for response shapes, error behavior, and examples.
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
   simple `go.mod` module path refresh importers when direct `.go` files in their package directory
   change. It traces unshadowed bare direct calls to top-level functions declared in the same source
-  file. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags, and
-  cross-file/package/import resolution remain unavailable; method dispatch and patching remain
-  capability-gated.
+  file and unambiguous direct calls to functions through local package imports, using an explicit alias
+  or the imported package's declared name. Module-root imports, external modules, `replace`, `go.work`,
+  vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
+  unavailable; patching remains capability-gated.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -534,17 +536,18 @@ conservative declaration indexing, local module dependency refresh, and conserva
 inline-module-qualified direct-call graph tracing plus position identity. Go now has parsing, raw
 Tree-sitter queries, semantic skeletons, conservative declaration indexing, source-position identity,
 static local-package dependency refresh under the nearest valid simple `go.mod` module path, and
-same-file bare direct-call graph tracing. Cross-file/package/import resolution, method dispatch, and
-patch features remain deliberately capability-gated; Go module replacements, workspaces, vendoring,
-and build tags do not influence dependency refresh.
+same-file bare plus unambiguous local-package imported-function direct-call graph tracing. General
+cross-file/package/import resolution, method dispatch, and patch features remain deliberately
+capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
+these capabilities.
 
 Remaining larger work includes:
 
 - Adding carefully-scoped Rust out-of-line-module, Cargo, and import trace resolution before
   considering Rust patching.
-- Adding conservative Go package/import trace resolution after dedicated package fixtures establish
-  safe behavior; adding Java one language at a time after its adapter contract and workspace
-  assumptions are documented.
+- Extending Go package/import trace resolution beyond direct local function calls only after
+  dedicated fixtures establish safe behavior; adding Java one language at a time after its adapter
+  contract and workspace assumptions are documented.
 - Completing JavaScript/TypeScript default and namespace module resolution plus
   language-specific patch binding validation.
 - Splitting large Rust modules such as `lib.rs`, `symbols.rs`, and `model.rs`.

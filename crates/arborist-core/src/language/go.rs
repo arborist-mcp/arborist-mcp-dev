@@ -7,25 +7,48 @@ use tree_sitter::Node;
 
 use super::{node_text, normalize_absolute_path, path_is_inside_workspace};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GoLocalPackageImport {
+    pub(crate) explicit_local_name: Option<String>,
+    pub(crate) source_paths: BTreeSet<PathBuf>,
+}
+
 pub(crate) fn go_local_package_dependency_paths(
     path: &Path,
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
+    Ok(go_local_package_imports(path, root, source)?
+        .into_iter()
+        .flat_map(|import| import.source_paths)
+        .collect())
+}
+
+pub(crate) fn go_local_package_imports(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<GoLocalPackageImport>> {
     let Some((module_root, module_path)) = find_go_module(path) else {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     };
 
-    let mut dependencies = BTreeSet::new();
-    for import_path in go_import_paths(root, source)? {
+    let mut imports = Vec::new();
+    for import in go_import_specs(root, source)? {
         let Some(package_dir) =
-            resolve_local_go_package_directory(&module_root, &module_path, &import_path)
+            resolve_local_go_package_directory(&module_root, &module_path, &import.path)
         else {
             continue;
         };
-        dependencies.extend(go_source_files_in_directory(&module_root, &package_dir));
+        let source_paths = go_source_files_in_directory(&module_root, &package_dir);
+        if !source_paths.is_empty() {
+            imports.push(GoLocalPackageImport {
+                explicit_local_name: import.explicit_local_name,
+                source_paths,
+            });
+        }
     }
-    Ok(dependencies)
+    Ok(imports)
 }
 
 fn find_go_module(path: &Path) -> Option<(PathBuf, String)> {
@@ -77,38 +100,59 @@ fn is_valid_go_module_path(module_path: &str) -> bool {
         && module_path.split('/').all(is_safe_go_package_segment)
 }
 
-fn go_import_paths(root: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GoImportSpec {
+    explicit_local_name: Option<String>,
+    path: String,
+}
+
+fn go_import_specs(root: Node<'_>, source: &str) -> Result<Vec<GoImportSpec>> {
     if root.kind() != "source_file" {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     }
 
-    let mut imports = BTreeSet::new();
+    let mut imports = Vec::new();
     let mut cursor = root.walk();
     for child in root.named_children(&mut cursor) {
         if child.kind() == "import_declaration" {
-            collect_go_import_paths(child, source, &mut imports)?;
+            collect_go_import_specs(child, source, &mut imports)?;
         }
     }
     Ok(imports)
 }
 
-fn collect_go_import_paths(
+fn collect_go_import_specs(
     node: Node<'_>,
     source: &str,
-    imports: &mut BTreeSet<String>,
+    imports: &mut Vec<GoImportSpec>,
 ) -> Result<()> {
     if node.kind() == "import_spec"
         && let Some(path) = node.child_by_field_name("path")
-        && let Some(import_path) = go_import_path_literal(path, source)?
+        && let Some(path) = go_import_path_literal(path, source)?
     {
-        imports.insert(import_path);
+        imports.push(GoImportSpec {
+            explicit_local_name: go_explicit_import_local_name(node, source)?,
+            path,
+        });
     }
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_go_import_paths(child, source, imports)?;
+        collect_go_import_specs(child, source, imports)?;
     }
     Ok(())
+}
+
+fn go_explicit_import_local_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    if name.kind() != "package_identifier" {
+        return Ok(None);
+    }
+
+    let name = node_text(name, source)?.trim();
+    Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
 fn go_import_path_literal(node: Node<'_>, source: &str) -> Result<Option<String>> {

@@ -42,9 +42,10 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
   simple `go.mod` module path refresh the importing file when a direct `.go` file in the imported
   package directory changes. It traces unshadowed bare direct calls to top-level functions declared in
-  the same source file. Module-root imports, external modules, `replace`, `go.work`, vendoring, build
-  tags, and cross-file/package/import resolution remain unavailable; method dispatch and patch
-  operations return explicit unsupported-operation errors.
+  the same source file and unambiguous direct calls to functions through local package imports, using
+  an explicit alias or the imported package's declared name. Module-root imports, external modules,
+  `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
+  dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol
 indexing, tracing, raw-query owner metadata, and patch target resolution cover

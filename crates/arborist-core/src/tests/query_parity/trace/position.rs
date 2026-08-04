@@ -265,6 +265,61 @@ fn traces_go_unshadowed_same_file_direct_calls_in_live_workspace_and_persisted_i
 }
 
 #[test]
+fn traces_go_local_package_imported_function_calls_in_live_and_persisted_indexes() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("cmd").join("main.go");
+    let service_path = dir.join("internal").join("service").join("service.go");
+    let utility_path = dir.join("internal").join("utility").join("utility.go");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(service_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(utility_path.parent().unwrap()).unwrap();
+    fs::write(dir.join("go.mod"), "module example.com/project\n").unwrap();
+    fs::write(
+        &caller_path,
+        "package main\n\nimport (\n    \"example.com/project/internal/service\"\n    utility_alias \"example.com/project/internal/utility\"\n)\n\ntype local struct{}\nfunc (local) Value() int { return 0 }\nfunc caller() int { return service.Value() + utility_alias.Other() }\nfunc shadowed() int { service := local{}; return service.Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &service_path,
+        "package service\n\nfunc Value() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &utility_path,
+        "package utility\n\nfunc Other() int { return 2 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.symbol.symbol_id, "Value");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.symbol.symbol_id, "Value");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+
+    let position = Position { row: 2, column: 5 };
+    let persisted_at_position = trace_symbol_graph_at_position_from_index(
+        &db_path,
+        &service_path,
+        &position,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_at_position.symbol.symbol_id, "Value");
+    assert_eq!(persisted_at_position.callers.len(), 1);
+    assert_eq!(persisted_at_position.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn does_not_trace_go_direct_calls_across_source_files() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");

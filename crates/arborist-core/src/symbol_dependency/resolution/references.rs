@@ -4,6 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
+use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
@@ -73,6 +74,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
 ) -> Vec<String> {
     resolve_dependencies_for_symbol_with_deadline(
         symbol,
@@ -83,6 +85,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         languages_by_file,
         include_contexts_by_file,
         javascript_import_contexts_by_file,
+        go_import_contexts_by_file,
         None,
     )
     .expect("dependency resolution without a deadline cannot fail")
@@ -98,6 +101,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     languages_by_file: &mut HashMap<&'a str, Option<LanguageId>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Vec<String>> {
     let mut dependencies = BTreeSet::new();
@@ -140,6 +144,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     file_overrides,
                     include_contexts_by_file,
                     javascript_import_contexts_by_file,
+                    go_import_contexts_by_file,
                     deadline,
                 )? && target_symbol_id != symbol.symbol_id
                 {
@@ -157,6 +162,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             file_overrides,
             include_contexts_by_file,
             javascript_import_contexts_by_file,
+            go_import_contexts_by_file,
             deadline,
         )? && target_symbol_id != symbol.symbol_id
         {
@@ -181,13 +187,48 @@ fn resolve_reference_path_with_deadline<'a>(
     file_overrides: Option<&BTreeMap<String, String>>,
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if let Some(deadline) = deadline {
         deadline.check("resolving reference candidates")?;
     }
     let call_arity = call_context.arity;
-    if matches!(language_id, Some(LanguageId::Rust | LanguageId::Go)) {
+    if language_id == Some(LanguageId::Go) {
+        if let Some((imported_name, binding)) = resolve_go_import_binding_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )? {
+            let candidates = name_index
+                .get(&imported_name)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.node_kind == "function_declaration"
+                        && candidate.semantic_path == imported_name
+                        && binding.package_paths.contains(&candidate.file_path)
+                })
+                .collect::<Vec<_>>();
+            return Ok(
+                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
+
+        let candidates = semantic_path_index
+            .get(reference_name)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+            .collect::<Vec<_>>();
+        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+    }
+    if language_id == Some(LanguageId::Rust) {
         let candidates = semantic_path_index
             .get(reference_name)
             .into_iter()
@@ -498,6 +539,7 @@ mod tests {
             None,
             &mut std::collections::HashMap::new(),
             &mut std::collections::HashMap::new(),
+            &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             Some(&deadline),
         )

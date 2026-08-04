@@ -99,9 +99,6 @@ fn collect_direct_local_calls(
         return Ok(BTreeSet::new());
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
-    if local_functions.is_empty() {
-        return Ok(BTreeSet::new());
-    }
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
@@ -245,6 +242,34 @@ fn collect_identifier_binding(
     Ok(())
 }
 
+fn go_imported_selector_reference(
+    selector: Node<'_>,
+    source: &str,
+    bindings: &BTreeSet<String>,
+) -> Result<Option<String>> {
+    let Some(operand) = selector.child_by_field_name("operand") else {
+        return Ok(None);
+    };
+    let Some(field) = selector.child_by_field_name("field") else {
+        return Ok(None);
+    };
+    if operand.kind() != "identifier" || field.kind() != "field_identifier" {
+        return Ok(None);
+    }
+
+    let local_name = node_text(operand, source)?.trim();
+    let imported_name = node_text(field, source)?.trim();
+    if local_name.is_empty()
+        || imported_name.is_empty()
+        || bindings.contains(local_name)
+        || !imported_name.chars().next().is_some_and(char::is_uppercase)
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(format!("{local_name}.{imported_name}")))
+}
+
 fn collect_direct_local_calls_from_node(
     node: Node<'_>,
     source: &str,
@@ -261,14 +286,24 @@ fn collect_direct_local_calls_from_node(
     }
     if node.kind() == "call_expression"
         && let Some(function) = node.child_by_field_name("function")
-        && function.kind() == "identifier"
     {
-        let name = node_text(function, source)?.trim();
-        if !name.is_empty()
-            && !bindings.contains(name)
-            && let Some(path) = local_functions.get(name)
-        {
-            references.insert(path.clone());
+        match function.kind() {
+            "identifier" => {
+                let name = node_text(function, source)?.trim();
+                if !name.is_empty()
+                    && !bindings.contains(name)
+                    && let Some(path) = local_functions.get(name)
+                {
+                    references.insert(path.clone());
+                }
+            }
+            "selector_expression" => {
+                if let Some(reference) = go_imported_selector_reference(function, source, bindings)?
+                {
+                    references.insert(reference);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -309,6 +344,11 @@ func shadowed_variable() int {
     return helper()
 }
 func NewCounter(value int) Counter { return Counter{value: value} }
+func imported() int { return service.Value() }
+func shadowed_selector() int {
+    service := Counter{}
+    return service.Value()
+}
 func (counter *Counter) Increment(amount int) int { return helper() + amount }
 "#;
         let path = Path::new("metrics.go");
@@ -329,6 +369,8 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "shadowed_parameter",
                 "shadowed_variable",
                 "NewCounter",
+                "imported",
+                "shadowed_selector",
                 "Counter::Increment",
             ]
         );
@@ -348,7 +390,20 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert_eq!(caller.references_by_name, ["helper".to_string()].into());
             assert_eq!(caller.reference_facts.len(), 1);
         }
-        for caller_path in ["shadowed_parameter", "shadowed_variable"] {
+        let imported = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "imported")
+            .unwrap();
+        assert_eq!(
+            imported.references_by_name,
+            ["service.Value".to_string()].into()
+        );
+        assert_eq!(imported.reference_facts.len(), 1);
+        for caller_path in [
+            "shadowed_parameter",
+            "shadowed_variable",
+            "shadowed_selector",
+        ] {
             let caller = symbols
                 .iter()
                 .find(|symbol| symbol.semantic_path == caller_path)
