@@ -474,36 +474,43 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
         )
     }
 
-    fn ascend_to_symbol<'tree>(&self, _node: Node<'tree>) -> Option<Node<'tree>> {
-        None
+    fn ascend_to_symbol<'tree>(&self, node: Node<'tree>) -> Option<Node<'tree>> {
+        crate::semantic::ascend_javascript_to_symbol(node)
     }
 
     fn position_symbol_identity(
         &self,
         _path: &Path,
-        _node: Node<'_>,
-        _source: &str,
+        node: Node<'_>,
+        source: &str,
     ) -> Result<PositionSymbolIdentity> {
-        self.unsupported("symbol positions")
+        let semantic_path = javascript_semantic_path_for_node(node, source)?.ok_or_else(|| {
+            anyhow!("position does not resolve to a JavaScript/TypeScript symbol")
+        })?;
+        Ok(PositionSymbolIdentity {
+            symbol_id: semantic_path.clone(),
+            semantic_path,
+            byte_range: (node.start_byte(), node.end_byte()),
+        })
     }
 
     fn semantic_path_for_node(
         &self,
         _path: &Path,
-        _node: Node<'_>,
-        _source: &str,
+        node: Node<'_>,
+        source: &str,
     ) -> Result<Option<String>> {
-        self.unsupported("semantic skeletons")
+        javascript_semantic_path_for_node(node, source)
     }
 
     fn symbol_id_for_node(
         &self,
         _path: &Path,
-        _node: Node<'_>,
-        _source: &str,
+        node: Node<'_>,
+        source: &str,
         _deadline: Option<&dyn DeadlineCheck>,
     ) -> Result<Option<String>> {
-        self.unsupported("symbol positions")
+        javascript_semantic_path_for_node(node, source)
     }
 
     fn requires_exact_symbol_id_for_ambiguous_semantic_paths(&self) -> bool {
@@ -600,6 +607,12 @@ impl LanguageAdapter for JavaScriptFamilyAdapter {
             deadline,
         )
     }
+}
+
+fn javascript_semantic_path_for_node(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    crate::semantic::javascript::javascript_symbol_name(node, source)?
+        .map(|name| crate::semantic::javascript::javascript_semantic_path(node, source, &name))
+        .transpose()
 }
 
 impl LanguageAdapter for PythonAdapter {

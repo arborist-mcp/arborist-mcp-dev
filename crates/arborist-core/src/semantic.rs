@@ -132,6 +132,19 @@ pub(crate) fn ascend_c_to_symbol(node: Node<'_>) -> Option<Node<'_>> {
     None
 }
 
+pub(crate) fn ascend_javascript_to_symbol(node: Node<'_>) -> Option<Node<'_>> {
+    let mut current = Some(node);
+
+    while let Some(candidate) = current {
+        if javascript::is_javascript_symbol_node(candidate) {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
