@@ -701,7 +701,93 @@ class ExactDerived : Base {
 }
 
 #[test]
-fn does_not_trace_ambiguous_or_global_csharp_namespace_import_base_members() {
+fn traces_csharp_global_alias_and_namespace_import_base_members_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo.Utility;
+class Base {
+    public Base(int value) {}
+    public int Ping(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalAlias.cs"),
+        "global using BaseAlias = Demo.Utility.Base;
+namespace Demo.Alias;
+class AliasDerived : BaseAlias {
+    AliasDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalImport.cs"),
+        "global using Demo.Utility;
+namespace Demo.Import;
+class ImportDerived : Base {
+    ImportDerived(int value) : base(value) {}
+    int Call(int value) => base.Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    for target in ["Demo::Utility::Base::Base", "Demo::Utility::Base::Ping"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::Alias::AliasDerived::AliasDerived",
+                    "Demo::Import::ImportDerived::ImportDerived",
+                ]
+            } else {
+                [
+                    "Demo::Alias::AliasDerived::Call",
+                    "Demo::Import::ImportDerived::Call",
+                ]
+            }
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["Demo::Utility::Base::Base", "Demo::Utility::Base::Ping"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            if target.ends_with("::Base") {
+                [
+                    "Demo::Alias::AliasDerived::AliasDerived",
+                    "Demo::Import::ImportDerived::ImportDerived",
+                ]
+            } else {
+                [
+                    "Demo::Alias::AliasDerived::Call",
+                    "Demo::Import::ImportDerived::Call",
+                ]
+            }
+        );
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_local_or_global_base_import_alias_members() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
     fs::write(
@@ -724,22 +810,27 @@ class AmbiguousDerived : Base {
     )
     .unwrap();
     fs::write(
-        dir.join("Global.cs"),
-        "global using First;
-namespace Demo.Global;
-class GlobalDerived : Base {
-    GlobalDerived(int value) : base(value) {}
+        dir.join("GlobalAliasOne.cs"),
+        "global using BaseAlias = First.Base;
+namespace Demo.GlobalAlias;
+class GlobalAliasDerived : BaseAlias {
+    GlobalAliasDerived(int value) : base(value) {}
     int Call(int value) => base.Ping(value);
 }
 ",
     )
     .unwrap();
-
+    fs::write(
+        dir.join("GlobalAliasTwo.cs"),
+        "global using BaseAlias = Second.Base;
+",
+    )
+    .unwrap();
     for caller in [
         "Demo::App::AmbiguousDerived::AmbiguousDerived",
         "Demo::App::AmbiguousDerived::Call",
-        "Demo::Global::GlobalDerived::GlobalDerived",
-        "Demo::Global::GlobalDerived::Call",
+        "Demo::GlobalAlias::GlobalAliasDerived::GlobalAliasDerived",
+        "Demo::GlobalAlias::GlobalAliasDerived::Call",
     ] {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert!(live.callees.is_empty(), "{caller}");
@@ -749,8 +840,8 @@ class GlobalDerived : Base {
     for caller in [
         "Demo::App::AmbiguousDerived::AmbiguousDerived",
         "Demo::App::AmbiguousDerived::Call",
-        "Demo::Global::GlobalDerived::GlobalDerived",
-        "Demo::Global::GlobalDerived::Call",
+        "Demo::GlobalAlias::GlobalAliasDerived::GlobalAliasDerived",
+        "Demo::GlobalAlias::GlobalAliasDerived::Call",
     ] {
         let persisted =
             trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
@@ -793,25 +884,11 @@ class CollisionDerived : BaseAlias {
 ",
     )
     .unwrap();
-    fs::write(
-        dir.join("GlobalAlias.cs"),
-        "global using BaseAlias = Demo.Base;
-namespace Demo.Global;
-class GlobalAliasDerived : BaseAlias {
-    GlobalAliasDerived(int value) : base(value) {}
-    int Call(int value) => base.Ping(value);
-}
-",
-    )
-    .unwrap();
-
     for caller in [
         "Demo::App::AmbiguousDerived::AmbiguousDerived",
         "Demo::App::AmbiguousDerived::Call",
         "Demo::Collision::CollisionDerived::CollisionDerived",
         "Demo::Collision::CollisionDerived::Call",
-        "Demo::Global::GlobalAliasDerived::GlobalAliasDerived",
-        "Demo::Global::GlobalAliasDerived::Call",
     ] {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert!(live.callees.is_empty(), "{caller}");
@@ -823,8 +900,6 @@ class GlobalAliasDerived : BaseAlias {
         "Demo::App::AmbiguousDerived::Call",
         "Demo::Collision::CollisionDerived::CollisionDerived",
         "Demo::Collision::CollisionDerived::Call",
-        "Demo::Global::GlobalAliasDerived::GlobalAliasDerived",
-        "Demo::Global::GlobalAliasDerived::Call",
     ] {
         let persisted =
             trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();

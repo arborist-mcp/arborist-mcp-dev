@@ -153,6 +153,39 @@ pub(in crate::symbol_dependency) fn resolve_csharp_global_type_alias_binding_for
     Some((method_name.to_string(), binding))
 }
 
+pub(in crate::symbol_dependency) fn resolve_csharp_global_base_type_alias(
+    local_type_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> Option<CSharpTypeAliasBinding> {
+    if local_type_name.is_empty() {
+        return None;
+    }
+    context
+        .type_alias_bindings
+        .get(&(None, local_type_name.to_string()))
+        .cloned()
+}
+
+pub(in crate::symbol_dependency) fn csharp_global_base_type_alias_is_ambiguous(
+    local_type_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> bool {
+    !local_type_name.is_empty()
+        && context
+            .ambiguous_type_alias_names
+            .contains(&(None, local_type_name.to_string()))
+}
+
+pub(in crate::symbol_dependency) fn csharp_global_base_namespace_import_paths(
+    context: &CSharpGlobalImportContext,
+) -> Vec<String> {
+    context
+        .namespace_import_bindings
+        .iter()
+        .map(|binding| binding.semantic_namespace_path.clone())
+        .collect()
+}
+
 pub(in crate::symbol_dependency) fn csharp_global_type_alias_name_is_ambiguous(
     reference_name: &str,
     context: &CSharpGlobalImportContext,
@@ -299,6 +332,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
     source_file_path: &str,
     source_type_range: (usize, usize),
     source_namespace_path: Option<&str>,
+    global_import_context: Option<&CSharpGlobalImportContext>,
     file_overrides: Option<&BTreeMap<String, String>>,
     contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -327,7 +361,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
             if let Some(alias) = context.type_alias_bindings.get(&key) {
                 binding.semantic_type_path = alias.semantic_type_path.clone();
                 binding.is_global_qualified = true;
-                binding.alias_name = Some(local_name);
+                binding.alias_name = Some(local_name.clone());
                 break;
             }
         }
@@ -342,6 +376,23 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
                         .map(|candidate| candidate.semantic_namespace_path.clone())
                 })
                 .collect();
+            if let Some(global_import_context) = global_import_context {
+                if csharp_global_base_type_alias_is_ambiguous(&local_name, global_import_context) {
+                    return Ok(None);
+                }
+                if let Some(alias) =
+                    resolve_csharp_global_base_type_alias(&local_name, global_import_context)
+                {
+                    binding.semantic_type_path = alias.semantic_type_path;
+                    binding.is_global_qualified = true;
+                    binding.alias_name = Some(local_name.clone());
+                    binding.namespace_import_paths.clear();
+                } else {
+                    binding.namespace_import_paths.extend(
+                        csharp_global_base_namespace_import_paths(global_import_context),
+                    );
+                }
+            }
         }
     }
     Ok(Some(binding))
