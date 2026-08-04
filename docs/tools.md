@@ -49,10 +49,11 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, and simple same-namespace
-  `Type.Method()` static calls from non-nested types. Each target must be a unique same-file, exact-arity,
-  non-`params` declaration; simple type receivers must not be shadowed by a local, parameter, type parameter,
-  or type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods,
-  and constructors are supported. Dependency refresh, other member dispatch, overload type selection, and
+  `Type.Method()` static calls from non-nested types. Local forms target a unique same-file, exact-arity,
+  non-`params` declaration; globally qualified static calls may resolve one unique workspace declaration.
+  Simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
+  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are
+  supported. Dependency refresh, other member dispatch, overload type selection, and
   patch operations return explicit unsupported-operation errors until dedicated C# adapter slices establish
   their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

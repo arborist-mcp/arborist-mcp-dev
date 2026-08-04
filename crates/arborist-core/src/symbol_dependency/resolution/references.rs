@@ -36,6 +36,13 @@ use crate::symbol_reference_compat::effective_reference_facts;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Clone, Copy)]
+struct CSharpCandidateRequirements {
+    node_kind: &'static str,
+    require_static: bool,
+    require_same_file: bool,
+}
+
+#[derive(Clone, Copy)]
 struct CallResolutionContext {
     arity: Option<usize>,
     rvalue_this_receiver: bool,
@@ -282,8 +289,11 @@ fn resolve_reference_path_with_deadline<'a>(
                 &target_path,
                 source_symbol,
                 call_arity,
-                "constructor_declaration",
-                false,
+                CSharpCandidateRequirements {
+                    node_kind: "constructor_declaration",
+                    require_static: false,
+                    require_same_file: true,
+                },
             ));
         }
         if let Some(target_path) = csharp_global_qualified_static_target_path(reference_name) {
@@ -293,8 +303,11 @@ fn resolve_reference_path_with_deadline<'a>(
                 &target_path,
                 source_symbol,
                 call_arity,
-                "method_declaration",
-                true,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_same_file: false,
+                },
             ));
         }
         if let Some(target_path) =
@@ -306,8 +319,11 @@ fn resolve_reference_path_with_deadline<'a>(
                 &target_path,
                 source_symbol,
                 call_arity,
-                "method_declaration",
-                true,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_same_file: true,
+                },
             ));
         }
         let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
@@ -328,8 +344,11 @@ fn resolve_reference_path_with_deadline<'a>(
             &target_path,
             source_symbol,
             call_arity,
-            "method_declaration",
-            false,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: false,
+                require_same_file: true,
+            },
         ));
     }
     if language_id == Some(LanguageId::Java) {
@@ -676,8 +695,7 @@ fn resolve_csharp_candidate(
     target_path: &str,
     source_symbol: &IndexedSymbol,
     call_arity: usize,
-    node_kind: &str,
-    require_static: bool,
+    requirements: CSharpCandidateRequirements,
 ) -> Option<String> {
     let candidates = semantic_path_index
         .get(target_path)
@@ -686,14 +704,14 @@ fn resolve_csharp_candidate(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == node_kind
+            (!requirements.require_same_file || candidate.file_path == source_symbol.file_path)
+                && candidate.node_kind == requirements.node_kind
                 && candidate.parameters.len() == call_arity
                 && !candidate
                     .parameters
                     .iter()
                     .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
-                && (!require_static || csharp_method_is_static(candidate))
+                && (!requirements.require_static || csharp_method_is_static(candidate))
         })
         .collect::<Vec<_>>();
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())

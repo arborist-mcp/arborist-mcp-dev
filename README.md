@@ -58,10 +58,11 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
   constructor initializers, globally namespace-qualified `global::...` static calls, and simple same-namespace
-  `Type.Method()` static calls from non-nested types. Each target must be a unique same-file, exact-arity,
-  non-`params` declaration; simple type receivers must not be shadowed by a local, parameter, type parameter,
-  or type member. Block and file-scoped namespaces, classes, structs, interfaces, enums, records, methods,
-  and constructors are supported. Dependency refresh, other member dispatch, overload type selection, and
+  `Type.Method()` static calls from non-nested types. Local forms target a unique same-file, exact-arity,
+  non-`params` declaration; globally qualified static calls may resolve one unique workspace declaration.
+  Simple type receivers must not be shadowed by a local, parameter, type parameter, or type member. Block and
+  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are
+  supported. Dependency refresh, other member dispatch, overload type selection, and
   patching remain explicitly unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
@@ -536,10 +537,11 @@ for response shapes, error behavior, and examples.
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
-  conservative same-file tracing for unshadowed unqualified calls, explicit `this.` method calls,
+  conservative tracing for unshadowed unqualified calls, explicit `this.` method calls,
   `: this(...)` constructor initializers, globally namespace-qualified `global::...` static calls, and simple
-  same-namespace `Type.Method()` static calls from non-nested types. Targets require a unique exact-arity,
-  non-`params` declaration, and simple type receivers must be unshadowed. Dependency refresh, other member
+  same-namespace `Type.Method()` static calls from non-nested types. Local forms require a unique same-file,
+  exact-arity, non-`params` declaration; globally qualified static calls may resolve one unique workspace
+  declaration, and simple type receivers must be unshadowed. Dependency refresh, other member
   dispatch, overload type selection, and patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports

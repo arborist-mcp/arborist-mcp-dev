@@ -466,7 +466,7 @@ static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::SYMBOL_INDEX.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "csharp-local-trace-v5",
+    analysis_revision: "csharp-local-trace-v6",
     grammar: csharp_grammar,
 };
 

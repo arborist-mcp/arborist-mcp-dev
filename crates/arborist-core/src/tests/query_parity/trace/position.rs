@@ -391,6 +391,93 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
 }
 
 #[test]
+fn traces_csharp_global_static_calls_across_files_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("GlobalHelper.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo;
+class GlobalHelper {
+    public static int Utility(int value) => value;
+    public static int Flexible(params int[] values) => values.Length;
+    public int Instance(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo;
+class Caller {
+    int Call() => global::Demo.GlobalHelper.Utility(1);
+    int InstanceCall() => global::Demo.GlobalHelper.Instance(1);
+    int ParamsCall() => global::Demo.GlobalHelper.Flexible(1);
+}
+",
+    )
+    .unwrap();
+
+    let static_target = "Demo::GlobalHelper::Utility";
+    let live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+
+    for target in [
+        "Demo::GlobalHelper::Instance",
+        "Demo::GlobalHelper::Flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_global_static_calls_across_files() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("First.cs"),
+        "namespace Demo; class GlobalHelper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Second.cs"),
+        "namespace Demo; class GlobalHelper { public static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo; class Caller { int Call() => global::Demo.GlobalHelper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Demo::Caller::Call", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_java_explicit_this_method_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.java");
