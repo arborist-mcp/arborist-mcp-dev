@@ -19,6 +19,7 @@ const TSX_EXTENSIONS: &[&str] = &["tsx"];
 const RUST_EXTENSIONS: &[&str] = &["rs"];
 const GO_EXTENSIONS: &[&str] = &["go"];
 const JAVA_EXTENSIONS: &[&str] = &["java"];
+const CSHARP_EXTENSIONS: &[&str] = &["cs"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LanguageCapabilities(u32);
@@ -216,7 +217,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 9] = [
+        let adapters: [&'static dyn LanguageAdapter; 10] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -226,6 +227,7 @@ impl LanguageRegistry {
             &RUST_ADAPTER,
             &GO_ADAPTER,
             &JAVA_ADAPTER,
+            &CSHARP_ADAPTER,
         ];
         Self::new(adapters)
     }
@@ -344,6 +346,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Python => "python",
         LanguageId::C => "c",
         LanguageId::Cpp => "cpp",
+        LanguageId::CSharp => "csharp",
         LanguageId::JavaScript => "javascript",
         LanguageId::TypeScript => "typescript",
         LanguageId::Tsx => "tsx",
@@ -453,6 +456,14 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "java-static-import-trace-v1",
     grammar: java_grammar,
 };
+static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::CSharp,
+    display_name: "C#",
+    extensions: CSHARP_EXTENSIONS,
+    capabilities: LanguageCapabilities::TREE_QUERY,
+    analysis_revision: "csharp-query-v1",
+    grammar: csharp_grammar,
+};
 
 static PYTHON_ADAPTER: PythonAdapter = PythonAdapter;
 static C_ADAPTER: CAdapter = CAdapter;
@@ -480,6 +491,9 @@ static JAVA_ADAPTER: JavaAdapter = JavaAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &JAVA_DESCRIPTOR,
     },
+};
+static CSHARP_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &CSHARP_DESCRIPTOR,
 };
 
 struct JavaScriptFamilyAdapter {
@@ -1969,4 +1983,8 @@ fn go_grammar() -> Language {
 
 fn java_grammar() -> Language {
     tree_sitter_java::LANGUAGE.into()
+}
+
+fn csharp_grammar() -> Language {
+    tree_sitter_c_sharp::LANGUAGE.into()
 }

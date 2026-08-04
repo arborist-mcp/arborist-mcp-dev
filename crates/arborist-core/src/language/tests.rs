@@ -28,6 +28,7 @@ fn detect_language_accepts_uppercase_extensions() {
         ("HH", LanguageId::Cpp),
         ("HXX", LanguageId::Cpp),
         ("H++", LanguageId::Cpp),
+        ("CS", LanguageId::CSharp),
         ("JS", LanguageId::JavaScript),
         ("JSX", LanguageId::JavaScript),
         ("MJS", LanguageId::JavaScript),
@@ -56,6 +57,7 @@ fn supported_languages_reports_all_builtin_languages() {
             "python",
             "c",
             "cpp",
+            "csharp",
             "javascript",
             "typescript",
             "tsx",
@@ -72,6 +74,7 @@ fn language_ids_use_stable_serde_names() {
         (LanguageId::Python, "python"),
         (LanguageId::C, "c"),
         (LanguageId::Cpp, "cpp"),
+        (LanguageId::CSharp, "csharp"),
         (LanguageId::JavaScript, "javascript"),
         (LanguageId::TypeScript, "typescript"),
         (LanguageId::Tsx, "tsx"),
@@ -204,6 +207,31 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
+fn csharp_adapter_exposes_tree_queries_without_semantic_capabilities() {
+    let registry = builtin_language_registry();
+    let descriptor = registry.descriptor(LanguageId::CSharp).unwrap();
+
+    assert_eq!(descriptor.display_name, "C#");
+    assert_eq!(descriptor.extensions, &["cs"]);
+    assert_eq!(descriptor.analysis_revision, "csharp-query-v1");
+    assert!(
+        descriptor
+            .capabilities
+            .contains(LanguageCapabilities::TREE_QUERY)
+    );
+    for capability in [
+        LanguageCapabilities::SEMANTIC_SKELETON,
+        LanguageCapabilities::SYMBOL_INDEX,
+        LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
+        LanguageCapabilities::PATCH_TARGETING,
+        LanguageCapabilities::PATCH_VALIDATION,
+    ] {
+        assert!(!descriptor.capabilities.contains(capability));
+    }
+}
+
+#[test]
 fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Java).unwrap();
@@ -290,6 +318,19 @@ fn parse_document_uses_go_grammar_and_recovers_from_invalid_source() {
 
     let malformed = parse_document(Path::new("broken.go"), "package sample\nfunc broken(").unwrap();
     assert_eq!(malformed.language_id, LanguageId::Go);
+    assert!(malformed.tree.root_node().has_error());
+}
+
+#[test]
+fn parse_document_uses_csharp_grammar_and_recovers_from_invalid_source() {
+    let path = Path::new("Sample.cs");
+    let source = "public class Sample { public int Add(int left, int right) => left + right; }";
+    let document = parse_document(path, source).unwrap();
+    assert_eq!(document.language_id, LanguageId::CSharp);
+    assert_eq!(document.tree.root_node().kind(), "compilation_unit");
+
+    let malformed = parse_document(path, "public class Sample {").unwrap();
+    assert_eq!(malformed.language_id, LanguageId::CSharp);
     assert!(malformed.tree.root_node().has_error());
 }
 

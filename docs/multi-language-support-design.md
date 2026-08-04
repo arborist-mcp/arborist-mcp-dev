@@ -1,6 +1,6 @@
 # Multi-Language Support Design
 
-**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices plus Java query, semantic-skeleton, declaration-indexing, local-import dependency, same-type/explicit-`this` trace, explicit local type-import static-call trace, and explicit local static-import trace slices implemented
+**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices, Java query/semantic-skeleton/declaration-indexing/import-dependency/direct-trace slices, and a C# parsing/raw-query slice implemented
 **Audience:** Arborist core, PyO3, gateway, and release maintainers
 **Scope:** Rust core architecture for adding source languages without weakening existing Python, C, and C++ behavior.
 
@@ -707,7 +707,9 @@ Suggested order:
 1. Rust: `mod`, `use`, functions, `impl`, traits, associated items;
 2. Go: packages, imports, functions, methods, interfaces;
 3. Java: establish parsing and raw-query compatibility, then package-qualified semantic skeletons, declaration indexing, conservative explicit type/static-import refresh, same-type/explicit-`this`, explicit-local-type static-call, and explicit-static-import tracing, overload identity, and conservative resolution;
-4. C# and Kotlin after the relevant project-model assumptions are documented.
+4. C#: establish parsing and raw-query compatibility, then add semantic skeletons, declarations,
+   dependencies, and tracing only through dedicated adapter slices; Kotlin after explicit JVM interop
+   assumptions are documented.
 
 ## 17. Test And Validation Strategy
 

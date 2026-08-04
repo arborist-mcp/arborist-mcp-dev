@@ -55,6 +55,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   package imports, using an explicit alias or the imported package's declared name. Module-root imports,
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
+- C#: `.cs` — Tree-sitter parsing and raw queries only. Semantic skeletons, symbol indexing,
+  dependency refresh, tracing, and patching remain explicitly unavailable until dedicated C# adapter
+  slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,

@@ -15,6 +15,8 @@ pub enum LanguageId {
     Python,
     C,
     Cpp,
+    #[serde(rename = "csharp")]
+    CSharp,
     #[serde(rename = "javascript")]
     JavaScript,
     #[serde(rename = "typescript")]
