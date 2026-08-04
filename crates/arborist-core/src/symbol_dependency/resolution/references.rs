@@ -276,24 +276,26 @@ fn resolve_reference_path_with_deadline<'a>(
                 return Ok(None);
             }
             let target_path = format!("{scope_path}::{}", source_symbol.base_name);
-            let candidates = semantic_path_index
-                .get(&target_path)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|index| {
-                    let candidate = &raw_symbols[*index];
-                    candidate.file_path == source_symbol.file_path
-                        && candidate.node_kind == "constructor_declaration"
-                        && candidate.parameters.len() == call_arity
-                        && !candidate.parameters.iter().any(|parameter| {
-                            parameter.split_whitespace().any(|part| part == "params")
-                        })
-                })
-                .collect::<Vec<_>>();
-            return Ok(
-                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
-            );
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                source_symbol,
+                call_arity,
+                "constructor_declaration",
+                false,
+            ));
+        }
+        if let Some(target_path) = csharp_global_qualified_static_target_path(reference_name) {
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                source_symbol,
+                call_arity,
+                "method_declaration",
+                true,
+            ));
         }
         let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
             if method_name.is_empty() || method_name.contains('.') {
@@ -307,23 +309,15 @@ fn resolve_reference_path_with_deadline<'a>(
             reference_name
         };
         let target_path = format!("{scope_path}::{method_name}");
-        let candidates = semantic_path_index
-            .get(&target_path)
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(|index| {
-                let candidate = &raw_symbols[*index];
-                candidate.file_path == source_symbol.file_path
-                    && candidate.node_kind == "method_declaration"
-                    && candidate.parameters.len() == call_arity
-                    && !candidate
-                        .parameters
-                        .iter()
-                        .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
-            })
-            .collect::<Vec<_>>();
-        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+        return Ok(resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            source_symbol,
+            call_arity,
+            "method_declaration",
+            false,
+        ));
     }
     if language_id == Some(LanguageId::Java) {
         let Some(call_arity) = call_context.arity else {
@@ -661,6 +655,54 @@ fn resolve_reference_path_with_deadline<'a>(
         deadline.check("ranking reference candidates")?;
     }
     Ok(selected)
+}
+
+fn resolve_csharp_candidate(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    target_path: &str,
+    source_symbol: &IndexedSymbol,
+    call_arity: usize,
+    node_kind: &str,
+    require_static: bool,
+) -> Option<String> {
+    let candidates = semantic_path_index
+        .get(target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == node_kind
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
+                && (!require_static || csharp_method_is_static(candidate))
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+}
+
+fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<String> {
+    let qualified_name = reference_name.strip_prefix("global::")?;
+    let (type_path, method_name) = qualified_name.rsplit_once('.')?;
+    if type_path.is_empty()
+        || method_name.is_empty()
+        || type_path.split('.').any(|segment| segment.is_empty())
+    {
+        return None;
+    }
+    Some(format!("{}::{method_name}", type_path.replace('.', "::")))
+}
+
+fn csharp_method_is_static(symbol: &IndexedSymbol) -> bool {
+    symbol
+        .signature
+        .as_deref()
+        .is_some_and(|signature| signature.split_whitespace().any(|part| part == "static"))
 }
 
 fn resolve_java_imported_static_method(

@@ -192,17 +192,38 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
         let Some(receiver) = node.child_by_field_name("expression") else {
             return Ok(None);
         };
-        if receiver.kind() != "this" {
-            return Ok(None);
-        }
         let Some(member) = node.child_by_field_name("name") else {
             return Ok(None);
         };
-        return csharp_invocation_member_name(member, source)
-            .map(|name| name.map(|name| format!("this.{name}")));
+        if receiver.kind() == "this" {
+            return csharp_invocation_member_name(member, source)
+                .map(|name| name.map(|name| format!("this.{name}")));
+        }
+        return csharp_global_qualified_static_invocation_name(receiver, member, source);
     }
 
     csharp_invocation_member_name(node, source)
+}
+
+fn csharp_global_qualified_static_invocation_name(
+    receiver: Node<'_>,
+    member: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let receiver = crate::language::node_text(receiver, source)?.trim();
+    let Some(type_path) = receiver.strip_prefix("global::") else {
+        return Ok(None);
+    };
+    if type_path.is_empty()
+        || type_path.contains('<')
+        || type_path.split('.').any(|segment| segment.is_empty())
+    {
+        return Ok(None);
+    }
+    let Some(member_name) = csharp_invocation_member_name(member, source)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!("global::{type_path}.{member_name}")))
 }
 
 fn csharp_invocation_member_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -344,6 +365,12 @@ public record Entry(string Name);
         let source = r#"
 using System;
 
+class GlobalHelper {
+    public static int Utility() => 1;
+    public static T GenericUtility<T>() => default;
+    public int Instance() => 1;
+}
+
 class Counter {
     Counter() {}
     Counter(int value) : this() {}
@@ -355,6 +382,9 @@ class Counter {
     int ExplicitThis() => this.Helper();
     int ExplicitThisParameterShadow(Func<int> Helper) => this.Helper();
     int Other(Counter counter) => counter.Helper();
+    int GlobalStaticCaller() => global::GlobalHelper.Utility();
+    int GlobalGenericStaticCaller() => global::GlobalHelper.GenericUtility<int>();
+    int GlobalInstanceCaller() => global::GlobalHelper.Instance();
     int ParameterShadow(Func<int> Helper) => Helper();
     int LocalFunctionShadow() { int Helper() => 2; return Helper(); }
     int LambdaShadow() => ((Func<int, int>)(Helper => Helper())).Invoke(1);
@@ -409,6 +439,18 @@ class Counter {
             ["this.Helper".to_string()].into()
         );
         assert!(references("Counter::Other").is_empty());
+        assert_eq!(
+            references("Counter::GlobalStaticCaller"),
+            ["global::GlobalHelper.Utility".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::GlobalGenericStaticCaller"),
+            ["global::GlobalHelper.GenericUtility".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::GlobalInstanceCaller"),
+            ["global::GlobalHelper.Instance".to_string()].into()
+        );
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());
         assert!(references("Counter::LambdaShadow").is_empty());

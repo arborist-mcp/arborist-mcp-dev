@@ -56,10 +56,11 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   external modules, `replace`, `go.work`, vendoring, build tags, general cross-file/package/import
   resolution, method dispatch, and patching remain unavailable or capability-gated.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, and `: this(...)`
-  constructor initializers to a single same-type, same-file target with an exact arity match. Block and
-  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are
-  supported. Dependency refresh, other member dispatch, overload type selection, and patching remain
+  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
+  constructor initializers, and globally namespace-qualified `global::...` static calls. Each target must
+  be a unique same-file, exact-arity, non-`params` declaration. Block and file-scoped namespaces, classes,
+  structs, interfaces, enums, records, methods, and constructors are supported. Dependency refresh, other
+  member dispatch, overload type selection, and patching remain
   explicitly unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports and single-member `import static`
@@ -534,9 +535,10 @@ for response shapes, error behavior, and examples.
   vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
   unavailable; patching remains capability-gated.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
-  conservative same-type, same-file tracing for unshadowed unqualified calls, explicit `this.` method calls,
-  and `: this(...)` constructor initializers with a unique exact arity match. Dependency refresh,
-  other member dispatch, overload type selection, and patching remain capability-gated pending dedicated
+  conservative same-file tracing for unshadowed unqualified calls, explicit `this.` method calls,
+  `: this(...)` constructor initializers, and globally namespace-qualified `global::...` static calls.
+  Targets require a unique exact-arity, non-`params` declaration. Dependency refresh, other member dispatch,
+  overload type selection, and patching remain capability-gated pending dedicated
   C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports

@@ -47,10 +47,11 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
   dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, and `: this(...)`
-  constructor initializers to a single same-type, same-file target with an exact arity match. Block and
-  file-scoped namespaces, classes, structs, interfaces, enums, records, methods, and constructors are
-  supported. Dependency refresh, other member dispatch, overload type selection, and patch operations
+  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)`
+  constructor initializers, and globally namespace-qualified `global::...` static calls. Each target must
+  be a unique same-file, exact-arity, non-`params` declaration. Block and file-scoped namespaces, classes,
+  structs, interfaces, enums, records, methods, and constructors are supported. Dependency refresh, other
+  member dispatch, overload type selection, and patch operations
   return explicit unsupported-operation errors until dedicated C# adapter slices establish their contracts
   and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

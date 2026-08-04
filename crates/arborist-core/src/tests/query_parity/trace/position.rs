@@ -260,13 +260,13 @@ fn traces_java_unqualified_same_type_calls_in_live_workspace_and_persisted_index
 }
 
 #[test]
-fn traces_csharp_same_type_direct_calls_in_live_workspace_and_persisted_index() {
+fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "class Counter {\n    Counter() {}\n    Counter(int value) : this() {}\n    Counter(string value) : base() {}\n    Counter(params int[] values) {}\n    Counter(bool first, bool second) : this(1, 2) {}\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n}\n",
+        "class GlobalHelper {\n    public static int Utility(int value) => value;\n    public static int Flexible(params int[] values) => values.Length;\n    public int Instance(int value) => value;\n}\nclass Counter {\n    Counter() {}\n    Counter(int value) : this() {}\n    Counter(string value) : base() {}\n    Counter(params int[] values) {}\n    Counter(bool first, bool second) : this(1, 2) {}\n    int Helper() => 1;\n    int Caller() => Helper();\n    int ExplicitThis() => this.Helper();\n    int ExplicitThisParameterShadow(System.Func<int> Helper) => this.Helper();\n    int First(int value) => value;\n    long First(long value) => value;\n    long Ambiguous() => First(1L);\n    int Flexible(params int[] values) => values.Length;\n    int ParamsCaller() => Flexible(1);\n    int GlobalStaticCaller() => global::GlobalHelper.Utility(1);\n    int GlobalInstanceCaller() => global::GlobalHelper.Instance(1);\n    int GlobalParamsCaller() => global::GlobalHelper.Flexible(1);\n}\n",
     )
     .unwrap();
 
@@ -351,6 +351,29 @@ fn traces_csharp_same_type_direct_calls_in_live_workspace_and_persisted_index() 
         trace_symbol_graph_from_index(&db_path, &params_constructor_id, TraceDirection::Callers)
             .unwrap();
     assert!(params_constructor_persisted.callers.is_empty());
+
+    let static_target = "GlobalHelper::Utility";
+    let static_live = trace_symbol_graph(&dir, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(static_live.callers.len(), 1);
+    assert_eq!(
+        static_live.callers[0].symbol_id,
+        "Counter::GlobalStaticCaller"
+    );
+    let static_persisted =
+        trace_symbol_graph_from_index(&db_path, static_target, TraceDirection::Callers).unwrap();
+    assert_eq!(static_persisted.callers.len(), 1);
+    assert_eq!(
+        static_persisted.callers[0].symbol_id,
+        "Counter::GlobalStaticCaller"
+    );
+
+    for target in ["GlobalHelper::Instance", "GlobalHelper::Flexible"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
 }
 
 #[test]
