@@ -408,3 +408,26 @@ fn expands_javascript_semantic_nodes_without_duplicating_members() {
         Some("Counter")
     );
 }
+
+#[test]
+fn builds_rust_skeleton_through_public_entrypoint() {
+    let source = r#"
+pub struct Counter;
+impl Counter {
+    pub fn increment(&self, amount: u64) -> u64 { amount }
+}
+"#;
+    let skeleton = get_semantic_skeleton(Path::new("sample.rs"), source, 2, &[]).unwrap();
+
+    assert_eq!(
+        skeleton.available_paths,
+        vec!["Counter", "Counter::increment"]
+    );
+    let increment = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "Counter::increment")
+        .unwrap();
+    assert_eq!(increment.parameters, vec!["&self", "amount: u64"]);
+    assert_eq!(increment.return_type.as_deref(), Some("u64"));
+}

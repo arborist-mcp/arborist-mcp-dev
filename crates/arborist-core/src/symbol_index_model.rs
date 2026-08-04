@@ -65,7 +65,7 @@ pub(crate) fn symbol_base_name(semantic_path: &str) -> String {
 
 pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
     match node_kind {
-        "function_definition" => 3,
+        "function_definition" | "function_item" | "function_signature_item" => 3,
         "class_definition" => 3,
         "alias_declaration"
         | "class_specifier"
@@ -77,7 +77,14 @@ pub(crate) fn symbol_kind_rank(node_kind: &str) -> usize {
         | "template_instantiation"
         | "type_definition"
         | "union_specifier"
-        | "using_declaration" => 2,
+        | "using_declaration"
+        | "const_item"
+        | "enum_item"
+        | "mod_item"
+        | "static_item"
+        | "struct_item"
+        | "trait_item"
+        | "type_item" => 2,
         "declaration" | "field_declaration" => 1,
         _ => 0,
     }

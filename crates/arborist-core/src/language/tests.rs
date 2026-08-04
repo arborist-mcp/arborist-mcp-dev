@@ -198,21 +198,21 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn rust_syntax_adapter_exposes_tree_queries_only() {
+fn rust_adapter_exposes_skeleton_and_indexing_without_dependencies_tracing_or_patching() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Rust).unwrap();
 
     assert_eq!(descriptor.display_name, "Rust");
     assert_eq!(descriptor.extensions, &["rs"]);
-    assert_eq!(descriptor.analysis_revision, "rust-syntax-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "rust-symbols-v1");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
@@ -223,14 +223,16 @@ fn rust_syntax_adapter_exposes_tree_queries_only() {
     let error = registry
         .require_capability(
             LanguageId::Rust,
-            LanguageCapabilities::SEMANTIC_SKELETON,
-            "semantic skeleton requests",
+            LanguageCapabilities::REFERENCE_TRACE,
+            "reference trace requests",
         )
-        .expect_err("Rust syntax-only support must reject semantic skeleton requests");
+        .expect_err(
+            "Rust indexing support must reject reference tracing until direct calls resolve safely",
+        );
     assert!(
         error
             .to_string()
-            .contains("Rust does not support semantic skeletons")
+            .contains("Rust does not support reference tracing")
     );
 }
 

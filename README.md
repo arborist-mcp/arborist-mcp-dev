@@ -39,9 +39,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   and queries.
 - TypeScript: `.ts`, `.mts`, `.cts`; TSX: `.tsx` — the same initial capabilities as
   JavaScript.
-- Rust: `.rs` — Tree-sitter parsing and raw queries only. Skeletons, indexing,
-  dependencies, tracing, and patching are explicitly unavailable until the Rust adapter
-  gains those capabilities.
+- Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, and symbol indexing
+  for named modules, declarations, trait signatures, and inherent-`impl` methods. Module
+  dependencies, reference tracing, and patching remain explicitly unavailable.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
 unique IDs for each declaration and implementation, such as
@@ -488,8 +488,9 @@ for response shapes, error behavior, and examples.
   and named re-export chains, static local module dependency refresh, and structural
   patching with syntax-level validation; default/namespace resolution and language-specific
   reference-binding validation remain deferred.
-- Rust Tree-sitter parsing and raw query execution, with non-query operations kept
-  capability-gated pending the Rust semantic adapter.
+- Rust Tree-sitter parsing, raw query execution, semantic skeletons, and symbol indexing for
+  named modules/declarations plus inherent-`impl` methods. Trait-implementation members,
+  module dependencies, tracing, and patching remain capability-gated.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
   response schema versioning, stale/missing/unreadable/unindexed file diagnostics,
@@ -505,13 +506,14 @@ The multi-language adapter substrate is implemented through Phase 4: Python,
 C, C++, JavaScript, TypeScript, and TSX use the registry and explicit
 capabilities. JavaScript-family adapters provide semantic skeletons, indexing,
 conservative local-module tracing, structural patching, source overlays, and
-persisted-index coverage. Phase 5 has started with Rust parsing and raw query
-support; Rust semantic analysis remains deliberately capability-gated.
+persisted-index coverage. Phase 5 now includes Rust parsing, raw queries, semantic skeletons,
+and conservative declaration indexing; Rust dependencies, tracing, and patching remain
+deliberately capability-gated.
 
 Remaining larger work includes:
 
-- Building Rust discovery/indexing, module dependencies, and conservative trace
-  support before enabling Rust patching.
+- Adding Rust module dependency extraction and conservative trace support before considering
+  Rust patching.
 - Adding Go and Java one language at a time after their adapter contracts and
   workspace assumptions are documented.
 - Completing JavaScript/TypeScript default and namespace module resolution plus

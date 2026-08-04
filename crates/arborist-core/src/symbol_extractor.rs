@@ -9,6 +9,7 @@ use crate::workspace_scan::WorkspaceScanDeadline;
 pub(crate) mod c;
 pub(crate) mod javascript;
 pub(crate) mod python;
+pub(crate) mod rust;
 
 pub(crate) fn index_symbols_from_document(
     path: &Path,
