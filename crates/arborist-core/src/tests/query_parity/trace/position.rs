@@ -380,6 +380,152 @@ fn traces_rust_self_function_import_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_rust_parent_qualified_calls_from_out_of_line_children() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let api_directory = dir.join("api");
+    let nested_path = api_directory.join("nested.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&api_directory).unwrap();
+    fs::write(&root_path, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+    fs::write(
+        &api_path,
+        "mod nested;\nmod inline {\n    fn inline_caller() { crate::sibling::helper(); super::super::root_helper(); }\n}\nfn caller() { crate::sibling::helper(); super::root_helper(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        &nested_path,
+        "fn nested_caller() { super::super::sibling::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 2);
+    assert!(
+        live.callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        live.callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+    let nested_live = trace_symbol_graph(&dir, "nested_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(nested_live.callees.len(), 1);
+    assert_eq!(nested_live.callees[0].symbol_id, "helper");
+    let inline_live =
+        trace_symbol_graph(&dir, "inline::inline_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(inline_live.callees.len(), 2);
+    assert!(
+        inline_live
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        inline_live
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+    let nested_persisted =
+        trace_symbol_graph_from_index(&db_path, "nested_caller", TraceDirection::Callees).unwrap();
+    assert_eq!(nested_persisted.callees.len(), 1);
+    assert_eq!(nested_persisted.callees[0].symbol_id, "helper");
+    let inline_persisted =
+        trace_symbol_graph_from_index(&db_path, "inline::inline_caller", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(inline_persisted.callees.len(), 2);
+    assert!(
+        inline_persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        inline_persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+}
+
+#[test]
+fn traces_rust_parent_qualified_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+    fs::write(&api_path, "fn stale() {}\n").unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+    let api_overlay = "fn caller() { crate::sibling::helper(); super::root_helper(); }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &api_path,
+        api_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(live.callees.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &api_path,
+        api_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(persisted.callees.len(), 2);
+}
+
+#[test]
+fn does_not_trace_rust_parent_qualified_calls_with_ambiguous_parent_modules() {
+    let dir = temporary_dir();
+    let lib_path = dir.join("lib.rs");
+    let main_path = dir.join("main.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    fs::write(&lib_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&main_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(
+        &api_path,
+        "fn caller() { crate::sibling::helper(); super::root_helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+}
+
+#[test]
 fn traces_rust_crate_and_super_function_import_calls_from_out_of_line_children() {
     let dir = temporary_dir();
     let root_path = dir.join("lib.rs");

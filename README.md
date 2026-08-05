@@ -50,8 +50,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   `use crate::module::function;`, `use self::module::function;`, or exact `use super::...` bindings, including grouped
   `use` paths and explicit `as` aliases when their targets are reachable through the unique out-of-line
   parent/module chain. Crate-root imports from out-of-line children and repeated `super::` ancestor
-  navigation are supported. Malformed source, `#[path]` semantics, duplicate declarations/import aliases,
-  ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not
+  navigation are supported. Equivalent qualified `crate::...` and `super::...` calls from out-of-line
+  children use the same conservative parent/module chain. Malformed source, `#[path]` semantics,
+  duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered. Trait-implementation members are not
   indexed, and inline-module, Cargo, and import resolution beyond those exact bindings remains unavailable.
   Patching remains explicitly unavailable.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
@@ -555,8 +556,9 @@ for response shapes, error behavior, and examples.
   exact `use crate::module::function;`, `use self::module::function;`, or `use super::...` bindings,
   including grouped `use` paths and explicit `as` aliases, resolve through the unique out-of-line
   parent/module chain. Crate-root imports from out-of-line children and repeated `super::` ancestor
-  navigation are supported. Malformed source, `#[path]` semantics, duplicate declarations/import aliases,
-  ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
+  navigation are supported. Equivalent qualified `crate::...` and `super::...` calls from out-of-line
+  children use the same conservative parent/module chain. Malformed source, `#[path]` semantics,
+  duplicate declarations/import aliases, ambiguous layouts, and ambiguous parent chains fail closed; wildcard imports are not considered.
   Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution beyond
   those exact bindings remains unavailable. Patching remains capability-gated.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration

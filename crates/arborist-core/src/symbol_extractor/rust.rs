@@ -567,13 +567,15 @@ fn collect_direct_local_calls_from_node(
             }
         } else if function.kind() == "scoped_identifier"
             && let Some(module_components) = context.module_components.as_deref()
-            && let Some(path) =
+            && let Some((path, import_root)) =
                 rust_qualified_call_target_path(function, module_components, context.source)?
         {
             if let Some(path) = context.qualified_functions.get(&path) {
-                references.insert(path.clone(), None);
-            } else if is_out_of_line_module_call(&path, context.out_of_line_modules) {
-                references.insert(path, None);
+                references.insert(path.clone(), import_root);
+            } else if is_rust_parent_qualified_module_call(import_root.as_ref(), &path)
+                || is_out_of_line_module_call(&path, context.out_of_line_modules)
+            {
+                references.insert(path, import_root);
             }
         }
     }
@@ -583,6 +585,14 @@ fn collect_direct_local_calls_from_node(
         collect_direct_local_calls_from_node(child, context, references)?;
     }
     Ok(())
+}
+
+fn is_rust_parent_qualified_module_call(import_root: Option<&RustImportRoot>, path: &str) -> bool {
+    match import_root {
+        Some(RustImportRoot::Crate) => path.contains("::"),
+        Some(RustImportRoot::Super { .. }) => !path.is_empty(),
+        Some(RustImportRoot::SelfModule) | None => false,
+    }
 }
 
 fn is_out_of_line_module_call(path: &str, out_of_line_modules: &BTreeSet<String>) -> bool {
@@ -621,7 +631,7 @@ fn rust_qualified_call_target_path(
     function: Node<'_>,
     module_components: &[String],
     source: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, Option<RustImportRoot>)>> {
     let spelling = node_text(function, source)?.trim();
     if spelling.is_empty() {
         return Ok(None);
@@ -633,8 +643,12 @@ fn rust_qualified_call_target_path(
 
     let mut module_components = module_components.to_vec();
     let mut components = components.into_iter();
+    let mut import_root = None;
     match components.next() {
-        Some("crate") => module_components.clear(),
+        Some("crate") => {
+            module_components.clear();
+            import_root = Some(RustImportRoot::Crate);
+        }
         Some("self") => {}
         Some("super") => {
             let mut parent_count = 1;
@@ -643,15 +657,18 @@ fn rust_qualified_call_target_path(
                 parent_count += 1;
             }
             if parent_count > module_components.len() {
-                return Ok(None);
+                let levels = parent_count - module_components.len();
+                module_components.clear();
+                import_root = Some(RustImportRoot::Super { levels });
+            } else {
+                module_components.truncate(module_components.len() - parent_count);
             }
-            module_components.truncate(module_components.len() - parent_count);
         }
         Some(first) => module_components.push(first.to_string()),
         None => return Ok(None),
     }
     module_components.extend(components.map(str::to_string));
-    Ok((!module_components.is_empty()).then(|| module_components.join("::")))
+    Ok((!module_components.is_empty()).then(|| (module_components.join("::"), import_root)))
 }
 
 #[cfg(test)]
@@ -901,6 +918,60 @@ fn shadowed(helper: fn()) { helper(); }
                 .unwrap();
             assert!(caller.references_by_name.is_empty());
         }
+    }
+
+    #[test]
+    fn indexes_parent_qualified_calls_with_ancestor_metadata() {
+        let source = r#"
+fn caller() {
+    crate::sibling::helper();
+    super::parent_helper();
+    super::super::grandparent_helper();
+}
+"#;
+        let path = Path::new("src/api.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+        assert_eq!(
+            caller.references_by_name,
+            [
+                "sibling::helper".to_string(),
+                "parent_helper".to_string(),
+                "grandparent_helper".to_string(),
+            ]
+            .into()
+        );
+        assert!(caller.reference_facts.iter().any(|reference| {
+            reference.spelling == "sibling::helper"
+                && matches!(
+                    reference.language_details,
+                    ReferenceLanguageDetails::Rust(ref details)
+                        if details.import_root == Some(RustImportRoot::Crate)
+                )
+        }));
+        assert!(caller.reference_facts.iter().any(|reference| {
+            reference.spelling == "parent_helper"
+                && matches!(
+                    reference.language_details,
+                    ReferenceLanguageDetails::Rust(ref details)
+                        if details.import_root == Some(RustImportRoot::Super { levels: 1 })
+                )
+        }));
+        assert!(caller.reference_facts.iter().any(|reference| {
+            reference.spelling == "grandparent_helper"
+                && matches!(
+                    reference.language_details,
+                    ReferenceLanguageDetails::Rust(ref details)
+                        if details.import_root == Some(RustImportRoot::Super { levels: 2 })
+                )
+        }));
     }
 
     #[test]
