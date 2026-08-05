@@ -89,11 +89,18 @@ struct GoMethodReceiver {
     type_name: String,
 }
 
+struct GoLocalVariableType {
+    type_name: String,
+    available_after: usize,
+}
+
 struct GoDirectCallContext<'a> {
     local_functions: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
     method_receiver: Option<&'a GoMethodReceiver>,
     parameter_types: &'a BTreeMap<String, String>,
+    local_variable_types: &'a BTreeMap<String, GoLocalVariableType>,
+    function_body_range: (usize, usize),
     body_bindings: &'a BTreeSet<String>,
 }
 
@@ -114,6 +121,7 @@ fn collect_direct_local_calls(
     let local_functions = source_file_function_paths(symbol_node, source)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
     let parameter_types = go_named_parameter_types(symbol_node, source)?;
+    let local_variable_types = go_function_body_local_variable_types(body, source)?;
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
@@ -124,6 +132,8 @@ fn collect_direct_local_calls(
         bindings: &bindings,
         method_receiver: method_receiver.as_ref(),
         parameter_types: &parameter_types,
+        local_variable_types: &local_variable_types,
+        function_body_range: (body.start_byte(), body.end_byte()),
         body_bindings: &body_bindings,
     };
     let mut references = BTreeSet::new();
@@ -226,6 +236,227 @@ fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
         }
         _ => Ok(None),
     }
+}
+
+fn go_function_body_local_variable_types(
+    body: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, GoLocalVariableType>> {
+    let mut local_variable_types = BTreeMap::new();
+    let mut ambiguous_names = BTreeSet::new();
+    let mut body_cursor = body.walk();
+    let Some(statement_list) = body
+        .named_children(&mut body_cursor)
+        .find(|node| node.kind() == "statement_list")
+    else {
+        return Ok(local_variable_types);
+    };
+    let mut statement_cursor = statement_list.walk();
+    for statement in statement_list.named_children(&mut statement_cursor) {
+        match statement.kind() {
+            "var_declaration" => collect_go_var_declaration_types(
+                statement,
+                source,
+                &mut local_variable_types,
+                &mut ambiguous_names,
+            )?,
+            "short_var_declaration" => collect_go_short_variable_declaration_types(
+                statement,
+                source,
+                &mut local_variable_types,
+                &mut ambiguous_names,
+            )?,
+            _ => {}
+        }
+    }
+    local_variable_types.retain(|name, _| !ambiguous_names.contains(name));
+    Ok(local_variable_types)
+}
+
+fn collect_go_var_declaration_types(
+    declaration: Node<'_>,
+    source: &str,
+    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    ambiguous_names: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut cursor = declaration.walk();
+    for node in declaration.named_children(&mut cursor) {
+        match node.kind() {
+            "var_spec" => {
+                collect_go_var_spec_types(node, source, local_variable_types, ambiguous_names)?
+            }
+            "var_spec_list" => {
+                let mut spec_cursor = node.walk();
+                for spec in node.named_children(&mut spec_cursor) {
+                    if spec.kind() == "var_spec" {
+                        collect_go_var_spec_types(
+                            spec,
+                            source,
+                            local_variable_types,
+                            ambiguous_names,
+                        )?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn collect_go_var_spec_types(
+    spec: Node<'_>,
+    source: &str,
+    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    ambiguous_names: &mut BTreeSet<String>,
+) -> Result<()> {
+    let mut name_cursor = spec.walk();
+    let names = spec
+        .children_by_field_name("name", &mut name_cursor)
+        .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
+        .collect::<Result<Vec<_>>>()?;
+    if names.is_empty() || names.iter().any(|name| name.is_empty() || name == "_") {
+        return Ok(());
+    }
+
+    let type_name = if let Some(type_node) = spec.child_by_field_name("type") {
+        go_named_local_type(type_node, source)?
+    } else if let Some(type_node) = spec
+        .child_by_field_name("value")
+        .and_then(go_single_composite_literal_type)
+    {
+        go_named_local_type(type_node, source)?
+    } else {
+        None
+    };
+    let Some(type_name) = type_name else {
+        return Ok(());
+    };
+    for name in names {
+        insert_go_local_variable_type(
+            local_variable_types,
+            ambiguous_names,
+            name,
+            type_name.clone(),
+            spec.end_byte(),
+        );
+    }
+    Ok(())
+}
+
+fn collect_go_short_variable_declaration_types(
+    declaration: Node<'_>,
+    source: &str,
+    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    ambiguous_names: &mut BTreeSet<String>,
+) -> Result<()> {
+    let Some(left) = declaration.child_by_field_name("left") else {
+        return Ok(());
+    };
+    let Some(right) = declaration.child_by_field_name("right") else {
+        return Ok(());
+    };
+    let mut left_cursor = left.walk();
+    let names = left
+        .named_children(&mut left_cursor)
+        .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
+        .collect::<Result<Vec<_>>>()?;
+    let mut right_cursor = right.walk();
+    let values = right.named_children(&mut right_cursor).collect::<Vec<_>>();
+    if names.is_empty() || names.len() != values.len() {
+        return Ok(());
+    }
+    for (name, value) in names.into_iter().zip(values) {
+        if name.is_empty() || name == "_" {
+            continue;
+        }
+        let Some(type_node) = go_single_composite_literal_type(value) else {
+            continue;
+        };
+        let Some(type_name) = go_named_local_type(type_node, source)? else {
+            continue;
+        };
+        insert_go_local_variable_type(
+            local_variable_types,
+            ambiguous_names,
+            name,
+            type_name,
+            declaration.end_byte(),
+        );
+    }
+    Ok(())
+}
+
+fn go_single_composite_literal_type(node: Node<'_>) -> Option<Node<'_>> {
+    let literal = if node.kind() == "composite_literal" {
+        Some(node)
+    } else if node.kind() == "expression_list" {
+        let mut cursor = node.walk();
+        let mut expressions = node.named_children(&mut cursor);
+        let literal = expressions.next()?;
+        (expressions.next().is_none() && literal.kind() == "composite_literal").then_some(literal)
+    } else {
+        None
+    };
+    literal.and_then(|literal| literal.child_by_field_name("type"))
+}
+
+fn insert_go_local_variable_type(
+    local_variable_types: &mut BTreeMap<String, GoLocalVariableType>,
+    ambiguous_names: &mut BTreeSet<String>,
+    name: String,
+    type_name: String,
+    available_after: usize,
+) {
+    if local_variable_types
+        .insert(
+            name.clone(),
+            GoLocalVariableType {
+                type_name,
+                available_after,
+            },
+        )
+        .is_some()
+    {
+        ambiguous_names.insert(name);
+    }
+}
+
+fn go_local_variable_type_for_operand(
+    operand: Node<'_>,
+    source: &str,
+    context: &GoDirectCallContext<'_>,
+) -> Option<String> {
+    if !go_operand_is_in_function_body_scope(operand, context.function_body_range) {
+        return None;
+    }
+    let name = node_text(operand, source).ok()?.trim();
+    let local_type = context.local_variable_types.get(name)?;
+    (local_type.available_after <= operand.start_byte()).then(|| local_type.type_name.clone())
+}
+
+fn go_operand_is_in_function_body_scope(
+    operand: Node<'_>,
+    function_body_range: (usize, usize),
+) -> bool {
+    let mut current = operand.parent();
+    while let Some(node) = current {
+        if node.kind() == "block" && (node.start_byte(), node.end_byte()) != function_body_range {
+            return false;
+        }
+        if matches!(
+            node.kind(),
+            "if_statement"
+                | "for_statement"
+                | "expression_switch_statement"
+                | "type_switch_statement"
+                | "select_statement"
+        ) {
+            return false;
+        }
+        current = node.parent();
+    }
+    true
 }
 
 fn source_file_function_paths(
@@ -419,11 +650,13 @@ fn go_direct_method_reference(
             (receiver_name == receiver.name && !context.body_bindings.contains(receiver_name))
                 .then(|| receiver.type_name.clone())
         });
-        receiver_type.or_else(|| {
-            (!context.body_bindings.contains(receiver_name))
-                .then(|| context.parameter_types.get(receiver_name).cloned())
-                .flatten()
-        })
+        receiver_type
+            .or_else(|| {
+                (!context.body_bindings.contains(receiver_name))
+                    .then(|| context.parameter_types.get(receiver_name).cloned())
+                    .flatten()
+            })
+            .or_else(|| go_local_variable_type_for_operand(operand, source, context))
     } else {
         None
     };
@@ -513,6 +746,22 @@ func shadowed_selector() int {
 func literal_method() int { return Counter{}.Value() }
 func (Counter) Value() int { return 3 }
 func (Other) Value() int { return 4 }
+func local_short_call() int { counter := Counter{}; return counter.Value() }
+func local_var_call() int { var counter *Counter; return counter.Value() }
+func local_var_literal_call() int { var counter = Counter{}; return counter.Value() }
+func call_before_local_declaration() int {
+    counter.Value()
+    counter := Counter{}
+    return 0
+}
+func nested_local_method_call() int {
+    counter := Counter{}
+    if true {
+        counter := Other{}
+        return counter.Value()
+    }
+    return 0
+}
 func parameter_call(counter Counter) int { return counter.Value() }
 func shadowed_parameter_method(counter Counter) int {
     if true {
@@ -555,6 +804,11 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "literal_method",
                 "Counter::Value",
                 "Other::Value",
+                "local_short_call",
+                "local_var_call",
+                "local_var_literal_call",
+                "call_before_local_declaration",
+                "nested_local_method_call",
                 "parameter_call",
                 "shadowed_parameter_method",
                 "Counter::receiver_call",
@@ -578,6 +832,31 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert_eq!(caller.references_by_name, ["helper".to_string()].into());
             assert_eq!(caller.reference_facts.len(), 1);
         }
+        for caller_path in [
+            "local_short_call",
+            "local_var_call",
+            "local_var_literal_call",
+        ] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(
+                caller.references_by_name,
+                ["Counter::Value".to_string()].into(),
+                "{caller_path}"
+            );
+            assert_eq!(caller.reference_facts.len(), 1, "{caller_path}");
+        }
+        for caller_path in ["call_before_local_declaration", "nested_local_method_call"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert!(caller.references_by_name.is_empty(), "{caller_path}");
+            assert!(caller.reference_facts.is_empty(), "{caller_path}");
+        }
+
         let parameter_call = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "parameter_call")
@@ -610,6 +889,16 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
         assert!(shadowed_receiver.references_by_name.is_empty());
         assert!(shadowed_receiver.reference_facts.is_empty());
 
+        let shadowed_selector = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "shadowed_selector")
+            .unwrap();
+        assert_eq!(
+            shadowed_selector.references_by_name,
+            ["Counter::Value".to_string()].into()
+        );
+        assert_eq!(shadowed_selector.reference_facts.len(), 1);
+
         let literal_method = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "literal_method")
@@ -629,11 +918,7 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             ["service.Value".to_string()].into()
         );
         assert_eq!(imported.reference_facts.len(), 1);
-        for caller_path in [
-            "shadowed_parameter",
-            "shadowed_variable",
-            "shadowed_selector",
-        ] {
+        for caller_path in ["shadowed_parameter", "shadowed_variable"] {
             let caller = symbols
                 .iter()
                 .find(|symbol| symbol.semantic_path == caller_path)
