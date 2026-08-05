@@ -58,7 +58,7 @@ struct GoSamePackageReferenceTarget<'a> {
     candidate_indexes: &'a [usize],
 }
 
-enum GoTypeConversionReceiver {
+enum GoNamedTypeDeclaration {
     Absent,
     Unique,
     Ambiguous,
@@ -292,17 +292,29 @@ fn resolve_reference_path_with_deadline<'a>(
     }
     let call_arity = call_context.arity;
     if language_id == Some(LanguageId::Go) {
-        if go_reference_details.is_some_and(|details| details.type_conversion) {
-            return resolve_go_type_conversion_reference(
-                source_symbol,
-                reference_name,
-                raw_symbols,
-                name_index,
-                semantic_path_index,
-                file_overrides,
-                go_import_contexts_by_file,
-                deadline,
-            );
+        if let Some(details) = go_reference_details {
+            return match (details.type_conversion, details.type_assertion) {
+                (true, false) => resolve_go_type_conversion_reference(
+                    source_symbol,
+                    reference_name,
+                    raw_symbols,
+                    name_index,
+                    semantic_path_index,
+                    file_overrides,
+                    go_import_contexts_by_file,
+                    deadline,
+                ),
+                (false, true) => resolve_go_type_assertion_reference(
+                    source_symbol,
+                    reference_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    go_import_contexts_by_file,
+                    deadline,
+                ),
+                _ => Ok(None),
+            };
         }
         if let Some((imported_name, binding)) = resolve_go_import_binding_for_reference(
             &source_symbol.file_path,
@@ -1333,7 +1345,7 @@ fn resolve_go_type_conversion_reference(
         return Ok(None);
     }
 
-    match go_type_conversion_receiver_status(
+    match go_named_type_declaration_status(
         source_symbol,
         receiver_type,
         raw_symbols,
@@ -1342,7 +1354,7 @@ fn resolve_go_type_conversion_reference(
         go_import_contexts_by_file,
         deadline,
     )? {
-        GoTypeConversionReceiver::Unique => resolve_go_same_package_method_reference(
+        GoNamedTypeDeclaration::Unique => resolve_go_same_package_method_reference(
             source_symbol,
             reference_name,
             raw_symbols,
@@ -1351,7 +1363,7 @@ fn resolve_go_type_conversion_reference(
             go_import_contexts_by_file,
             deadline,
         ),
-        GoTypeConversionReceiver::Absent => resolve_go_same_package_function_reference(
+        GoNamedTypeDeclaration::Absent => resolve_go_same_package_function_reference(
             source_symbol,
             receiver_type,
             raw_symbols,
@@ -1360,11 +1372,55 @@ fn resolve_go_type_conversion_reference(
             go_import_contexts_by_file,
             deadline,
         ),
-        GoTypeConversionReceiver::Ambiguous => Ok(None),
+        GoNamedTypeDeclaration::Ambiguous => Ok(None),
     }
 }
 
-fn go_type_conversion_receiver_status(
+fn resolve_go_type_assertion_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((receiver_type, method_name)) = reference_name.split_once("::") else {
+        return Ok(None);
+    };
+    if receiver_type.is_empty()
+        || method_name.is_empty()
+        || receiver_type.contains(':')
+        || method_name.contains(':')
+    {
+        return Ok(None);
+    }
+    if !matches!(
+        go_named_type_declaration_status(
+            source_symbol,
+            receiver_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?,
+        GoNamedTypeDeclaration::Unique
+    ) {
+        return Ok(None);
+    }
+    resolve_go_same_package_method_reference(
+        source_symbol,
+        reference_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn go_named_type_declaration_status(
     source_symbol: &IndexedSymbol,
     receiver_type: &str,
     raw_symbols: &[IndexedSymbol],
@@ -1372,7 +1428,7 @@ fn go_type_conversion_receiver_status(
     file_overrides: Option<&BTreeMap<String, String>>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<GoTypeConversionReceiver> {
+) -> Result<GoNamedTypeDeclaration> {
     let Some(caller_package_name) = go_package_name_for_source_file(
         &source_symbol.file_path,
         file_overrides,
@@ -1380,13 +1436,13 @@ fn go_type_conversion_receiver_status(
         deadline,
     )?
     else {
-        return Ok(GoTypeConversionReceiver::Ambiguous);
+        return Ok(GoNamedTypeDeclaration::Ambiguous);
     };
     let Some(caller_directory) = Path::new(&source_symbol.file_path)
         .parent()
         .map(normalize_path)
     else {
-        return Ok(GoTypeConversionReceiver::Ambiguous);
+        return Ok(GoNamedTypeDeclaration::Ambiguous);
     };
 
     let mut type_declaration_count = 0;
@@ -1418,15 +1474,15 @@ fn go_type_conversion_receiver_status(
         if candidate_package_name == caller_package_name {
             type_declaration_count += 1;
             if type_declaration_count > 1 {
-                return Ok(GoTypeConversionReceiver::Ambiguous);
+                return Ok(GoNamedTypeDeclaration::Ambiguous);
             }
         }
     }
 
     Ok(if type_declaration_count == 1 {
-        GoTypeConversionReceiver::Unique
+        GoNamedTypeDeclaration::Unique
     } else {
-        GoTypeConversionReceiver::Absent
+        GoNamedTypeDeclaration::Absent
     })
 }
 

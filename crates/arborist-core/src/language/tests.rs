@@ -296,7 +296,7 @@ fn go_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patchin
     assert_eq!(descriptor.extensions, &["go"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "go-conversion-receiver-forms-v10"
+        "go-type-assertion-method-trace-v11"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,

@@ -27,7 +27,10 @@ pub(crate) enum RustImportRoot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GoReferenceDetails {
+    #[serde(default)]
     pub(crate) type_conversion: bool,
+    #[serde(default)]
+    pub(crate) type_assertion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

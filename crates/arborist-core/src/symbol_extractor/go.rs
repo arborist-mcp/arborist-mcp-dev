@@ -69,6 +69,7 @@ fn indexed_symbol(
     let call_arities_by_name = BTreeMap::new();
     let reference_facts = go_reference_facts(
         &references_by_name,
+        &direct_references.type_assertion_method_references,
         &direct_references.type_conversion_method_references,
         &call_arities_by_name,
     );
@@ -94,12 +95,14 @@ fn indexed_symbol(
 
 struct GoDirectReferences {
     references_by_name: BTreeSet<String>,
+    type_assertion_method_references: BTreeSet<String>,
     type_conversion_method_references: BTreeSet<String>,
     suppressed_type_conversion_call_starts: BTreeSet<usize>,
 }
 
 enum GoDirectMethodReference {
     Plain(String),
+    TypeAssertion(String),
     TypeConversion {
         method_path: String,
         conversion_call_start: usize,
@@ -128,10 +131,24 @@ struct GoDirectCallContext<'a> {
 
 fn go_reference_facts(
     references_by_name: &BTreeSet<String>,
+    type_assertion_method_references: &BTreeSet<String>,
     type_conversion_method_references: &BTreeSet<String>,
     call_arities_by_name: &BTreeMap<String, BTreeSet<usize>>,
 ) -> Vec<ReferenceFact> {
     let mut reference_facts = reference_facts_from_legacy(references_by_name, call_arities_by_name);
+    reference_facts.extend(
+        type_assertion_method_references
+            .iter()
+            .filter(|reference| !references_by_name.contains(*reference))
+            .map(|spelling| ReferenceFact {
+                spelling: spelling.clone(),
+                call_arities: None,
+                language_details: ReferenceLanguageDetails::Go(GoReferenceDetails {
+                    type_conversion: false,
+                    type_assertion: true,
+                }),
+            }),
+    );
     reference_facts.extend(
         type_conversion_method_references
             .iter()
@@ -141,6 +158,7 @@ fn go_reference_facts(
                 call_arities: None,
                 language_details: ReferenceLanguageDetails::Go(GoReferenceDetails {
                     type_conversion: true,
+                    type_assertion: false,
                 }),
             }),
     );
@@ -158,6 +176,7 @@ fn collect_direct_local_calls(
     ) {
         return Ok(GoDirectReferences {
             references_by_name: BTreeSet::new(),
+            type_assertion_method_references: BTreeSet::new(),
             type_conversion_method_references: BTreeSet::new(),
             suppressed_type_conversion_call_starts: BTreeSet::new(),
         });
@@ -165,6 +184,7 @@ fn collect_direct_local_calls(
     let Some(body) = symbol_node.child_by_field_name("body") else {
         return Ok(GoDirectReferences {
             references_by_name: BTreeSet::new(),
+            type_assertion_method_references: BTreeSet::new(),
             type_conversion_method_references: BTreeSet::new(),
             suppressed_type_conversion_call_starts: BTreeSet::new(),
         });
@@ -189,6 +209,7 @@ fn collect_direct_local_calls(
     };
     let mut references = GoDirectReferences {
         references_by_name: BTreeSet::new(),
+        type_assertion_method_references: BTreeSet::new(),
         type_conversion_method_references: BTreeSet::new(),
         suppressed_type_conversion_call_starts: BTreeSet::new(),
     };
@@ -744,6 +765,14 @@ fn go_direct_method_reference(
             "{receiver_type}::{method_name}"
         ))));
     }
+    if let Some(type_name) = go_type_assertion_receiver(operand, source)? {
+        if context.bindings.contains(&type_name) {
+            return Ok(None);
+        }
+        return Ok(Some(GoDirectMethodReference::TypeAssertion(format!(
+            "{type_name}::{method_name}"
+        ))));
+    }
     let Some((type_name, conversion_call_start)) = go_type_conversion_receiver(operand, source)?
     else {
         return Ok(None);
@@ -755,6 +784,17 @@ fn go_direct_method_reference(
         method_path: format!("{type_name}::{method_name}"),
         conversion_call_start,
     }))
+}
+
+fn go_type_assertion_receiver(operand: Node<'_>, source: &str) -> Result<Option<String>> {
+    if operand.kind() != "type_assertion_expression" {
+        return Ok(None);
+    }
+    operand
+        .child_by_field_name("type")
+        .map(|type_node| go_named_local_type(type_node, source))
+        .transpose()
+        .map(Option::flatten)
 }
 
 fn go_type_conversion_receiver(operand: Node<'_>, source: &str) -> Result<Option<(String, usize)>> {
@@ -850,6 +890,11 @@ fn collect_direct_local_calls_from_node(
                     match reference {
                         GoDirectMethodReference::Plain(reference) => {
                             references.references_by_name.insert(reference);
+                        }
+                        GoDirectMethodReference::TypeAssertion(method_path) => {
+                            references
+                                .type_assertion_method_references
+                                .insert(method_path);
                         }
                         GoDirectMethodReference::TypeConversion {
                             method_path,
@@ -1136,6 +1181,8 @@ func generic_conversion(value int) int { return Box[int](value).Value() }
 func factory_method(value int) int { return Factory(value).Value() }
 func parenthesized_factory_method(value int) int { return (Factory)(value).Value() }
 func shadowed_conversion(Scalar func(int) Result, value int) int { return Scalar(value).Value() }
+func asserted_method(value any) int { return value.(Scalar).Value() }
+func shadowed_assertion(Scalar any, value any) int { return value.(Scalar).Value() }
 "#;
         let path = Path::new("metrics.go");
         let document = parse_document(path, source).unwrap();
@@ -1168,6 +1215,7 @@ func shadowed_conversion(Scalar func(int) Result, value int) int { return Scalar
                 caller.reference_facts[0].language_details,
                 ReferenceLanguageDetails::Go(GoReferenceDetails {
                     type_conversion: true,
+                    type_assertion: false,
                 }),
                 "{caller_path}"
             );
@@ -1179,5 +1227,27 @@ func shadowed_conversion(Scalar func(int) Result, value int) int { return Scalar
             .unwrap();
         assert!(shadowed_conversion.references_by_name.is_empty());
         assert!(shadowed_conversion.reference_facts.is_empty());
+
+        let asserted_method = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "asserted_method")
+            .unwrap();
+        assert!(asserted_method.references_by_name.is_empty());
+        assert_eq!(asserted_method.reference_facts.len(), 1);
+        assert_eq!(asserted_method.reference_facts[0].spelling, "Scalar::Value");
+        assert_eq!(
+            asserted_method.reference_facts[0].language_details,
+            ReferenceLanguageDetails::Go(GoReferenceDetails {
+                type_conversion: false,
+                type_assertion: true,
+            })
+        );
+
+        let shadowed_assertion = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "shadowed_assertion")
+            .unwrap();
+        assert!(shadowed_assertion.references_by_name.is_empty());
+        assert!(shadowed_assertion.reference_facts.is_empty());
     }
 }
