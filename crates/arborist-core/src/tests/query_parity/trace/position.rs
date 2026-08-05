@@ -3732,14 +3732,22 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Scalar int\ntype Result struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Result) Value() int { return 2 }\nfunc Factory(value int) Result { return Result{} }\nfunc conversionCaller(value int) int { return Scalar(value).Value() }\nfunc factoryCaller(value int) int { return Factory(value).Value() }\nfunc parenthesizedFactoryCaller(value int) int { return (Factory)(value).Value() }\n",
+        "package metrics\n\ntype Scalar int\ntype Alias = Scalar\ntype Chained = Alias\ntype LoopA = LoopB\ntype LoopB = LoopA\ntype Broken = Missing\ntype Result struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Result) Value() int { return 2 }\nfunc Broken(value int) Result { return Result{} }\nfunc Factory(value int) Result { return Result{} }\nfunc aliasConversionCaller(value int) int { return Alias(value).Value() }\nfunc chainedConversionCaller(value int) int { return Chained(value).Value() }\nfunc conversionCaller(value int) int { return Scalar(value).Value() }\nfunc factoryCaller(value int) int { return Factory(value).Value() }\nfunc loopConversionCaller(value int) int { return LoopA(value).Value() }\nfunc brokenConversionCaller(value int) int { return Broken(value).Value() }\nfunc parenthesizedFactoryCaller(value int) int { return (Factory)(value).Value() }\n",
     )
     .unwrap();
 
     let conversion_live =
         trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(conversion_live.callers.len(), 1);
-    assert_eq!(conversion_live.callers[0].symbol_id, "conversionCaller");
+    assert_eq!(conversion_live.callers.len(), 3);
+    assert_eq!(
+        conversion_live.callers[0].symbol_id,
+        "aliasConversionCaller"
+    );
+    assert_eq!(
+        conversion_live.callers[1].symbol_id,
+        "chainedConversionCaller"
+    );
+    assert_eq!(conversion_live.callers[2].symbol_id, "conversionCaller");
     let factory_live = trace_symbol_graph(&dir, "Factory", TraceDirection::Callers).unwrap();
     assert_eq!(factory_live.callers.len(), 2);
     assert_eq!(factory_live.callers[0].symbol_id, "factoryCaller");
@@ -3747,6 +3755,8 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
         factory_live.callers[1].symbol_id,
         "parenthesizedFactoryCaller"
     );
+    let broken_live = trace_symbol_graph(&dir, "Broken", TraceDirection::Callers).unwrap();
+    assert!(broken_live.callers.is_empty());
     let result_method_live =
         trace_symbol_graph(&dir, "Result::Value", TraceDirection::Callers).unwrap();
     assert!(result_method_live.callers.is_empty());
@@ -3754,9 +3764,17 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let conversion_persisted =
         trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(conversion_persisted.callers.len(), 1);
+    assert_eq!(conversion_persisted.callers.len(), 3);
     assert_eq!(
         conversion_persisted.callers[0].symbol_id,
+        "aliasConversionCaller"
+    );
+    assert_eq!(
+        conversion_persisted.callers[1].symbol_id,
+        "chainedConversionCaller"
+    );
+    assert_eq!(
+        conversion_persisted.callers[2].symbol_id,
         "conversionCaller"
     );
     let factory_persisted =
@@ -3767,6 +3785,9 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
         factory_persisted.callers[1].symbol_id,
         "parenthesizedFactoryCaller"
     );
+    let broken_persisted =
+        trace_symbol_graph_from_index(&db_path, "Broken", TraceDirection::Callers).unwrap();
+    assert!(broken_persisted.callers.is_empty());
     let result_method_persisted =
         trace_symbol_graph_from_index(&db_path, "Result::Value", TraceDirection::Callers).unwrap();
     assert!(result_method_persisted.callers.is_empty());
@@ -3975,7 +3996,7 @@ fn traces_go_type_conversion_methods_from_dirty_vfs_overrides() {
         "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
     )
     .unwrap();
-    let caller_overlay = "package metrics\n\ntype Scalar int\nfunc caller(value int) int { return Scalar(value).Value() }\n";
+    let caller_overlay = "package metrics\n\ntype Scalar int\ntype Alias = Scalar\ntype Chained = Alias\nfunc caller(value int) int { return Chained(value).Value() }\n";
 
     let live = trace_symbol_graph_with_source(
         &dir,

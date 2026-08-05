@@ -64,6 +64,12 @@ enum GoNamedTypeDeclaration {
     Ambiguous,
 }
 
+enum GoSimpleTypeAliasTerminalTarget {
+    NotAlias,
+    Resolved(String),
+    UnresolvedAlias,
+}
+
 #[derive(Clone, Copy)]
 struct CSharpCandidateRequirements {
     node_kind: &'static str,
@@ -1374,15 +1380,41 @@ fn resolve_go_type_conversion_reference(
             go_import_contexts_by_file,
             deadline,
         ),
-        GoNamedTypeDeclaration::Absent => resolve_go_same_package_function_reference(
-            source_symbol,
-            receiver_type,
-            raw_symbols,
-            name_index,
-            file_overrides,
-            go_import_contexts_by_file,
-            deadline,
-        ),
+        GoNamedTypeDeclaration::Absent => {
+            match go_same_package_simple_type_alias_terminal_target(
+                source_symbol,
+                receiver_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            )? {
+                GoSimpleTypeAliasTerminalTarget::Resolved(target_type) => {
+                    resolve_go_same_package_method_reference(
+                        source_symbol,
+                        &format!("{target_type}::{method_name}"),
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        go_import_contexts_by_file,
+                        deadline,
+                    )
+                }
+                GoSimpleTypeAliasTerminalTarget::NotAlias => {
+                    resolve_go_same_package_function_reference(
+                        source_symbol,
+                        receiver_type,
+                        raw_symbols,
+                        name_index,
+                        file_overrides,
+                        go_import_contexts_by_file,
+                        deadline,
+                    )
+                }
+                GoSimpleTypeAliasTerminalTarget::UnresolvedAlias => Ok(None),
+            }
+        }
         GoNamedTypeDeclaration::Ambiguous => Ok(None),
     }
 }
@@ -1417,15 +1449,16 @@ fn resolve_go_type_assertion_reference(
     )? {
         GoNamedTypeDeclaration::Unique => receiver_type.to_string(),
         GoNamedTypeDeclaration::Absent => {
-            let Some(target_type) = go_same_package_simple_type_alias_terminal_target(
-                source_symbol,
-                receiver_type,
-                raw_symbols,
-                semantic_path_index,
-                file_overrides,
-                go_import_contexts_by_file,
-                deadline,
-            )?
+            let GoSimpleTypeAliasTerminalTarget::Resolved(target_type) =
+                go_same_package_simple_type_alias_terminal_target(
+                    source_symbol,
+                    receiver_type,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    go_import_contexts_by_file,
+                    deadline,
+                )?
             else {
                 return Ok(None);
             };
@@ -1529,15 +1562,16 @@ fn resolve_go_same_package_type_alias_method_reference(
     {
         return Ok(None);
     }
-    let Some(target_type) = go_same_package_simple_type_alias_terminal_target(
-        source_symbol,
-        alias_name,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        go_import_contexts_by_file,
-        deadline,
-    )?
+    let GoSimpleTypeAliasTerminalTarget::Resolved(target_type) =
+        go_same_package_simple_type_alias_terminal_target(
+            source_symbol,
+            alias_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
     else {
         return Ok(None);
     };
@@ -1560,15 +1594,16 @@ fn go_same_package_simple_type_alias_terminal_target(
     file_overrides: Option<&BTreeMap<String, String>>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<GoSimpleTypeAliasTerminalTarget> {
     let mut current_name = alias_name.to_string();
     let mut visited_aliases = BTreeSet::new();
+    let mut followed_alias = false;
     loop {
         if let Some(deadline) = deadline {
             deadline.check("resolving Go type alias chain")?;
         }
         if !visited_aliases.insert(current_name.clone()) {
-            return Ok(None);
+            return Ok(GoSimpleTypeAliasTerminalTarget::UnresolvedAlias);
         }
         match go_named_type_declaration_status(
             source_symbol,
@@ -1579,11 +1614,15 @@ fn go_same_package_simple_type_alias_terminal_target(
             go_import_contexts_by_file,
             deadline,
         )? {
-            GoNamedTypeDeclaration::Unique => return Ok(Some(current_name)),
-            GoNamedTypeDeclaration::Ambiguous => return Ok(None),
+            GoNamedTypeDeclaration::Unique => {
+                return Ok(GoSimpleTypeAliasTerminalTarget::Resolved(current_name));
+            }
+            GoNamedTypeDeclaration::Ambiguous => {
+                return Ok(GoSimpleTypeAliasTerminalTarget::UnresolvedAlias);
+            }
             GoNamedTypeDeclaration::Absent => {}
         }
-        let Some(next_name) = go_same_package_simple_type_alias_target(
+        match go_same_package_simple_type_alias_target(
             source_symbol,
             &current_name,
             raw_symbols,
@@ -1591,11 +1630,22 @@ fn go_same_package_simple_type_alias_terminal_target(
             file_overrides,
             go_import_contexts_by_file,
             deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        current_name = next_name;
+        )? {
+            GoSimpleTypeAliasTerminalTarget::NotAlias => {
+                return Ok(if followed_alias {
+                    GoSimpleTypeAliasTerminalTarget::UnresolvedAlias
+                } else {
+                    GoSimpleTypeAliasTerminalTarget::NotAlias
+                });
+            }
+            GoSimpleTypeAliasTerminalTarget::Resolved(next_name) => {
+                followed_alias = true;
+                current_name = next_name;
+            }
+            GoSimpleTypeAliasTerminalTarget::UnresolvedAlias => {
+                return Ok(GoSimpleTypeAliasTerminalTarget::UnresolvedAlias);
+            }
+        }
     }
 }
 
@@ -1607,7 +1657,7 @@ fn go_same_package_simple_type_alias_target(
     file_overrides: Option<&BTreeMap<String, String>>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<GoSimpleTypeAliasTerminalTarget> {
     let Some(caller_package_name) = go_package_name_for_source_file(
         &source_symbol.file_path,
         file_overrides,
@@ -1615,13 +1665,13 @@ fn go_same_package_simple_type_alias_target(
         deadline,
     )?
     else {
-        return Ok(None);
+        return Ok(GoSimpleTypeAliasTerminalTarget::UnresolvedAlias);
     };
     let Some(caller_directory) = Path::new(&source_symbol.file_path)
         .parent()
         .map(normalize_path)
     else {
-        return Ok(None);
+        return Ok(GoSimpleTypeAliasTerminalTarget::UnresolvedAlias);
     };
 
     let mut candidates = Vec::new();
@@ -1656,9 +1706,18 @@ fn go_same_package_simple_type_alias_target(
     }
 
     let [candidate_index] = candidates.as_slice() else {
-        return Ok(None);
+        return Ok(if candidates.is_empty() {
+            GoSimpleTypeAliasTerminalTarget::NotAlias
+        } else {
+            GoSimpleTypeAliasTerminalTarget::UnresolvedAlias
+        });
     };
-    Ok(go_simple_type_alias_target(&raw_symbols[*candidate_index]))
+    Ok(
+        go_simple_type_alias_target(&raw_symbols[*candidate_index]).map_or(
+            GoSimpleTypeAliasTerminalTarget::UnresolvedAlias,
+            GoSimpleTypeAliasTerminalTarget::Resolved,
+        ),
+    )
 }
 
 fn go_simple_type_alias_target(alias_symbol: &IndexedSymbol) -> Option<String> {
@@ -1674,7 +1733,6 @@ fn go_simple_type_alias_target(alias_symbol: &IndexedSymbol) -> Option<String> {
     let target_name = target_name.trim();
     go_simple_identifier(target_name).then(|| target_name.to_string())
 }
-
 fn go_simple_identifier(value: &str) -> bool {
     let mut characters = value.chars();
     let Some(first) = characters.next() else {
