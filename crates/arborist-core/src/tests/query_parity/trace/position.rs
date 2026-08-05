@@ -3770,6 +3770,101 @@ fn traces_java_explicit_local_import_static_calls_in_live_workspace_and_persiste
 }
 
 #[test]
+fn traces_java_same_file_static_type_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper {
+    static int utility(int value) { return value; }
+    static int flexible(int... values) { return values.length; }
+    int instance(int value) { return value; }
+}
+class Main {
+    int caller() { return Helper.utility(1); }
+    int parameterShadowed(Helper Helper) { return Helper.utility(1); }
+    int localTypeShadowed() { class Helper {} return Helper.utility(1); }
+    int nonStatic() { return Helper.instance(1); }
+    int varargs() { return Helper.flexible(1); }
+}
+class FieldShadowing {
+    private Helper Helper;
+    int fieldShadowed() { return Helper.utility(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::utility";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, helper_symbol);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, helper_symbol);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+
+    for target in [
+        "com::example::Helper::instance",
+        "com::example::Helper::flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn traces_java_same_file_static_type_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    let overlay = "class Helper { static int utility(int value) { return value; } }
+class Main { int caller() { return Helper.utility(1); } }
+";
+    fs::write(
+        &source_path,
+        "class Stale {}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "Helper::utility";
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Main::caller");
+}
+
+#[test]
 fn traces_go_unshadowed_same_file_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

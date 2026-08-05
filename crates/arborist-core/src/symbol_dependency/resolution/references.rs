@@ -793,6 +793,15 @@ fn resolve_reference_path_with_deadline<'a>(
                 call_arity,
             ));
         }
+        if let Some(symbol_id) = resolve_java_same_file_static_method_reference(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            call_arity,
+        ) {
+            return Ok(Some(symbol_id));
+        }
 
         let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
             if method_name.is_empty() || method_name.contains('.') {
@@ -2210,6 +2219,65 @@ fn resolve_java_same_file_super_method_reference(
         })
         .collect::<Vec<_>>();
     Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn resolve_java_same_file_static_method_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    call_arity: usize,
+) -> Option<String> {
+    let (type_name, method_name) = reference_name.split_once('.')?;
+    if type_name.is_empty()
+        || method_name.is_empty()
+        || method_name.contains('.')
+        || matches!(type_name, "this" | "super")
+    {
+        return None;
+    }
+    let scope_path = source_symbol.scope_path.as_deref()?;
+    let type_path = scope_path.rsplit_once("::").map_or_else(
+        || type_name.to_string(),
+        |(enclosing_scope_path, _)| format!("{enclosing_scope_path}::{type_name}"),
+    );
+    let type_candidates = semantic_path_index
+        .get(&type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == "class_declaration"
+        })
+        .collect::<Vec<_>>();
+    if type_candidates.len() != 1 {
+        return None;
+    }
+
+    let target_path = format!("{type_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_static)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
 fn java_same_file_simple_superclass_path(

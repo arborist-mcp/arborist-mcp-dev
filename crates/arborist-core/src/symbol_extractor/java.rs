@@ -311,12 +311,8 @@ fn collect_qualified_call_exclusions(
         Ok(())
     }
 
-    let mut root = symbol_node;
-    while let Some(parent) = root.parent() {
-        root = parent;
-    }
     let mut exclusions = BTreeSet::new();
-    collect_type_names(root, source, &mut exclusions)?;
+    collect_type_names(symbol_node, source, &mut exclusions)?;
     collect_value_bindings(symbol_node, source, &mut exclusions)?;
 
     let mut current = symbol_node.parent();
