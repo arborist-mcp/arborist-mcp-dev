@@ -132,16 +132,16 @@ fn collect_direct_local_calls_from_node(
         return Ok(());
     }
     if node.kind() == "explicit_constructor_invocation"
-        && node
-            .child_by_field_name("constructor")
-            .is_some_and(|constructor| constructor.kind() == "this")
+        && let Some(constructor) = node.child_by_field_name("constructor")
+        && matches!(constructor.kind(), "this" | "super")
         && let Some(arguments) = node.child_by_field_name("arguments")
     {
         let mut cursor = arguments.walk();
         let arity = arguments.named_children(&mut cursor).count();
-        references.insert("this".to_string());
+        let reference = constructor.kind().to_string();
+        references.insert(reference.clone());
         call_arities_by_name
-            .entry("this".to_string())
+            .entry(reference)
             .or_default()
             .insert(arity);
     }

@@ -90,7 +90,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type maps to a local `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors use package-qualified paths. It
-  traces an explicit `this(...)` constructor initializer only when one same-type, same-file, non-varargs constructor has the call arity; plus unqualified and `this.method()` calls only when one same-type, same-file, non-varargs method has the call arity; `Type.method()` through a unique explicit non-static local type import
+  traces an explicit `this(...)` constructor initializer only when one same-type, same-file, non-varargs constructor has the call arity; a same-file simple `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor has the call arity; plus unqualified and `this.method()` calls only when one same-type, same-file, non-varargs method has the call arity; `Type.method()` through a unique explicit non-static local type import
   with an unshadowed type name; and a bare call through a unique explicit local static-method import
   only when no same-type method has that name. Imported targets require a unique static-method arity
   match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous

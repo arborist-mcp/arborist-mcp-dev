@@ -95,7 +95,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   conservative dependency refresh for explicit local type imports and single-member `import static`
   imports whose owning type resolves to a local `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors are indexed by package-qualified
-  paths. It traces an explicit `this(...)` constructor initializer to a single same-type, same-file, non-varargs constructor with a unique arity match; plus unqualified and `this.method()` calls to a single same-type, same-file, non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
+  paths. It traces an explicit `this(...)` constructor initializer to a single same-type, same-file, non-varargs constructor with a unique arity match; a same-file simple `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity; plus unqualified and `this.method()` calls to a single same-type, same-file, non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
   non-static local type import when the type name is unshadowed; and bare calls through a unique
   explicit local static-method import when no same-type method has that name. Imported targets must
   be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
@@ -588,7 +588,7 @@ for response shapes, error behavior, and examples.
   patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports and single-member `import static` imports
-  whose owning type maps to a local `.java` file under an ancestor source root. It traces an explicit `this(...)` constructor initializer when one same-type, same-file, non-varargs constructor matches the call arity; plus unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches the call arity; `Type.method()` through a unique explicit non-static local type import with an
+  whose owning type maps to a local `.java` file under an ancestor source root. It traces an explicit `this(...)` constructor initializer when one same-type, same-file, non-varargs constructor matches the call arity; a same-file simple `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor matches the call arity; plus unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches the call arity; `Type.method()` through a unique explicit non-static local type import with an
   unshadowed type name; and a bare call through a unique explicit local static-method import only
   when no same-type method has that name. Imported targets require a unique static-method arity
   match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
@@ -618,7 +618,7 @@ same-file bare plus unambiguous local-package imported-function direct-call grap
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for explicit local type imports and single-member `import static` imports
-whose owning type maps to a local `.java` file under an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
+whose owning type maps to a local `.java` file under an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus a same-file simple `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
 unique explicit local static-method imports only when no same-type method has that name. Imported
 trace targets must be static with an exact unique arity. General cross-file/package/import resolution,

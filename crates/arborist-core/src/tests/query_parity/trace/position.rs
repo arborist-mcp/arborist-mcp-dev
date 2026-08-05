@@ -1105,6 +1105,78 @@ fn traces_java_explicit_this_constructor_initializers_from_dirty_vfs_overrides()
     assert_eq!(persisted.callers[0].symbol_id, delegated_constructor);
 }
 #[test]
+fn traces_java_explicit_same_file_super_constructor_initializers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;\nclass Base {\n    Base() {}\n    Base(int value) {}\n    Base(int... values) {}\n}\nclass Child extends Base {\n    Child() { super(); }\n    Child(int value) { super(value); }\n    Child(boolean first, boolean second) { super(1, 2); }\n}\n",
+    )
+    .unwrap();
+    let file_path = normalize_path(&source_path);
+    let base_zero = format!("{file_path}::com::example::Base::Base#overload[1]");
+    let base_one = format!("{file_path}::com::example::Base::Base#overload[2]");
+    let child_zero = format!("{file_path}::com::example::Child::Child#overload[1]");
+    let child_one = format!("{file_path}::com::example::Child::Child#overload[2]");
+    let base_params = format!("{file_path}::com::example::Base::Base#overload[3]");
+
+    let live_zero = trace_symbol_graph(&dir, &base_zero, TraceDirection::Callers).unwrap();
+    assert_eq!(live_zero.callers.len(), 1);
+    assert_eq!(live_zero.callers[0].symbol_id, child_zero);
+    let live_one = trace_symbol_graph(&dir, &base_one, TraceDirection::Callers).unwrap();
+    assert_eq!(live_one.callers.len(), 1);
+    assert_eq!(live_one.callers[0].symbol_id, child_one);
+    let live_params = trace_symbol_graph(&dir, &base_params, TraceDirection::Callers).unwrap();
+    assert!(live_params.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_zero =
+        trace_symbol_graph_from_index(&db_path, &base_zero, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_zero.callers.len(), 1);
+    assert_eq!(persisted_zero.callers[0].symbol_id, child_zero);
+    let persisted_one =
+        trace_symbol_graph_from_index(&db_path, &base_one, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_one.callers.len(), 1);
+    assert_eq!(persisted_one.callers[0].symbol_id, child_one);
+    let persisted_params =
+        trace_symbol_graph_from_index(&db_path, &base_params, TraceDirection::Callers).unwrap();
+    assert!(persisted_params.callers.is_empty());
+}
+#[test]
+fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example; class Stale {}\n").unwrap();
+    let overlay = "package com.example;\nclass Base { Base() {} }\nclass Child extends Base { Child() { super(); } }\n";
+    let target = "com::example::Base::Base";
+    let child_constructor = "com::example::Child::Child";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, child_constructor);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, child_constructor);
+}
+#[test]
 fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");
