@@ -9,8 +9,10 @@ use crate::semantic::rust::{
     is_rust_symbol_node, rust_parameters, rust_return_type, rust_semantic_path, rust_signature,
     rust_symbol_name,
 };
-use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
-use crate::symbol_reference_compat::reference_facts_from_legacy;
+use crate::symbol_index_model::{
+    IndexedSymbol, ReferenceFact, ReferenceLanguageDetails, RustImportRoot, RustReferenceDetails,
+    symbol_base_name,
+};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 pub(crate) fn index_rust_symbols_with_deadline(
@@ -62,7 +64,9 @@ fn indexed_symbol(
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let references_by_name = collect_direct_local_calls(path, node, source, deadline)?;
+    let references = collect_direct_local_calls(path, node, source, deadline)?;
+    let references_by_name = references.paths();
+    let reference_facts = references.reference_facts();
     let call_arities_by_name = BTreeMap::new();
 
     Ok(Some(IndexedSymbol {
@@ -78,7 +82,7 @@ fn indexed_symbol(
         parameters: rust_parameters(node, source),
         return_type: rust_return_type(node, source),
         docstring: None,
-        reference_facts: reference_facts_from_legacy(&references_by_name, &call_arities_by_name),
+        reference_facts,
         references_by_name,
         call_arities_by_name,
     }))
@@ -89,12 +93,12 @@ fn collect_direct_local_calls(
     symbol_node: Node<'_>,
     source: &str,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<BTreeSet<String>> {
+) -> Result<RustDirectCallReferences> {
     if symbol_node.kind() != "function_item" {
-        return Ok(BTreeSet::new());
+        return Ok(RustDirectCallReferences::default());
     }
     let Some(body) = symbol_node.child_by_field_name("body") else {
-        return Ok(BTreeSet::new());
+        return Ok(RustDirectCallReferences::default());
     };
     let local_functions = local_module_function_paths(symbol_node, source)?.unwrap_or_default();
     let local_function_names =
@@ -107,7 +111,7 @@ fn collect_direct_local_calls(
         && qualified_functions.is_empty()
         && out_of_line_modules.is_empty()
     {
-        return Ok(BTreeSet::new());
+        return Ok(RustDirectCallReferences::default());
     }
 
     let mut bindings = BTreeSet::new();
@@ -123,7 +127,7 @@ fn collect_direct_local_calls(
         module_components: rust_inline_module_path_components(symbol_node, source)?,
         bindings: &bindings,
     };
-    let mut references = BTreeSet::new();
+    let mut references = RustDirectCallReferences::default();
     collect_direct_local_calls_from_node(body, &context, &mut references)?;
     Ok(references)
 }
@@ -133,7 +137,7 @@ struct RustDirectCallContext<'a> {
     deadline: Option<&'a WorkspaceScanDeadline>,
     local_functions: &'a BTreeMap<String, String>,
     local_function_names: &'a BTreeSet<String>,
-    imported_functions: &'a BTreeMap<String, String>,
+    imported_functions: &'a BTreeMap<String, RustImportedFunctionBinding>,
     qualified_functions: &'a BTreeMap<String, String>,
     out_of_line_modules: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
@@ -175,16 +179,63 @@ fn local_module_function_names(
     Ok(Some(names))
 }
 
+#[derive(Debug, Clone)]
+struct RustImportedFunctionBinding {
+    target_path: String,
+    import_root: RustImportRoot,
+}
+
+#[derive(Debug, Default)]
+struct RustDirectCallReferences {
+    paths_by_import_root: BTreeMap<String, BTreeSet<Option<RustImportRoot>>>,
+}
+
+impl RustDirectCallReferences {
+    fn insert(&mut self, path: String, import_root: Option<RustImportRoot>) {
+        self.paths_by_import_root
+            .entry(path)
+            .or_default()
+            .insert(import_root);
+    }
+
+    fn paths(&self) -> BTreeSet<String> {
+        self.paths_by_import_root.keys().cloned().collect()
+    }
+
+    fn reference_facts(&self) -> Vec<ReferenceFact> {
+        self.paths_by_import_root
+            .iter()
+            .filter_map(|(path, roots)| {
+                let language_details = if roots.len() == 1 {
+                    match roots.first()? {
+                        Some(import_root) => ReferenceLanguageDetails::Rust(RustReferenceDetails {
+                            import_root: Some(import_root.clone()),
+                        }),
+                        None => ReferenceLanguageDetails::None,
+                    }
+                } else {
+                    return None;
+                };
+                Some(ReferenceFact {
+                    spelling: path.clone(),
+                    call_arities: None,
+                    language_details,
+                })
+            })
+            .collect()
+    }
+}
+
 fn source_file_imported_function_paths(
     symbol_node: Node<'_>,
     source: &str,
-) -> Result<BTreeMap<String, String>> {
+) -> Result<BTreeMap<String, RustImportedFunctionBinding>> {
     let mut root = symbol_node;
     while let Some(parent) = root.parent() {
         root = parent;
     }
 
-    let mut paths_by_local_name = BTreeMap::<String, Vec<String>>::new();
+    let mut paths_by_local_name = BTreeMap::<String, Vec<RustImportedFunctionBinding>>::new();
     let mut cursor = root.walk();
     for node in root.named_children(&mut cursor) {
         if node.kind() != "use_declaration" {
@@ -195,11 +246,11 @@ fn source_file_imported_function_paths(
         };
         let mut bindings = Vec::new();
         collect_rust_function_import_bindings(argument, &[], source, &mut bindings)?;
-        for (local_name, target_path) in bindings {
+        for (local_name, binding) in bindings {
             paths_by_local_name
                 .entry(local_name)
                 .or_default()
-                .push(target_path);
+                .push(binding);
         }
     }
 
@@ -213,7 +264,7 @@ fn collect_rust_function_import_bindings(
     node: Node<'_>,
     prefix: &[String],
     source: &str,
-    bindings: &mut Vec<(String, String)>,
+    bindings: &mut Vec<(String, RustImportedFunctionBinding)>,
 ) -> Result<()> {
     match node.kind() {
         "scoped_use_list" => {
@@ -281,7 +332,7 @@ fn collect_rust_function_import_bindings(
 fn rust_import_path_components(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
     if !matches!(
         node.kind(),
-        "crate" | "self" | "identifier" | "scoped_identifier"
+        "crate" | "self" | "super" | "identifier" | "scoped_identifier"
     ) {
         return Ok(None);
     }
@@ -301,27 +352,47 @@ fn rust_join_import_path_components(prefix: &[String], path: &[String]) -> Optio
     if prefix.is_empty() {
         return Some(path.to_vec());
     }
-    (!matches!(path.first().map(String::as_str), Some("crate" | "self")))
-        .then(|| prefix.iter().chain(path).cloned().collect::<Vec<String>>())
+    (!matches!(
+        path.first().map(String::as_str),
+        Some("crate" | "self" | "super")
+    ))
+    .then(|| prefix.iter().chain(path).cloned().collect::<Vec<String>>())
 }
 
 fn rust_function_import_binding(
     target_components: &[String],
     local_name: &str,
-) -> Option<(String, String)> {
+) -> Option<(String, RustImportedFunctionBinding)> {
     if local_name.is_empty()
-        || target_components.len() < 3
-        || !matches!(
-            target_components.first().map(String::as_str),
-            Some("crate" | "self")
-        )
+        || target_components.len() < 2
         || target_components
             .iter()
             .any(|component| component.is_empty())
     {
         return None;
     }
-    Some((local_name.to_string(), target_components[1..].join("::")))
+    let (import_root, root_len) = match target_components.first()?.as_str() {
+        "crate" => (RustImportRoot::Crate, 1),
+        "self" => (RustImportRoot::SelfModule, 1),
+        "super" => {
+            let levels = target_components
+                .iter()
+                .take_while(|component| component.as_str() == "super")
+                .count();
+            (RustImportRoot::Super { levels }, levels)
+        }
+        _ => return None,
+    };
+    let target_components = target_components.get(root_len..)?;
+    (!target_components.is_empty()).then(|| {
+        (
+            local_name.to_string(),
+            RustImportedFunctionBinding {
+                target_path: target_components.join("::"),
+                import_root,
+            },
+        )
+    })
 }
 
 fn local_module_function_paths(
@@ -469,7 +540,7 @@ fn collect_pattern_bindings(
 fn collect_direct_local_calls_from_node(
     node: Node<'_>,
     context: &RustDirectCallContext<'_>,
-    references: &mut BTreeSet<String>,
+    references: &mut RustDirectCallReferences,
 ) -> Result<()> {
     if let Some(deadline) = context.deadline {
         deadline.check("collecting Rust direct calls")?;
@@ -487,11 +558,11 @@ fn collect_direct_local_calls_from_node(
             let name = node_text(function, context.source)?.trim();
             if !name.is_empty() && !context.bindings.contains(name) {
                 if let Some(path) = context.local_functions.get(name) {
-                    references.insert(path.clone());
+                    references.insert(path.clone(), None);
                 } else if !context.local_function_names.contains(name)
                     && let Some(path) = context.imported_functions.get(name)
                 {
-                    references.insert(path.clone());
+                    references.insert(path.target_path.clone(), Some(path.import_root.clone()));
                 }
             }
         } else if function.kind() == "scoped_identifier"
@@ -500,9 +571,9 @@ fn collect_direct_local_calls_from_node(
                 rust_qualified_call_target_path(function, module_components, context.source)?
         {
             if let Some(path) = context.qualified_functions.get(&path) {
-                references.insert(path.clone());
+                references.insert(path.clone(), None);
             } else if is_out_of_line_module_call(&path, context.out_of_line_modules) {
-                references.insert(path);
+                references.insert(path, None);
             }
         }
     }
@@ -589,6 +660,7 @@ mod tests {
 
     use super::index_rust_symbols_with_deadline;
     use crate::language::parse_document;
+    use crate::symbol_index_model::{ReferenceLanguageDetails, RustImportRoot};
 
     #[test]
     fn indexes_unshadowed_direct_calls_to_local_module_functions() {
@@ -743,6 +815,43 @@ fn grouped_caller() { grouped_value(); }
                 caller.references_by_name,
                 ["nested::value".to_string()].into()
             );
+        }
+    }
+
+    #[test]
+    fn indexes_unshadowed_direct_calls_to_super_function_imports_with_ancestor_metadata() {
+        let source = r#"
+use super::root_helper;
+use super::{root_helper as grouped_root_helper};
+
+fn caller() { root_helper(); }
+fn grouped_caller() { grouped_root_helper(); }
+"#;
+        let path = Path::new("src/api.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for caller_path in ["caller", "grouped_caller"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(
+                caller.references_by_name,
+                ["root_helper".to_string()].into()
+            );
+            assert!(matches!(
+                caller.reference_facts.as_slice(),
+                [reference]
+                    if reference.spelling == "root_helper"
+                        && matches!(
+                            reference.language_details,
+                            ReferenceLanguageDetails::Rust(ref details)
+                                if details.import_root == Some(RustImportRoot::Super { levels: 1 })
+                        )
+            ));
         }
     }
 

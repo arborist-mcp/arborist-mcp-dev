@@ -14,6 +14,19 @@ pub(crate) struct ReferenceFact {
 pub(crate) enum ReferenceLanguageDetails {
     None,
     Cpp(CppReferenceDetails),
+    Rust(RustReferenceDetails),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(crate) enum RustImportRoot {
+    Crate,
+    SelfModule,
+    Super { levels: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RustReferenceDetails {
+    pub(crate) import_root: Option<RustImportRoot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

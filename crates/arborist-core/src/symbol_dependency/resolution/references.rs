@@ -44,7 +44,7 @@ use super::type_alias::{
 use crate::language::detect_language;
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
-use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails};
+use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails, RustImportRoot};
 use crate::symbol_reference_compat::effective_reference_facts;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -166,7 +166,12 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     details.const_receiver,
                     details.explicit_member_receiver,
                 ),
+                ReferenceLanguageDetails::Rust(_) => (false, false, false),
             };
+        let rust_import_root = match &reference.language_details {
+            ReferenceLanguageDetails::Rust(details) => details.import_root.as_ref(),
+            _ => None,
+        };
         if matches!(
             language_id,
             Some(LanguageId::Cpp | LanguageId::Java | LanguageId::CSharp)
@@ -188,6 +193,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                 };
                 if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
                     &reference.spelling,
+                    rust_import_root,
                     language_id,
                     call_context,
                     symbol,
@@ -210,6 +216,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             }
         } else if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
             &reference.spelling,
+            rust_import_root,
             language_id,
             CallResolutionContext::non_call(),
             symbol,
@@ -239,6 +246,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
 #[allow(clippy::too_many_arguments)]
 fn resolve_reference_path_with_deadline<'a>(
     reference_name: &str,
+    rust_import_root: Option<&RustImportRoot>,
     language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
     source_symbol: &'a IndexedSymbol,
@@ -294,13 +302,17 @@ fn resolve_reference_path_with_deadline<'a>(
         return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }
     if language_id == Some(LanguageId::Rust) {
-        let candidates = semantic_path_index
-            .get(reference_name)
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
-            .collect::<Vec<_>>();
+        let candidates = if matches!(rust_import_root, None | Some(RustImportRoot::SelfModule)) {
+            semantic_path_index
+                .get(reference_name)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         if candidates.len() == 1 {
             return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
         }
@@ -310,6 +322,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 rust_out_of_line_module_context,
                 &source_symbol.file_path,
                 reference_name,
+                rust_import_root,
             )
         else {
             return Ok(None);

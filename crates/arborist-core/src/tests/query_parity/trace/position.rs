@@ -380,6 +380,118 @@ fn traces_rust_self_function_import_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_rust_crate_and_super_function_import_calls_from_out_of_line_children() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+    fs::write(
+        &api_path,
+        "use crate::{sibling::helper as crate_helper};\nuse super::root_helper;\nfn caller() { crate_helper(); root_helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callees.len(), 2);
+    assert!(
+        live.callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        live.callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callees.len(), 2);
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "helper")
+    );
+    assert!(
+        persisted
+            .callees
+            .iter()
+            .any(|symbol| symbol.symbol_id == "root_helper")
+    );
+}
+
+#[test]
+fn traces_rust_repeated_super_function_import_calls() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_directory = dir.join("api");
+    let api_path = api_directory.join("mod.rs");
+    let nested_path = api_directory.join("nested.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&api_directory).unwrap();
+    fs::write(&root_path, "mod api;\nmod sibling;\n").unwrap();
+    fs::write(&api_path, "mod nested;\n").unwrap();
+    fs::write(
+        &nested_path,
+        "use super::super::{sibling::helper as selected};\nfn caller() { selected(); }\n",
+    )
+    .unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn traces_rust_crate_and_super_function_import_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let sibling_path = dir.join("sibling.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+    fs::write(&api_path, "use crate::sibling::stale;\n").unwrap();
+    fs::write(&sibling_path, "pub fn helper() {}\n").unwrap();
+    let api_overlay = "use crate::{sibling::helper as crate_helper};\nuse super::root_helper;\nfn caller() { crate_helper(); root_helper(); }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &api_path,
+        api_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(live.callees.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &api_path,
+        api_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(persisted.callees.len(), 2);
+}
+
+#[test]
 fn traces_rust_grouped_function_import_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let root_path = dir.join("lib.rs");

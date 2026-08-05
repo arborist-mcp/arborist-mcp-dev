@@ -8,11 +8,15 @@ use crate::language::{
     rust_direct_module_candidate_paths,
 };
 use crate::model::LanguageId;
+use crate::symbol_index_model::RustImportRoot;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct RustOutOfLineModuleContext {
     bindings_by_source_file: BTreeMap<String, BTreeMap<String, String>>,
+    parents_by_child_file: BTreeMap<String, String>,
+    ambiguous_parent_files: BTreeSet<String>,
+    cyclic_parent_files: BTreeSet<String>,
 }
 
 pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
@@ -73,8 +77,32 @@ pub(in crate::symbol_dependency) fn rust_out_of_line_module_context_for_files_wi
         }
     }
 
+    let mut parent_candidates = BTreeMap::<String, BTreeSet<String>>::new();
+    for (parent_path, bindings) in &bindings_by_source_file {
+        for child_path in bindings.values() {
+            parent_candidates
+                .entry(child_path.clone())
+                .or_default()
+                .insert(parent_path.clone());
+        }
+    }
+    let mut parents_by_child_file = BTreeMap::new();
+    let mut ambiguous_parent_files = BTreeSet::new();
+    for (child_path, parents) in parent_candidates {
+        if parents.len() == 1 {
+            parents_by_child_file.insert(child_path, parents.into_iter().next().unwrap());
+        } else if parents.len() > 1 {
+            ambiguous_parent_files.insert(child_path);
+        }
+    }
+
+    let cyclic_parent_files = rust_cyclic_parent_files(&parents_by_child_file);
+
     Ok(RustOutOfLineModuleContext {
         bindings_by_source_file,
+        parents_by_child_file,
+        ambiguous_parent_files,
+        cyclic_parent_files,
     })
 }
 
@@ -82,11 +110,11 @@ pub(in crate::symbol_dependency) fn resolve_rust_out_of_line_module_reference(
     context: &RustOutOfLineModuleContext,
     source_file_path: &str,
     reference_name: &str,
+    import_root: Option<&RustImportRoot>,
 ) -> Option<(String, String)> {
     let components = reference_name.split("::").collect::<Vec<_>>();
     let (target_name, module_components) = components.split_last()?;
     if target_name.is_empty()
-        || module_components.is_empty()
         || module_components
             .iter()
             .any(|component| component.is_empty())
@@ -95,6 +123,17 @@ pub(in crate::symbol_dependency) fn resolve_rust_out_of_line_module_reference(
     }
 
     let mut target_file_path = normalize_path(Path::new(source_file_path));
+    match import_root {
+        Some(RustImportRoot::Crate) => {
+            target_file_path = rust_crate_root(context, &target_file_path)?;
+        }
+        Some(RustImportRoot::SelfModule) | None => {}
+        Some(RustImportRoot::Super { levels }) => {
+            for _ in 0..*levels {
+                target_file_path = rust_parent_file(context, &target_file_path)?;
+            }
+        }
+    }
     for module_name in module_components {
         target_file_path = context
             .bindings_by_source_file
@@ -103,6 +142,54 @@ pub(in crate::symbol_dependency) fn resolve_rust_out_of_line_module_reference(
             .clone();
     }
     Some((target_file_path, (*target_name).to_string()))
+}
+
+fn rust_cyclic_parent_files(parents_by_child_file: &BTreeMap<String, String>) -> BTreeSet<String> {
+    let mut cyclic_files = BTreeSet::new();
+    for start in parents_by_child_file.keys() {
+        let mut path = start.clone();
+        let mut seen = BTreeSet::new();
+        loop {
+            if !seen.insert(path.clone()) {
+                cyclic_files.extend(seen);
+                break;
+            }
+            let Some(parent) = parents_by_child_file.get(&path) else {
+                break;
+            };
+            path = parent.clone();
+        }
+    }
+    cyclic_files
+}
+
+fn rust_crate_root(context: &RustOutOfLineModuleContext, source_file_path: &str) -> Option<String> {
+    let mut current = source_file_path.to_string();
+    let mut visited = BTreeSet::new();
+    while visited.insert(current.clone()) {
+        if context.ambiguous_parent_files.contains(&current)
+            || context.cyclic_parent_files.contains(&current)
+        {
+            return None;
+        }
+        let Some(parent) = rust_parent_file(context, &current) else {
+            return Some(current);
+        };
+        current = parent;
+    }
+    None
+}
+
+fn rust_parent_file(
+    context: &RustOutOfLineModuleContext,
+    source_file_path: &str,
+) -> Option<String> {
+    if context.ambiguous_parent_files.contains(source_file_path)
+        || context.cyclic_parent_files.contains(source_file_path)
+    {
+        return None;
+    }
+    context.parents_by_child_file.get(source_file_path).cloned()
 }
 
 #[cfg(test)]
@@ -117,6 +204,7 @@ mod tests {
         rust_out_of_line_module_context_for_files_with_overrides_and_deadline,
     };
     use crate::language::normalize_path;
+    use crate::symbol_index_model::RustImportRoot;
 
     static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -154,6 +242,7 @@ mod tests {
                 &context,
                 &normalize_path(&root),
                 "api::helper",
+                None,
             ),
             Some((normalize_path(&api), "helper".to_string()))
         );
@@ -182,6 +271,7 @@ mod tests {
                 &context,
                 &normalize_path(&root),
                 "api::helper::value",
+                None,
             ),
             Some((normalize_path(&helper), "value".to_string()))
         );
@@ -209,6 +299,7 @@ mod tests {
                 &context,
                 &normalize_path(&root),
                 "custom::helper",
+                None,
             )
             .is_none()
         );
@@ -217,6 +308,76 @@ mod tests {
                 &context,
                 &normalize_path(&root),
                 "api::helper",
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn resolves_crate_and_super_imports_from_out_of_line_children() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let api = dir.join("api.rs");
+        let sibling = dir.join("sibling.rs");
+        fs::write(&root, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+        fs::write(
+            &api,
+            "use crate::sibling::helper;\nuse super::root_helper;\n",
+        )
+        .unwrap();
+        fs::write(&sibling, "pub fn helper() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), api.clone(), sibling.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&api),
+                "sibling::helper",
+                Some(&RustImportRoot::Crate),
+            ),
+            Some((normalize_path(&sibling), "helper".to_string()))
+        );
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&api),
+                "root_helper",
+                Some(&RustImportRoot::Super { levels: 1 }),
+            ),
+            Some((normalize_path(&root), "root_helper".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_ancestor_imports_when_a_child_has_ambiguous_parents() {
+        let dir = temporary_dir();
+        let lib = dir.join("lib.rs");
+        let main = dir.join("main.rs");
+        let api = dir.join("api.rs");
+        let sibling = dir.join("sibling.rs");
+        fs::write(&lib, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+        fs::write(&main, "mod api;\nmod sibling;\nfn root_helper() {}\n").unwrap();
+        fs::write(&api, "use crate::root_helper;\n").unwrap();
+        fs::write(&sibling, "pub fn helper() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[lib, main, api.clone(), sibling],
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&api),
+                "root_helper",
+                Some(&RustImportRoot::Crate),
             )
             .is_none()
         );
@@ -242,6 +403,7 @@ mod tests {
                 &context,
                 &normalize_path(&root),
                 "api::helper",
+                None,
             ),
             Some((normalize_path(&api), "helper".to_string()))
         );

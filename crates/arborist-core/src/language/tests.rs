@@ -266,7 +266,7 @@ fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patch
 
     assert_eq!(descriptor.display_name, "Rust");
     assert_eq!(descriptor.extensions, &["rs"]);
-    assert_eq!(descriptor.analysis_revision, "rust-self-import-trace-v8");
+    assert_eq!(descriptor.analysis_revision, "rust-parent-import-trace-v9");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
