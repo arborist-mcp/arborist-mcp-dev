@@ -296,7 +296,7 @@ fn go_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patchin
     assert_eq!(descriptor.extensions, &["go"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "go-local-variable-method-trace-v7"
+        "go-composite-receiver-trace-v8"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,

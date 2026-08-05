@@ -615,6 +615,37 @@ fn go_imported_selector_reference(
     Ok(Some(format!("{local_name}.{imported_name}")))
 }
 
+fn go_direct_static_method_receiver_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    match node.kind() {
+        "composite_literal" => node
+            .child_by_field_name("type")
+            .map(|type_node| go_named_local_type(type_node, source))
+            .transpose()
+            .map(Option::flatten),
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .next()
+                .map(|inner| go_direct_static_method_receiver_type(inner, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        "unary_expression" => {
+            let Some(operator) = node.child_by_field_name("operator") else {
+                return Ok(None);
+            };
+            if node_text(operator, source)?.trim() != "&" {
+                return Ok(None);
+            }
+            node.child_by_field_name("operand")
+                .map(|operand| go_direct_static_method_receiver_type(operand, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        _ => Ok(None),
+    }
+}
+
 fn go_direct_method_reference(
     selector: Node<'_>,
     source: &str,
@@ -634,32 +665,25 @@ fn go_direct_method_reference(
         return Ok(None);
     }
 
-    let receiver_type = if operand.kind() == "composite_literal" {
-        operand
-            .child_by_field_name("type")
-            .filter(|type_node| type_node.kind() == "type_identifier")
-            .map(|type_node| {
-                node_text(type_node, source)
-                    .map(str::trim)
-                    .map(str::to_string)
-            })
-            .transpose()?
-    } else if operand.kind() == "identifier" {
-        let receiver_name = node_text(operand, source)?.trim();
-        let receiver_type = context.method_receiver.and_then(|receiver| {
-            (receiver_name == receiver.name && !context.body_bindings.contains(receiver_name))
-                .then(|| receiver.type_name.clone())
-        });
-        receiver_type
-            .or_else(|| {
-                (!context.body_bindings.contains(receiver_name))
-                    .then(|| context.parameter_types.get(receiver_name).cloned())
-                    .flatten()
-            })
-            .or_else(|| go_local_variable_type_for_operand(operand, source, context))
-    } else {
-        None
-    };
+    let receiver_type =
+        if let Some(receiver_type) = go_direct_static_method_receiver_type(operand, source)? {
+            Some(receiver_type)
+        } else if operand.kind() == "identifier" {
+            let receiver_name = node_text(operand, source)?.trim();
+            let receiver_type = context.method_receiver.and_then(|receiver| {
+                (receiver_name == receiver.name && !context.body_bindings.contains(receiver_name))
+                    .then(|| receiver.type_name.clone())
+            });
+            receiver_type
+                .or_else(|| {
+                    (!context.body_bindings.contains(receiver_name))
+                        .then(|| context.parameter_types.get(receiver_name).cloned())
+                        .flatten()
+                })
+                .or_else(|| go_local_variable_type_for_operand(operand, source, context))
+        } else {
+            None
+        };
     Ok(receiver_type.map(|receiver_type| format!("{receiver_type}::{method_name}")))
 }
 
@@ -727,6 +751,7 @@ mod tests {
 package metrics
 
 type Counter struct { value int }
+type Box[T any] struct{}
 type Other struct{}
 type Alias = Counter
 
@@ -745,7 +770,10 @@ func shadowed_selector() int {
 }
 func literal_method() int { return Counter{}.Value() }
 func (Counter) Value() int { return 3 }
+func (Box[T]) Value() int { return 5 }
 func (Other) Value() int { return 4 }
+func pointer_literal_method_call() int { return (&Counter{}).Value() }
+func generic_literal_method_call() int { return Box[int]{}.Value() }
 func local_short_call() int { counter := Counter{}; return counter.Value() }
 func local_var_call() int { var counter *Counter; return counter.Value() }
 func local_var_literal_call() int { var counter = Counter{}; return counter.Value() }
@@ -792,6 +820,7 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 .collect::<Vec<_>>(),
             vec![
                 "Counter",
+                "Box",
                 "Other",
                 "Alias",
                 "helper",
@@ -803,7 +832,10 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "shadowed_selector",
                 "literal_method",
                 "Counter::Value",
+                "Box::Value",
                 "Other::Value",
+                "pointer_literal_method_call",
+                "generic_literal_method_call",
                 "local_short_call",
                 "local_var_call",
                 "local_var_literal_call",
@@ -889,6 +921,23 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
         assert!(shadowed_receiver.references_by_name.is_empty());
         assert!(shadowed_receiver.reference_facts.is_empty());
 
+        let generic_literal_method_call = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "generic_literal_method_call")
+            .unwrap();
+        assert_eq!(
+            generic_literal_method_call.references_by_name,
+            ["Box::Value".to_string()].into()
+        );
+
+        let pointer_literal_method_call = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "pointer_literal_method_call")
+            .unwrap();
+        assert_eq!(
+            pointer_literal_method_call.references_by_name,
+            ["Counter::Value".to_string()].into()
+        );
         let shadowed_selector = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "shadowed_selector")
