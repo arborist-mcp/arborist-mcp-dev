@@ -453,7 +453,7 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "java-default-interface-inheritance-trace-v21",
+    analysis_revision: "java-default-interface-superclass-trace-v22",
     grammar: java_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

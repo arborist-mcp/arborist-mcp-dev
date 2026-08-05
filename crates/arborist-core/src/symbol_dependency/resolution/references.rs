@@ -2355,6 +2355,7 @@ fn resolve_java_direct_interface_default_method_reference(
 ) -> Result<Option<String>> {
     let Some(interface_path) = java_unique_direct_interface_path(
         source_symbol,
+        method_name,
         raw_symbols,
         semantic_path_index,
         file_overrides,
@@ -2514,6 +2515,7 @@ fn java_unique_direct_parent_interface_path(
 )]
 fn java_unique_direct_interface_path(
     source_symbol: &IndexedSymbol,
+    method_name: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -2543,8 +2545,39 @@ fn java_unique_direct_interface_path(
             let mut ancestor = node.parent();
             while let Some(candidate) = ancestor {
                 if candidate.kind() == "class_declaration" {
-                    if candidate.child_by_field_name("superclass").is_some() {
-                        return Ok(None);
+                    if let Some(superclass) = candidate.child_by_field_name("superclass") {
+                        let Some(superclass_reference) =
+                            java_direct_superclass_reference(superclass, &source)?
+                        else {
+                            return Ok(None);
+                        };
+                        let enclosing_scope_path =
+                            scope_path.rsplit_once("::").map(|(parent, _)| parent);
+                        let Some(superclass_path) = resolve_java_direct_superclass_target_path(
+                            &source_symbol.file_path,
+                            enclosing_scope_path,
+                            &superclass_reference,
+                            raw_symbols,
+                            semantic_path_index,
+                            file_overrides,
+                            java_import_contexts_by_file,
+                            deadline,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        if java_class_hierarchy_defines_method_from_type_path(
+                            &superclass_path,
+                            method_name,
+                            raw_symbols,
+                            semantic_path_index,
+                            file_overrides,
+                            java_import_contexts_by_file,
+                            deadline,
+                        )? != Some(false)
+                        {
+                            return Ok(None);
+                        }
                     }
                     interface_references =
                         java_direct_interface_references_for_declaration(candidate, &source)?;
@@ -2574,6 +2607,63 @@ fn java_unique_direct_interface_path(
         java_import_contexts_by_file,
         deadline,
     )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java superclass hierarchy resolution inputs explicit"
+)]
+fn java_class_hierarchy_defines_method_from_type_path(
+    initial_type_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<bool>> {
+    let mut visited_type_paths = BTreeSet::new();
+    let mut current_type_path = initial_type_path.to_string();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("checking Java superclass methods")?;
+        }
+        if !visited_type_paths.insert(current_type_path.clone()) {
+            return Ok(None);
+        }
+        let target_path = format!("{current_type_path}::{method_name}");
+        if semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .any(|index| raw_symbols[index].node_kind == "method_declaration")
+        {
+            return Ok(Some(true));
+        }
+        let class_candidates = semantic_path_index
+            .get(&current_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+            .collect::<Vec<_>>();
+        let [class_index] = class_candidates.as_slice() else {
+            return Ok(None);
+        };
+        let Some(superclass_path) = java_simple_superclass_path_for_class(
+            &raw_symbols[*class_index],
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(Some(false));
+        };
+        current_type_path = superclass_path;
+    }
 }
 
 #[allow(

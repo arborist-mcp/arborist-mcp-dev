@@ -5107,6 +5107,72 @@ fn traces_java_unique_default_interface_inheritance_chains_in_live_workspace_and
 }
 
 #[test]
+fn traces_java_default_interface_methods_through_unique_empty_superclass_chains() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let base_path = source_dir.join("Base.java");
+    let blocking_base_path = source_dir.join("BlockingBase.java");
+    let interface_path = source_dir.join("Defaults.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example; class Main extends Base implements Defaults { int caller() { return helper(1); } int thisCaller() { return this.helper(1); } } class Blocked extends BlockingBase implements Defaults { int caller() { return helper(1); } int thisCaller() { return this.helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package com.example; class Base {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &blocking_base_path,
+        "package com.example; class BlockingBase { int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package com.example; interface Defaults { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Defaults::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 4);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 4);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+}
+
+#[test]
 fn traces_java_default_interface_inheritance_chains_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let source_path = dir.join("Root.java");
@@ -5117,7 +5183,7 @@ fn traces_java_default_interface_inheritance_chains_from_dirty_vfs_overrides() {
 ",
     )
     .unwrap();
-    let overlay = "package com.example; interface Root { default int helper(int value) { return value; } } interface Child extends Root {} class Main implements Child { int caller() { return this.helper(1); } }
+    let overlay = "package com.example; class Base {} interface Root { default int helper(int value) { return value; } } interface Child extends Root {} class Main extends Base implements Child { int caller() { return this.helper(1); } }
 ";
     let target = "com::example::Root::helper";
 
