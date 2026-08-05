@@ -3254,6 +3254,39 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_same_namespace_static_interface_calls_across_files() {
+    let dir = temporary_dir();
+    let interface_path = dir.join("Tools.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &interface_path,
+        "namespace Demo; interface Tools { static int Utility(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Caller { int Call() => Tools.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Tools::Utility";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
 fn does_not_trace_ambiguous_csharp_same_namespace_static_calls_across_files() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
