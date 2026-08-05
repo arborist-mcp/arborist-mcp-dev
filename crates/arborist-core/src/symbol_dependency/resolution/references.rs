@@ -2932,21 +2932,24 @@ fn resolve_java_direct_type_target_path(
 ) -> Result<Option<String>> {
     match type_reference {
         JavaDirectSuperclassReference::Simple(superclass_name) => {
-            let local_path = enclosing_scope_path.map_or_else(
-                || superclass_name.to_string(),
-                |scope_path| format!("{scope_path}::{superclass_name}"),
-            );
-            let local_candidates = semantic_path_index
-                .get(&local_path)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
-                .collect::<Vec<_>>();
-            match local_candidates.as_slice() {
-                [_] => return Ok(Some(local_path)),
-                [] => {}
-                _ => return Ok(None),
+            let mut scope_path = enclosing_scope_path;
+            while let Some(current_scope_path) = scope_path {
+                let local_path = format!("{current_scope_path}::{superclass_name}");
+                let local_candidates = semantic_path_index
+                    .get(&local_path)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
+                    .collect::<Vec<_>>();
+                match local_candidates.as_slice() {
+                    [_] => return Ok(Some(local_path)),
+                    [] => {}
+                    _ => return Ok(None),
+                }
+                scope_path = current_scope_path
+                    .rsplit_once("::")
+                    .map(|(parent, _)| parent);
             }
 
             let Some(binding) = resolve_java_type_import_binding_for_name(
@@ -2974,21 +2977,36 @@ fn resolve_java_direct_type_target_path(
         }
         JavaDirectSuperclassReference::Qualified(qualified_name) => {
             let qualified_path = qualified_name.replace('.', "::");
-            let local_path =
-                enclosing_scope_path.map(|scope_path| format!("{scope_path}::{qualified_path}"));
-            for semantic_path in local_path.iter().chain(std::iter::once(&qualified_path)) {
+            let mut scope_path = enclosing_scope_path;
+            while let Some(current_scope_path) = scope_path {
+                let semantic_path = format!("{current_scope_path}::{qualified_path}");
                 let candidates = semantic_path_index
-                    .get(semantic_path)
+                    .get(&semantic_path)
                     .into_iter()
                     .flatten()
                     .copied()
                     .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
-                    [_] => return Ok(Some(semantic_path.clone())),
+                    [_] => return Ok(Some(semantic_path)),
                     [] => {}
                     _ => return Ok(None),
                 }
+                scope_path = current_scope_path
+                    .rsplit_once("::")
+                    .map(|(parent, _)| parent);
+            }
+            let candidates = semantic_path_index
+                .get(&qualified_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
+                .collect::<Vec<_>>();
+            match candidates.as_slice() {
+                [_] => return Ok(Some(qualified_path)),
+                [] => {}
+                _ => return Ok(None),
             }
 
             let Some((outer_type_name, nested_type_path)) = qualified_name.split_once('.') else {
