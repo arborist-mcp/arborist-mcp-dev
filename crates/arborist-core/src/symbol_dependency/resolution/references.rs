@@ -784,6 +784,18 @@ fn resolve_reference_path_with_deadline<'a>(
                 deadline,
             );
         }
+        if let Some(symbol_id) = resolve_java_nested_static_method_reference(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         if let Some((method_name, binding)) = resolve_java_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
@@ -2300,6 +2312,70 @@ fn resolve_java_inherited_method_from_type_path(
         };
         current_type_path = superclass_path;
     }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java nested static resolution inputs explicit"
+)]
+fn resolve_java_nested_static_method_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((type_reference, method_name)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if type_reference.is_empty()
+        || method_name.is_empty()
+        || !type_reference.contains('.')
+        || matches!(type_reference, "this" | "super")
+    {
+        return Ok(None);
+    }
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let enclosing_scope_path = scope_path.rsplit_once("::").map(|(parent, _)| parent);
+    let Some(type_path) = resolve_java_direct_superclass_target_path(
+        &source_symbol.file_path,
+        enclosing_scope_path,
+        &JavaDirectSuperclassReference::Qualified(type_reference.to_string()),
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{type_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_static)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
 }
 
 fn resolve_java_same_package_static_method_reference(

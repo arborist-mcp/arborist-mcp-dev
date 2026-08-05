@@ -100,7 +100,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   non-static local type import when the type name is unshadowed; and bare calls through a unique
   explicit local static-method import when no same-type method has that name. It also traces a
   `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
-  non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
+  non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
   unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
   declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous
   classes, nested/outer generic bases, and nearer nonmatching declarations fail closed. A generic direct base such as `Base<String>` or `com.base.Base<String>` is normalized to its simple or exact qualified base name without type-argument selection. A same-package or explicitly imported outer-qualified direct base such as `Outer.Base` is supported only when one local outer source file and one indexed nested `class_declaration` remain. Wildcard outer imports and broader nested/outer scope semantics beyond this direct source or explicit-import form remain unsupported. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
@@ -597,7 +597,7 @@ for response shapes, error behavior, and examples.
   an ancestor source root. It traces an explicit `this(...)` constructor initializer when one same-type, same-file, non-varargs constructor matches the call arity; a direct local-source `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor matches the call arity; plus unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches the call arity; `Type.method()` through a unique explicit non-static local type import with an
   unshadowed type name; and a bare call through a unique explicit local static-method import only
   when no same-type method has that name. It also traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
-  non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
+  non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
   unchanged Java source files. Imported targets require a
   unique static-method arity match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
   imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call selection, and patching remain capability-gated
@@ -631,7 +631,7 @@ an ancestor source root. It traces an explicit `this(...)` constructor initializ
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
 unique explicit local static-method imports only when no same-type method has that name. It also
 traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
-non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
+non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
 unchanged Java source files. Imported trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
 instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
