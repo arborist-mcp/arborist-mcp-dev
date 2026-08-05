@@ -270,6 +270,34 @@ fn go_imported_selector_reference(
     Ok(Some(format!("{local_name}.{imported_name}")))
 }
 
+fn go_direct_method_reference(selector: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(operand) = selector.child_by_field_name("operand") else {
+        return Ok(None);
+    };
+    let Some(field) = selector.child_by_field_name("field") else {
+        return Ok(None);
+    };
+    if field.kind() != "field_identifier" {
+        return Ok(None);
+    }
+    let method_name = node_text(field, source)?.trim();
+    if method_name.is_empty() {
+        return Ok(None);
+    }
+
+    let receiver_type = (operand.kind() == "composite_literal")
+        .then(|| operand.child_by_field_name("type"))
+        .flatten()
+        .filter(|type_node| type_node.kind() == "type_identifier")
+        .map(|type_node| {
+            node_text(type_node, source)
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .transpose()?;
+    Ok(receiver_type.map(|receiver_type| format!("{receiver_type}::{method_name}")))
+}
+
 fn collect_direct_local_calls_from_node(
     node: Node<'_>,
     source: &str,
@@ -302,6 +330,8 @@ fn collect_direct_local_calls_from_node(
             "selector_expression" => {
                 if let Some(reference) = go_imported_selector_reference(function, source, bindings)?
                 {
+                    references.insert(reference);
+                } else if let Some(reference) = go_direct_method_reference(function, source)? {
                     references.insert(reference);
                 }
             }
@@ -351,6 +381,8 @@ func shadowed_selector() int {
     service := Counter{}
     return service.Value()
 }
+func literal_method() int { return Counter{}.Value() }
+func (Counter) Value() int { return 3 }
 func (counter *Counter) Increment(amount int) int { return helper() + amount }
 "#;
         let path = Path::new("metrics.go");
@@ -373,6 +405,8 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "NewCounter",
                 "imported",
                 "shadowed_selector",
+                "literal_method",
+                "Counter::Value",
                 "Counter::Increment",
             ]
         );
@@ -392,6 +426,16 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert_eq!(caller.references_by_name, ["helper".to_string()].into());
             assert_eq!(caller.reference_facts.len(), 1);
         }
+        let literal_method = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "literal_method")
+            .unwrap();
+        assert_eq!(
+            literal_method.references_by_name,
+            ["Counter::Value".to_string()].into()
+        );
+        assert_eq!(literal_method.reference_facts.len(), 1);
+
         let imported = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "imported")
