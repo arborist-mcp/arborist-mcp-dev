@@ -5,6 +5,52 @@ use crate::language::normalize_path;
 use crate::symbol_index_state::load_symbol_index_with_overrides;
 
 #[test]
+fn refreshes_csharp_inherited_bare_callers_when_a_base_method_becomes_static() {
+    let dir = temporary_dir();
+    let base = dir.join("Base.cs");
+    let derived = dir.join("Derived.cs");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &base,
+        "namespace Demo; class Base { public int Ping(int value) => value; }\n",
+    )
+    .unwrap();
+    fs::write(
+        &derived,
+        "namespace Demo; class Derived : Base { int Call(int value) => Ping(value); }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial =
+        trace_symbol_graph_from_index(&db_path, "Demo::Derived::Call", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(
+        initial
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Base::Ping"]
+    );
+
+    fs::write(
+        &base,
+        "namespace Demo; class Base { public static int Ping(int value) => value; }\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &base).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let refreshed =
+        trace_symbol_graph_from_index(&db_path, "Demo::Derived::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(refreshed.callees.is_empty());
+}
+
+#[test]
 fn refreshes_csharp_enclosing_namespace_static_dependents_when_a_nearer_type_appears() {
     let dir = temporary_dir();
     let helper = dir.join("Helper.cs");

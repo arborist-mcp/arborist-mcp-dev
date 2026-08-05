@@ -60,7 +60,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   general cross-file/package/import resolution, qualified imported conversions, interface dispatch, and other method dispatch remain unavailable;
   patch operations return explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
+  conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
   globally namespace-qualified `global::...` static calls, simple same-namespace and enclosing-namespace
   `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
@@ -73,7 +73,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   namespaces to file root, with the nearest binding taking precedence, while static/ordinary imports from each
   of those scopes are considered.
   Same-type unqualified/`this.`
-  forms require a unique same-file, exact-arity, non-`params` declaration. Globally qualified, simple same-namespace,
+  forms require a unique same-file, exact-arity, non-`params` declaration. When no same-type method name is indexed, a non-static caller may resolve a bare or explicit `this.` call through the same unique class/record ancestor chain used by `base.Method()`. Globally qualified, simple same-namespace,
   and imported static calls may resolve one unique workspace declaration. Imported targets must resolve to one indexed
   type. Duplicate aliases within the same scope, duplicate imports, same-file type-name collisions, competing
   imported targets, and ambiguous type declarations fail closed. Static imports are considered only when no same-type

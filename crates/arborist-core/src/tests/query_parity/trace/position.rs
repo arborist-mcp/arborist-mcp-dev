@@ -2897,6 +2897,69 @@ class Derived : Parent {
 }
 
 #[test]
+fn traces_csharp_inherited_bare_and_this_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Base {
+    public int Ping(int value) => value;
+    public int Flexible(params int[] values) => values.Length;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Derived.cs"),
+        "namespace Demo;
+class Derived : Base {
+    int Bare(int value) => Ping(value);
+    int Explicit(int value) => this.Ping(value);
+    int Params(int value) => Flexible(value);
+    static int StaticCall(int value) => Ping(value);
+}
+class HidingDerived : Base {
+    int Ping(string value) => value.Length;
+    int Hidden(int value) => Ping(value);
+}
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Base::Ping";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Derived::Bare", "Demo::Derived::Explicit"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Derived::Bare", "Demo::Derived::Explicit"]
+    );
+
+    let target = "Demo::Base::Flexible";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty(), "{target}");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty(), "{target}");
+}
+
+#[test]
 fn traces_csharp_generic_base_members_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

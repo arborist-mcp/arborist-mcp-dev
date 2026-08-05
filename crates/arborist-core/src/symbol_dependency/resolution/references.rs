@@ -690,7 +690,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 candidate.file_path == source_symbol.file_path
                     && candidate.node_kind == "method_declaration"
             });
-        if has_explicit_this_receiver || has_same_type_method {
+        if has_same_type_method {
             return Ok(resolve_csharp_candidate(
                 raw_symbols,
                 semantic_path_index,
@@ -704,6 +704,46 @@ fn resolve_reference_path_with_deadline<'a>(
                     require_same_file: true,
                 },
             ));
+        }
+        if !csharp_method_is_static(source_symbol)
+            && let Some(base_type_binding) = csharp_source_base_type_binding(
+                source_symbol,
+                raw_symbols,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            && let Some(target_path) = csharp_base_method_target_path(
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                &base_type_binding,
+                method_name,
+                call_arity,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                call_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: false,
+                    require_instance: true,
+                    require_same_file: false,
+                },
+            ));
+        }
+        if has_explicit_this_receiver {
+            return Ok(None);
         }
         let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
             &source_symbol.file_path,
