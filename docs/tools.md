@@ -37,12 +37,12 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   `module::function()`/`crate::module::function()` calls through an explicit chain of source-file-root
   out-of-line `mod` declarations, selected by semantic path or source position. Every module in the
   chain must use one default-layout source file and the terminal file must contain one matching
-  top-level function. Unshadowed bare calls through one exact source-file-root
-  `use crate::module::function;` binding or explicit `as` alias resolve through the same chain.
-  Malformed source, `#[path]` semantics, duplicate declarations/import aliases and ambiguous layouts fail closed; wildcard or grouped imports
-  are not considered. Trait-implementation members are not indexed, and
-  inline-module, Cargo, and import resolution beyond those exact bindings remains unavailable.
-  Patching returns an explicit unsupported-operation error.
+  top-level function. Unshadowed bare calls through exact source-file-root
+  `use crate::module::function;` bindings, including grouped `use` paths, or explicit `as` aliases
+  resolve through the same chain. Malformed source, `#[path]` semantics, duplicate declarations/import
+  aliases, and ambiguous layouts fail closed; wildcard imports are not considered. Trait-implementation
+  members are not indexed, and inline-module, Cargo, and import resolution beyond those exact bindings
+  remains unavailable. Patching returns an explicit unsupported-operation error.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid

@@ -193,15 +193,14 @@ fn source_file_imported_function_paths(
         let Some(argument) = node.child_by_field_name("argument") else {
             continue;
         };
-        let Some((local_name, target_path)) =
-            rust_single_function_import_binding(argument, source)?
-        else {
-            continue;
-        };
-        paths_by_local_name
-            .entry(local_name)
-            .or_default()
-            .push(target_path);
+        let mut bindings = Vec::new();
+        collect_rust_function_import_bindings(argument, &[], source, &mut bindings)?;
+        for (local_name, target_path) in bindings {
+            paths_by_local_name
+                .entry(local_name)
+                .or_default()
+                .push(target_path);
+        }
     }
 
     Ok(paths_by_local_name
@@ -210,46 +209,115 @@ fn source_file_imported_function_paths(
         .collect())
 }
 
-fn rust_single_function_import_binding(
-    argument: Node<'_>,
+fn collect_rust_function_import_bindings(
+    node: Node<'_>,
+    prefix: &[String],
     source: &str,
-) -> Result<Option<(String, String)>> {
-    if !matches!(argument.kind(), "scoped_identifier" | "use_as_clause") {
-        return Ok(None);
-    }
-    let spelling = node_text(argument, source)?.trim();
-    let (target_spelling, local_name) = match argument.kind() {
-        "scoped_identifier" => {
-            let Some(local_name) = spelling.rsplit("::").next() else {
-                return Ok(None);
+    bindings: &mut Vec<(String, String)>,
+) -> Result<()> {
+    match node.kind() {
+        "scoped_use_list" => {
+            let Some(path) = node.child_by_field_name("path") else {
+                return Ok(());
             };
-            (spelling, local_name)
+            let Some(path_components) = rust_import_path_components(path, source)? else {
+                return Ok(());
+            };
+            let Some(prefix) = rust_join_import_path_components(prefix, &path_components) else {
+                return Ok(());
+            };
+            let Some(list) = node.child_by_field_name("list") else {
+                return Ok(());
+            };
+            collect_rust_function_import_bindings(list, &prefix, source, bindings)?;
+        }
+        "use_list" => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_rust_function_import_bindings(child, prefix, source, bindings)?;
+            }
         }
         "use_as_clause" => {
-            let Some(path) = argument.child_by_field_name("path") else {
-                return Ok(None);
+            let Some(path) = node.child_by_field_name("path") else {
+                return Ok(());
             };
-            let Some(alias) = argument.child_by_field_name("alias") else {
-                return Ok(None);
+            let Some(alias) = node.child_by_field_name("alias") else {
+                return Ok(());
             };
-            (
-                node_text(path, source)?.trim(),
-                node_text(alias, source)?.trim(),
-            )
+            let Some(path_components) = rust_import_path_components(path, source)? else {
+                return Ok(());
+            };
+            let Some(target_components) =
+                rust_join_import_path_components(prefix, &path_components)
+            else {
+                return Ok(());
+            };
+            let alias = node_text(alias, source)?.trim();
+            if let Some(binding) = rust_function_import_binding(&target_components, alias) {
+                bindings.push(binding);
+            }
         }
-        _ => return Ok(None),
-    };
-    let Some(target_path) = target_spelling.strip_prefix("crate::") else {
-        return Ok(None);
-    };
-    let components = target_path.split("::").collect::<Vec<_>>();
-    if local_name.is_empty()
-        || components.len() < 2
-        || components.iter().any(|component| component.is_empty())
-    {
+        "scoped_identifier" | "identifier" => {
+            let Some(path_components) = rust_import_path_components(node, source)? else {
+                return Ok(());
+            };
+            let Some(target_components) =
+                rust_join_import_path_components(prefix, &path_components)
+            else {
+                return Ok(());
+            };
+            let Some(local_name) = target_components.last() else {
+                return Ok(());
+            };
+            if let Some(binding) = rust_function_import_binding(&target_components, local_name) {
+                bindings.push(binding);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn rust_import_path_components(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
+    if !matches!(node.kind(), "crate" | "identifier" | "scoped_identifier") {
         return Ok(None);
     }
-    Ok(Some((local_name.to_string(), target_path.to_string())))
+    let spelling = node_text(node, source)?.trim();
+    let components = spelling
+        .split("::")
+        .filter(|component| !component.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if components.is_empty() || spelling.split("::").any(str::is_empty) {
+        return Ok(None);
+    }
+    Ok(Some(components))
+}
+
+fn rust_join_import_path_components(prefix: &[String], path: &[String]) -> Option<Vec<String>> {
+    if prefix.is_empty() {
+        return Some(path.to_vec());
+    }
+    (!matches!(path.first().map(String::as_str), Some("crate")))
+        .then(|| prefix.iter().chain(path).cloned().collect::<Vec<String>>())
+}
+
+fn rust_function_import_binding(
+    target_components: &[String],
+    local_name: &str,
+) -> Option<(String, String)> {
+    if local_name.is_empty()
+        || target_components.len() < 3
+        || target_components
+            .first()
+            .is_none_or(|component| component != "crate")
+        || target_components
+            .iter()
+            .any(|component| component.is_empty())
+    {
+        return None;
+    }
+    Some((local_name.to_string(), target_components[1..].join("::")))
 }
 
 fn local_module_function_paths(
