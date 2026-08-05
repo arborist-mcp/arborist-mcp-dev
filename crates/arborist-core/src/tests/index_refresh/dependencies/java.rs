@@ -118,6 +118,49 @@ fn refreshes_java_same_package_static_type_callers() {
 }
 
 #[test]
+fn refreshes_java_same_package_simple_generic_superclass_dependents() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let child = source_dir.join("Child.java");
+    let base = source_dir.join("Base.java");
+    let unrelated = source_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &child,
+        "package com.example; class Child extends Base<String> { int caller() { return helper(); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &base,
+        "package com.example; class Base<T> { int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package com.example; class Unrelated {}
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &base,
+        "package com.example; class Base<T> { int helper() { return 2; } int added() { return 3; } }
+",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &base).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
+}
+
+#[test]
 fn refreshes_java_qualified_simple_superclass_dependents() {
     let dir = temporary_dir();
     let base_dir = dir.join("src").join("com").join("base");

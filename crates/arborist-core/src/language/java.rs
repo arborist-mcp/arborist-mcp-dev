@@ -96,17 +96,36 @@ pub(crate) fn java_direct_superclass_reference(
     let Some(type_node) = superclass.named_child(0) else {
         return Ok(None);
     };
-    let reference = node_text(type_node, source)?.trim().to_string();
-    if reference.is_empty() {
-        return Ok(None);
-    }
     match type_node.kind() {
-        "type_identifier" => Ok(Some(JavaDirectSuperclassReference::Simple(reference))),
-        "scoped_type_identifier" if is_safe_java_qualified_name(&reference) => {
-            Ok(Some(JavaDirectSuperclassReference::Qualified(reference)))
+        "type_identifier" => java_simple_superclass_reference(type_node, source),
+        "scoped_type_identifier" => {
+            let reference = node_text(type_node, source)?.trim().to_string();
+            Ok(
+                (!reference.is_empty() && is_safe_java_qualified_name(&reference))
+                    .then_some(JavaDirectSuperclassReference::Qualified(reference)),
+            )
+        }
+        "generic_type" => {
+            let mut cursor = type_node.walk();
+            let children = type_node.named_children(&mut cursor).collect::<Vec<_>>();
+            let [base_type, type_arguments] = children.as_slice() else {
+                return Ok(None);
+            };
+            if base_type.kind() != "type_identifier" || type_arguments.kind() != "type_arguments" {
+                return Ok(None);
+            }
+            java_simple_superclass_reference(*base_type, source)
         }
         _ => Ok(None),
     }
+}
+
+fn java_simple_superclass_reference(
+    type_node: Node<'_>,
+    source: &str,
+) -> Result<Option<JavaDirectSuperclassReference>> {
+    let reference = node_text(type_node, source)?.trim().to_string();
+    Ok((!reference.is_empty()).then_some(JavaDirectSuperclassReference::Simple(reference)))
 }
 
 pub(crate) fn java_local_explicit_type_imports(
@@ -440,6 +459,35 @@ mod tests {
         fs::write(
             &unrelated_path,
             "package com.example; class Unrelated {}
+",
+        )
+        .unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [base_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_simple_generic_superclasses_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Child.java");
+        let base_path = root.join("src/com/example/Base.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.example; class Child extends Base<String> {} class Qualified extends other.Base<String> {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &base_path,
+            "package com.example; class Base<T> {}
 ",
         )
         .unwrap();
