@@ -2416,15 +2416,28 @@ fn resolve_java_direct_superclass_target_path(
             Ok((candidates.len() == 1).then_some(binding.semantic_path))
         }
         JavaDirectSuperclassReference::Qualified(qualified_name) => {
-            let semantic_path = qualified_name.replace('.', "::");
-            let candidates = semantic_path_index
-                .get(&semantic_path)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+            let qualified_path = qualified_name.replace('.', "::");
+            let local_path =
+                enclosing_scope_path.map(|scope_path| format!("{scope_path}::{qualified_path}"));
+            let mut candidates = local_path
+                .iter()
+                .chain(std::iter::once(&qualified_path))
+                .flat_map(|path| {
+                    semantic_path_index
+                        .get(path)
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .map(move |index| (path, index))
+                })
+                .filter(|(_, index)| raw_symbols[*index].node_kind == "class_declaration")
                 .collect::<Vec<_>>();
-            Ok((candidates.len() == 1).then_some(semantic_path))
+            candidates.sort_unstable_by_key(|(_, index)| *index);
+            candidates.dedup_by_key(|(_, index)| *index);
+            let [(semantic_path, _)] = candidates.as_slice() else {
+                return Ok(None);
+            };
+            Ok(Some((*semantic_path).clone()))
         }
     }
 }

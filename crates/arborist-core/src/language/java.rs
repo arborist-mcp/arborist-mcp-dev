@@ -77,7 +77,11 @@ fn java_local_simple_superclass_dependency_paths(
                 }
             }
             JavaDirectSuperclassReference::Qualified(qualified_name) => {
-                resolve_unique_java_source_path(path, &qualified_name)
+                resolve_unique_java_qualified_superclass_source_path(
+                    path,
+                    package_name.as_deref(),
+                    &qualified_name,
+                )
             }
         };
         if let Some(source_path) = source_path
@@ -261,6 +265,33 @@ fn java_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
         .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
         .transpose()
         .map(|name| name.filter(|name| !name.is_empty()))
+}
+
+fn resolve_unique_java_qualified_superclass_source_path(
+    path: &Path,
+    package_name: Option<&str>,
+    qualified_name: &str,
+) -> Option<PathBuf> {
+    let mut source_type_paths = BTreeSet::from([qualified_name.to_string()]);
+    if let Some(package_name) = package_name
+        && !package_name.is_empty()
+    {
+        source_type_paths.insert(format!("{package_name}.{qualified_name}"));
+    }
+
+    let mut candidates = BTreeSet::new();
+    for source_type_path in source_type_paths {
+        let segments = source_type_path.split('.').collect::<Vec<_>>();
+        for end in 1..=segments.len() {
+            let candidate_path = segments[..end].join(".");
+            if let Some(candidate) = resolve_unique_java_source_path(path, &candidate_path) {
+                candidates.insert(candidate);
+            }
+        }
+    }
+    (candidates.len() == 1)
+        .then(|| candidates.into_iter().next())
+        .flatten()
 }
 
 fn resolve_unique_java_default_package_source_path(
@@ -479,6 +510,35 @@ mod tests {
                 .unwrap();
 
         assert_eq!(dependencies, [base_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_same_package_outer_superclasses_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Child.java");
+        let outer_path = root.join("src/com/example/Outer.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.example; class Child extends Outer.Base {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &outer_path,
+            "package com.example; class Outer { static class Base {} }
+",
+        )
+        .unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [outer_path].into_iter().collect());
         let _ = fs::remove_dir_all(root);
     }
 
