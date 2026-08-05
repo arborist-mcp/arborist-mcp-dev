@@ -351,7 +351,18 @@ fn resolve_reference_path_with_deadline<'a>(
             return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
         }
         if reference_name.contains("::") {
-            return resolve_go_same_package_method_reference(
+            if let Some(method_symbol_id) = resolve_go_same_package_method_reference(
+                source_symbol,
+                reference_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            )? {
+                return Ok(Some(method_symbol_id));
+            }
+            return resolve_go_same_package_type_alias_method_reference(
                 source_symbol,
                 reference_name,
                 raw_symbols,
@@ -1484,6 +1495,147 @@ fn go_named_type_declaration_status(
     } else {
         GoNamedTypeDeclaration::Absent
     })
+}
+
+fn resolve_go_same_package_type_alias_method_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((alias_name, method_name)) = reference_name.split_once("::") else {
+        return Ok(None);
+    };
+    if alias_name.is_empty()
+        || method_name.is_empty()
+        || alias_name.contains(':')
+        || method_name.contains(':')
+    {
+        return Ok(None);
+    }
+    let Some(target_type) = go_same_package_simple_type_alias_target(
+        source_symbol,
+        alias_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if !matches!(
+        go_named_type_declaration_status(
+            source_symbol,
+            &target_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?,
+        GoNamedTypeDeclaration::Unique
+    ) {
+        return Ok(None);
+    }
+    resolve_go_same_package_method_reference(
+        source_symbol,
+        &format!("{target_type}::{method_name}"),
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn go_same_package_simple_type_alias_target(
+    source_symbol: &IndexedSymbol,
+    alias_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(caller_package_name) = go_package_name_for_source_file(
+        &source_symbol.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(caller_directory) = Path::new(&source_symbol.file_path)
+        .parent()
+        .map(normalize_path)
+    else {
+        return Ok(None);
+    };
+
+    let mut candidates = Vec::new();
+    for index in semantic_path_index.get(alias_name).into_iter().flatten() {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go type alias target")?;
+        }
+        let candidate = &raw_symbols[*index];
+        if candidate.node_kind != "type_alias"
+            || candidate.semantic_path != alias_name
+            || !is_production_go_source_file(&candidate.file_path)
+            || Path::new(&candidate.file_path)
+                .parent()
+                .map(normalize_path)
+                .as_deref()
+                != Some(caller_directory.as_str())
+        {
+            continue;
+        }
+        let Some(candidate_package_name) = go_package_name_for_source_file(
+            &candidate.file_path,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if candidate_package_name == caller_package_name {
+            candidates.push(*index);
+        }
+    }
+
+    let [candidate_index] = candidates.as_slice() else {
+        return Ok(None);
+    };
+    Ok(go_simple_type_alias_target(&raw_symbols[*candidate_index]))
+}
+
+fn go_simple_type_alias_target(alias_symbol: &IndexedSymbol) -> Option<String> {
+    let declaration = alias_symbol
+        .signature
+        .as_deref()?
+        .strip_prefix("type ")?
+        .trim();
+    let (alias_name, target_name) = declaration.split_once('=')?;
+    if alias_name.trim() != alias_symbol.semantic_path {
+        return None;
+    }
+    let target_name = target_name.trim();
+    go_simple_identifier(target_name).then(|| target_name.to_string())
+}
+
+fn go_simple_identifier(value: &str) -> bool {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first == '_' || first.is_alphabetic())
+        && characters.all(|character| character == '_' || character.is_alphanumeric())
 }
 
 fn resolve_go_same_package_function_reference(

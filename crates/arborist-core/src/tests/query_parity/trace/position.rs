@@ -3773,6 +3773,74 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
 }
 
 #[test]
+fn traces_go_simple_type_alias_method_calls() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\nfunc (Counter) Value() int { return 1 }\nfunc compositeCaller() int { return Alias{}.Value() }\nfunc parameterCaller(value Alias) int { return value.Value() }\nfunc localCaller() int { value := Alias{}; return value.Value() }\nfunc chainedCaller() int { return Chained{}.Value() }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 3);
+    assert_eq!(live.callers[0].symbol_id, "compositeCaller");
+    assert_eq!(live.callers[1].symbol_id, "localCaller");
+    assert_eq!(live.callers[2].symbol_id, "parameterCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    assert_eq!(persisted.callers[0].symbol_id, "compositeCaller");
+    assert_eq!(persisted.callers[1].symbol_id, "localCaller");
+    assert_eq!(persisted.callers[2].symbol_id, "parameterCaller");
+}
+
+#[test]
+fn traces_go_simple_type_alias_method_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("counter.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\nfunc caller() int { return Alias{}.Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_type_assertion_methods_and_does_not_fallback_to_functions() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
