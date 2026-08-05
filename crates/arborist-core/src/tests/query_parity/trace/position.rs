@@ -3653,6 +3653,115 @@ fn traces_go_direct_pointer_and_generic_composite_literal_method_calls() {
 }
 
 #[test]
+fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Scalar int\ntype Result struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Result) Value() int { return 2 }\nfunc Factory(value int) Result { return Result{} }\nfunc conversionCaller(value int) int { return Scalar(value).Value() }\nfunc factoryCaller(value int) int { return Factory(value).Value() }\n",
+    )
+    .unwrap();
+
+    let conversion_live =
+        trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(conversion_live.callers.len(), 1);
+    assert_eq!(conversion_live.callers[0].symbol_id, "conversionCaller");
+    let factory_live = trace_symbol_graph(&dir, "Factory", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_live.callers.len(), 1);
+    assert_eq!(factory_live.callers[0].symbol_id, "factoryCaller");
+    let result_method_live =
+        trace_symbol_graph(&dir, "Result::Value", TraceDirection::Callers).unwrap();
+    assert!(result_method_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let conversion_persisted =
+        trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(conversion_persisted.callers.len(), 1);
+    assert_eq!(
+        conversion_persisted.callers[0].symbol_id,
+        "conversionCaller"
+    );
+    let factory_persisted =
+        trace_symbol_graph_from_index(&db_path, "Factory", TraceDirection::Callers).unwrap();
+    assert_eq!(factory_persisted.callers.len(), 1);
+    assert_eq!(factory_persisted.callers[0].symbol_id, "factoryCaller");
+    let result_method_persisted =
+        trace_symbol_graph_from_index(&db_path, "Result::Value", TraceDirection::Callers).unwrap();
+    assert!(result_method_persisted.callers.is_empty());
+}
+
+#[test]
+fn fails_closed_for_go_type_conversion_methods_with_ambiguous_type_declarations() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let duplicate_type_path = dir.join("duplicate.go");
+    let method_path = dir.join("scalar.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\ntype Scalar int\nfunc caller(value int) int { return Scalar(value).Value() }\n",
+    )
+    .unwrap();
+    fs::write(&duplicate_type_path, "package metrics\n\ntype Scalar int\n").unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_go_type_conversion_methods_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("scalar.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Scalar int\nfunc caller(value int) int { return Scalar(value).Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Scalar::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Scalar::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_unshadowed_function_body_local_variable_method_calls() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

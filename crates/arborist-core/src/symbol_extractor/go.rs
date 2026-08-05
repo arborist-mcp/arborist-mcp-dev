@@ -9,7 +9,9 @@ use crate::semantic::go::{
     go_parameters, go_return_type, go_semantic_path, go_signature, go_symbol_name,
     is_go_symbol_node,
 };
-use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
+use crate::symbol_index_model::{
+    GoReferenceDetails, IndexedSymbol, ReferenceFact, ReferenceLanguageDetails, symbol_base_name,
+};
 use crate::symbol_reference_compat::reference_facts_from_legacy;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -62,8 +64,14 @@ fn indexed_symbol(
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let references_by_name = collect_direct_local_calls(node, source, deadline)?;
+    let direct_references = collect_direct_local_calls(node, source, deadline)?;
+    let references_by_name = direct_references.references_by_name;
     let call_arities_by_name = BTreeMap::new();
+    let reference_facts = go_reference_facts(
+        &references_by_name,
+        &direct_references.type_conversion_method_references,
+        &call_arities_by_name,
+    );
 
     Ok(Some(IndexedSymbol {
         symbol_id: semantic_path.clone(),
@@ -78,10 +86,24 @@ fn indexed_symbol(
         parameters: go_parameters(node, source),
         return_type: go_return_type(node, source),
         docstring: None,
-        reference_facts: reference_facts_from_legacy(&references_by_name, &call_arities_by_name),
+        reference_facts,
         references_by_name,
         call_arities_by_name,
     }))
+}
+
+struct GoDirectReferences {
+    references_by_name: BTreeSet<String>,
+    type_conversion_method_references: BTreeSet<String>,
+    suppressed_type_conversion_call_starts: BTreeSet<usize>,
+}
+
+enum GoDirectMethodReference {
+    Plain(String),
+    TypeConversion {
+        method_path: String,
+        conversion_call_start: usize,
+    },
 }
 
 struct GoMethodReceiver {
@@ -104,19 +126,48 @@ struct GoDirectCallContext<'a> {
     body_bindings: &'a BTreeSet<String>,
 }
 
+fn go_reference_facts(
+    references_by_name: &BTreeSet<String>,
+    type_conversion_method_references: &BTreeSet<String>,
+    call_arities_by_name: &BTreeMap<String, BTreeSet<usize>>,
+) -> Vec<ReferenceFact> {
+    let mut reference_facts = reference_facts_from_legacy(references_by_name, call_arities_by_name);
+    reference_facts.extend(
+        type_conversion_method_references
+            .iter()
+            .filter(|reference| !references_by_name.contains(*reference))
+            .map(|spelling| ReferenceFact {
+                spelling: spelling.clone(),
+                call_arities: None,
+                language_details: ReferenceLanguageDetails::Go(GoReferenceDetails {
+                    type_conversion: true,
+                }),
+            }),
+    );
+    reference_facts
+}
+
 fn collect_direct_local_calls(
     symbol_node: Node<'_>,
     source: &str,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<BTreeSet<String>> {
+) -> Result<GoDirectReferences> {
     if !matches!(
         symbol_node.kind(),
         "function_declaration" | "method_declaration"
     ) {
-        return Ok(BTreeSet::new());
+        return Ok(GoDirectReferences {
+            references_by_name: BTreeSet::new(),
+            type_conversion_method_references: BTreeSet::new(),
+            suppressed_type_conversion_call_starts: BTreeSet::new(),
+        });
     }
     let Some(body) = symbol_node.child_by_field_name("body") else {
-        return Ok(BTreeSet::new());
+        return Ok(GoDirectReferences {
+            references_by_name: BTreeSet::new(),
+            type_conversion_method_references: BTreeSet::new(),
+            suppressed_type_conversion_call_starts: BTreeSet::new(),
+        });
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
@@ -136,7 +187,11 @@ fn collect_direct_local_calls(
         function_body_range: (body.start_byte(), body.end_byte()),
         body_bindings: &body_bindings,
     };
-    let mut references = BTreeSet::new();
+    let mut references = GoDirectReferences {
+        references_by_name: BTreeSet::new(),
+        type_conversion_method_references: BTreeSet::new(),
+        suppressed_type_conversion_call_starts: BTreeSet::new(),
+    };
     collect_direct_local_calls_from_node(body, source, deadline, &context, &mut references)?;
     Ok(references)
 }
@@ -650,7 +705,7 @@ fn go_direct_method_reference(
     selector: Node<'_>,
     source: &str,
     context: &GoDirectCallContext<'_>,
-) -> Result<Option<String>> {
+) -> Result<Option<GoDirectMethodReference>> {
     let Some(operand) = selector.child_by_field_name("operand") else {
         return Ok(None);
     };
@@ -684,7 +739,33 @@ fn go_direct_method_reference(
         } else {
             None
         };
-    Ok(receiver_type.map(|receiver_type| format!("{receiver_type}::{method_name}")))
+    if let Some(receiver_type) = receiver_type {
+        return Ok(Some(GoDirectMethodReference::Plain(format!(
+            "{receiver_type}::{method_name}"
+        ))));
+    }
+    let Some((type_name, conversion_call_start)) = go_type_conversion_receiver(operand, source)?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(GoDirectMethodReference::TypeConversion {
+        method_path: format!("{type_name}::{method_name}"),
+        conversion_call_start,
+    }))
+}
+
+fn go_type_conversion_receiver(operand: Node<'_>, source: &str) -> Result<Option<(String, usize)>> {
+    if operand.kind() != "call_expression" {
+        return Ok(None);
+    }
+    let Some(function) = operand.child_by_field_name("function") else {
+        return Ok(None);
+    };
+    if function.kind() != "identifier" {
+        return Ok(None);
+    }
+    let type_name = node_text(function, source)?.trim();
+    Ok((!type_name.is_empty()).then(|| (type_name.to_string(), operand.start_byte())))
 }
 
 fn collect_direct_local_calls_from_node(
@@ -692,7 +773,7 @@ fn collect_direct_local_calls_from_node(
     source: &str,
     deadline: Option<&WorkspaceScanDeadline>,
     context: &GoDirectCallContext<'_>,
-    references: &mut BTreeSet<String>,
+    references: &mut GoDirectReferences,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
         deadline.check("collecting Go direct calls")?;
@@ -706,8 +787,13 @@ fn collect_direct_local_calls_from_node(
         match function.kind() {
             "identifier" => {
                 let name = node_text(function, source)?.trim();
-                if !name.is_empty() && !context.bindings.contains(name) {
-                    references.insert(
+                if !name.is_empty()
+                    && !context.bindings.contains(name)
+                    && !references
+                        .suppressed_type_conversion_call_starts
+                        .contains(&node.start_byte())
+                {
+                    references.references_by_name.insert(
                         context
                             .local_functions
                             .get(name)
@@ -720,11 +806,26 @@ fn collect_direct_local_calls_from_node(
                 if let Some(reference) =
                     go_imported_selector_reference(function, source, context.bindings)?
                 {
-                    references.insert(reference);
+                    references.references_by_name.insert(reference);
                 } else if let Some(reference) =
                     go_direct_method_reference(function, source, context)?
                 {
-                    references.insert(reference);
+                    match reference {
+                        GoDirectMethodReference::Plain(reference) => {
+                            references.references_by_name.insert(reference);
+                        }
+                        GoDirectMethodReference::TypeConversion {
+                            method_path,
+                            conversion_call_start,
+                        } => {
+                            references
+                                .type_conversion_method_references
+                                .insert(method_path);
+                            references
+                                .suppressed_type_conversion_call_starts
+                                .insert(conversion_call_start);
+                        }
+                    }
                 }
             }
             _ => {}
@@ -744,6 +845,7 @@ mod tests {
 
     use super::index_go_symbols_with_deadline;
     use crate::language::parse_document;
+    use crate::symbol_index_model::{GoReferenceDetails, ReferenceLanguageDetails};
 
     #[test]
     fn indexes_go_named_types_functions_methods_and_unshadowed_direct_calls() {
@@ -974,6 +1076,53 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 .unwrap();
             assert!(caller.references_by_name.is_empty(), "{caller_path}");
             assert!(caller.reference_facts.is_empty(), "{caller_path}");
+        }
+    }
+
+    #[test]
+    fn indexes_go_type_conversion_method_reference_facts_without_legacy_call_edges() {
+        let source = r#"
+package metrics
+
+type Scalar int
+type Result struct{}
+
+func (Scalar) Value() int { return 1 }
+func (Result) Value() int { return 2 }
+func Factory(value int) Result { return Result{} }
+func scalar_conversion(value int) int { return Scalar(value).Value() }
+func factory_method(value int) int { return Factory(value).Value() }
+"#;
+        let path = Path::new("metrics.go");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_go_symbols_with_deadline(path, source, document.tree.root_node(), None).unwrap();
+
+        for (caller_path, method_path) in [
+            ("scalar_conversion", "Scalar::Value"),
+            ("factory_method", "Factory::Value"),
+        ] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert!(caller.references_by_name.is_empty(), "{caller_path}");
+            assert_eq!(caller.reference_facts.len(), 1, "{caller_path}");
+            assert_eq!(
+                caller.reference_facts[0].spelling, method_path,
+                "{caller_path}"
+            );
+            assert_eq!(
+                caller.reference_facts[0].call_arities, None,
+                "{caller_path}"
+            );
+            assert_eq!(
+                caller.reference_facts[0].language_details,
+                ReferenceLanguageDetails::Go(GoReferenceDetails {
+                    type_conversion: true,
+                }),
+                "{caller_path}"
+            );
         }
     }
 }

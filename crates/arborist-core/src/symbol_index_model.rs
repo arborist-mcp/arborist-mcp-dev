@@ -14,6 +14,7 @@ pub(crate) struct ReferenceFact {
 pub(crate) enum ReferenceLanguageDetails {
     None,
     Cpp(CppReferenceDetails),
+    Go(GoReferenceDetails),
     Rust(RustReferenceDetails),
 }
 
@@ -22,6 +23,11 @@ pub(crate) enum RustImportRoot {
     Crate,
     SelfModule,
     Super { levels: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct GoReferenceDetails {
+    pub(crate) type_conversion: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -46,7 +46,9 @@ use super::type_alias::{
 use crate::language::{detect_language, normalize_path};
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
-use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails, RustImportRoot};
+use crate::symbol_index_model::{
+    GoReferenceDetails, IndexedSymbol, ReferenceLanguageDetails, RustImportRoot,
+};
 use crate::symbol_reference_compat::effective_reference_facts;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -54,6 +56,12 @@ struct GoSamePackageReferenceTarget<'a> {
     reference_name: &'a str,
     node_kind: &'a str,
     candidate_indexes: &'a [usize],
+}
+
+enum GoTypeConversionReceiver {
+    Absent,
+    Unique,
+    Ambiguous,
 }
 
 #[derive(Clone, Copy)]
@@ -174,10 +182,15 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     details.const_receiver,
                     details.explicit_member_receiver,
                 ),
+                ReferenceLanguageDetails::Go(_) => (false, false, false),
                 ReferenceLanguageDetails::Rust(_) => (false, false, false),
             };
         let rust_import_root = match &reference.language_details {
             ReferenceLanguageDetails::Rust(details) => details.import_root.as_ref(),
+            _ => None,
+        };
+        let go_reference_details = match &reference.language_details {
+            ReferenceLanguageDetails::Go(details) => Some(details),
             _ => None,
         };
         if matches!(
@@ -202,6 +215,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                 if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
                     &reference.spelling,
                     rust_import_root,
+                    go_reference_details,
                     language_id,
                     call_context,
                     symbol,
@@ -225,6 +239,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
         } else if let Some(target_symbol_id) = resolve_reference_path_with_deadline(
             &reference.spelling,
             rust_import_root,
+            go_reference_details,
             language_id,
             CallResolutionContext::non_call(),
             symbol,
@@ -255,6 +270,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
 fn resolve_reference_path_with_deadline<'a>(
     reference_name: &str,
     rust_import_root: Option<&RustImportRoot>,
+    go_reference_details: Option<&GoReferenceDetails>,
     language_id: Option<LanguageId>,
     call_context: CallResolutionContext,
     source_symbol: &'a IndexedSymbol,
@@ -276,6 +292,18 @@ fn resolve_reference_path_with_deadline<'a>(
     }
     let call_arity = call_context.arity;
     if language_id == Some(LanguageId::Go) {
+        if go_reference_details.is_some_and(|details| details.type_conversion) {
+            return resolve_go_type_conversion_reference(
+                source_symbol,
+                reference_name,
+                raw_symbols,
+                name_index,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            );
+        }
         if let Some((imported_name, binding)) = resolve_go_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
@@ -1281,6 +1309,125 @@ fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
         symbol.node_kind.as_str(),
         "class_declaration" | "record_declaration"
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_go_type_conversion_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((receiver_type, method_name)) = reference_name.split_once("::") else {
+        return Ok(None);
+    };
+    if receiver_type.is_empty()
+        || method_name.is_empty()
+        || receiver_type.contains(':')
+        || method_name.contains(':')
+    {
+        return Ok(None);
+    }
+
+    match go_type_conversion_receiver_status(
+        source_symbol,
+        receiver_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )? {
+        GoTypeConversionReceiver::Unique => resolve_go_same_package_method_reference(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        ),
+        GoTypeConversionReceiver::Absent => resolve_go_same_package_function_reference(
+            source_symbol,
+            receiver_type,
+            raw_symbols,
+            name_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        ),
+        GoTypeConversionReceiver::Ambiguous => Ok(None),
+    }
+}
+
+fn go_type_conversion_receiver_status(
+    source_symbol: &IndexedSymbol,
+    receiver_type: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<GoTypeConversionReceiver> {
+    let Some(caller_package_name) = go_package_name_for_source_file(
+        &source_symbol.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(GoTypeConversionReceiver::Ambiguous);
+    };
+    let Some(caller_directory) = Path::new(&source_symbol.file_path)
+        .parent()
+        .map(normalize_path)
+    else {
+        return Ok(GoTypeConversionReceiver::Ambiguous);
+    };
+
+    let mut type_declaration_count = 0;
+    for index in semantic_path_index.get(receiver_type).into_iter().flatten() {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go type conversion receiver")?;
+        }
+        let candidate = &raw_symbols[*index];
+        if candidate.node_kind != "type_spec"
+            || candidate.semantic_path != receiver_type
+            || !is_production_go_source_file(&candidate.file_path)
+            || Path::new(&candidate.file_path)
+                .parent()
+                .map(normalize_path)
+                .as_deref()
+                != Some(caller_directory.as_str())
+        {
+            continue;
+        }
+        let Some(candidate_package_name) = go_package_name_for_source_file(
+            &candidate.file_path,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if candidate_package_name == caller_package_name {
+            type_declaration_count += 1;
+            if type_declaration_count > 1 {
+                return Ok(GoTypeConversionReceiver::Ambiguous);
+            }
+        }
+    }
+
+    Ok(if type_declaration_count == 1 {
+        GoTypeConversionReceiver::Unique
+    } else {
+        GoTypeConversionReceiver::Absent
+    })
 }
 
 fn resolve_go_same_package_function_reference(
