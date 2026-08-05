@@ -2010,17 +2010,27 @@ fn csharp_simple_type_static_target_path(
     {
         return None;
     }
-    let namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
-    let target_type_path = namespace_path
-        .map(|namespace_path| format!("{namespace_path}::{type_name}"))
-        .unwrap_or_else(|| type_name.to_string());
-    let target_type_candidates = raw_symbols
-        .iter()
-        .filter(|candidate| {
-            candidate.semantic_path == target_type_path && csharp_is_type_declaration(candidate)
-        })
-        .count();
-    (target_type_candidates == 1).then(|| format!("{target_type_path}::{method_name}"))
+
+    let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
+    loop {
+        let target_type_path = namespace_path
+            .map(|namespace_path| format!("{namespace_path}::{type_name}"))
+            .unwrap_or_else(|| type_name.to_string());
+        let target_type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == target_type_path && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        if target_type_candidates > 0 {
+            return (target_type_candidates == 1)
+                .then(|| format!("{target_type_path}::{method_name}"));
+        }
+        namespace_path = match namespace_path {
+            Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
+            None => return None,
+        };
+    }
 }
 
 fn csharp_is_type_declaration(symbol: &IndexedSymbol) -> bool {

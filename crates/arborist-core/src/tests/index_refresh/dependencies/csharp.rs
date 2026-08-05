@@ -5,6 +5,60 @@ use crate::language::normalize_path;
 use crate::symbol_index_state::load_symbol_index_with_overrides;
 
 #[test]
+fn refreshes_csharp_enclosing_namespace_static_dependents_when_a_nearer_type_appears() {
+    let dir = temporary_dir();
+    let helper = dir.join("Helper.cs");
+    let caller = dir.join("Caller.cs");
+    let nearer = dir.join("Nearer.cs");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &helper,
+        "namespace Demo; class Helper { public static void Ping() {} }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace Demo.App.Tools; class Caller { void Call() { Helper.Ping(); } }\n",
+    )
+    .unwrap();
+    fs::write(&nearer, "namespace Demo.App; class Other {}\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial = trace_symbol_graph_from_index(
+        &db_path,
+        "Demo::App::Tools::Caller::Call",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(
+        initial
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Helper::Ping"]
+    );
+
+    fs::write(
+        &nearer,
+        "namespace Demo.App; class Helper { public int Ping() => 0; }\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &nearer).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 2);
+
+    let refreshed = trace_symbol_graph_from_index(
+        &db_path,
+        "Demo::App::Tools::Caller::Call",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(refreshed.callees.is_empty());
+}
+
+#[test]
 fn refreshes_csharp_dependents_when_a_type_becomes_ambiguous() {
     let dir = temporary_dir();
     let helper = dir.join("Helper.cs");

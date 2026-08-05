@@ -69,7 +69,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
-  globally namespace-qualified `global::...` static calls, simple same-namespace
+  globally namespace-qualified `global::...` static calls, simple same-namespace and enclosing-namespace
   `Type.Method()` static calls, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;`
   bare method calls contributed by any scanned C# source file (including directive-only files), and file-root
@@ -580,7 +580,7 @@ for response shapes, error behavior, and examples.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative tracing for unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
-  globally namespace-qualified `global::...` static calls, unique simple same-namespace
+  globally namespace-qualified `global::...` static calls, unique simple same-namespace or enclosing-namespace
   `Type.Method()` static calls across the workspace, including from nested source types, type aliases and static imports at file
   root or directly in block/file-scoped namespaces, root-level `global using static` imports from any scanned source file
   (including directive-only files), root-level global namespace-import `Type.Method()` calls and global type-alias calls from any scanned source file,
