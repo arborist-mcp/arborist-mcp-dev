@@ -2282,79 +2282,22 @@ fn resolve_java_same_file_super_constructor_reference(
     if source_symbol.node_kind != "constructor_declaration" {
         return Ok(None);
     }
-    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+    let Some(superclass_path) = java_same_file_simple_superclass_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        deadline,
+    )?
+    else {
         return Ok(None);
     };
-    if let Some(deadline) = deadline {
-        deadline.check("resolving Java super constructor")?;
-    }
-    let path = Path::new(&source_symbol.file_path);
-    let normalized_path = normalize_path(path);
-    let source = file_overrides
-        .and_then(|overrides| overrides.get(&normalized_path))
-        .cloned()
-        .map(Ok)
-        .unwrap_or_else(|| read_source(path))?;
-    if let Some(deadline) = deadline {
-        deadline.check("parsing Java super constructor")?;
-    }
-    let document = parse_document(path, &source)?;
-    let mut stack = vec![document.tree.root_node()];
-    let mut superclass_name = None;
-    while let Some(node) = stack.pop() {
-        if let Some(deadline) = deadline {
-            deadline.check("locating Java super constructor")?;
-        }
-        if node.kind() == "constructor_declaration"
-            && (node.start_byte(), node.end_byte()) == source_symbol.byte_range
-        {
-            let mut ancestor = node.parent();
-            while let Some(candidate) = ancestor {
-                if candidate.kind() == "class_declaration" {
-                    let Some(superclass) = candidate.child_by_field_name("superclass") else {
-                        return Ok(None);
-                    };
-                    let Some(type_node) = superclass.named_child(0) else {
-                        return Ok(None);
-                    };
-                    if type_node.kind() != "type_identifier" {
-                        return Ok(None);
-                    }
-                    let name = node_text(type_node, &source)?.trim().to_string();
-                    superclass_name = (!name.is_empty()).then_some(name);
-                    break;
-                }
-                ancestor = candidate.parent();
-            }
-            break;
-        }
-        let mut cursor = node.walk();
-        stack.extend(node.named_children(&mut cursor));
-    }
-    let Some(superclass_name) = superclass_name else {
+    let Some(superclass_name) = superclass_path.rsplit("::").next() else {
         return Ok(None);
     };
-    let superclass_path = scope_path.rsplit_once("::").map_or_else(
-        || superclass_name.clone(),
-        |(parent_scope, _)| format!("{parent_scope}::{superclass_name}"),
-    );
-    let type_candidates = semantic_path_index
-        .get(&superclass_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == "class_declaration"
-        })
-        .collect::<Vec<_>>();
-    if type_candidates.len() != 1 {
-        return Ok(None);
-    }
-    let constructor_path = format!("{superclass_path}::{superclass_name}");
+    let target_path = format!("{superclass_path}::{superclass_name}");
     let candidates = semantic_path_index
-        .get(&constructor_path)
+        .get(&target_path)
         .into_iter()
         .flatten()
         .copied()

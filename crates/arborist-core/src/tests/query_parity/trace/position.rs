@@ -1167,7 +1167,7 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
     let source_path = dir.join("Types.java");
     let db_path = dir.join("symbols.db");
     fs::write(&source_path, "package com.example; class Stale {}\n").unwrap();
-    let overlay = "package com.example;\nclass Base { Base() {} }\nclass Child extends Base { Child() { super(); } }\n";
+    let overlay = "package com.example;\nclass Base { Base() {} int helper() { return 1; } }\nclass Child extends Base { Child() { super(); } int inheritedCaller() { return super.helper(); } }\n";
     let target = "com::example::Base::Base";
     let child_constructor = "com::example::Child::Child";
 
@@ -1181,6 +1181,19 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
     .unwrap();
     assert_eq!(live.callers.len(), 1);
     assert_eq!(live.callers[0].symbol_id, child_constructor);
+    let helper_live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "com::example::Base::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(helper_live.callers.len(), 1);
+    assert_eq!(
+        helper_live.callers[0].symbol_id,
+        "com::example::Child::inheritedCaller"
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted = trace_symbol_graph_from_index_with_source(
@@ -1193,6 +1206,19 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
     .unwrap();
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, child_constructor);
+    let helper_persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        "com::example::Base::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 1);
+    assert_eq!(
+        helper_persisted.callers[0].symbol_id,
+        "com::example::Child::inheritedCaller"
+    );
 }
 #[test]
 fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
