@@ -320,7 +320,7 @@ fn collect_direct_local_calls_from_node(
         {
             if let Some(path) = context.qualified_functions.get(&path) {
                 references.insert(path.clone());
-            } else if is_direct_out_of_line_module_call(&path, context.out_of_line_modules) {
+            } else if is_out_of_line_module_call(&path, context.out_of_line_modules) {
                 references.insert(path);
             }
         }
@@ -333,16 +333,16 @@ fn collect_direct_local_calls_from_node(
     Ok(())
 }
 
-fn is_direct_out_of_line_module_call(path: &str, out_of_line_modules: &BTreeSet<String>) -> bool {
+fn is_out_of_line_module_call(path: &str, out_of_line_modules: &BTreeSet<String>) -> bool {
     let mut components = path.split("::");
     let Some(module_name) = components.next() else {
         return false;
     };
-    let Some(function_name) = components.next() else {
+    let Some(next_component) = components.next() else {
         return false;
     };
-    components.next().is_none()
-        && !function_name.is_empty()
+    !next_component.is_empty()
+        && components.all(|component| !component.is_empty())
         && out_of_line_modules.contains(module_name)
 }
 

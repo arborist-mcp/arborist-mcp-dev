@@ -266,10 +266,7 @@ fn rust_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patch
 
     assert_eq!(descriptor.display_name, "Rust");
     assert_eq!(descriptor.extensions, &["rs"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "rust-out-of-line-module-trace-v4"
-    );
+    assert_eq!(descriptor.analysis_revision, "rust-nested-module-trace-v5");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,

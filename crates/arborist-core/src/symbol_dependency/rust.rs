@@ -83,19 +83,26 @@ pub(in crate::symbol_dependency) fn resolve_rust_out_of_line_module_reference(
     source_file_path: &str,
     reference_name: &str,
 ) -> Option<(String, String)> {
-    let mut components = reference_name.split("::");
-    let module_name = components.next()?;
-    let target_name = components.next()?;
-    if module_name.is_empty() || target_name.is_empty() || components.next().is_some() {
+    let components = reference_name.split("::").collect::<Vec<_>>();
+    let (target_name, module_components) = components.split_last()?;
+    if target_name.is_empty()
+        || module_components.is_empty()
+        || module_components
+            .iter()
+            .any(|component| component.is_empty())
+    {
         return None;
     }
 
-    let normalized_source_path = normalize_path(Path::new(source_file_path));
-    let target_file_path = context
-        .bindings_by_source_file
-        .get(&normalized_source_path)?
-        .get(module_name)?;
-    Some((target_file_path.clone(), target_name.to_string()))
+    let mut target_file_path = normalize_path(Path::new(source_file_path));
+    for module_name in module_components {
+        target_file_path = context
+            .bindings_by_source_file
+            .get(&target_file_path)?
+            .get(*module_name)?
+            .clone();
+    }
+    Some((target_file_path, (*target_name).to_string()))
 }
 
 #[cfg(test)]
@@ -149,6 +156,34 @@ mod tests {
                 "api::helper",
             ),
             Some((normalize_path(&api), "helper".to_string()))
+        );
+    }
+
+    #[test]
+    fn resolves_unambiguous_nested_out_of_line_module_references() {
+        let dir = temporary_dir();
+        let root = dir.join("lib.rs");
+        let api_directory = dir.join("api");
+        let api = api_directory.join("mod.rs");
+        let helper = api_directory.join("helper.rs");
+        fs::create_dir_all(&api_directory).unwrap();
+        fs::write(&root, "mod api;\n").unwrap();
+        fs::write(&api, "mod helper;\n").unwrap();
+        fs::write(&helper, "pub fn value() {}\n").unwrap();
+
+        let context = rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            &[root.clone(), api, helper.clone()],
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_rust_out_of_line_module_reference(
+                &context,
+                &normalize_path(&root),
+                "api::helper::value",
+            ),
+            Some((normalize_path(&helper), "value".to_string()))
         );
     }
 
