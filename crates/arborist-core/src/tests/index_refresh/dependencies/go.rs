@@ -32,6 +32,35 @@ fn refreshes_go_local_package_import_dependents() {
 
     let stats = refresh_symbol_index_for_file(&dir, &db_path, &second).unwrap();
     assert_eq!(stats.indexed_files, 4);
-    assert_eq!(stats.rebuilt_files, 2);
-    assert_eq!(stats.reused_files, 2);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 1);
+}
+
+#[test]
+fn refreshes_go_same_package_direct_call_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("caller.go");
+    let helper = dir.join("helper.go");
+    let unrelated = dir.join("unrelated.go");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &caller,
+        "package metrics\nfunc Caller() int { return Helper() }\n",
+    )
+    .unwrap();
+    fs::write(&helper, "package metrics\nfunc Helper() int { return 1 }\n").unwrap();
+    fs::write(
+        &unrelated,
+        "package metrics\nfunc Unrelated() int { return 0 }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(&helper, "package metrics\nfunc Helper() int { return 2 }\n").unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 0);
 }

@@ -49,12 +49,13 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid
-  simple `go.mod` module path refresh the importing file when a direct `.go` file in the imported
-  package directory changes. It traces unshadowed bare direct calls to top-level functions declared in
-  the same source file and unambiguous direct calls to functions through local package imports, using
-  an explicit alias or the imported package's declared name. Module-root imports, external modules,
-  `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method
-  dispatch remain unavailable; patch operations return explicit unsupported-operation errors.
+  simple `go.mod` module path refresh importers when direct `.go` files in their package directory change;
+  matching production sources in one local package also refresh conservatively together. It traces unshadowed
+  bare direct calls to top-level functions declared in the same source file or in one matching production
+  source in the same directory and package, plus unambiguous direct calls through local package imports using
+  an explicit alias or the imported package's declared name. Module-root imports, external modules, `replace`,
+  `go.work`, vendoring, build tags, general cross-file/package/import resolution, and method dispatch remain
+  unavailable; patch operations return explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,

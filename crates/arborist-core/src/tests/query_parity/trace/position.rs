@@ -3655,7 +3655,7 @@ fn traces_go_local_package_imported_function_calls_in_live_and_persisted_indexes
 }
 
 #[test]
-fn does_not_trace_go_direct_calls_across_source_files() {
+fn traces_go_same_package_direct_calls_across_source_files() {
     let dir = temporary_dir();
     let caller_path = dir.join("caller.go");
     let helper_path = dir.join("helper.go");
@@ -3673,11 +3673,81 @@ fn does_not_trace_go_direct_calls_across_source_files() {
 
     let live = trace_symbol_graph(&dir, "helper", TraceDirection::Callers).unwrap();
     assert_eq!(live.indexed_files, 2);
-    assert!(live.callers.is_empty());
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
     assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn traces_go_same_package_direct_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let helper_path = dir.join("helper.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package metrics\n\nfunc helper() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\nfunc caller() int { return helper() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn does_not_trace_go_same_directory_calls_across_different_or_test_packages() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let helper_path = dir.join("helper_test.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc caller() int { return helper() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package metrics_test\n\nfunc helper() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "helper", TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }

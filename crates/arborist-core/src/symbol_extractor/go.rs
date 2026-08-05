@@ -290,11 +290,13 @@ fn collect_direct_local_calls_from_node(
         match function.kind() {
             "identifier" => {
                 let name = node_text(function, source)?.trim();
-                if !name.is_empty()
-                    && !bindings.contains(name)
-                    && let Some(path) = local_functions.get(name)
-                {
-                    references.insert(path.clone());
+                if !name.is_empty() && !bindings.contains(name) {
+                    references.insert(
+                        local_functions
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| name.to_string()),
+                    );
                 }
             }
             "selector_expression" => {

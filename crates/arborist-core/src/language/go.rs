@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use tree_sitter::Node;
 
-use super::{node_text, normalize_absolute_path, path_is_inside_workspace};
+use super::{
+    node_text, normalize_absolute_path, parse_document, path_is_inside_workspace, read_source,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GoLocalPackageImport {
@@ -18,10 +20,87 @@ pub(crate) fn go_local_package_dependency_paths(
     root: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<PathBuf>> {
-    Ok(go_local_package_imports(path, root, source)?
+    let mut dependencies = go_local_package_imports(path, root, source)?
         .into_iter()
         .flat_map(|import| import.source_paths)
-        .collect())
+        .collect::<BTreeSet<_>>();
+    dependencies.extend(go_same_package_source_paths(path, root, source)?);
+    Ok(dependencies)
+}
+
+fn go_same_package_source_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    if root.has_error() {
+        return Ok(BTreeSet::new());
+    }
+    let Some(package_name) = go_source_package_name(root, source)? else {
+        return Ok(BTreeSet::new());
+    };
+    let Some(directory) = path.parent() else {
+        return Ok(BTreeSet::new());
+    };
+
+    let current_path = normalize_absolute_path(path)?;
+    let mut dependencies = BTreeSet::new();
+    for candidate_path in go_production_source_files_in_directory(directory) {
+        if candidate_path == current_path {
+            continue;
+        }
+        let candidate_source = read_source(&candidate_path)?;
+        let document = parse_document(&candidate_path, &candidate_source)?;
+        let candidate_root = document.tree.root_node();
+        if candidate_root.has_error()
+            || go_source_package_name(candidate_root, &candidate_source)?.as_deref()
+                != Some(package_name.as_str())
+        {
+            continue;
+        }
+        dependencies.insert(candidate_path);
+    }
+    Ok(dependencies)
+}
+
+fn go_production_source_files_in_directory(directory: &Path) -> BTreeSet<PathBuf> {
+    fs::read_dir(directory)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            path.is_file().then_some(path)
+        })
+        .filter(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
+                && !path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.ends_with("_test"))
+        })
+        .filter_map(|path| normalize_absolute_path(&path).ok())
+        .collect()
+}
+
+fn go_source_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut cursor = root.walk();
+    let Some(package_clause) = root
+        .named_children(&mut cursor)
+        .find(|node| node.kind() == "package_clause")
+    else {
+        return Ok(None);
+    };
+    let Some(name) = package_clause.named_child(0) else {
+        return Ok(None);
+    };
+    if name.kind() != "package_identifier" {
+        return Ok(None);
+    }
+    let name = node_text(name, source)?.trim();
+    Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
 pub(crate) fn go_local_package_imports(
@@ -283,6 +362,37 @@ mod tests {
                 normalize_absolute_path(&second).unwrap(),
             ]
             .into()
+        );
+    }
+
+    #[test]
+    fn includes_unambiguous_same_package_production_sources_as_dependencies() {
+        let root = temporary_dir();
+        let caller = root.join("caller.go");
+        let helper = root.join("helper.go");
+        let other_package = root.join("external.go");
+        let test_source = root.join("helper_test.go");
+        let source = "package metrics\nfunc Caller() int { return Helper() }\n";
+        fs::write(&caller, source).unwrap();
+        fs::write(&helper, "package metrics\nfunc Helper() int { return 1 }\n").unwrap();
+        fs::write(
+            &other_package,
+            "package metrics_test\nfunc External() int { return 0 }\n",
+        )
+        .unwrap();
+        fs::write(
+            &test_source,
+            "package metrics_test\nfunc TestHelper() int { return 0 }\n",
+        )
+        .unwrap();
+
+        let document = parse_document(&caller, source).unwrap();
+        let dependencies =
+            go_local_package_dependency_paths(&caller, document.tree.root_node(), source).unwrap();
+
+        assert_eq!(
+            dependencies,
+            [normalize_absolute_path(&helper).unwrap()].into()
         );
     }
 

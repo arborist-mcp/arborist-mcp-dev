@@ -17,6 +17,7 @@ pub(in crate::symbol_dependency) struct GoImportBinding {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct GoImportContext {
+    package_name: Option<String>,
     bindings: BTreeMap<String, GoImportBinding>,
 }
 
@@ -55,6 +56,7 @@ fn go_import_context_for_file_with_overrides_and_deadline(
         return Ok(GoImportContext::default());
     }
 
+    let package_name = go_package_name(root, &source)?;
     let mut bindings = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
     for import in go_local_package_imports(path, root, &source)? {
@@ -89,7 +91,22 @@ fn go_import_context_for_file_with_overrides_and_deadline(
         }
     }
 
-    Ok(GoImportContext { bindings })
+    Ok(GoImportContext {
+        package_name,
+        bindings,
+    })
+}
+
+pub(in crate::symbol_dependency) fn go_package_name_for_source_file(
+    file_path: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    Ok(
+        go_import_context_from_cache(file_path, file_overrides, contexts_by_file, deadline)?
+            .package_name,
+    )
 }
 
 pub(in crate::symbol_dependency) fn resolve_go_import_binding_for_reference(

@@ -16,7 +16,9 @@ use super::super::csharp::{
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
 };
-use super::super::go::{GoImportContext, resolve_go_import_binding_for_reference};
+use super::super::go::{
+    GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
+};
 use super::super::java::{
     JavaImportBinding, JavaImportContext, resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
@@ -41,7 +43,7 @@ use super::type_alias::{
     cpp_constructor_path, cpp_type_alias_member_candidates, cpp_type_alias_target_indexes,
     is_cpp_constructible_type,
 };
-use crate::language::detect_language;
+use crate::language::{detect_language, normalize_path};
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
 use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails, RustImportRoot};
@@ -299,7 +301,18 @@ fn resolve_reference_path_with_deadline<'a>(
             .copied()
             .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
             .collect::<Vec<_>>();
-        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
+        if candidates.len() == 1 {
+            return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+        }
+        return resolve_go_same_package_function_reference(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            name_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        );
     }
     if language_id == Some(LanguageId::Rust) {
         let candidates = if matches!(rust_import_root, None | Some(RustImportRoot::SelfModule)) {
@@ -1251,6 +1264,77 @@ fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
         symbol.node_kind.as_str(),
         "class_declaration" | "record_declaration"
     )
+}
+
+fn resolve_go_same_package_function_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    name_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if reference_name.is_empty() || reference_name.contains('.') {
+        return Ok(None);
+    }
+    let Some(caller_package_name) = go_package_name_for_source_file(
+        &source_symbol.file_path,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(caller_directory) = Path::new(&source_symbol.file_path)
+        .parent()
+        .map(normalize_path)
+    else {
+        return Ok(None);
+    };
+
+    let mut candidates = Vec::new();
+    for index in name_index
+        .get(reference_name)
+        .into_iter()
+        .flatten()
+        .copied()
+    {
+        let candidate = &raw_symbols[index];
+        if candidate.node_kind != "function_declaration"
+            || candidate.semantic_path != reference_name
+            || !is_production_go_source_file(&candidate.file_path)
+            || Path::new(&candidate.file_path)
+                .parent()
+                .map(normalize_path)
+                .as_deref()
+                != Some(caller_directory.as_str())
+        {
+            continue;
+        }
+        let Some(candidate_package_name) = go_package_name_for_source_file(
+            &candidate.file_path,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if candidate_package_name == caller_package_name {
+            candidates.push(index);
+        }
+    }
+
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn is_production_go_source_file(file_path: &str) -> bool {
+    !Path::new(file_path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with("_test"))
 }
 
 fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<String> {
