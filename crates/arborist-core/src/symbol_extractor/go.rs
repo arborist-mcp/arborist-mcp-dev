@@ -93,6 +93,7 @@ struct GoDirectCallContext<'a> {
     local_functions: &'a BTreeMap<String, String>,
     bindings: &'a BTreeSet<String>,
     method_receiver: Option<&'a GoMethodReceiver>,
+    parameter_types: &'a BTreeMap<String, String>,
     body_bindings: &'a BTreeSet<String>,
 }
 
@@ -112,18 +113,17 @@ fn collect_direct_local_calls(
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
     let method_receiver = go_method_receiver_binding(symbol_node, source)?;
+    let parameter_types = go_named_parameter_types(symbol_node, source)?;
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
     let mut body_bindings = BTreeSet::new();
-    if let Some(parameters) = symbol_node.child_by_field_name("parameters") {
-        collect_parameter_bindings(parameters, source, &mut body_bindings)?;
-    }
     collect_body_bindings(body, source, &mut body_bindings)?;
     let context = GoDirectCallContext {
         local_functions: &local_functions,
         bindings: &bindings,
         method_receiver: method_receiver.as_ref(),
+        parameter_types: &parameter_types,
         body_bindings: &body_bindings,
     };
     let mut references = BTreeSet::new();
@@ -165,6 +165,67 @@ fn go_method_receiver_binding(
         name: receiver_name.to_string(),
         type_name: type_name.to_string(),
     }))
+}
+
+fn go_named_parameter_types(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let Some(parameters) = symbol_node.child_by_field_name("parameters") else {
+        return Ok(BTreeMap::new());
+    };
+    let mut parameter_types = BTreeMap::new();
+    let mut ambiguous_names = BTreeSet::new();
+    let mut cursor = parameters.walk();
+    for parameter in parameters.named_children(&mut cursor) {
+        if parameter.kind() != "parameter_declaration" {
+            continue;
+        }
+        let Some(type_node) = parameter.child_by_field_name("type") else {
+            continue;
+        };
+        let Some(type_name) = go_named_local_type(type_node, source)? else {
+            continue;
+        };
+        let mut name_cursor = parameter.walk();
+        for name in parameter.children_by_field_name("name", &mut name_cursor) {
+            let name = node_text(name, source)?.trim();
+            if name.is_empty() || name == "_" {
+                continue;
+            }
+            if parameter_types
+                .insert(name.to_string(), type_name.clone())
+                .is_some()
+            {
+                ambiguous_names.insert(name.to_string());
+            }
+        }
+    }
+    parameter_types.retain(|name, _| !ambiguous_names.contains(name));
+    Ok(parameter_types)
+}
+
+fn go_named_local_type(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    match node.kind() {
+        "type_identifier" => node_text(node, source)
+            .map(str::trim)
+            .map(str::to_string)
+            .map(Some),
+        "generic_type" => node
+            .child_by_field_name("type")
+            .map(|inner| go_named_local_type(inner, source))
+            .transpose()
+            .map(Option::flatten),
+        "pointer_type" | "parenthesized_type" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .next()
+                .map(|inner| go_named_local_type(inner, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn source_file_function_paths(
@@ -354,9 +415,14 @@ fn go_direct_method_reference(
             .transpose()?
     } else if operand.kind() == "identifier" {
         let receiver_name = node_text(operand, source)?.trim();
-        context.method_receiver.and_then(|receiver| {
+        let receiver_type = context.method_receiver.and_then(|receiver| {
             (receiver_name == receiver.name && !context.body_bindings.contains(receiver_name))
                 .then(|| receiver.type_name.clone())
+        });
+        receiver_type.or_else(|| {
+            (!context.body_bindings.contains(receiver_name))
+                .then(|| context.parameter_types.get(receiver_name).cloned())
+                .flatten()
         })
     } else {
         None
@@ -447,6 +513,14 @@ func shadowed_selector() int {
 func literal_method() int { return Counter{}.Value() }
 func (Counter) Value() int { return 3 }
 func (Other) Value() int { return 4 }
+func parameter_call(counter Counter) int { return counter.Value() }
+func shadowed_parameter_method(counter Counter) int {
+    if true {
+        counter := Other{}
+        return counter.Value()
+    }
+    return 0
+}
 func (counter *Counter) receiver_call() int { return counter.Value() }
 func (counter *Counter) shadowed_receiver() int {
     if true {
@@ -481,6 +555,8 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "literal_method",
                 "Counter::Value",
                 "Other::Value",
+                "parameter_call",
+                "shadowed_parameter_method",
                 "Counter::receiver_call",
                 "Counter::shadowed_receiver",
                 "Counter::Increment",
@@ -502,6 +578,22 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert_eq!(caller.references_by_name, ["helper".to_string()].into());
             assert_eq!(caller.reference_facts.len(), 1);
         }
+        let parameter_call = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "parameter_call")
+            .unwrap();
+        assert_eq!(
+            parameter_call.references_by_name,
+            ["Counter::Value".to_string()].into()
+        );
+        assert_eq!(parameter_call.reference_facts.len(), 1);
+        let shadowed_parameter_method = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "shadowed_parameter_method")
+            .unwrap();
+        assert!(shadowed_parameter_method.references_by_name.is_empty());
+        assert!(shadowed_parameter_method.reference_facts.is_empty());
+
         let receiver_call = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "Counter::receiver_call")

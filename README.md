@@ -63,7 +63,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   functions declared in the same source file or in one matching production source in the same directory and
   package, plus unambiguous direct calls through local package imports using an explicit alias or the imported
   package's declared name, and calls through a named composite literal such as `Counter{}.Value()` to one matching
-  production method in the same local package, or through the caller method's own unshadowed named receiver. Same-package production sources refresh conservatively as a group. Module-root imports, external modules,
+  production method in the same local package, or through an unshadowed named local receiver or local-type parameter. Same-package production sources refresh conservatively as a group. Module-root imports, external modules,
   `replace`, `go.work`, vendoring, build tags, general cross-file/package/import resolution, other method dispatch,
   and patching remain unavailable or capability-gated.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
@@ -570,7 +570,7 @@ for response shapes, error behavior, and examples.
   change. It traces unshadowed bare direct calls to top-level functions declared in the same source
   file or in one matching production source in the same directory and package, plus unambiguous direct calls
   through local package imports using an explicit alias or the imported package's declared name, and calls through a
-  named composite literal such as `Counter{}.Value()` to one matching production method in the same local package, or through the caller method's own unshadowed named receiver. Same-package production sources refresh conservatively as a group. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags,
+  named composite literal such as `Counter{}.Value()` to one matching production method in the same local package, or through an unshadowed named local receiver or local-type parameter. Same-package production sources refresh conservatively as a group. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags,
   general cross-file/package/import resolution, and other method dispatch remain unavailable; patching remains
   capability-gated.
 - C# Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
