@@ -243,7 +243,7 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
     assert_eq!(descriptor.extensions, &["java"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "java-outer-superclass-trace-v15"
+        "java-imported-outer-superclass-trace-v16"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
