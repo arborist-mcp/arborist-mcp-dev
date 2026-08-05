@@ -2404,8 +2404,10 @@ fn resolve_java_same_package_static_method_reference(
         .flatten()
         .copied()
         .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "class_declaration"
+            matches!(
+                raw_symbols[*index].node_kind.as_str(),
+                "class_declaration" | "interface_declaration"
+            )
         })
         .collect::<Vec<_>>();
     if type_candidates.len() != 1 {

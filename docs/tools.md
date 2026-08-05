@@ -93,7 +93,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   interfaces, enums, annotation types, methods, and constructors use package-qualified paths. It
   traces an explicit `this(...)` constructor initializer only when one same-type, same-file, non-varargs constructor has the call arity; a direct local-source `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor has the call arity; plus unqualified and `this.method()` calls only when one same-type, same-file, non-varargs method has the call arity; `Type.method()` through a unique explicit non-static local type import
   with an unshadowed type name; and a bare call through a unique explicit local static-method import
-  only when no same-type method has that name. It also traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
+  only when no same-type method has that name. It also traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
   non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
   unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
   declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous

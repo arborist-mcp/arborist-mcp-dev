@@ -67,6 +67,57 @@ fn refreshes_java_explicit_static_import_dependents() {
 }
 
 #[test]
+fn refreshes_java_same_package_static_interface_callers() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller = source_dir.join("Main.java");
+    let interface = source_dir.join("Tools.java");
+    let unrelated = source_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller,
+        "package com.example; class Main { int caller() { return Tools.utility(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &interface,
+        "package com.example; interface Tools { int utility(int value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package com.example; class Unrelated {}
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let target = "com::example::Tools::utility";
+    let before = trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(before.callers.is_empty());
+
+    fs::write(
+        &interface,
+        "package com.example; interface Tools { static int utility(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &interface).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 2);
+
+    let after = trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::example::Main::caller");
+}
+
+#[test]
 fn refreshes_java_same_package_static_type_callers() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");
