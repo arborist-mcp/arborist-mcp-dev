@@ -3626,6 +3626,80 @@ fn traces_go_same_file_direct_composite_literal_method_calls() {
 }
 
 #[test]
+fn traces_go_same_package_direct_composite_literal_method_calls_across_source_files() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("counter.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\ntype Counter struct{}\nfunc caller() int { return Counter{}.Value() }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, "Counter::Value");
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, "Counter::Value");
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn traces_go_same_package_composite_literal_method_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("counter.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\nfunc caller() int { return Counter{}.Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Counter::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_local_package_imported_function_calls_in_live_and_persisted_indexes() {
     let dir = temporary_dir();
     let caller_path = dir.join("cmd").join("main.go");

@@ -53,8 +53,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   matching production sources in one local package also refresh conservatively together. It traces unshadowed
   bare direct calls to top-level functions declared in the same source file or in one matching production
   source in the same directory and package, plus unambiguous direct calls through local package imports using
-  an explicit alias or the imported package's declared name, and same-file calls through a named composite literal
-  such as `Counter{}.Value()`. Module-root imports, external modules, `replace`, `go.work`, vendoring, build tags,
+  an explicit alias or the imported package's declared name, and calls through a named composite literal such as
+  `Counter{}.Value()` to one matching production method in the same local package. Module-root imports, external
+  modules, `replace`, `go.work`, vendoring, build tags,
   general cross-file/package/import resolution, and other method dispatch remain unavailable; patch operations return
   explicit unsupported-operation errors.
 - C#: `.cs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

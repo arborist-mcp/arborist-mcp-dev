@@ -50,6 +50,12 @@ use crate::symbol_index_model::{IndexedSymbol, ReferenceLanguageDetails, RustImp
 use crate::symbol_reference_compat::effective_reference_facts;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
+struct GoSamePackageReferenceTarget<'a> {
+    reference_name: &'a str,
+    node_kind: &'a str,
+    candidate_indexes: &'a [usize],
+}
+
 #[derive(Clone, Copy)]
 struct CSharpCandidateRequirements {
     node_kind: &'static str,
@@ -303,6 +309,17 @@ fn resolve_reference_path_with_deadline<'a>(
             .collect::<Vec<_>>();
         if candidates.len() == 1 {
             return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+        }
+        if reference_name.contains("::") {
+            return resolve_go_same_package_method_reference(
+                source_symbol,
+                reference_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            );
         }
         return resolve_go_same_package_function_reference(
             source_symbol,
@@ -1275,9 +1292,69 @@ fn resolve_go_same_package_function_reference(
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    if reference_name.is_empty() || reference_name.contains('.') {
+    if reference_name.is_empty() || reference_name.contains(['.', ':']) {
         return Ok(None);
     }
+    let candidate_indexes = name_index.get(reference_name).cloned().unwrap_or_default();
+    resolve_go_same_package_reference(
+        source_symbol,
+        GoSamePackageReferenceTarget {
+            reference_name,
+            node_kind: "function_declaration",
+            candidate_indexes: &candidate_indexes,
+        },
+        raw_symbols,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn resolve_go_same_package_method_reference(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((receiver_type, method_name)) = reference_name.split_once("::") else {
+        return Ok(None);
+    };
+    if receiver_type.is_empty()
+        || method_name.is_empty()
+        || receiver_type.contains(':')
+        || method_name.contains(':')
+    {
+        return Ok(None);
+    }
+    let candidate_indexes = semantic_path_index
+        .get(reference_name)
+        .cloned()
+        .unwrap_or_default();
+    resolve_go_same_package_reference(
+        source_symbol,
+        GoSamePackageReferenceTarget {
+            reference_name,
+            node_kind: "method_declaration",
+            candidate_indexes: &candidate_indexes,
+        },
+        raw_symbols,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn resolve_go_same_package_reference(
+    source_symbol: &IndexedSymbol,
+    target: GoSamePackageReferenceTarget<'_>,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
     let Some(caller_package_name) = go_package_name_for_source_file(
         &source_symbol.file_path,
         file_overrides,
@@ -1295,15 +1372,10 @@ fn resolve_go_same_package_function_reference(
     };
 
     let mut candidates = Vec::new();
-    for index in name_index
-        .get(reference_name)
-        .into_iter()
-        .flatten()
-        .copied()
-    {
-        let candidate = &raw_symbols[index];
-        if candidate.node_kind != "function_declaration"
-            || candidate.semantic_path != reference_name
+    for index in target.candidate_indexes {
+        let candidate = &raw_symbols[*index];
+        if candidate.node_kind != target.node_kind
+            || candidate.semantic_path != target.reference_name
             || !is_production_go_source_file(&candidate.file_path)
             || Path::new(&candidate.file_path)
                 .parent()
@@ -1323,7 +1395,7 @@ fn resolve_go_same_package_function_reference(
             continue;
         };
         if candidate_package_name == caller_package_name {
-            candidates.push(index);
+            candidates.push(*index);
         }
     }
 
