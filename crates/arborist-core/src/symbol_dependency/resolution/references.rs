@@ -1406,23 +1406,36 @@ fn resolve_go_type_assertion_reference(
     {
         return Ok(None);
     }
-    if !matches!(
-        go_named_type_declaration_status(
-            source_symbol,
-            receiver_type,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            go_import_contexts_by_file,
-            deadline,
-        )?,
-        GoNamedTypeDeclaration::Unique
-    ) {
-        return Ok(None);
-    }
+    let target_type = match go_named_type_declaration_status(
+        source_symbol,
+        receiver_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        go_import_contexts_by_file,
+        deadline,
+    )? {
+        GoNamedTypeDeclaration::Unique => receiver_type.to_string(),
+        GoNamedTypeDeclaration::Absent => {
+            let Some(target_type) = go_same_package_simple_type_alias_terminal_target(
+                source_symbol,
+                receiver_type,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                go_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            target_type
+        }
+        GoNamedTypeDeclaration::Ambiguous => return Ok(None),
+    };
     resolve_go_same_package_method_reference(
         source_symbol,
-        reference_name,
+        &format!("{target_type}::{method_name}"),
         raw_symbols,
         semantic_path_index,
         file_overrides,
