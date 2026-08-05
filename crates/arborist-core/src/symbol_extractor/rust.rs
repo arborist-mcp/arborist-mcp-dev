@@ -279,7 +279,10 @@ fn collect_rust_function_import_bindings(
 }
 
 fn rust_import_path_components(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
-    if !matches!(node.kind(), "crate" | "identifier" | "scoped_identifier") {
+    if !matches!(
+        node.kind(),
+        "crate" | "self" | "identifier" | "scoped_identifier"
+    ) {
         return Ok(None);
     }
     let spelling = node_text(node, source)?.trim();
@@ -298,7 +301,7 @@ fn rust_join_import_path_components(prefix: &[String], path: &[String]) -> Optio
     if prefix.is_empty() {
         return Some(path.to_vec());
     }
-    (!matches!(path.first().map(String::as_str), Some("crate")))
+    (!matches!(path.first().map(String::as_str), Some("crate" | "self")))
         .then(|| prefix.iter().chain(path).cloned().collect::<Vec<String>>())
 }
 
@@ -308,9 +311,10 @@ fn rust_function_import_binding(
 ) -> Option<(String, String)> {
     if local_name.is_empty()
         || target_components.len() < 3
-        || target_components
-            .first()
-            .is_none_or(|component| component != "crate")
+        || !matches!(
+            target_components.first().map(String::as_str),
+            Some("crate" | "self")
+        )
         || target_components
             .iter()
             .any(|component| component.is_empty())
@@ -710,6 +714,34 @@ fn alias_caller() { aliased_helper(); }
             assert_eq!(
                 caller.references_by_name,
                 ["api::helper".to_string()].into()
+            );
+        }
+    }
+
+    #[test]
+    fn indexes_unshadowed_direct_calls_to_self_function_imports() {
+        let source = r#"
+mod nested;
+use self::nested::value;
+use self::{nested::value as grouped_value};
+
+fn caller() { value(); }
+fn grouped_caller() { grouped_value(); }
+"#;
+        let path = Path::new("src/api/mod.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for caller_path in ["caller", "grouped_caller"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(
+                caller.references_by_name,
+                ["nested::value".to_string()].into()
             );
         }
     }
