@@ -1478,6 +1478,63 @@ fn traces_java_same_package_simple_superclasses_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_java_qualified_simple_superclasses_across_files() {
+    let dir = temporary_dir();
+    let base_dir = dir.join("src").join("com").join("base");
+    let child_dir = dir.join("src").join("com").join("child");
+    let base_path = base_dir.join("Base.java");
+    let child_path = child_dir.join("Child.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&child_dir).unwrap();
+    fs::write(
+        &base_path,
+        "package com.base; class Base { Base() {} int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.child; class Child extends com.base.Base { Child() { super(); } int caller() { return super.helper(); } }
+",
+    )
+    .unwrap();
+
+    let constructor_live =
+        trace_symbol_graph(&dir, "com::base::Base::Base", TraceDirection::Callers).unwrap();
+    assert_eq!(constructor_live.callers.len(), 1);
+    assert_eq!(
+        constructor_live.callers[0].symbol_id,
+        "com::child::Child::Child"
+    );
+    let helper_live =
+        trace_symbol_graph(&dir, "com::base::Base::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 1);
+    assert_eq!(
+        helper_live.callers[0].symbol_id,
+        "com::child::Child::caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let constructor_persisted =
+        trace_symbol_graph_from_index(&db_path, "com::base::Base::Base", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(constructor_persisted.callers.len(), 1);
+    assert_eq!(
+        constructor_persisted.callers[0].symbol_id,
+        "com::child::Child::Child"
+    );
+    let helper_persisted =
+        trace_symbol_graph_from_index(&db_path, "com::base::Base::helper", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 1);
+    assert_eq!(
+        helper_persisted.callers[0].symbol_id,
+        "com::child::Child::caller"
+    );
+}
+
+#[test]
 fn traces_java_explicit_local_import_simple_superclasses_across_files() {
     let dir = temporary_dir();
     let base_dir = dir.join("src").join("com").join("base");
@@ -1532,6 +1589,55 @@ fn traces_java_explicit_local_import_simple_superclasses_across_files() {
         helper_persisted.callers[0].symbol_id,
         "com::child::Child::caller"
     );
+}
+
+#[test]
+fn traces_java_qualified_simple_superclasses_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let base_dir = dir.join("src").join("com").join("base");
+    let child_dir = dir.join("src").join("com").join("child");
+    let base_path = base_dir.join("Base.java");
+    let child_path = child_dir.join("Child.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&child_dir).unwrap();
+    fs::write(
+        &base_path,
+        "package com.base; class Base { Base() {} int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.child; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.child; class Child extends com.base.Base { Child() { super(); } int caller() { return helper(); } }
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &child_path,
+        overlay,
+        "com::base::Base::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::child::Child::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &child_path,
+        overlay,
+        "com::base::Base::Base",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::child::Child::Child");
 }
 
 #[test]

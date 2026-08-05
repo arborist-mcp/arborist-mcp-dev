@@ -44,7 +44,10 @@ use super::type_alias::{
     cpp_constructor_path, cpp_type_alias_member_candidates, cpp_type_alias_target_indexes,
     is_cpp_constructible_type,
 };
-use crate::language::{detect_language, node_text, normalize_path, parse_document, read_source};
+use crate::language::{
+    JavaDirectSuperclassReference, detect_language, java_direct_superclass_reference,
+    normalize_path, parse_document, read_source,
+};
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
 use crate::symbol_index_model::{
@@ -2360,54 +2363,70 @@ fn resolve_java_same_package_static_method_reference(
     clippy::too_many_arguments,
     reason = "keeps Java superclass resolution inputs explicit"
 )]
-fn resolve_java_simple_superclass_target_path(
+fn resolve_java_direct_superclass_target_path(
     source_file_path: &str,
     enclosing_scope_path: Option<&str>,
-    superclass_name: &str,
+    superclass_reference: &JavaDirectSuperclassReference,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let local_path = enclosing_scope_path.map_or_else(
-        || superclass_name.to_string(),
-        |scope_path| format!("{scope_path}::{superclass_name}"),
-    );
-    let local_candidates = semantic_path_index
-        .get(&local_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
-        .collect::<Vec<_>>();
-    match local_candidates.as_slice() {
-        [_] => return Ok(Some(local_path)),
-        [] => {}
-        _ => return Ok(None),
-    }
+    match superclass_reference {
+        JavaDirectSuperclassReference::Simple(superclass_name) => {
+            let local_path = enclosing_scope_path.map_or_else(
+                || superclass_name.to_string(),
+                |scope_path| format!("{scope_path}::{superclass_name}"),
+            );
+            let local_candidates = semantic_path_index
+                .get(&local_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+                .collect::<Vec<_>>();
+            match local_candidates.as_slice() {
+                [_] => return Ok(Some(local_path)),
+                [] => {}
+                _ => return Ok(None),
+            }
 
-    let Some(binding) = resolve_java_type_import_binding_for_name(
-        source_file_path,
-        superclass_name,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    let candidates = semantic_path_index
-        .get(&binding.semantic_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.file_path == binding.source_path && candidate.node_kind == "class_declaration"
-        })
-        .collect::<Vec<_>>();
-    Ok((candidates.len() == 1).then_some(binding.semantic_path))
+            let Some(binding) = resolve_java_type_import_binding_for_name(
+                source_file_path,
+                superclass_name,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            let candidates = semantic_path_index
+                .get(&binding.semantic_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.file_path == binding.source_path
+                        && candidate.node_kind == "class_declaration"
+                })
+                .collect::<Vec<_>>();
+            Ok((candidates.len() == 1).then_some(binding.semantic_path))
+        }
+        JavaDirectSuperclassReference::Qualified(qualified_name) => {
+            let semantic_path = qualified_name.replace('.', "::");
+            let candidates = semantic_path_index
+                .get(&semantic_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+                .collect::<Vec<_>>();
+            Ok((candidates.len() == 1).then_some(semantic_path))
+        }
+    }
 }
 
 fn java_simple_superclass_path(
@@ -2430,7 +2449,7 @@ fn java_simple_superclass_path(
         .unwrap_or_else(|| read_source(path))?;
     let document = parse_document(path, &source)?;
     let mut stack = vec![document.tree.root_node()];
-    let mut superclass_name = None;
+    let mut superclass_reference = None;
     while let Some(node) = stack.pop() {
         if let Some(deadline) = deadline {
             deadline.check("locating Java superclass")?;
@@ -2444,14 +2463,7 @@ fn java_simple_superclass_path(
                     let Some(superclass) = candidate.child_by_field_name("superclass") else {
                         return Ok(None);
                     };
-                    let Some(type_node) = superclass.named_child(0) else {
-                        return Ok(None);
-                    };
-                    if type_node.kind() != "type_identifier" {
-                        return Ok(None);
-                    }
-                    let name = node_text(type_node, &source)?.trim().to_string();
-                    superclass_name = (!name.is_empty()).then_some(name);
+                    superclass_reference = java_direct_superclass_reference(superclass, &source)?;
                     break;
                 }
                 ancestor = candidate.parent();
@@ -2461,14 +2473,14 @@ fn java_simple_superclass_path(
         let mut cursor = node.walk();
         stack.extend(node.named_children(&mut cursor));
     }
-    let Some(superclass_name) = superclass_name else {
+    let Some(superclass_reference) = superclass_reference else {
         return Ok(None);
     };
     let enclosing_scope_path = scope_path.rsplit_once("::").map(|(parent, _)| parent);
-    resolve_java_simple_superclass_target_path(
+    resolve_java_direct_superclass_target_path(
         &source_symbol.file_path,
         enclosing_scope_path,
-        &superclass_name,
+        &superclass_reference,
         raw_symbols,
         semantic_path_index,
         file_overrides,
@@ -2496,7 +2508,7 @@ fn java_simple_superclass_path_for_class(
         .unwrap_or_else(|| read_source(path))?;
     let document = parse_document(path, &source)?;
     let mut stack = vec![document.tree.root_node()];
-    let mut superclass_name = None;
+    let mut superclass_reference = None;
     while let Some(node) = stack.pop() {
         if let Some(deadline) = deadline {
             deadline.check("locating Java superclass")?;
@@ -2507,26 +2519,19 @@ fn java_simple_superclass_path_for_class(
             let Some(superclass) = node.child_by_field_name("superclass") else {
                 return Ok(None);
             };
-            let Some(type_node) = superclass.named_child(0) else {
-                return Ok(None);
-            };
-            if type_node.kind() != "type_identifier" {
-                return Ok(None);
-            }
-            let name = node_text(type_node, &source)?.trim().to_string();
-            superclass_name = (!name.is_empty()).then_some(name);
+            superclass_reference = java_direct_superclass_reference(superclass, &source)?;
             break;
         }
         let mut cursor = node.walk();
         stack.extend(node.named_children(&mut cursor));
     }
-    let Some(superclass_name) = superclass_name else {
+    let Some(superclass_reference) = superclass_reference else {
         return Ok(None);
     };
-    resolve_java_simple_superclass_target_path(
+    resolve_java_direct_superclass_target_path(
         &source_class.file_path,
         source_class.scope_path.as_deref(),
-        &superclass_name,
+        &superclass_reference,
         raw_symbols,
         semantic_path_index,
         file_overrides,

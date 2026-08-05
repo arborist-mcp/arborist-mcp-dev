@@ -21,6 +21,12 @@ pub(crate) struct JavaLocalStaticMemberImport {
     pub(crate) source_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum JavaDirectSuperclassReference {
+    Simple(String),
+    Qualified(String),
+}
+
 pub(crate) fn java_local_file_dependency_paths(
     path: &Path,
     root: Node<'_>,
@@ -57,21 +63,22 @@ fn java_local_simple_superclass_dependency_paths(
         let Some(superclass) = declaration.child_by_field_name("superclass") else {
             continue;
         };
-        let Some(type_node) = superclass.named_child(0) else {
+        let Some(superclass_reference) = java_direct_superclass_reference(superclass, source)?
+        else {
             continue;
         };
-        if type_node.kind() != "type_identifier" {
-            continue;
-        }
-        let superclass_name = node_text(type_node, source)?.trim();
-        if superclass_name.is_empty() {
-            continue;
-        }
-        let source_path = if let Some(package_name) = package_name.as_deref() {
-            let import_path = format!("{package_name}.{superclass_name}");
-            resolve_unique_java_source_path(path, &import_path)
-        } else {
-            resolve_unique_java_default_package_source_path(path, superclass_name)
+        let source_path = match superclass_reference {
+            JavaDirectSuperclassReference::Simple(superclass_name) => {
+                if let Some(package_name) = package_name.as_deref() {
+                    let import_path = format!("{package_name}.{superclass_name}");
+                    resolve_unique_java_source_path(path, &import_path)
+                } else {
+                    resolve_unique_java_default_package_source_path(path, &superclass_name)
+                }
+            }
+            JavaDirectSuperclassReference::Qualified(qualified_name) => {
+                resolve_unique_java_source_path(path, &qualified_name)
+            }
         };
         if let Some(source_path) = source_path
             && source_path != normalized_path
@@ -80,6 +87,26 @@ fn java_local_simple_superclass_dependency_paths(
         }
     }
     Ok(dependencies)
+}
+
+pub(crate) fn java_direct_superclass_reference(
+    superclass: Node<'_>,
+    source: &str,
+) -> Result<Option<JavaDirectSuperclassReference>> {
+    let Some(type_node) = superclass.named_child(0) else {
+        return Ok(None);
+    };
+    let reference = node_text(type_node, source)?.trim().to_string();
+    if reference.is_empty() {
+        return Ok(None);
+    }
+    match type_node.kind() {
+        "type_identifier" => Ok(Some(JavaDirectSuperclassReference::Simple(reference))),
+        "scoped_type_identifier" if is_safe_java_qualified_name(&reference) => {
+            Ok(Some(JavaDirectSuperclassReference::Qualified(reference)))
+        }
+        _ => Ok(None),
+    }
 }
 
 pub(crate) fn java_local_explicit_type_imports(
@@ -413,6 +440,43 @@ mod tests {
         fs::write(
             &unrelated_path,
             "package com.example; class Unrelated {}
+",
+        )
+        .unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [base_path].into_iter().collect());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_qualified_simple_superclasses_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/child/Child.java");
+        let base_path = root.join("src/com/base/Base.java");
+        let holder_path = root.join("src/com/base/Holder.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(base_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.child; class Child extends com.base.Base {} class Generic extends com.base.Holder<String> {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &base_path,
+            "package com.base; class Base {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &holder_path,
+            "package com.base; class Holder<T> {}
 ",
         )
         .unwrap();

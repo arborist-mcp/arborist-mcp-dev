@@ -93,17 +93,17 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports, single-member `import static`
-  imports, and simple direct superclass links whose base resolves from the same package or a unique explicit local type import and whose owning type resolves to a local
+  imports, and direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type resolves to a local
   `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors are indexed by package-qualified
-  paths. It traces an explicit `this(...)` constructor initializer to a single same-type, same-file, non-varargs constructor with a unique arity match; a simple local same-package `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity; plus unqualified and `this.method()` calls to a single same-type, same-file, non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
+  paths. It traces an explicit `this(...)` constructor initializer to a single same-type, same-file, non-varargs constructor with a unique arity match; a direct local-source `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity; plus unqualified and `this.method()` calls to a single same-type, same-file, non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
   non-static local type import when the type name is unshadowed; and bare calls through a unique
   explicit local static-method import when no same-type method has that name. It also traces a
   `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
   non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
   unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
-  declaration also walk a unique local-source chain of simple direct base classes, resolved from the same package or a unique explicit local type import; cycles, ambiguous
-  classes, generic or qualified bases, and nearer nonmatching declarations fail closed. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
+  declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous
+  classes, generic bases, and nearer nonmatching declarations fail closed. Qualified spellings must map to one indexed local `class_declaration`; cross-file nested/outer-type qualification is not independently proven. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
   field/type imports, missing or ambiguous imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call
   selection, and patch operations remain capability-gated.
 
@@ -593,8 +593,8 @@ for response shapes, error behavior, and examples.
   patching remain capability-gated pending dedicated C# adapter slices.
 - Java Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative refresh for explicit local type imports, single-member `import static` imports, and
-  simple direct superclass links whose base resolves from the same package or a unique explicit local type import and whose owning type maps to a local `.java` file under
-  an ancestor source root. It traces an explicit `this(...)` constructor initializer when one same-type, same-file, non-varargs constructor matches the call arity; a simple local same-package `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor matches the call arity; plus unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches the call arity; `Type.method()` through a unique explicit non-static local type import with an
+  direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type maps to a local `.java` file under
+  an ancestor source root. It traces an explicit `this(...)` constructor initializer when one same-type, same-file, non-varargs constructor matches the call arity; a direct local-source `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor matches the call arity; plus unqualified and `this.method()` calls when one same-type, same-file, non-varargs method matches the call arity; `Type.method()` through a unique explicit non-static local type import with an
   unshadowed type name; and a bare call through a unique explicit local static-method import only
   when no same-type method has that name. It also traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
   non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
@@ -626,8 +626,8 @@ same-file bare plus unambiguous local-package imported-function direct-call grap
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for explicit local type imports, single-member `import static` imports, and
-simple direct superclass links whose base resolves from the same package or a unique explicit local type import and whose owning type maps to a local `.java` file under
-an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus a simple local same-package `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
+direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type maps to a local `.java` file under
+an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus a direct local-source `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
 unique explicit local static-method imports only when no same-type method has that name. It also
 traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
