@@ -5048,6 +5048,104 @@ class AbstractMain implements Abstracts { int caller() { return helper(1); } }
 }
 
 #[test]
+fn traces_java_unique_default_interface_inheritance_chains_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let child_path = source_dir.join("Child.java");
+    let root_path = source_dir.join("Root.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example; class Main implements Child { int caller() { return helper(1); } int thisCaller() { return this.helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.example; interface Child extends Root {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &root_path,
+        "package com.example; interface Root { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Root::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_default_interface_inheritance_chains_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Root.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example; interface Root { default int helper(int value) { return value; } } interface Child extends Root {} class Main implements Child { int caller() { return this.helper(1); } }
+";
+    let target = "com::example::Root::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+}
+
+#[test]
 fn traces_java_default_interface_methods_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let source_path = dir.join("Defaults.java");

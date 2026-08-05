@@ -45,8 +45,9 @@ use super::type_alias::{
     is_cpp_constructible_type,
 };
 use crate::language::{
-    JavaDirectSuperclassReference, detect_language, java_direct_interface_references,
-    java_direct_superclass_reference, normalize_path, parse_document, read_source,
+    JavaDirectSuperclassReference, detect_language,
+    java_direct_interface_references_for_declaration, java_direct_superclass_reference,
+    normalize_path, parse_document, read_source,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
@@ -2363,27 +2364,148 @@ fn resolve_java_direct_interface_default_method_reference(
     else {
         return Ok(None);
     };
-    let target_path = format!("{interface_path}::{method_name}");
-    let candidates = semantic_path_index
-        .get(&target_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "method_declaration"
-                && candidate
-                    .signature
-                    .as_deref()
-                    .is_some_and(java_method_signature_is_default)
-                && candidate.parameters.len() == call_arity
-                && !candidate
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.contains("..."))
-        })
-        .collect::<Vec<_>>();
-    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+    resolve_java_default_interface_method_from_type_path(
+        &interface_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java interface inheritance resolution inputs explicit"
+)]
+fn resolve_java_default_interface_method_from_type_path(
+    initial_interface_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut visited_interface_paths = BTreeSet::new();
+    let mut current_interface_path = initial_interface_path.to_string();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Java default interface method")?;
+        }
+        if !visited_interface_paths.insert(current_interface_path.clone()) {
+            return Ok(None);
+        }
+        let target_path = format!("{current_interface_path}::{method_name}");
+        let declared_candidates = semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+            .collect::<Vec<_>>();
+        if !declared_candidates.is_empty() {
+            let candidates = declared_candidates
+                .into_iter()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate
+                        .signature
+                        .as_deref()
+                        .is_some_and(java_method_signature_is_default)
+                        && candidate.parameters.len() == call_arity
+                        && !candidate
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.contains("..."))
+                })
+                .collect::<Vec<_>>();
+            return Ok(
+                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
+        let interface_candidates = semantic_path_index
+            .get(&current_interface_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
+            .collect::<Vec<_>>();
+        let [interface_index] = interface_candidates.as_slice() else {
+            return Ok(None);
+        };
+        let Some(parent_interface_path) = java_unique_direct_parent_interface_path(
+            &raw_symbols[*interface_index],
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        current_interface_path = parent_interface_path;
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java interface inheritance resolution inputs explicit"
+)]
+fn java_unique_direct_parent_interface_path(
+    source_interface: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if source_interface.node_kind != "interface_declaration" {
+        return Ok(None);
+    }
+    let path = Path::new(&source_interface.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    let mut interface_references = None;
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Java parent interface")?;
+        }
+        if node.kind() == "interface_declaration"
+            && (node.start_byte(), node.end_byte()) == source_interface.byte_range
+        {
+            interface_references = java_direct_interface_references_for_declaration(node, &source)?;
+            break;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    let Some(interface_references) = interface_references else {
+        return Ok(None);
+    };
+    let [interface_reference] = interface_references.as_slice() else {
+        return Ok(None);
+    };
+    resolve_java_direct_interface_target_path(
+        &source_interface.file_path,
+        source_interface.scope_path.as_deref(),
+        interface_reference,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
 }
 
 #[allow(
@@ -2424,10 +2546,8 @@ fn java_unique_direct_interface_path(
                     if candidate.child_by_field_name("superclass").is_some() {
                         return Ok(None);
                     }
-                    let Some(interfaces) = candidate.child_by_field_name("interfaces") else {
-                        return Ok(None);
-                    };
-                    interface_references = java_direct_interface_references(interfaces, &source)?;
+                    interface_references =
+                        java_direct_interface_references_for_declaration(candidate, &source)?;
                     break;
                 }
                 ancestor = candidate.parent();

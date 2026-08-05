@@ -243,7 +243,7 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
     assert_eq!(descriptor.extensions, &["java"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "java-default-interface-this-trace-v20"
+        "java-default-interface-inheritance-trace-v21"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,

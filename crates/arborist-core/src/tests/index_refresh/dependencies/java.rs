@@ -169,6 +169,68 @@ fn refreshes_java_same_package_default_interface_callers() {
 }
 
 #[test]
+fn refreshes_java_default_interface_inheritance_dependents() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller = source_dir.join("Main.java");
+    let child = source_dir.join("Child.java");
+    let root = source_dir.join("Root.java");
+    let unrelated = source_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller,
+        "package com.example; class Main implements Child { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child,
+        "package com.example; interface Child extends Root {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &root,
+        "package com.example; interface Root { int helper(int value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package com.example; class Unrelated {}
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let target = "com::example::Root::helper";
+    assert!(
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers)
+            .unwrap()
+            .callers
+            .is_empty()
+    );
+
+    fs::write(
+        &root,
+        "package com.example; interface Root { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &root).unwrap();
+    assert_eq!(stats.indexed_files, 4);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 1);
+
+    let after = trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::example::Main::caller");
+}
+
+#[test]
 fn refreshes_java_same_package_static_type_callers() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");

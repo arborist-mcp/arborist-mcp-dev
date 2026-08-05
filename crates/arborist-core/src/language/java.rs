@@ -95,12 +95,10 @@ fn java_local_direct_interface_dependency_paths(
     let mut cursor = root.walk();
     for declaration in root
         .named_children(&mut cursor)
-        .filter(|node| node.kind() == "class_declaration")
+        .filter(|node| matches!(node.kind(), "class_declaration" | "interface_declaration"))
     {
-        let Some(interfaces) = declaration.child_by_field_name("interfaces") else {
-            continue;
-        };
-        let Some(interface_references) = java_direct_interface_references(interfaces, source)?
+        let Some(interface_references) =
+            java_direct_interface_references_for_declaration(declaration, source)?
         else {
             continue;
         };
@@ -148,6 +146,26 @@ pub(crate) fn java_direct_superclass_reference(
         return Ok(None);
     };
     java_direct_type_reference(type_node, source)
+}
+
+pub(crate) fn java_direct_interface_references_for_declaration(
+    declaration: Node<'_>,
+    source: &str,
+) -> Result<Option<Vec<JavaDirectSuperclassReference>>> {
+    let interfaces = match declaration.kind() {
+        "class_declaration" => declaration.child_by_field_name("interfaces"),
+        "interface_declaration" => {
+            let mut cursor = declaration.walk();
+            declaration
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "extends_interfaces")
+        }
+        _ => None,
+    };
+    let Some(interfaces) = interfaces else {
+        return Ok(None);
+    };
+    java_direct_interface_references(interfaces, source)
 }
 
 pub(crate) fn java_direct_interface_references(
