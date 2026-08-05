@@ -44,7 +44,7 @@ pub use positions::{offset_for_position, point_for_offset, position_from};
 pub use registry::{
     LanguageCapabilities, LanguageDescriptor, LanguageRegistry, builtin_language_registry,
 };
-pub(crate) use rust::rust_local_module_dependency_paths;
+pub(crate) use rust::{rust_direct_module_candidate_paths, rust_local_module_dependency_paths};
 pub use tree::*;
 
 pub(crate) use io::write_source_atomic;

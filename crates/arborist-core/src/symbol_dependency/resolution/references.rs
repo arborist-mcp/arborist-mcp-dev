@@ -24,6 +24,7 @@ use super::super::java::{
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
+use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
     cpp_rvalue_member_candidates, is_cpp_callable,
@@ -108,6 +109,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
@@ -122,6 +124,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         include_contexts_by_file,
         javascript_import_contexts_by_file,
         go_import_contexts_by_file,
+        rust_out_of_line_module_context,
         java_import_contexts_by_file,
         csharp_import_contexts_by_file,
         csharp_global_import_context,
@@ -141,6 +144,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
@@ -194,6 +198,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     include_contexts_by_file,
                     javascript_import_contexts_by_file,
                     go_import_contexts_by_file,
+                    rust_out_of_line_module_context,
                     java_import_contexts_by_file,
                     csharp_import_contexts_by_file,
                     csharp_global_import_context,
@@ -215,6 +220,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             include_contexts_by_file,
             javascript_import_contexts_by_file,
             go_import_contexts_by_file,
+            rust_out_of_line_module_context,
             java_import_contexts_by_file,
             csharp_import_contexts_by_file,
             csharp_global_import_context,
@@ -243,6 +249,7 @@ fn resolve_reference_path_with_deadline<'a>(
     include_contexts_by_file: &mut HashMap<&'a str, Option<CIncludeContext>>,
     javascript_import_contexts_by_file: &mut BTreeMap<String, JavaScriptImportContext>,
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
@@ -293,6 +300,31 @@ fn resolve_reference_path_with_deadline<'a>(
             .flatten()
             .copied()
             .filter(|index| raw_symbols[*index].file_path == source_symbol.file_path)
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            return Ok(Some(raw_symbols[candidates[0]].symbol_id.clone()));
+        }
+
+        let Some((target_file_path, target_semantic_path)) =
+            resolve_rust_out_of_line_module_reference(
+                rust_out_of_line_module_context,
+                &source_symbol.file_path,
+                reference_name,
+            )
+        else {
+            return Ok(None);
+        };
+        let candidates = semantic_path_index
+            .get(&target_semantic_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.file_path == target_file_path
+                    && candidate.node_kind == "function_item"
+                    && candidate.semantic_path == target_semantic_path
+            })
             .collect::<Vec<_>>();
         return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }
@@ -1491,6 +1523,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::resolve_dependencies_for_symbol_with_deadline;
+    use crate::symbol_dependency::rust::RustOutOfLineModuleContext;
     use crate::symbol_index_model::IndexedSymbol;
     use crate::workspace_scan::WorkspaceScanDeadline;
 
@@ -1528,6 +1561,7 @@ mod tests {
             &mut std::collections::HashMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
+            &RustOutOfLineModuleContext::default(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             None,

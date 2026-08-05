@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use tree_sitter::Node;
 
-use crate::language::{node_text, normalize_path};
+use crate::language::{node_text, normalize_path, rust_direct_module_candidate_paths};
 use crate::semantic::rust::{
     is_rust_symbol_node, rust_parameters, rust_return_type, rust_semantic_path, rust_signature,
     rust_symbol_name,
@@ -62,7 +62,7 @@ fn indexed_symbol(
     let scope_path = semantic_path
         .rsplit_once("::")
         .map(|(scope_path, _)| scope_path.to_string());
-    let references_by_name = collect_direct_local_calls(node, source, deadline)?;
+    let references_by_name = collect_direct_local_calls(path, node, source, deadline)?;
     let call_arities_by_name = BTreeMap::new();
 
     Ok(Some(IndexedSymbol {
@@ -85,6 +85,7 @@ fn indexed_symbol(
 }
 
 fn collect_direct_local_calls(
+    path: &Path,
     symbol_node: Node<'_>,
     source: &str,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -97,7 +98,11 @@ fn collect_direct_local_calls(
     };
     let local_functions = local_module_function_paths(symbol_node, source)?.unwrap_or_default();
     let qualified_functions = source_file_module_function_paths(symbol_node, source)?;
-    if local_functions.is_empty() && qualified_functions.is_empty() {
+    let out_of_line_modules = source_file_out_of_line_module_names(path, symbol_node, source)?;
+    if local_functions.is_empty()
+        && qualified_functions.is_empty()
+        && out_of_line_modules.is_empty()
+    {
         return Ok(BTreeSet::new());
     }
 
@@ -108,6 +113,7 @@ fn collect_direct_local_calls(
         deadline,
         local_functions: &local_functions,
         qualified_functions: &qualified_functions,
+        out_of_line_modules: &out_of_line_modules,
         module_components: rust_inline_module_path_components(symbol_node, source)?,
         bindings: &bindings,
     };
@@ -121,8 +127,23 @@ struct RustDirectCallContext<'a> {
     deadline: Option<&'a WorkspaceScanDeadline>,
     local_functions: &'a BTreeMap<String, String>,
     qualified_functions: &'a BTreeMap<String, String>,
+    out_of_line_modules: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
     bindings: &'a BTreeSet<String>,
+}
+
+fn source_file_out_of_line_module_names(
+    path: &Path,
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    Ok(rust_direct_module_candidate_paths(path, root, source)?
+        .into_keys()
+        .collect())
 }
 
 fn local_module_function_paths(
@@ -296,9 +317,12 @@ fn collect_direct_local_calls_from_node(
             && let Some(module_components) = context.module_components.as_deref()
             && let Some(path) =
                 rust_qualified_call_target_path(function, module_components, context.source)?
-            && let Some(path) = context.qualified_functions.get(&path)
         {
-            references.insert(path.clone());
+            if let Some(path) = context.qualified_functions.get(&path) {
+                references.insert(path.clone());
+            } else if is_direct_out_of_line_module_call(&path, context.out_of_line_modules) {
+                references.insert(path);
+            }
         }
     }
 
@@ -307,6 +331,19 @@ fn collect_direct_local_calls_from_node(
         collect_direct_local_calls_from_node(child, context, references)?;
     }
     Ok(())
+}
+
+fn is_direct_out_of_line_module_call(path: &str, out_of_line_modules: &BTreeSet<String>) -> bool {
+    let mut components = path.split("::");
+    let Some(module_name) = components.next() else {
+        return false;
+    };
+    let Some(function_name) = components.next() else {
+        return false;
+    };
+    components.next().is_none()
+        && !function_name.is_empty()
+        && out_of_line_modules.contains(module_name)
 }
 
 fn rust_inline_module_path_components(
@@ -473,7 +510,7 @@ mod api {
     }
 
     #[test]
-    fn does_not_index_qualified_calls_to_out_of_line_modules() {
+    fn indexes_qualified_calls_to_declared_out_of_line_modules() {
         let source = r#"
 mod api;
 
@@ -491,7 +528,10 @@ fn caller() {
             .iter()
             .find(|symbol| symbol.semantic_path == "caller")
             .unwrap();
-        assert!(caller.references_by_name.is_empty());
+        assert_eq!(
+            caller.references_by_name,
+            ["api::helper".to_string()].into()
+        );
     }
 
     #[test]

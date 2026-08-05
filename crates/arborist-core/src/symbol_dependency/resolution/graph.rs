@@ -8,6 +8,7 @@ use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 use super::super::csharp::csharp_global_import_context_for_files_with_overrides_and_deadline;
+use super::super::rust::rust_out_of_line_module_context_for_files_with_overrides_and_deadline;
 use super::indexes::{build_name_index, build_semantic_path_index, raw_symbol_indexes_by_id};
 use super::{resolve_dependencies_for_symbol, resolve_dependencies_for_symbol_with_deadline};
 
@@ -41,6 +42,14 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
         )
         .expect("dependency resolution without a deadline cannot fail");
 
+    let rust_out_of_line_module_context =
+        rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            source_file_paths,
+            file_overrides,
+            None,
+        )
+        .expect("dependency resolution without a deadline cannot fail");
+
     for (symbol_id, indexes) in &symbol_indexes {
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
         for index in indexes {
@@ -54,6 +63,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &mut include_contexts_by_file,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
+                &rust_out_of_line_module_context,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
                 Some(&csharp_global_import_context),
@@ -123,6 +133,13 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
             Some(deadline),
         )?;
 
+    let rust_out_of_line_module_context =
+        rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            source_file_paths,
+            file_overrides,
+            Some(deadline),
+        )?;
+
     for (symbol_id, indexes) in &symbol_indexes {
         deadline.check("resolving symbol dependencies")?;
         let dependencies = dependency_map.entry(symbol_id.clone()).or_default();
@@ -137,6 +154,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &mut include_contexts_by_file,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
+                &rust_out_of_line_module_context,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
                 Some(&csharp_global_import_context),

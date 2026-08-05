@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -14,6 +14,49 @@ pub(crate) fn rust_local_module_dependency_paths(
     let mut dependencies = BTreeSet::new();
     collect_out_of_line_module_dependencies(path, root, source, &mut dependencies)?;
     Ok(dependencies)
+}
+
+pub(crate) fn rust_direct_module_candidate_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, BTreeSet<PathBuf>>> {
+    let mut candidates_by_normalized_name =
+        BTreeMap::<String, (String, Option<BTreeSet<PathBuf>>)>::new();
+    let mut cursor = root.walk();
+    for node in root.named_children(&mut cursor) {
+        if node.kind() != "mod_item"
+            || node.child_by_field_name("body").is_some()
+            || has_path_semantics(node, source)?
+        {
+            continue;
+        }
+        let Some(name) = node
+            .child_by_field_name("name")
+            .map(|name| node_text(name, source))
+            .transpose()?
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let Some(normalized_name) = normalize_rust_module_name(name) else {
+            continue;
+        };
+        let directory = rust_module_directory(path, node, source)?;
+        let candidates = rust_module_file_candidates(&directory.join(&normalized_name));
+        if let Some((_, existing)) = candidates_by_normalized_name.get_mut(&normalized_name) {
+            *existing = None;
+        } else {
+            candidates_by_normalized_name
+                .insert(normalized_name, (name.to_string(), Some(candidates)));
+        }
+    }
+
+    Ok(candidates_by_normalized_name
+        .into_values()
+        .filter_map(|(name, candidates)| candidates.map(|candidates| (name, candidates)))
+        .collect())
 }
 
 fn collect_out_of_line_module_dependencies(
@@ -220,14 +263,22 @@ fn rust_module_directory(path: &Path, node: Node<'_>, source: &str) -> Result<Pa
 }
 
 fn unique_rust_module_file(base: &Path) -> Option<PathBuf> {
-    let file_candidate = base.with_extension("rs");
-    let directory_candidate = base.join("mod.rs");
-    let path = match (file_candidate.is_file(), directory_candidate.is_file()) {
-        (true, false) => file_candidate,
-        (false, true) => directory_candidate,
-        _ => return None,
-    };
-    normalize_absolute_path(&path).ok()
+    let candidates = rust_module_file_candidates(base);
+    let paths = candidates
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
+    (paths.len() == 1)
+        .then(|| normalize_absolute_path(&paths[0]))
+        .transpose()
+        .ok()
+        .flatten()
+}
+
+fn rust_module_file_candidates(base: &Path) -> BTreeSet<PathBuf> {
+    [base.with_extension("rs"), base.join("mod.rs")]
+        .into_iter()
+        .collect()
 }
 
 fn normalize_rust_module_name(value: &str) -> Option<String> {

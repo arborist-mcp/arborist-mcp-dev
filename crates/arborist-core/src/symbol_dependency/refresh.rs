@@ -13,6 +13,7 @@ use super::resolution::{
     build_name_index, build_semantic_path_index, cpp_template_base_path, indexed_symbol_rank,
     raw_symbol_indexes_by_id, resolve_dependencies_for_symbol_with_deadline,
 };
+use super::rust::rust_out_of_line_module_context_for_files_with_overrides_and_deadline;
 use crate::model::{LanguageId, SymbolMeta, SymbolMetaInit};
 use crate::symbol_index_model::IndexedSymbol;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -74,6 +75,13 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
         None
     };
 
+    let rust_out_of_line_module_context =
+        rust_out_of_line_module_context_for_files_with_overrides_and_deadline(
+            source_file_paths,
+            file_overrides,
+            deadline,
+        )?;
+
     let mut resolved_map = old_resolved_map.clone();
     let mut languages_by_file: HashMap<&str, Option<LanguageId>> = HashMap::new();
     let mut include_contexts_by_file: HashMap<&str, Option<CIncludeContext>> = HashMap::new();
@@ -114,6 +122,7 @@ pub(crate) fn refresh_resolved_symbol_subgraph(
                 &mut include_contexts_by_file,
                 &mut javascript_import_contexts_by_file,
                 &mut go_import_contexts_by_file,
+                &rust_out_of_line_module_context,
                 &mut java_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
                 csharp_global_import_context.as_ref(),

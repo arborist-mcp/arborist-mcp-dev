@@ -42,10 +42,14 @@ Arborist uses extension-based routing with explicit per-language capabilities:
 - Rust: `.rs` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing,
   and conservative local-module dependency refresh through unambiguous out-of-line `mod`
   declarations. It also provides conservative graph tracing for unshadowed bare direct calls to
-  functions in the same source-file module and qualified direct calls to functions in inline modules
-  in the same source file. Trait-implementation members are not indexed, `use` paths do not create
-  dependency edges, and out-of-line module, Cargo, and import resolution remain unavailable. Patching
-  remains explicitly unavailable.
+  functions in the same source-file module, qualified direct calls to functions in inline modules in
+  the same source file, and `module::function()` or `crate::module::function()` calls through one
+  direct source-file-root out-of-line `mod module;` declaration. The out-of-line target must use one
+  unambiguous default-layout file (`module.rs` or `module/mod.rs`) and contain one matching top-level
+  function; malformed source, `#[path]` semantics, duplicate declarations, and ambiguous layouts fail
+  closed. Trait-implementation members are not indexed, `use` paths do not create dependency edges,
+  and broader out-of-line module, Cargo, and import resolution remain unavailable. Patching remains
+  explicitly unavailable.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local
   receiver types, selected by semantic path or source position. Static imports strictly below the
@@ -539,10 +543,14 @@ for response shapes, error behavior, and examples.
   reference-binding validation remain deferred.
 - Rust Tree-sitter parsing, raw query execution, semantic skeletons, declaration indexing, and
   conservative local module dependency refresh through unambiguous out-of-line `mod` declarations.
-  It traces unshadowed bare direct calls to functions in the same source-file module and
-  qualified direct calls to functions in inline modules in the same source file. Trait-implementation
-  members are not indexed, `use` paths do not create dependency edges, and out-of-line module, Cargo,
-  and import resolution remain unavailable. Patching remains capability-gated.
+  It traces unshadowed bare direct calls to functions in the same source-file module, qualified direct
+  calls to functions in inline modules in the same source file, and direct
+  `module::function()`/`crate::module::function()` calls through one source-file-root out-of-line
+  `mod module;` declaration. That target must have one default-layout source file and one matching
+  top-level function; malformed source, `#[path]` semantics, duplicate declarations, and ambiguous
+  layouts fail closed. Trait-implementation members are not indexed, `use` paths do not create
+  dependency edges, and broader out-of-line module, Cargo, and import resolution remain unavailable.
+  Patching remains capability-gated.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid

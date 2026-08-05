@@ -1,4 +1,5 @@
 use super::*;
+use crate::{trace_symbol_graph_from_index_with_source, trace_symbol_graph_with_source};
 
 #[test]
 fn trace_symbol_graph_at_position_uses_dirty_vfs_overrides() {
@@ -219,6 +220,134 @@ fn traces_rust_qualified_inline_module_calls_in_live_workspace_and_persisted_ind
     assert_eq!(persisted.symbol.symbol_id, "api::helper");
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
+fn traces_rust_direct_out_of_line_module_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\nfn caller() { api::helper(); }\nfn crate_caller() { crate::api::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+
+    for caller in ["caller", "crate_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(
+            live.callees.len(),
+            1,
+            "{caller} should resolve its direct module call"
+        );
+        assert_eq!(live.callees[0].symbol_id, "helper");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["caller", "crate_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(
+            persisted.callees.len(),
+            1,
+            "{caller} should resolve its direct module call from the persisted index"
+        );
+        assert_eq!(persisted.callees[0].symbol_id, "helper");
+    }
+}
+
+#[test]
+fn traces_rust_raw_identifier_out_of_line_module_calls() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let module_path = dir.join("await.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod r#await;\nfn caller() { r#await::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&module_path, "pub fn helper() {}\n").unwrap();
+
+    let live = trace_symbol_graph(&dir, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "caller", TraceDirection::Callees).unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn traces_rust_direct_out_of_line_module_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod stale;\n").unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+    let root_overlay = "mod api;\nfn caller() { api::helper(); }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &root_path,
+        root_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &root_path,
+        root_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_path_semantic_rust_direct_module_calls() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_file_path = dir.join("api.rs");
+    let api_module_path = dir.join("api").join("mod.rs");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(api_module_path.parent().unwrap()).unwrap();
+    fs::write(
+        &root_path,
+        "#[path = \"custom.rs\"]\nmod custom;\nmod api;\nfn custom_caller() { custom::helper(); }\nfn api_caller() { api::helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_file_path, "pub fn helper() {}\n").unwrap();
+    fs::write(&api_module_path, "pub fn helper() {}\n").unwrap();
+
+    for caller in ["custom_caller", "api_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller} must fail closed");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["custom_caller", "api_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed from the persisted index"
+        );
+    }
 }
 
 #[test]

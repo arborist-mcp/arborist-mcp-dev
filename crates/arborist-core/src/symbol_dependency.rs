@@ -5,6 +5,7 @@ mod java;
 mod javascript;
 mod refresh;
 mod resolution;
+mod rust;
 
 pub(crate) use c::{CIncludeContext, c_include_context_for_file};
 pub(crate) use refresh::{
