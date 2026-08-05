@@ -100,7 +100,9 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   explicit local static-method import when no same-type method has that name. It also traces a
   `Type.method()` call from a top-level caller class to a unique same-package top-level class static method with an exact,
   non-varargs arity match. Matching callers are re-resolved during refresh without reindexing
-  unchanged Java source files. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
+  unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
+  declaration also walk a unique same-file chain of simple direct base classes; cycles, ambiguous
+  classes, generic or qualified bases, and nearer nonmatching declarations fail closed. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
   field/type imports, missing or ambiguous imports, instance/member dispatch other than explicit same-file simple `super.method()` calls, overloaded-call
   selection, and patch operations remain capability-gated.
 

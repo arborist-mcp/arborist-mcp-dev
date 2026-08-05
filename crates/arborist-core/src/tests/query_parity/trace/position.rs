@@ -1237,6 +1237,129 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
     );
 }
 #[test]
+fn traces_java_same_file_multilevel_inherited_methods() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Grand { int helper() { return 1; } }
+class Base extends Grand {}
+class Child extends Base {
+    int bareCaller() { return helper(); }
+    int superCaller() { return super.helper(); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Grand::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Child::bareCaller",
+            "com::example::Child::superCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Child::bareCaller",
+            "com::example::Child::superCaller"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_same_file_multilevel_inherited_methods_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Grand { int helper() { return 1; } }
+class Base extends Grand {}
+class Child extends Base { int caller() { return helper(); } }
+";
+    let helper_symbol = "com::example::Grand::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Child::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Child::caller"
+    );
+}
+
+#[test]
+fn ignores_cyclic_java_same_file_inheritance() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class First extends Second {}
+class Second extends First {}
+class Child extends First { int caller() { return helper(); } }
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "com::example::Child::caller", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "com::example::Child::caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");
