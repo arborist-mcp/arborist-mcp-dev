@@ -5222,6 +5222,50 @@ fn traces_java_same_package_outer_default_interface_inheritance_chains() {
 }
 
 #[test]
+fn traces_java_explicit_imported_outer_default_interface_inheritance_chains() {
+    let dir = temporary_dir();
+    let base_dir = dir.join("src").join("com").join("base");
+    let caller_dir = dir.join("src").join("com").join("child");
+    let outer_path = base_dir.join("Outer.java");
+    let root_path = base_dir.join("Root.java");
+    let caller_path = caller_dir.join("Main.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &outer_path,
+        "package com.base; class Outer { interface Child extends Root {} }
+",
+    )
+    .unwrap();
+    fs::write(
+        &root_path,
+        "package com.base; interface Root { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.child; import com.base.Outer; class Main implements Outer.Child { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+
+    let target = "com::base::Root::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::child::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::child::Main::caller");
+}
+
+#[test]
 fn traces_java_explicit_imported_default_interface_inheritance_chains() {
     let dir = temporary_dir();
     let root_dir = dir.join("src").join("com").join("root");
