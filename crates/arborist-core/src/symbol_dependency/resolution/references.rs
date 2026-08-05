@@ -22,6 +22,7 @@ use super::super::go::{
 use super::super::java::{
     JavaImportBinding, JavaImportContext, resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
+    resolve_java_type_import_binding_for_name,
 };
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
@@ -764,6 +765,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
+                java_import_contexts_by_file,
                 call_arity,
                 deadline,
             );
@@ -774,6 +776,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
+                java_import_contexts_by_file,
                 call_arity,
                 deadline,
             );
@@ -849,6 +852,7 @@ fn resolve_reference_path_with_deadline<'a>(
             raw_symbols,
             semantic_path_index,
             file_overrides,
+            java_import_contexts_by_file,
             call_arity,
             deadline,
         )? {
@@ -2182,12 +2186,17 @@ fn resolve_csharp_imported_static_method(
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java superclass resolution inputs explicit"
+)]
 fn resolve_java_simple_super_method_reference(
     source_symbol: &IndexedSymbol,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
@@ -2196,6 +2205,7 @@ fn resolve_java_simple_super_method_reference(
         raw_symbols,
         semantic_path_index,
         file_overrides,
+        java_import_contexts_by_file,
         deadline,
     )?
     else {
@@ -2207,17 +2217,23 @@ fn resolve_java_simple_super_method_reference(
         raw_symbols,
         semantic_path_index,
         file_overrides,
+        java_import_contexts_by_file,
         call_arity,
         deadline,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java superclass resolution inputs explicit"
+)]
 fn resolve_java_inherited_method_from_type_path(
     initial_type_path: &str,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
@@ -2273,6 +2289,7 @@ fn resolve_java_inherited_method_from_type_path(
             raw_symbols,
             semantic_path_index,
             file_overrides,
+            java_import_contexts_by_file,
             deadline,
         )?
         else {
@@ -2339,11 +2356,66 @@ fn resolve_java_same_package_static_method_reference(
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java superclass resolution inputs explicit"
+)]
+fn resolve_java_simple_superclass_target_path(
+    source_file_path: &str,
+    enclosing_scope_path: Option<&str>,
+    superclass_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let local_path = enclosing_scope_path.map_or_else(
+        || superclass_name.to_string(),
+        |scope_path| format!("{scope_path}::{superclass_name}"),
+    );
+    let local_candidates = semantic_path_index
+        .get(&local_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+        .collect::<Vec<_>>();
+    match local_candidates.as_slice() {
+        [_] => return Ok(Some(local_path)),
+        [] => {}
+        _ => return Ok(None),
+    }
+
+    let Some(binding) = resolve_java_type_import_binding_for_name(
+        source_file_path,
+        superclass_name,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let candidates = semantic_path_index
+        .get(&binding.semantic_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == binding.source_path && candidate.node_kind == "class_declaration"
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then_some(binding.semantic_path))
+}
+
 fn java_simple_superclass_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     let Some(scope_path) = source_symbol.scope_path.as_deref() else {
@@ -2392,27 +2464,24 @@ fn java_simple_superclass_path(
     let Some(superclass_name) = superclass_name else {
         return Ok(None);
     };
-    let superclass_path = scope_path.rsplit_once("::").map_or_else(
-        || superclass_name.clone(),
-        |(parent, _)| format!("{parent}::{superclass_name}"),
-    );
-    let candidates = semantic_path_index
-        .get(&superclass_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "class_declaration"
-        })
-        .collect::<Vec<_>>();
-    Ok((candidates.len() == 1).then_some(superclass_path))
+    let enclosing_scope_path = scope_path.rsplit_once("::").map(|(parent, _)| parent);
+    resolve_java_simple_superclass_target_path(
+        &source_symbol.file_path,
+        enclosing_scope_path,
+        &superclass_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
 }
 fn java_simple_superclass_path_for_class(
     source_class: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     if source_class.node_kind != "class_declaration" {
@@ -2454,21 +2523,16 @@ fn java_simple_superclass_path_for_class(
     let Some(superclass_name) = superclass_name else {
         return Ok(None);
     };
-    let superclass_path = source_class.scope_path.as_deref().map_or_else(
-        || superclass_name.clone(),
-        |scope_path| format!("{scope_path}::{superclass_name}"),
-    );
-    let candidates = semantic_path_index
-        .get(&superclass_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "class_declaration"
-        })
-        .collect::<Vec<_>>();
-    Ok((candidates.len() == 1).then_some(superclass_path))
+    resolve_java_simple_superclass_target_path(
+        &source_class.file_path,
+        source_class.scope_path.as_deref(),
+        &superclass_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
 }
 
 fn resolve_java_same_file_super_constructor_reference(
@@ -2476,6 +2540,7 @@ fn resolve_java_same_file_super_constructor_reference(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
@@ -2487,6 +2552,7 @@ fn resolve_java_same_file_super_constructor_reference(
         raw_symbols,
         semantic_path_index,
         file_overrides,
+        java_import_contexts_by_file,
         deadline,
     )?
     else {

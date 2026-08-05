@@ -111,6 +111,25 @@ fn insert_unique_java_import_binding(
     }
 }
 
+pub(in crate::symbol_dependency) fn resolve_java_type_import_binding_for_name(
+    source_file_path: &str,
+    type_name: &str,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<JavaImportBinding>> {
+    if type_name.is_empty() || type_name.contains('.') {
+        return Ok(None);
+    }
+    let context = java_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context.type_bindings.get(type_name).cloned())
+}
+
 pub(in crate::symbol_dependency) fn resolve_java_import_binding_for_reference(
     source_file_path: &str,
     reference_name: &str,
