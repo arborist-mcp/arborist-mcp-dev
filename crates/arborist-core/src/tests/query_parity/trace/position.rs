@@ -3371,6 +3371,101 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_nested_type_static_calls_through_namespace_imports() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Outer.cs"),
+        "namespace Demo.Utility;
+class Outer { class Helper { public static int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("LocalCaller.cs"),
+        "using Demo.Utility;
+namespace Demo.App; class LocalCaller { int Call() => Outer.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using Demo.Utility;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalCaller.cs"),
+        "namespace Demo.Other; class GlobalCaller { int Call() => Outer.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Utility::Outer::Helper::Utility";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 4);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::App::LocalCaller::Call",
+            "Demo::Other::GlobalCaller::Call"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 4);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::App::LocalCaller::Call",
+            "Demo::Other::GlobalCaller::Call"
+        ]
+    );
+}
+
+#[test]
+fn does_not_trace_ambiguous_csharp_namespace_imported_nested_type_static_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    for (name, namespace) in [("First.cs", "Demo.First"), ("Second.cs", "Demo.Second")] {
+        fs::write(
+            dir.join(name),
+            format!(
+                "namespace {namespace}; class Outer {{ class Helper {{ public static int Utility(int value) => value; }} }}\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        dir.join("Caller.cs"),
+        "using Demo.First;
+using Demo.Second;
+namespace Demo.App; class Caller { int Call() => Outer.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "Demo::App::Caller::Call", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::App::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
 fn traces_csharp_nested_type_static_calls_through_local_and_global_aliases() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

@@ -215,7 +215,7 @@ fn csharp_adapter_exposes_query_skeleton_index_and_trace_capabilities() {
     assert_eq!(descriptor.extensions, &["cs"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "csharp-nested-alias-static-trace-v31"
+        "csharp-nested-namespace-static-trace-v32"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,

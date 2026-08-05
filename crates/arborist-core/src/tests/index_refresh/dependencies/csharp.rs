@@ -5,6 +5,50 @@ use crate::language::normalize_path;
 use crate::symbol_index_state::load_symbol_index_with_overrides;
 
 #[test]
+fn refreshes_csharp_global_namespace_imported_nested_type_callers_from_directive_only_files() {
+    let dir = temporary_dir();
+    let outer = dir.join("Outer.cs");
+    let caller = dir.join("Caller.cs");
+    let global_usings = dir.join("GlobalUsings.cs");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &outer,
+        "namespace Demo.Utility; class Outer { class Helper { public static void Ping() {} } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace Demo.App; class Caller { void Call() { Outer.Helper.Ping(); } }\n",
+    )
+    .unwrap();
+    fs::write(&global_usings, "global using Demo.Utility;\n").unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial =
+        trace_symbol_graph_from_index(&db_path, "Demo::App::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(
+        initial
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Utility::Outer::Helper::Ping"]
+    );
+
+    fs::write(&global_usings, "// no global namespace imports\n").unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &global_usings).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 2);
+
+    let refreshed =
+        trace_symbol_graph_from_index(&db_path, "Demo::App::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(refreshed.callees.is_empty());
+}
+
+#[test]
 fn refreshes_csharp_global_nested_type_alias_callers_from_directive_only_files() {
     let dir = temporary_dir();
     let outer = dir.join("Outer.cs");

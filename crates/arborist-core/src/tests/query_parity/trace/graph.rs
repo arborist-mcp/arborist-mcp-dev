@@ -69,6 +69,42 @@ fn traces_csharp_outer_namespace_static_import_calls_from_dirty_vfs_overrides() 
 }
 
 #[test]
+fn traces_csharp_nested_type_static_calls_through_namespace_imports_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let outer = dir.join("Outer.cs");
+    let caller = dir.join("Caller.cs");
+    fs::write(
+        &outer,
+        "namespace Demo.Utility; class Outer { class Helper { public static int Utility(int value) => value; } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace Demo.App; class Caller { int Call(int value) => value; }\n",
+    )
+    .unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &caller,
+        Some(
+            "using Demo.Utility;\nnamespace Demo.App; class Caller { int Call(int value) => Outer.Helper.Utility(value); }\n",
+        ),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(
+            &dir,
+            "Demo::Utility::Outer::Helper::Utility",
+            TraceDirection::Callers,
+        )
+        .unwrap();
+    assert_eq!(trace.callers.len(), 1);
+    assert_eq!(trace.callers[0].symbol_id, "Demo::App::Caller::Call");
+}
+
+#[test]
 fn traces_csharp_nested_type_static_calls_through_aliases_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let outer = dir.join("Outer.cs");

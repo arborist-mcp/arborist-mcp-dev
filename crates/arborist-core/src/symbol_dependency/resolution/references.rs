@@ -638,6 +638,33 @@ fn resolve_reference_path_with_deadline<'a>(
                 },
             ));
         }
+        if let Some((nested_type_path, first_type_name, method_name)) =
+            csharp_nested_type_static_reference_parts(reference_name)
+            && csharp_nested_type_root_is_unshadowed(first_type_name, source_symbol, raw_symbols)
+        {
+            let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
+                &source_symbol.file_path,
+                first_type_name,
+                source_namespace_path,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            if let Some(csharp_global_import_context) = csharp_global_import_context {
+                namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+                    first_type_name,
+                    csharp_global_import_context,
+                ));
+            }
+            return Ok(resolve_csharp_namespace_imported_nested_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &namespace_imports,
+                nested_type_path,
+                method_name,
+                call_arity,
+            ));
+        }
         if let Some((method_name, binding)) = resolve_csharp_type_alias_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
@@ -2123,22 +2150,8 @@ fn csharp_nested_type_static_target_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
 ) -> Option<String> {
-    let (type_path, method_name) = reference_name.rsplit_once('.')?;
-    if method_name.is_empty()
-        || type_path.is_empty()
-        || type_path.starts_with("global::")
-        || type_path
-            .split('.')
-            .any(|segment| !is_safe_csharp_identifier(segment))
-    {
-        return None;
-    }
-    let type_segments = type_path.split('.').collect::<Vec<_>>();
-    if type_segments.len() < 2 {
-        return None;
-    }
-    let first_type_name = type_segments[0];
-    let relative_type_path = type_path.replace('.', "::");
+    let (relative_type_path, first_type_name, method_name) =
+        csharp_nested_type_static_reference_parts(reference_name)?;
 
     let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
     loop {
@@ -2171,6 +2184,47 @@ fn csharp_nested_type_static_target_path(
         namespace_path = match namespace_path {
             Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
             None => return None,
+        };
+    }
+}
+
+fn csharp_nested_type_static_reference_parts(reference_name: &str) -> Option<(String, &str, &str)> {
+    let (type_path, method_name) = reference_name.rsplit_once('.')?;
+    if method_name.is_empty()
+        || type_path.is_empty()
+        || type_path.starts_with("global::")
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return None;
+    }
+    let mut type_segments = type_path.split('.');
+    let first_type_name = type_segments.next()?;
+    type_segments.next()?;
+    Some((type_path.replace('.', "::"), first_type_name, method_name))
+}
+
+fn csharp_nested_type_root_is_unshadowed(
+    first_type_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> bool {
+    let Some(mut namespace_path) = csharp_source_namespace_path(source_symbol, raw_symbols) else {
+        return false;
+    };
+    loop {
+        let root_type_path = namespace_path
+            .map(|namespace_path| format!("{namespace_path}::{first_type_name}"))
+            .unwrap_or_else(|| first_type_name.to_string());
+        if raw_symbols.iter().any(|candidate| {
+            candidate.semantic_path == root_type_path && csharp_is_type_declaration(candidate)
+        }) {
+            return false;
+        }
+        namespace_path = match namespace_path {
+            Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
+            None => return true,
         };
     }
 }
@@ -2304,6 +2358,63 @@ fn csharp_alias_name_is_unshadowed(
             && candidate.base_name == alias_name
             && csharp_is_type_declaration(candidate)
     })
+}
+
+fn resolve_csharp_namespace_imported_nested_static_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    bindings: &[CSharpNamespaceImportBinding],
+    nested_type_path: String,
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let mut target_type_paths = BTreeSet::new();
+    for binding in bindings {
+        let mut current_type_path = binding.semantic_namespace_path.clone();
+        let mut type_path_is_present = false;
+        for segment in nested_type_path.split("::") {
+            current_type_path.push_str("::");
+            current_type_path.push_str(segment);
+            let type_candidates = semantic_path_index
+                .get(&current_type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .count();
+            if type_candidates > 1 {
+                return None;
+            }
+            if type_candidates == 0 {
+                if type_path_is_present {
+                    return None;
+                }
+                break;
+            }
+            type_path_is_present = true;
+        }
+        if type_path_is_present {
+            target_type_paths.insert(current_type_path);
+        }
+    }
+    let target_type_paths = target_type_paths.into_iter().collect::<Vec<_>>();
+    let [target_type_path] = target_type_paths.as_slice() else {
+        return None;
+    };
+    let target_path = format!("{target_type_path}::{method_name}");
+    resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        None,
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: true,
+            require_instance: false,
+            require_same_file: false,
+        },
+    )
 }
 
 fn resolve_csharp_namespace_imported_static_method(
