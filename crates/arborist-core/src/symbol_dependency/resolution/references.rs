@@ -754,6 +754,20 @@ fn resolve_reference_path_with_deadline<'a>(
                 (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
             );
         }
+        if let Some(method_name) = reference_name.strip_prefix("super.") {
+            if method_name.is_empty() || method_name.contains('.') {
+                return Ok(None);
+            }
+            return resolve_java_same_file_super_method_reference(
+                source_symbol,
+                method_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                call_arity,
+                deadline,
+            );
+        }
         if reference_name == "super" {
             return resolve_java_same_file_super_constructor_reference(
                 source_symbol,
@@ -2148,6 +2162,115 @@ fn resolve_csharp_imported_static_method(
     )
 }
 
+fn resolve_java_same_file_super_method_reference(
+    source_symbol: &IndexedSymbol,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(superclass_path) = java_same_file_simple_superclass_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{superclass_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == "method_declaration"
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn java_same_file_simple_superclass_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let path = Path::new(&source_symbol.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    let mut superclass_name = None;
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Java superclass")?;
+        }
+        if (node.kind() == "method_declaration" || node.kind() == "constructor_declaration")
+            && (node.start_byte(), node.end_byte()) == source_symbol.byte_range
+        {
+            let mut ancestor = node.parent();
+            while let Some(candidate) = ancestor {
+                if candidate.kind() == "class_declaration" {
+                    let Some(superclass) = candidate.child_by_field_name("superclass") else {
+                        return Ok(None);
+                    };
+                    let Some(type_node) = superclass.named_child(0) else {
+                        return Ok(None);
+                    };
+                    if type_node.kind() != "type_identifier" {
+                        return Ok(None);
+                    }
+                    let name = node_text(type_node, &source)?.trim().to_string();
+                    superclass_name = (!name.is_empty()).then_some(name);
+                    break;
+                }
+                ancestor = candidate.parent();
+            }
+            break;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    let Some(superclass_name) = superclass_name else {
+        return Ok(None);
+    };
+    let superclass_path = scope_path.rsplit_once("::").map_or_else(
+        || superclass_name.clone(),
+        |(parent, _)| format!("{parent}::{superclass_name}"),
+    );
+    let candidates = semantic_path_index
+        .get(&superclass_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == "class_declaration"
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then_some(superclass_path))
+}
 fn resolve_java_same_file_super_constructor_reference(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],

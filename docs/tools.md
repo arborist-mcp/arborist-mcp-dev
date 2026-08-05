@@ -94,7 +94,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   with an unshadowed type name; and a bare call through a unique explicit local static-method import
   only when no same-type method has that name. Imported targets require a unique static-method arity
   match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
-  imports, instance/member dispatch, overloaded-call selection, and patch operations return explicit
+  imports, instance/member dispatch other than explicit same-file simple `super.method()` calls, overloaded-call selection, and patch operations return explicit
   unsupported-operation errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol

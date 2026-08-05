@@ -99,7 +99,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   non-static local type import when the type name is unshadowed; and bare calls through a unique
   explicit local static-method import when no same-type method has that name. Imported targets must
   be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
-  field/type imports, missing or ambiguous imports, instance/member dispatch, overloaded-call
+  field/type imports, missing or ambiguous imports, instance/member dispatch other than explicit same-file simple `super.method()` calls, overloaded-call
   selection, and patch operations remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
@@ -592,7 +592,7 @@ for response shapes, error behavior, and examples.
   unshadowed type name; and a bare call through a unique explicit local static-method import only
   when no same-type method has that name. Imported targets require a unique static-method arity
   match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
-  imports, instance/member dispatch, overloaded-call selection, and patching remain capability-gated
+  imports, instance/member dispatch other than explicit same-file simple `super.method()` calls, overloaded-call selection, and patching remain capability-gated
   pending dedicated Java resolution fixtures.
 - SQLite-backed persisted symbol indexes with transactional v1-v5-to-v6 schema
   migration, persisted analysis provenance, source reindexing, health inspection,
@@ -622,7 +622,7 @@ whose owning type maps to a local `.java` file under an ancestor source root. It
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
 unique explicit local static-method imports only when no same-type method has that name. Imported
 trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
-instance/member dispatch, and patch features remain deliberately
+instance/member dispatch other than explicit same-file simple `super.method()` calls, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.
 
