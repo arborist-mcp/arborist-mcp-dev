@@ -439,7 +439,7 @@ static GO_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Go",
     extensions: GO_EXTENSIONS,
     capabilities: LanguageCapabilities::INDEXED_SKELETON_DEPENDENCY_TRACE_SUPPORT,
-    analysis_revision: "go-conversion-method-trace-v9",
+    analysis_revision: "go-conversion-receiver-forms-v10",
     grammar: go_grammar,
 };
 static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

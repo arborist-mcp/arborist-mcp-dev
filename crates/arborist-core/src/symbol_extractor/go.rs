@@ -748,6 +748,9 @@ fn go_direct_method_reference(
     else {
         return Ok(None);
     };
+    if context.bindings.contains(&type_name) {
+        return Ok(None);
+    }
     Ok(Some(GoDirectMethodReference::TypeConversion {
         method_path: format!("{type_name}::{method_name}"),
         conversion_call_start,
@@ -755,17 +758,51 @@ fn go_direct_method_reference(
 }
 
 fn go_type_conversion_receiver(operand: Node<'_>, source: &str) -> Result<Option<(String, usize)>> {
-    if operand.kind() != "call_expression" {
-        return Ok(None);
-    }
-    let Some(function) = operand.child_by_field_name("function") else {
-        return Ok(None);
+    let type_name = match operand.kind() {
+        "call_expression" => {
+            let Some(function) = operand.child_by_field_name("function") else {
+                return Ok(None);
+            };
+            go_ambiguous_type_conversion_function_name(function, source)?
+        }
+        "type_conversion_expression" => operand
+            .child_by_field_name("type")
+            .map(|type_node| go_named_local_type(type_node, source))
+            .transpose()?
+            .flatten(),
+        _ => None,
     };
-    if function.kind() != "identifier" {
-        return Ok(None);
+    Ok(type_name.map(|type_name| (type_name, operand.start_byte())))
+}
+
+fn go_ambiguous_type_conversion_function_name(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    match node.kind() {
+        "identifier" => {
+            let name = node_text(node, source)?.trim();
+            Ok((!name.is_empty()).then(|| name.to_string()))
+        }
+        "parenthesized_expression" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .next()
+                .map(|inner| go_ambiguous_type_conversion_function_name(inner, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        "unary_expression" => {
+            if !node_text(node, source)?.trim().starts_with('*') {
+                return Ok(None);
+            }
+            node.child_by_field_name("operand")
+                .map(|inner| go_ambiguous_type_conversion_function_name(inner, source))
+                .transpose()
+                .map(Option::flatten)
+        }
+        _ => Ok(None),
     }
-    let type_name = node_text(function, source)?.trim();
-    Ok((!type_name.is_empty()).then(|| (type_name.to_string(), operand.start_byte())))
 }
 
 fn collect_direct_local_calls_from_node(
@@ -1085,13 +1122,20 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
 package metrics
 
 type Scalar int
+type Box[T ~int] int
 type Result struct{}
 
 func (Scalar) Value() int { return 1 }
-func (Result) Value() int { return 2 }
+func (Box[T]) Value() int { return 2 }
+func (Result) Value() int { return 3 }
 func Factory(value int) Result { return Result{} }
 func scalar_conversion(value int) int { return Scalar(value).Value() }
+func pointer_conversion(value *Scalar) int { return (*Scalar)(value).Value() }
+func parenthesized_conversion(value int) int { return (Scalar)(value).Value() }
+func generic_conversion(value int) int { return Box[int](value).Value() }
 func factory_method(value int) int { return Factory(value).Value() }
+func parenthesized_factory_method(value int) int { return (Factory)(value).Value() }
+func shadowed_conversion(Scalar func(int) Result, value int) int { return Scalar(value).Value() }
 "#;
         let path = Path::new("metrics.go");
         let document = parse_document(path, source).unwrap();
@@ -1100,7 +1144,11 @@ func factory_method(value int) int { return Factory(value).Value() }
 
         for (caller_path, method_path) in [
             ("scalar_conversion", "Scalar::Value"),
+            ("pointer_conversion", "Scalar::Value"),
+            ("parenthesized_conversion", "Scalar::Value"),
+            ("generic_conversion", "Box::Value"),
             ("factory_method", "Factory::Value"),
+            ("parenthesized_factory_method", "Factory::Value"),
         ] {
             let caller = symbols
                 .iter()
@@ -1124,5 +1172,12 @@ func factory_method(value int) int { return Factory(value).Value() }
                 "{caller_path}"
             );
         }
+
+        let shadowed_conversion = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "shadowed_conversion")
+            .unwrap();
+        assert!(shadowed_conversion.references_by_name.is_empty());
+        assert!(shadowed_conversion.reference_facts.is_empty());
     }
 }

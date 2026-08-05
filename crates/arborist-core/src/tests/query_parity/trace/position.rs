@@ -3653,13 +3653,86 @@ fn traces_go_direct_pointer_and_generic_composite_literal_method_calls() {
 }
 
 #[test]
+fn traces_go_explicit_type_conversion_method_receiver_forms() {
+    let dir = temporary_dir();
+    let source_path = dir.join("metrics.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package metrics\n\ntype Scalar int\ntype Box[T ~int] int\nfunc (Scalar) Value() int { return 1 }\nfunc (Box[T]) Value() int { return 2 }\nfunc pointerCaller(value *Scalar) int { return (*Scalar)(value).Value() }\nfunc parenthesizedCaller(value int) int { return (Scalar)(value).Value() }\nfunc genericCaller(value int) int { return Box[int](value).Value() }\n",
+    )
+    .unwrap();
+
+    let scalar_live = trace_symbol_graph(&dir, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_live.callers.len(), 2);
+    assert_eq!(scalar_live.callers[0].symbol_id, "parenthesizedCaller");
+    assert_eq!(scalar_live.callers[1].symbol_id, "pointerCaller");
+    let box_live = trace_symbol_graph(&dir, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_live.callers.len(), 1);
+    assert_eq!(box_live.callers[0].symbol_id, "genericCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let scalar_persisted =
+        trace_symbol_graph_from_index(&db_path, "Scalar::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(scalar_persisted.callers.len(), 2);
+    assert_eq!(scalar_persisted.callers[0].symbol_id, "parenthesizedCaller");
+    assert_eq!(scalar_persisted.callers[1].symbol_id, "pointerCaller");
+    let box_persisted =
+        trace_symbol_graph_from_index(&db_path, "Box::Value", TraceDirection::Callers).unwrap();
+    assert_eq!(box_persisted.callers.len(), 1);
+    assert_eq!(box_persisted.callers[0].symbol_id, "genericCaller");
+}
+
+#[test]
+fn traces_go_explicit_type_conversion_method_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("caller.go");
+    let method_path = dir.join("scalar.go");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package metrics\n\nfunc stale() int { return 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        &method_path,
+        "package metrics\n\nfunc (Scalar) Value() int { return 1 }\n",
+    )
+    .unwrap();
+    let caller_overlay = "package metrics\n\ntype Scalar int\nfunc caller(value *Scalar) int { return (*Scalar)(value).Value() }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        "Scalar::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        "Scalar::Value",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "caller");
+}
+
+#[test]
 fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Scalar int\ntype Result struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Result) Value() int { return 2 }\nfunc Factory(value int) Result { return Result{} }\nfunc conversionCaller(value int) int { return Scalar(value).Value() }\nfunc factoryCaller(value int) int { return Factory(value).Value() }\n",
+        "package metrics\n\ntype Scalar int\ntype Result struct{}\nfunc (Scalar) Value() int { return 1 }\nfunc (Result) Value() int { return 2 }\nfunc Factory(value int) Result { return Result{} }\nfunc conversionCaller(value int) int { return Scalar(value).Value() }\nfunc factoryCaller(value int) int { return Factory(value).Value() }\nfunc parenthesizedFactoryCaller(value int) int { return (Factory)(value).Value() }\n",
     )
     .unwrap();
 
@@ -3668,8 +3741,12 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     assert_eq!(conversion_live.callers.len(), 1);
     assert_eq!(conversion_live.callers[0].symbol_id, "conversionCaller");
     let factory_live = trace_symbol_graph(&dir, "Factory", TraceDirection::Callers).unwrap();
-    assert_eq!(factory_live.callers.len(), 1);
+    assert_eq!(factory_live.callers.len(), 2);
     assert_eq!(factory_live.callers[0].symbol_id, "factoryCaller");
+    assert_eq!(
+        factory_live.callers[1].symbol_id,
+        "parenthesizedFactoryCaller"
+    );
     let result_method_live =
         trace_symbol_graph(&dir, "Result::Value", TraceDirection::Callers).unwrap();
     assert!(result_method_live.callers.is_empty());
@@ -3684,8 +3761,12 @@ fn traces_go_type_conversion_methods_and_preserves_factory_call_edges() {
     );
     let factory_persisted =
         trace_symbol_graph_from_index(&db_path, "Factory", TraceDirection::Callers).unwrap();
-    assert_eq!(factory_persisted.callers.len(), 1);
+    assert_eq!(factory_persisted.callers.len(), 2);
     assert_eq!(factory_persisted.callers[0].symbol_id, "factoryCaller");
+    assert_eq!(
+        factory_persisted.callers[1].symbol_id,
+        "parenthesizedFactoryCaller"
+    );
     let result_method_persisted =
         trace_symbol_graph_from_index(&db_path, "Result::Value", TraceDirection::Callers).unwrap();
     assert!(result_method_persisted.callers.is_empty());
