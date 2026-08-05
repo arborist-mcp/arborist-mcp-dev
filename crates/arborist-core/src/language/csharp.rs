@@ -385,6 +385,10 @@ fn is_global_type_alias_directive(directive_text: &str) -> bool {
 }
 
 fn csharp_base_type_semantic_path(type_path: &str) -> Option<String> {
+    csharp_generic_type_semantic_path(type_path)
+}
+
+pub(crate) fn csharp_generic_type_semantic_path(type_path: &str) -> Option<String> {
     csharp_qualified_type_semantic_path(&strip_csharp_generic_type_arguments(type_path)?)
 }
 
@@ -462,20 +466,23 @@ mod tests {
     use crate::language::parse_document;
 
     #[test]
-    fn normalizes_safe_csharp_generic_base_type_paths() {
+    fn normalizes_safe_csharp_generic_type_paths() {
         assert_eq!(
-            super::csharp_base_type_semantic_path("global::Demo.Outer<int>.Base<string>"),
+            super::csharp_generic_type_semantic_path("global::Demo.Outer<int>.Base<string>"),
             Some("Demo::Outer::Base".to_string())
         );
         assert_eq!(
-            super::csharp_base_type_semantic_path("Base<System.Collections.Generic.List<int>>"),
+            super::csharp_generic_type_semantic_path("Base<System.Collections.Generic.List<int>>"),
             Some("Base".to_string())
         );
-        assert_eq!(super::csharp_base_type_semantic_path("Base<>"), None);
-        assert_eq!(super::csharp_base_type_semantic_path("Base<int>[]"), None);
-        assert_eq!(super::csharp_base_type_semantic_path("Base<int"), None);
+        assert_eq!(super::csharp_generic_type_semantic_path("Base<>"), None);
         assert_eq!(
-            super::csharp_base_type_semantic_path("Base<int>Suffix"),
+            super::csharp_generic_type_semantic_path("Base<int>[]"),
+            None
+        );
+        assert_eq!(super::csharp_generic_type_semantic_path("Base<int"), None);
+        assert_eq!(
+            super::csharp_generic_type_semantic_path("Base<int>Suffix"),
             None
         );
     }

@@ -170,11 +170,27 @@ pub fn refresh_symbol_index_for_file_with_limits(
 
     let mut file_states = load_file_states_with_deadline(&connection, Some(&deadline))?;
     deadline.check("loading existing indexed file states")?;
+    let mut refresh_path_overrides = BTreeMap::new();
+    for refresh_path in &refresh_paths {
+        deadline.check("reading changed refresh sources")?;
+        if !refresh_path.exists() || should_skip_index_path(&workspace_root, refresh_path) {
+            continue;
+        }
+        validate_source_file_size(refresh_path, limits)?;
+        let source = read_source(refresh_path)?;
+        let normalized_refresh_path = normalize_path(refresh_path);
+        if file_states
+            .get(&normalized_refresh_path)
+            .is_some_and(|stored_fingerprint| *stored_fingerprint != source_fingerprint(&source))
+        {
+            refresh_path_overrides.insert(normalized_refresh_path, source);
+        }
+    }
     validate_persisted_index_paths_with_overrides_and_deadline(
         &workspace_root,
         &file_states,
         &old_resolved_symbols,
-        None,
+        Some(&refresh_path_overrides),
         Some(&deadline),
     )?;
     let mut old_changed_symbols = Vec::new();
@@ -196,7 +212,10 @@ pub fn refresh_symbol_index_for_file_with_limits(
 
         if refresh_path.exists() && !skip_refresh_path {
             validate_source_file_size(refresh_path, limits)?;
-            let source = read_source(refresh_path)?;
+            let source = refresh_path_overrides
+                .get(&normalized_refresh_path)
+                .cloned()
+                .unwrap_or(read_source(refresh_path)?);
             let document = parse_document_with_timeout(
                 refresh_path,
                 &source,

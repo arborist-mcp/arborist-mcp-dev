@@ -200,7 +200,7 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("base.{name}")));
         }
-        if receiver.kind() == "identifier" {
+        if matches!(receiver.kind(), "identifier" | "generic_name") {
             return csharp_simple_type_static_invocation_name(receiver, member, source);
         }
         if receiver.kind() == "member_access_expression" {
@@ -223,13 +223,19 @@ fn csharp_simple_type_static_invocation_name(
     source: &str,
 ) -> Result<Option<String>> {
     let receiver_name = crate::language::node_text(receiver, source)?.trim();
-    if receiver_name.is_empty() {
+    let Some(semantic_type_path) =
+        crate::language::csharp_generic_type_semantic_path(receiver_name)
+    else {
         return Ok(None);
-    }
+    };
     let Some(member_name) = csharp_invocation_member_name(member, source)? else {
         return Ok(None);
     };
-    Ok(Some(format!("{receiver_name}.{member_name}")))
+    Ok(Some(format!(
+        "{}.{}",
+        semantic_type_path.replace("::", "."),
+        member_name
+    )))
 }
 
 fn csharp_qualified_type_static_invocation_name(
@@ -238,24 +244,18 @@ fn csharp_qualified_type_static_invocation_name(
     source: &str,
 ) -> Result<Option<String>> {
     let type_path = crate::language::node_text(receiver, source)?.trim();
-    if type_path.is_empty()
-        || type_path.contains(['<', '>', ':'])
-        || type_path
-            .split('.')
-            .any(|segment| !is_safe_csharp_identifier(segment))
-    {
+    let Some(semantic_type_path) = crate::language::csharp_generic_type_semantic_path(type_path)
+    else {
         return Ok(None);
-    }
+    };
     let Some(member_name) = csharp_invocation_member_name(member, source)? else {
         return Ok(None);
     };
-    Ok(Some(format!("{type_path}.{member_name}")))
-}
-
-fn is_safe_csharp_identifier(identifier: &str) -> bool {
-    let mut characters = identifier.chars();
-    matches!(characters.next(), Some(character) if character == '_' || character.is_ascii_alphabetic())
-        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
+    Ok(Some(format!(
+        "{}.{}",
+        semantic_type_path.replace("::", "."),
+        member_name
+    )))
 }
 
 fn csharp_global_qualified_static_invocation_name(
@@ -267,16 +267,18 @@ fn csharp_global_qualified_static_invocation_name(
     let Some(type_path) = receiver.strip_prefix("global::") else {
         return Ok(None);
     };
-    if type_path.is_empty()
-        || type_path.contains('<')
-        || type_path.split('.').any(|segment| segment.is_empty())
-    {
+    let Some(semantic_type_path) = crate::language::csharp_generic_type_semantic_path(type_path)
+    else {
         return Ok(None);
-    }
+    };
     let Some(member_name) = csharp_invocation_member_name(member, source)? else {
         return Ok(None);
     };
-    Ok(Some(format!("global::{type_path}.{member_name}")))
+    Ok(Some(format!(
+        "global::{}.{}",
+        semantic_type_path.replace("::", "."),
+        member_name
+    )))
 }
 
 fn csharp_reference_is_shadowed(name: &str, bindings: &BTreeSet<String>) -> bool {

@@ -70,7 +70,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
   globally namespace-qualified `global::...` static calls, simple same-namespace and enclosing-namespace
-  `Type.Method()` static calls, plus `Outer.Helper.Method()` or `AliasOuter.Helper.Method()` static calls when the outer type resolves uniquely in the caller's namespace, an enclosing namespace, or an imported namespace, or a type alias resolves uniquely in those scopes or a root-level global using, and every nested type is unique, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
+  `Type.Method()` static calls, including balanced generic type spellings such as `Outer<int>.Method()` or `Outer<int>.Helper<string>.Method()` that normalize to their declaration paths without type-argument selection, plus `Outer.Helper.Method()` or `AliasOuter.Helper.Method()` static calls when the outer type resolves uniquely in the caller's namespace, an enclosing namespace, or an imported namespace, or a type alias resolves uniquely in those scopes or a root-level global using, and every nested type is unique, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;`
   bare method calls contributed by any scanned C# source file (including directive-only files), and file-root
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`, and root-level `global using Fully.Qualified.Namespace;`
@@ -88,7 +88,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   shadowed by a local, parameter, type parameter, or type member. Block and file-scoped namespaces, classes, structs,
   interfaces, enums, records, methods, and constructors are supported. When any C# source file changes, refresh
   conservatively re-resolves every indexed C# symbol against all tracked C# sources, including directive-only global-using files;
-  unchanged C# source files are not reindexed. Outer-namespace alias/import inheritance, other member dispatch, overload
+  unchanged C# source files are not reindexed; a refreshed source that has changed may safely shrink because its stale byte ranges do not block validation before the rebuilt index replaces them. Outer-namespace alias/import inheritance, other member dispatch, overload
   type selection, and patching remain explicitly
   unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and

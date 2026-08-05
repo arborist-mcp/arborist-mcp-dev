@@ -5,6 +5,52 @@ use crate::language::normalize_path;
 use crate::symbol_index_state::load_symbol_index_with_overrides;
 
 #[test]
+fn refreshes_csharp_generic_nested_static_callers_when_the_target_becomes_instance_only() {
+    let dir = temporary_dir();
+    let outer = dir.join("Outer.cs");
+    let caller = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+
+    fs::write(
+        &outer,
+        "namespace Demo; class Outer<T> { class Helper<U> { public static void Ping() {} } }\n",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace Demo; class Caller { void Call() { Outer<int>.Helper<string>.Ping(); } }\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial =
+        trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(
+        initial
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Outer::Helper::Ping"]
+    );
+
+    fs::write(
+        &outer,
+        "namespace Demo; class Outer<T> { class Helper<U> { public void Ping() {} } }\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &outer).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let refreshed =
+        trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(refreshed.callees.is_empty());
+}
+
+#[test]
 fn refreshes_csharp_global_namespace_imported_nested_type_callers_from_directive_only_files() {
     let dir = temporary_dir();
     let outer = dir.join("Outer.cs");

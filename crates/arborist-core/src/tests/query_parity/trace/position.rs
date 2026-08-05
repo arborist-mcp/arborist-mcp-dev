@@ -3317,6 +3317,91 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_generic_static_type_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Outer.cs"),
+        "namespace Demo;
+class Outer<T> {
+    public static int Direct(int value) => value;
+    class Helper<U> {
+        public static int Utility(int value) => value;
+        public static int Flexible(params int[] values) => values.Length;
+        public int Instance(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int DirectCall() => Outer<int>.Direct(1);
+    int NestedCall() => Outer<int>.Helper<string>.Utility(1);
+    int GlobalNestedCall() => global::Demo.Outer<int>.Helper<string>.Utility(1);
+    int InstanceCall() => Outer<int>.Helper<string>.Instance(1);
+    int ParamsCall() => Outer<int>.Helper<string>.Flexible(1);
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected_callers) in [
+        ("Demo::Outer::Direct", vec!["Demo::Caller::DirectCall"]),
+        (
+            "Demo::Outer::Helper::Utility",
+            vec!["Demo::Caller::GlobalNestedCall", "Demo::Caller::NestedCall"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected_callers) in [
+        ("Demo::Outer::Direct", vec!["Demo::Caller::DirectCall"]),
+        (
+            "Demo::Outer::Helper::Utility",
+            vec!["Demo::Caller::GlobalNestedCall", "Demo::Caller::NestedCall"],
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.clone())
+                .collect::<Vec<_>>(),
+            expected_callers,
+            "{target}"
+        );
+    }
+
+    for target in [
+        "Demo::Outer::Helper::Instance",
+        "Demo::Outer::Helper::Flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{target}");
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty(), "{target}");
+    }
+}
+
+#[test]
 fn traces_csharp_nested_type_static_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
