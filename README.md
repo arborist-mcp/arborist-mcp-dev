@@ -46,10 +46,13 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   the same source file, and `module::function()` or `crate::module::function()` calls through one
   chain of source-file-root out-of-line `mod module;` declarations. Each module in the chain must use
   one unambiguous default-layout file (`module.rs` or `module/mod.rs`); the terminal file must contain
-  one matching top-level function. Malformed source, `#[path]` semantics, duplicate declarations, and
-  ambiguous layouts fail closed. Trait-implementation members are not indexed, `use` paths do not
-  create dependency edges, and inline-module, Cargo, and import resolution beyond those explicit
-  out-of-line chains remains unavailable. Patching remains explicitly unavailable.
+  one matching top-level function. It also traces unshadowed bare calls through one exact
+  source-file-root `use crate::module::function;` binding or explicit `as` alias when that target is
+  reachable through the same out-of-line chain. Malformed source, `#[path]` semantics, duplicate
+  declarations/import aliases and ambiguous layouts fail closed; wildcard or grouped imports are not
+  considered.
+  Trait-implementation members are not indexed, and inline-module, Cargo, and import resolution
+  beyond those exact bindings remains unavailable. Patching remains explicitly unavailable.
 - Go: `.go` — Tree-sitter parsing, raw queries, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local
   receiver types, selected by semantic path or source position. Static imports strictly below the
@@ -547,11 +550,12 @@ for response shapes, error behavior, and examples.
   calls to functions in inline modules in the same source file, and direct
   `module::function()`/`crate::module::function()` calls through an explicit chain of source-file-root
   out-of-line `mod` declarations. Each module in the chain must have one default-layout source file
-  and the terminal file must contain one matching top-level function; malformed source, `#[path]`
-  semantics, duplicate declarations, and ambiguous layouts fail closed. Trait-implementation members
-  are not indexed, `use` paths do not create dependency edges, and inline-module, Cargo, and import
-  resolution beyond those explicit out-of-line chains remains unavailable. Patching remains
-  capability-gated.
+  and the terminal file must contain one matching top-level function. Unshadowed bare calls through
+  one exact source-file-root `use crate::module::function;` binding or explicit `as` alias resolve
+  through the same chain. Malformed source, `#[path]` semantics, duplicate declarations/import aliases and ambiguous layouts fail closed; wildcard or grouped imports
+  are not considered. Trait-implementation members are not
+  indexed, and inline-module, Cargo, and import resolution beyond those exact bindings remains
+  unavailable. Patching remains capability-gated.
 - Go Tree-sitter parsing, raw query execution, semantic skeletons, and conservative declaration
   indexing for named type specifications and aliases, functions, and methods with named local receiver
   types, selected by semantic path or source position. Static imports strictly below the nearest valid

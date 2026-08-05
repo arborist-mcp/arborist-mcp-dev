@@ -97,9 +97,13 @@ fn collect_direct_local_calls(
         return Ok(BTreeSet::new());
     };
     let local_functions = local_module_function_paths(symbol_node, source)?.unwrap_or_default();
+    let local_function_names =
+        local_module_function_names(symbol_node, source)?.unwrap_or_default();
     let qualified_functions = source_file_module_function_paths(symbol_node, source)?;
+    let imported_functions = source_file_imported_function_paths(symbol_node, source)?;
     let out_of_line_modules = source_file_out_of_line_module_names(path, symbol_node, source)?;
     if local_functions.is_empty()
+        && imported_functions.is_empty()
         && qualified_functions.is_empty()
         && out_of_line_modules.is_empty()
     {
@@ -112,6 +116,8 @@ fn collect_direct_local_calls(
         source,
         deadline,
         local_functions: &local_functions,
+        local_function_names: &local_function_names,
+        imported_functions: &imported_functions,
         qualified_functions: &qualified_functions,
         out_of_line_modules: &out_of_line_modules,
         module_components: rust_inline_module_path_components(symbol_node, source)?,
@@ -126,6 +132,8 @@ struct RustDirectCallContext<'a> {
     source: &'a str,
     deadline: Option<&'a WorkspaceScanDeadline>,
     local_functions: &'a BTreeMap<String, String>,
+    local_function_names: &'a BTreeSet<String>,
+    imported_functions: &'a BTreeMap<String, String>,
     qualified_functions: &'a BTreeMap<String, String>,
     out_of_line_modules: &'a BTreeSet<String>,
     module_components: Option<Vec<String>>,
@@ -144,6 +152,104 @@ fn source_file_out_of_line_module_names(
     Ok(rust_direct_module_candidate_paths(path, root, source)?
         .into_keys()
         .collect())
+}
+
+fn local_module_function_names(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<Option<BTreeSet<String>>> {
+    let Some(container) = local_module_function_container(symbol_node) else {
+        return Ok(None);
+    };
+
+    let mut names = BTreeSet::new();
+    let mut cursor = container.walk();
+    for child in container.named_children(&mut cursor) {
+        if child.kind() != "function_item" {
+            continue;
+        }
+        if let Some(name) = rust_symbol_name(child, source)? {
+            names.insert(name);
+        }
+    }
+    Ok(Some(names))
+}
+
+fn source_file_imported_function_paths(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut root = symbol_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+
+    let mut paths_by_local_name = BTreeMap::<String, Vec<String>>::new();
+    let mut cursor = root.walk();
+    for node in root.named_children(&mut cursor) {
+        if node.kind() != "use_declaration" {
+            continue;
+        }
+        let Some(argument) = node.child_by_field_name("argument") else {
+            continue;
+        };
+        let Some((local_name, target_path)) =
+            rust_single_function_import_binding(argument, source)?
+        else {
+            continue;
+        };
+        paths_by_local_name
+            .entry(local_name)
+            .or_default()
+            .push(target_path);
+    }
+
+    Ok(paths_by_local_name
+        .into_iter()
+        .filter_map(|(name, paths)| (paths.len() == 1).then(|| (name, paths[0].clone())))
+        .collect())
+}
+
+fn rust_single_function_import_binding(
+    argument: Node<'_>,
+    source: &str,
+) -> Result<Option<(String, String)>> {
+    if !matches!(argument.kind(), "scoped_identifier" | "use_as_clause") {
+        return Ok(None);
+    }
+    let spelling = node_text(argument, source)?.trim();
+    let (target_spelling, local_name) = match argument.kind() {
+        "scoped_identifier" => {
+            let Some(local_name) = spelling.rsplit("::").next() else {
+                return Ok(None);
+            };
+            (spelling, local_name)
+        }
+        "use_as_clause" => {
+            let Some(path) = argument.child_by_field_name("path") else {
+                return Ok(None);
+            };
+            let Some(alias) = argument.child_by_field_name("alias") else {
+                return Ok(None);
+            };
+            (
+                node_text(path, source)?.trim(),
+                node_text(alias, source)?.trim(),
+            )
+        }
+        _ => return Ok(None),
+    };
+    let Some(target_path) = target_spelling.strip_prefix("crate::") else {
+        return Ok(None);
+    };
+    let components = target_path.split("::").collect::<Vec<_>>();
+    if local_name.is_empty()
+        || components.len() < 2
+        || components.iter().any(|component| component.is_empty())
+    {
+        return Ok(None);
+    }
+    Ok(Some((local_name.to_string(), target_path.to_string())))
 }
 
 fn local_module_function_paths(
@@ -307,11 +413,14 @@ fn collect_direct_local_calls_from_node(
     {
         if function.kind() == "identifier" {
             let name = node_text(function, context.source)?.trim();
-            if !name.is_empty()
-                && !context.bindings.contains(name)
-                && let Some(path) = context.local_functions.get(name)
-            {
-                references.insert(path.clone());
+            if !name.is_empty() && !context.bindings.contains(name) {
+                if let Some(path) = context.local_functions.get(name) {
+                    references.insert(path.clone());
+                } else if !context.local_function_names.contains(name)
+                    && let Some(path) = context.imported_functions.get(name)
+                {
+                    references.insert(path.clone());
+                }
             }
         } else if function.kind() == "scoped_identifier"
             && let Some(module_components) = context.module_components.as_deref()
@@ -506,6 +615,82 @@ mod api {
                 [callee_path.to_string()].into(),
                 "unexpected references for {caller_path}",
             );
+        }
+    }
+
+    #[test]
+    fn indexes_unshadowed_direct_calls_to_root_function_imports() {
+        let source = r#"
+mod api;
+use crate::api::helper;
+use crate::api::helper as aliased_helper;
+
+fn caller() { helper(); }
+fn alias_caller() { aliased_helper(); }
+"#;
+        let path = Path::new("src/lib.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for caller_path in ["caller", "alias_caller"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert_eq!(
+                caller.references_by_name,
+                ["api::helper".to_string()].into()
+            );
+        }
+    }
+
+    #[test]
+    fn prefers_local_functions_over_root_function_imports() {
+        let source = r#"
+mod api;
+use crate::api::helper;
+
+fn helper() {}
+fn caller() { helper(); }
+"#;
+        let path = Path::new("src/lib.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "caller")
+            .unwrap();
+        assert_eq!(caller.references_by_name, ["helper".to_string()].into());
+    }
+
+    #[test]
+    fn ignores_ambiguous_and_shadowed_root_function_import_calls() {
+        let source = r#"
+mod api;
+use crate::api::helper;
+use crate::api::helper as helper;
+use crate::api::other::*;
+
+fn caller() { helper(); }
+fn shadowed(helper: fn()) { helper(); }
+"#;
+        let path = Path::new("src/lib.rs");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_rust_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for caller_path in ["caller", "shadowed"] {
+            let caller = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == caller_path)
+                .unwrap();
+            assert!(caller.references_by_name.is_empty());
         }
     }
 

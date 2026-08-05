@@ -261,6 +261,107 @@ fn traces_rust_direct_out_of_line_module_calls_in_live_workspace_and_persisted_i
 }
 
 #[test]
+fn traces_rust_root_function_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\nuse crate::api::helper;\nuse crate::api::helper as aliased_helper;\nfn caller() { helper(); }\nfn alias_caller() { aliased_helper(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+
+    for caller in ["caller", "alias_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(
+            live.callees.len(),
+            1,
+            "{caller} should resolve its imported function"
+        );
+        assert_eq!(live.callees[0].symbol_id, "helper");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["caller", "alias_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(
+            persisted.callees.len(),
+            1,
+            "{caller} should resolve its imported function from the persisted index"
+        );
+        assert_eq!(persisted.callees[0].symbol_id, "helper");
+    }
+}
+
+#[test]
+fn traces_rust_root_function_import_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(&root_path, "mod api;\nuse crate::api::stale;\n").unwrap();
+    fs::write(&api_path, "pub fn helper() {}\n").unwrap();
+    let root_overlay = "mod api;\nuse crate::api::helper;\nfn caller() { helper(); }\n";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &root_path,
+        root_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(live.callees.len(), 1);
+    assert_eq!(live.callees[0].symbol_id, "helper");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &root_path,
+        root_overlay,
+        "caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(persisted.callees.len(), 1);
+    assert_eq!(persisted.callees[0].symbol_id, "helper");
+}
+
+#[test]
+fn does_not_trace_ambiguous_or_wildcard_rust_function_import_calls() {
+    let dir = temporary_dir();
+    let root_path = dir.join("lib.rs");
+    let api_path = dir.join("api.rs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &root_path,
+        "mod api;\nuse crate::api::helper;\nuse crate::api::helper as helper;\nuse crate::api::*;\nfn ambiguous_caller() { helper(); }\nfn wildcard_caller() { other(); }\n",
+    )
+    .unwrap();
+    fs::write(&api_path, "pub fn helper() {}\npub fn other() {}\n").unwrap();
+
+    for caller in ["ambiguous_caller", "wildcard_caller"] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller} must fail closed");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for caller in ["ambiguous_caller", "wildcard_caller"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(
+            persisted.callees.is_empty(),
+            "{caller} must fail closed from the persisted index"
+        );
+    }
+}
+
+#[test]
 fn traces_rust_nested_out_of_line_module_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let root_path = dir.join("lib.rs");
