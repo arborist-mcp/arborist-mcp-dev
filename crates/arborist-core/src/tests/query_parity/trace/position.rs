@@ -3865,6 +3865,150 @@ class Main { int caller() { return Helper.utility(1); } }
 }
 
 #[test]
+fn traces_java_same_package_static_type_calls_across_files_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let helper_path = source_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example;
+class Main {
+    int caller() { return Helper.utility(1); }
+    int parameterShadowed(Helper Helper) { return Helper.utility(1); }
+    int nonStatic() { return Helper.instance(1); }
+    int varargs() { return Helper.flexible(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package com.example;
+class Helper {
+    static int utility(int value) { return value; }
+    static int flexible(int... values) { return values.length; }
+    int instance(int value) { return value; }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::utility";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+
+    for target in [
+        "com::example::Helper::instance",
+        "com::example::Helper::flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty());
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty());
+    }
+}
+
+#[test]
+fn ignores_ambiguous_java_same_package_static_type_calls_across_files() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        source_dir.join("Main.java"),
+        "package com.example; class Main { int caller() { return Helper.utility(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("First.java"),
+        "package com.example; class Helper { static int utility(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        source_dir.join("Second.java"),
+        "package com.example; class Helper { static int utility(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let live =
+        trace_symbol_graph(&dir, "com::example::Main::caller", TraceDirection::Callees).unwrap();
+    assert!(live.callees.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "com::example::Main::caller",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(persisted.callees.is_empty());
+}
+
+#[test]
+fn traces_java_same_package_static_type_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let helper_path = source_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package com.example; class Helper { static int utility(int value) { return value; } }
+",
+    )
+    .unwrap();
+    let overlay = "package com.example; class Main { int caller() { return Helper.utility(1); } }
+";
+    let helper_symbol = "com::example::Helper::utility";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+}
+
+#[test]
 fn traces_go_unshadowed_same_file_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("metrics.go");

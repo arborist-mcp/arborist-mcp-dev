@@ -793,7 +793,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 call_arity,
             ));
         }
-        if let Some(symbol_id) = resolve_java_same_file_static_method_reference(
+        if let Some(symbol_id) = resolve_java_same_package_static_method_reference(
             source_symbol,
             reference_name,
             raw_symbols,
@@ -2221,7 +2221,7 @@ fn resolve_java_same_file_super_method_reference(
     Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
 }
 
-fn resolve_java_same_file_static_method_reference(
+fn resolve_java_same_package_static_method_reference(
     source_symbol: &IndexedSymbol,
     reference_name: &str,
     raw_symbols: &[IndexedSymbol],
@@ -2248,8 +2248,7 @@ fn resolve_java_same_file_static_method_reference(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == "class_declaration"
+            candidate.node_kind == "class_declaration"
         })
         .collect::<Vec<_>>();
     if type_candidates.len() != 1 {
@@ -2264,8 +2263,7 @@ fn resolve_java_same_file_static_method_reference(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == "method_declaration"
+            candidate.node_kind == "method_declaration"
                 && candidate
                     .signature
                     .as_deref()

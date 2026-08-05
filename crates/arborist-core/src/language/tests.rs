@@ -243,7 +243,7 @@ fn java_adapter_exposes_tree_queries_skeleton_indexing_dependencies_and_tracing(
     assert_eq!(descriptor.extensions, &["java"]);
     assert_eq!(
         descriptor.analysis_revision,
-        "java-same-file-static-method-trace-v6"
+        "java-same-package-static-method-trace-v7"
     );
     for capability in [
         LanguageCapabilities::TREE_QUERY,
