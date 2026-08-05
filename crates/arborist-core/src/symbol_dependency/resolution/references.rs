@@ -834,6 +834,17 @@ fn resolve_reference_path_with_deadline<'a>(
                 (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
             );
         }
+        if let Some(symbol_id) = resolve_java_same_file_super_method_reference(
+            source_symbol,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         let Some(binding) = resolve_java_static_method_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,

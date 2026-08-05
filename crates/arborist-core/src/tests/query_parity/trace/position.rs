@@ -1111,7 +1111,7 @@ fn traces_java_explicit_same_file_super_constructor_initializers() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package com.example;\nclass Base {\n    Base() {}\n    Base(int value) {}\n    Base(int... values) {}\n    int helper() { return 1; }\n}\nclass Child extends Base {\n    Child() { super(); }\n    Child(int value) { super(value); }\n    Child(boolean first, boolean second) { super(1, 2); }\n    int inheritedCaller() { return super.helper(); }\n}\n",
+        "package com.example;\nclass Base {\n    Base() {}\n    Base(int value) {}\n    Base(int... values) {}\n    int helper() { return 1; }\n}\nclass Child extends Base {\n    Child() { super(); }\n    Child(int value) { super(value); }\n    Child(boolean first, boolean second) { super(1, 2); }\n    int inheritedCaller() { return super.helper(); }\n    int inheritedBareCaller() { return helper(); }\n}\n",
     )
     .unwrap();
     let file_path = normalize_path(&source_path);
@@ -1131,9 +1131,13 @@ fn traces_java_explicit_same_file_super_constructor_initializers() {
     assert!(live_params.callers.is_empty());
     let helper_live =
         trace_symbol_graph(&dir, "com::example::Base::helper", TraceDirection::Callers).unwrap();
-    assert_eq!(helper_live.callers.len(), 1);
+    assert_eq!(helper_live.callers.len(), 2);
     assert_eq!(
         helper_live.callers[0].symbol_id,
+        "com::example::Child::inheritedBareCaller"
+    );
+    assert_eq!(
+        helper_live.callers[1].symbol_id,
         "com::example::Child::inheritedCaller"
     );
 
@@ -1155,9 +1159,13 @@ fn traces_java_explicit_same_file_super_constructor_initializers() {
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(helper_persisted.callers.len(), 1);
+    assert_eq!(helper_persisted.callers.len(), 2);
     assert_eq!(
         helper_persisted.callers[0].symbol_id,
+        "com::example::Child::inheritedBareCaller"
+    );
+    assert_eq!(
+        helper_persisted.callers[1].symbol_id,
         "com::example::Child::inheritedCaller"
     );
 }
@@ -1167,7 +1175,7 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
     let source_path = dir.join("Types.java");
     let db_path = dir.join("symbols.db");
     fs::write(&source_path, "package com.example; class Stale {}\n").unwrap();
-    let overlay = "package com.example;\nclass Base { Base() {} int helper() { return 1; } }\nclass Child extends Base { Child() { super(); } int inheritedCaller() { return super.helper(); } }\n";
+    let overlay = "package com.example;\nclass Base { Base() {} int helper() { return 1; } }\nclass Child extends Base { Child() { super(); } int inheritedCaller() { return super.helper(); }\n    int inheritedBareCaller() { return helper(); } }\n";
     let target = "com::example::Base::Base";
     let child_constructor = "com::example::Child::Child";
 
@@ -1189,9 +1197,13 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(helper_live.callers.len(), 1);
+    assert_eq!(helper_live.callers.len(), 2);
     assert_eq!(
         helper_live.callers[0].symbol_id,
+        "com::example::Child::inheritedBareCaller"
+    );
+    assert_eq!(
+        helper_live.callers[1].symbol_id,
         "com::example::Child::inheritedCaller"
     );
 
@@ -1214,9 +1226,13 @@ fn traces_java_explicit_same_file_super_constructor_initializers_from_dirty_vfs_
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(helper_persisted.callers.len(), 1);
+    assert_eq!(helper_persisted.callers.len(), 2);
     assert_eq!(
         helper_persisted.callers[0].symbol_id,
+        "com::example::Child::inheritedBareCaller"
+    );
+    assert_eq!(
+        helper_persisted.callers[1].symbol_id,
         "com::example::Child::inheritedCaller"
     );
 }
