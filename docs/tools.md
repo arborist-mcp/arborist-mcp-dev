@@ -87,8 +87,9 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   explicit unsupported-operation errors until dedicated C# adapter
   slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
-  conservative dependency refresh for explicit local type imports and single-member `import static`
-  imports whose owning type maps to a local `.java` file under an ancestor source root. Classes,
+  conservative dependency refresh for explicit local type imports, single-member `import static`
+  imports, and simple direct same-package superclass links whose owning type maps to a local
+  `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors use package-qualified paths. It
   traces an explicit `this(...)` constructor initializer only when one same-type, same-file, non-varargs constructor has the call arity; a same-file simple `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor has the call arity; plus unqualified and `this.method()` calls only when one same-type, same-file, non-varargs method has the call arity; `Type.method()` through a unique explicit non-static local type import
   with an unshadowed type name; and a bare call through a unique explicit local static-method import

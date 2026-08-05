@@ -35,6 +35,50 @@ pub(crate) fn java_local_file_dependency_paths(
             .into_iter()
             .map(|import| import.source_path),
     );
+    dependencies.extend(java_local_simple_superclass_dependency_paths(
+        path, root, source,
+    )?);
+    Ok(dependencies)
+}
+
+fn java_local_simple_superclass_dependency_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    let normalized_path = normalize_absolute_path(path)?;
+    let package_name = java_package_name(root, source)?;
+    let mut dependencies = BTreeSet::new();
+    let mut cursor = root.walk();
+    for declaration in root
+        .named_children(&mut cursor)
+        .filter(|node| node.kind() == "class_declaration")
+    {
+        let Some(superclass) = declaration.child_by_field_name("superclass") else {
+            continue;
+        };
+        let Some(type_node) = superclass.named_child(0) else {
+            continue;
+        };
+        if type_node.kind() != "type_identifier" {
+            continue;
+        }
+        let superclass_name = node_text(type_node, source)?.trim();
+        if superclass_name.is_empty() {
+            continue;
+        }
+        let source_path = if let Some(package_name) = package_name.as_deref() {
+            let import_path = format!("{package_name}.{superclass_name}");
+            resolve_unique_java_source_path(path, &import_path)
+        } else {
+            resolve_unique_java_default_package_source_path(path, superclass_name)
+        };
+        if let Some(source_path) = source_path
+            && source_path != normalized_path
+        {
+            dependencies.insert(source_path);
+        }
+    }
     Ok(dependencies)
 }
 
@@ -145,6 +189,58 @@ fn java_explicit_import_path(node: Node<'_>, source: &str) -> Result<Option<(boo
         return Ok(None);
     }
     Ok(Some((is_static, import_path)))
+}
+
+fn java_package_name(root: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut cursor = root.walk();
+    let Some(package) = root
+        .named_children(&mut cursor)
+        .find(|node| node.kind() == "package_declaration")
+    else {
+        return Ok(None);
+    };
+    let mut cursor = package.walk();
+    package
+        .named_children(&mut cursor)
+        .find(|node| matches!(node.kind(), "identifier" | "scoped_identifier"))
+        .map(|name| node_text(name, source).map(str::trim).map(str::to_string))
+        .transpose()
+        .map(|name| name.filter(|name| !name.is_empty()))
+}
+
+fn resolve_unique_java_default_package_source_path(
+    path: &Path,
+    type_name: &str,
+) -> Option<PathBuf> {
+    let mut candidates = BTreeSet::new();
+    let mut source_root = path.parent()?.to_path_buf();
+    loop {
+        let candidate = source_root.join(format!("{type_name}.java"));
+        if candidate.is_file() && candidate_declares_default_package(&candidate) {
+            candidates.insert(normalize_absolute_path(&candidate).ok()?);
+        }
+        if !source_root.pop() {
+            break;
+        }
+    }
+    (candidates.len() == 1)
+        .then(|| candidates.into_iter().next())
+        .flatten()
+}
+
+fn candidate_declares_default_package(candidate: &Path) -> bool {
+    let Ok(source) = fs::read_to_string(candidate) else {
+        return false;
+    };
+    let Ok(document) = parse_document(candidate, &source) else {
+        return false;
+    };
+    let mut cursor = document.tree.root_node().walk();
+    !document
+        .tree
+        .root_node()
+        .named_children(&mut cursor)
+        .any(|node| node.kind() == "package_declaration")
 }
 
 fn resolve_unique_java_source_path(path: &Path, import_path: &str) -> Option<PathBuf> {
@@ -292,6 +388,42 @@ mod tests {
                 source_path: static_helper_path,
             }]
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_same_package_simple_superclasses_as_dependencies() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Child.java");
+        let base_path = root.join("src/com/example/Base.java");
+        let unrelated_path = root.join("src/com/example/Unrelated.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &source_path,
+            "package com.example; class Child extends Base {} class Generic extends Holder<String> {} class Qualified extends other.Base {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &base_path,
+            "package com.example; class Base {}
+",
+        )
+        .unwrap();
+        fs::write(
+            &unrelated_path,
+            "package com.example; class Unrelated {}
+",
+        )
+        .unwrap();
+        let source = fs::read_to_string(&source_path).unwrap();
+        let document = parse_document(&source_path, &source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), &source)
+                .unwrap();
+
+        assert_eq!(dependencies, [base_path].into_iter().collect());
         let _ = fs::remove_dir_all(root);
     }
 
