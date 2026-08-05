@@ -856,9 +856,21 @@ fn resolve_reference_path_with_deadline<'a>(
                         .any(|parameter| parameter.contains("..."))
             })
             .collect::<Vec<_>>();
-        if !same_type_candidates.is_empty() || method_name != reference_name {
+        if !same_type_candidates.is_empty() {
             return Ok(
                 (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
+        if method_name != reference_name {
+            return resolve_java_direct_interface_default_method_reference(
+                source_symbol,
+                method_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                call_arity,
+                deadline,
             );
         }
         if let Some(symbol_id) = resolve_java_simple_super_method_reference(

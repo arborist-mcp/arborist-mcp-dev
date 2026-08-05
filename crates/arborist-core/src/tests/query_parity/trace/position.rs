@@ -4983,7 +4983,7 @@ fn traces_java_same_package_default_interface_methods_in_live_workspace_and_pers
     fs::write(
         &caller_path,
         "package com.example;
-class Main implements Defaults { int caller() { return helper(1); } }
+class Main implements Defaults { int caller() { return helper(1); } int thisCaller() { return this.helper(1); } }
 class AbstractMain implements Abstracts { int caller() { return helper(1); } }
 ",
     )
@@ -5005,8 +5005,17 @@ class AbstractMain implements Abstracts { int caller() { return helper(1); } }
     let abstract_target = "com::example::Abstracts::helper";
     let live = trace_symbol_graph(&dir, default_target, TraceDirection::Callers).unwrap();
     assert_eq!(live.indexed_files, 3);
-    assert_eq!(live.callers.len(), 1);
-    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+    assert_eq!(live.callers.len(), 2);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
     assert!(
         trace_symbol_graph(&dir, abstract_target, TraceDirection::Callers)
             .unwrap()
@@ -5018,8 +5027,18 @@ class AbstractMain implements Abstracts { int caller() { return helper(1); } }
     let persisted =
         trace_symbol_graph_from_index(&db_path, default_target, TraceDirection::Callers).unwrap();
     assert_eq!(persisted.indexed_files, 3);
-    assert_eq!(persisted.callers.len(), 1);
-    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+    assert_eq!(persisted.callers.len(), 2);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
     assert!(
         trace_symbol_graph_from_index(&db_path, abstract_target, TraceDirection::Callers)
             .unwrap()
@@ -5039,7 +5058,7 @@ fn traces_java_default_interface_methods_from_dirty_vfs_overrides() {
 ",
     )
     .unwrap();
-    let overlay = "package com.example; interface Defaults { default int helper(int value) { return value; } } class Main implements Defaults { int caller() { return helper(1); } }
+    let overlay = "package com.example; interface Defaults { default int helper(int value) { return value; } } class Main implements Defaults { int caller() { return this.helper(1); } }
 ";
     let target = "com::example::Defaults::helper";
 
