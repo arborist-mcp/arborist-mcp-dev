@@ -2339,6 +2339,12 @@ fn resolve_java_inherited_method_from_type_path(
     }
 }
 
+enum JavaDefaultInterfaceMethodResolution {
+    Resolved(String),
+    NoMethod,
+    Blocked,
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java direct interface resolution inputs explicit"
@@ -2353,7 +2359,7 @@ fn resolve_java_direct_interface_default_method_reference(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(interface_path) = java_unique_direct_interface_path(
+    let Some(interface_paths) = java_resolved_direct_interface_paths(
         source_symbol,
         method_name,
         raw_symbols,
@@ -2365,16 +2371,28 @@ fn resolve_java_direct_interface_default_method_reference(
     else {
         return Ok(None);
     };
-    resolve_java_default_interface_method_from_type_path(
-        &interface_path,
-        method_name,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        call_arity,
-        deadline,
-    )
+    let mut resolved_symbol_id = None;
+    for interface_path in interface_paths {
+        match resolve_java_default_interface_method_from_type_path(
+            &interface_path,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            JavaDefaultInterfaceMethodResolution::Resolved(symbol_id) => {
+                if resolved_symbol_id.replace(symbol_id).is_some() {
+                    return Ok(None);
+                }
+            }
+            JavaDefaultInterfaceMethodResolution::NoMethod => {}
+            JavaDefaultInterfaceMethodResolution::Blocked => return Ok(None),
+        }
+    }
+    Ok(resolved_symbol_id)
 }
 
 #[allow(
@@ -2390,7 +2408,7 @@ fn resolve_java_default_interface_method_from_type_path(
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<JavaDefaultInterfaceMethodResolution> {
     let mut visited_interface_paths = BTreeSet::new();
     let mut current_interface_path = initial_interface_path.to_string();
     loop {
@@ -2398,7 +2416,7 @@ fn resolve_java_default_interface_method_from_type_path(
             deadline.check("resolving Java default interface method")?;
         }
         if !visited_interface_paths.insert(current_interface_path.clone()) {
-            return Ok(None);
+            return Ok(JavaDefaultInterfaceMethodResolution::Blocked);
         }
         let target_path = format!("{current_interface_path}::{method_name}");
         let declared_candidates = semantic_path_index
@@ -2424,9 +2442,12 @@ fn resolve_java_default_interface_method_from_type_path(
                             .any(|parameter| parameter.contains("..."))
                 })
                 .collect::<Vec<_>>();
-            return Ok(
-                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
-            );
+            return Ok(match candidates.as_slice() {
+                [candidate_index] => JavaDefaultInterfaceMethodResolution::Resolved(
+                    raw_symbols[*candidate_index].symbol_id.clone(),
+                ),
+                _ => JavaDefaultInterfaceMethodResolution::Blocked,
+            });
         }
         let interface_candidates = semantic_path_index
             .get(&current_interface_path)
@@ -2436,10 +2457,11 @@ fn resolve_java_default_interface_method_from_type_path(
             .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
             .collect::<Vec<_>>();
         let [interface_index] = interface_candidates.as_slice() else {
-            return Ok(None);
+            return Ok(JavaDefaultInterfaceMethodResolution::Blocked);
         };
+        let source_interface = &raw_symbols[*interface_index];
         let Some(parent_interface_path) = java_unique_direct_parent_interface_path(
-            &raw_symbols[*interface_index],
+            source_interface,
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -2447,7 +2469,15 @@ fn resolve_java_default_interface_method_from_type_path(
             deadline,
         )?
         else {
-            return Ok(None);
+            return Ok(
+                if java_interface_has_no_direct_parents(source_interface, file_overrides, deadline)?
+                    == Some(true)
+                {
+                    JavaDefaultInterfaceMethodResolution::NoMethod
+                } else {
+                    JavaDefaultInterfaceMethodResolution::Blocked
+                },
+            );
         };
         current_interface_path = parent_interface_path;
     }
@@ -2509,11 +2539,48 @@ fn java_unique_direct_parent_interface_path(
     )
 }
 
+fn java_interface_has_no_direct_parents(
+    source_interface: &IndexedSymbol,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<bool>> {
+    if source_interface.node_kind != "interface_declaration" {
+        return Ok(None);
+    }
+    let path = Path::new(&source_interface.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Java parent interface")?;
+        }
+        if node.kind() == "interface_declaration"
+            && (node.start_byte(), node.end_byte()) == source_interface.byte_range
+        {
+            let mut cursor = node.walk();
+            return Ok(Some(
+                !node
+                    .named_children(&mut cursor)
+                    .any(|child| child.kind() == "extends_interfaces"),
+            ));
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    Ok(None)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java direct interface resolution inputs explicit"
 )]
-fn java_unique_direct_interface_path(
+fn java_resolved_direct_interface_paths(
     source_symbol: &IndexedSymbol,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
@@ -2521,7 +2588,7 @@ fn java_unique_direct_interface_path(
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
+) -> Result<Option<Vec<String>>> {
     let Some(scope_path) = source_symbol.scope_path.as_deref() else {
         return Ok(None);
     };
@@ -2593,20 +2660,25 @@ fn java_unique_direct_interface_path(
     let Some(interface_references) = interface_references else {
         return Ok(None);
     };
-    let [interface_reference] = interface_references.as_slice() else {
-        return Ok(None);
-    };
     let enclosing_scope_path = scope_path.rsplit_once("::").map(|(parent, _)| parent);
-    resolve_java_direct_interface_target_path(
-        &source_symbol.file_path,
-        enclosing_scope_path,
-        interface_reference,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )
+    let mut interface_paths = Vec::new();
+    for interface_reference in interface_references {
+        let Some(interface_path) = resolve_java_direct_interface_target_path(
+            &source_symbol.file_path,
+            enclosing_scope_path,
+            &interface_reference,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        interface_paths.push(interface_path);
+    }
+    Ok((!interface_paths.is_empty()).then_some(interface_paths))
 }
 
 #[allow(

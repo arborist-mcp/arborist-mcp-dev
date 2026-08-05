@@ -5048,6 +5048,79 @@ class AbstractMain implements Abstracts { int caller() { return helper(1); } }
 }
 
 #[test]
+fn traces_java_unambiguous_default_methods_across_multiple_direct_interfaces() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let primary_path = source_dir.join("Primary.java");
+    let empty_path = source_dir.join("Empty.java");
+    let abstract_path = source_dir.join("Abstracts.java");
+    let secondary_path = source_dir.join("Secondary.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example; class Main implements Primary, Empty { int caller() { return helper(1); } int thisCaller() { return this.helper(1); } } class AbstractBlocked implements Primary, Abstracts { int caller() { return helper(1); } } class DefaultBlocked implements Primary, Secondary { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &primary_path,
+        "package com.example; interface Primary { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &empty_path,
+        "package com.example; interface Empty {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &abstract_path,
+        "package com.example; interface Abstracts { int helper(int value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &secondary_path,
+        "package com.example; interface Secondary { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Primary::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 5);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 5);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|caller| caller.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "com::example::Main::caller",
+            "com::example::Main::thisCaller"
+        ]
+    );
+}
+
+#[test]
 fn traces_java_unique_default_interface_inheritance_chains_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");
@@ -5222,7 +5295,7 @@ fn traces_java_default_interface_methods_from_dirty_vfs_overrides() {
 ",
     )
     .unwrap();
-    let overlay = "package com.example; interface Defaults { default int helper(int value) { return value; } } class Main implements Defaults { int caller() { return this.helper(1); } }
+    let overlay = "package com.example; interface Defaults { default int helper(int value) { return value; } } interface Empty {} class Main implements Defaults, Empty { int caller() { return this.helper(1); } }
 ";
     let target = "com::example::Defaults::helper";
 
