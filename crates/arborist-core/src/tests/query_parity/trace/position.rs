@@ -1024,6 +1024,87 @@ fn traces_java_unqualified_same_type_calls_in_live_workspace_and_persisted_index
 }
 
 #[test]
+fn traces_java_explicit_this_constructor_initializers_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;\nclass Counter {\n    Counter() {}\n    Counter(int value) { this(); }\n    Counter(int... values) {}\n    Counter(boolean first, boolean second) { this(1, 2); }\n}\n",
+    )
+    .unwrap();
+
+    let target = format!(
+        "{}::com::example::Counter::Counter#overload[1]",
+        normalize_path(&source_path)
+    );
+    let delegated_constructor = format!(
+        "{}::com::example::Counter::Counter#overload[2]",
+        normalize_path(&source_path)
+    );
+    let params_constructor = format!(
+        "{}::com::example::Counter::Counter#overload[3]",
+        normalize_path(&source_path)
+    );
+
+    let live = trace_symbol_graph(&dir, &target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, delegated_constructor);
+    let params_live =
+        trace_symbol_graph(&dir, &params_constructor, TraceDirection::Callers).unwrap();
+    assert!(params_live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, &target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, delegated_constructor);
+    let params_persisted =
+        trace_symbol_graph_from_index(&db_path, &params_constructor, TraceDirection::Callers)
+            .unwrap();
+    assert!(params_persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_java_explicit_this_constructor_initializers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example; class Counter {}\n").unwrap();
+    let overlay = "package com.example;\nclass Counter {\n    Counter() {}\n    Counter(int value) { this(); }\n}\n";
+    let target = format!(
+        "{}::com::example::Counter::Counter#overload[1]",
+        normalize_path(&source_path)
+    );
+    let delegated_constructor = format!(
+        "{}::com::example::Counter::Counter#overload[2]",
+        normalize_path(&source_path)
+    );
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        &target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, delegated_constructor);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        &target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, delegated_constructor);
+}
+#[test]
 fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");

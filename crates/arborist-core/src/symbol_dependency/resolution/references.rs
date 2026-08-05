@@ -726,6 +726,34 @@ fn resolve_reference_path_with_deadline<'a>(
         let Some(call_arity) = call_context.arity else {
             return Ok(None);
         };
+        if reference_name == "this" {
+            if source_symbol.node_kind != "constructor_declaration" {
+                return Ok(None);
+            }
+            let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+                return Ok(None);
+            };
+            let target_path = format!("{scope_path}::{}", source_symbol.base_name);
+            let candidates = semantic_path_index
+                .get(&target_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.file_path == source_symbol.file_path
+                        && candidate.node_kind == "constructor_declaration"
+                        && candidate.parameters.len() == call_arity
+                        && !candidate
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.contains("..."))
+                })
+                .collect::<Vec<_>>();
+            return Ok(
+                (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+            );
+        }
         if let Some((method_name, binding)) = resolve_java_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,

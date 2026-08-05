@@ -131,6 +131,20 @@ fn collect_direct_local_calls_from_node(
     if node.kind() == "class_body" {
         return Ok(());
     }
+    if node.kind() == "explicit_constructor_invocation"
+        && node
+            .child_by_field_name("constructor")
+            .is_some_and(|constructor| constructor.kind() == "this")
+        && let Some(arguments) = node.child_by_field_name("arguments")
+    {
+        let mut cursor = arguments.walk();
+        let arity = arguments.named_children(&mut cursor).count();
+        references.insert("this".to_string());
+        call_arities_by_name
+            .entry("this".to_string())
+            .or_default()
+            .insert(arity);
+    }
     if node.kind() == "method_invocation"
         && let Some(name_node) = node.child_by_field_name("name")
         && let Some(arguments) = node.child_by_field_name("arguments")
