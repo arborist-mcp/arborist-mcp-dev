@@ -161,6 +161,51 @@ fn refreshes_java_same_package_simple_generic_superclass_dependents() {
 }
 
 #[test]
+fn refreshes_java_qualified_generic_superclass_dependents() {
+    let dir = temporary_dir();
+    let base_dir = dir.join("src").join("com").join("base");
+    let child_dir = dir.join("src").join("com").join("child");
+    let child = child_dir.join("Child.java");
+    let base = base_dir.join("Base.java");
+    let unrelated = child_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&child_dir).unwrap();
+    fs::write(
+        &child,
+        "package com.child; class Child extends com.base.Base<String> { int caller() { return helper(); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &base,
+        "package com.base; class Base<T> { int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package com.child; class Unrelated {}
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    fs::write(
+        &base,
+        "package com.base; class Base<T> { int helper() { return 2; } int added() { return 3; } }
+",
+    )
+    .unwrap();
+
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &base).unwrap();
+    assert_eq!(stats.indexed_files, 3);
+    assert_eq!(stats.rebuilt_files, 2);
+    assert_eq!(stats.reused_files, 1);
+}
+
+#[test]
 fn refreshes_java_qualified_simple_superclass_dependents() {
     let dir = temporary_dir();
     let base_dir = dir.join("src").join("com").join("base");
