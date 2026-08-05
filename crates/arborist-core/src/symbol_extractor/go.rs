@@ -84,6 +84,18 @@ fn indexed_symbol(
     }))
 }
 
+struct GoMethodReceiver {
+    name: String,
+    type_name: String,
+}
+
+struct GoDirectCallContext<'a> {
+    local_functions: &'a BTreeMap<String, String>,
+    bindings: &'a BTreeSet<String>,
+    method_receiver: Option<&'a GoMethodReceiver>,
+    body_bindings: &'a BTreeSet<String>,
+}
+
 fn collect_direct_local_calls(
     symbol_node: Node<'_>,
     source: &str,
@@ -99,19 +111,60 @@ fn collect_direct_local_calls(
         return Ok(BTreeSet::new());
     };
     let local_functions = source_file_function_paths(symbol_node, source)?;
+    let method_receiver = go_method_receiver_binding(symbol_node, source)?;
 
     let mut bindings = BTreeSet::new();
     collect_function_bindings(symbol_node, source, &mut bindings)?;
+    let mut body_bindings = BTreeSet::new();
+    if let Some(parameters) = symbol_node.child_by_field_name("parameters") {
+        collect_parameter_bindings(parameters, source, &mut body_bindings)?;
+    }
+    collect_body_bindings(body, source, &mut body_bindings)?;
+    let context = GoDirectCallContext {
+        local_functions: &local_functions,
+        bindings: &bindings,
+        method_receiver: method_receiver.as_ref(),
+        body_bindings: &body_bindings,
+    };
     let mut references = BTreeSet::new();
-    collect_direct_local_calls_from_node(
-        body,
-        source,
-        deadline,
-        &local_functions,
-        &bindings,
-        &mut references,
-    )?;
+    collect_direct_local_calls_from_node(body, source, deadline, &context, &mut references)?;
     Ok(references)
+}
+
+fn go_method_receiver_binding(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<Option<GoMethodReceiver>> {
+    if symbol_node.kind() != "method_declaration" {
+        return Ok(None);
+    }
+    let Some(name) = go_symbol_name(symbol_node, source)? else {
+        return Ok(None);
+    };
+    let Some(semantic_path) = go_semantic_path(symbol_node, source, &name)? else {
+        return Ok(None);
+    };
+    let Some((type_name, _)) = semantic_path.split_once("::") else {
+        return Ok(None);
+    };
+    let Some(receiver) = symbol_node.child_by_field_name("receiver") else {
+        return Ok(None);
+    };
+    let mut cursor = receiver.walk();
+    let Some(parameter) = receiver.named_children(&mut cursor).next() else {
+        return Ok(None);
+    };
+    let Some(receiver_name) = parameter.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let receiver_name = node_text(receiver_name, source)?.trim();
+    if receiver_name.is_empty() || receiver_name == "_" {
+        return Ok(None);
+    }
+    Ok(Some(GoMethodReceiver {
+        name: receiver_name.to_string(),
+        type_name: type_name.to_string(),
+    }))
 }
 
 fn source_file_function_paths(
@@ -270,7 +323,11 @@ fn go_imported_selector_reference(
     Ok(Some(format!("{local_name}.{imported_name}")))
 }
 
-fn go_direct_method_reference(selector: Node<'_>, source: &str) -> Result<Option<String>> {
+fn go_direct_method_reference(
+    selector: Node<'_>,
+    source: &str,
+    context: &GoDirectCallContext<'_>,
+) -> Result<Option<String>> {
     let Some(operand) = selector.child_by_field_name("operand") else {
         return Ok(None);
     };
@@ -285,16 +342,25 @@ fn go_direct_method_reference(selector: Node<'_>, source: &str) -> Result<Option
         return Ok(None);
     }
 
-    let receiver_type = (operand.kind() == "composite_literal")
-        .then(|| operand.child_by_field_name("type"))
-        .flatten()
-        .filter(|type_node| type_node.kind() == "type_identifier")
-        .map(|type_node| {
-            node_text(type_node, source)
-                .map(str::trim)
-                .map(str::to_string)
+    let receiver_type = if operand.kind() == "composite_literal" {
+        operand
+            .child_by_field_name("type")
+            .filter(|type_node| type_node.kind() == "type_identifier")
+            .map(|type_node| {
+                node_text(type_node, source)
+                    .map(str::trim)
+                    .map(str::to_string)
+            })
+            .transpose()?
+    } else if operand.kind() == "identifier" {
+        let receiver_name = node_text(operand, source)?.trim();
+        context.method_receiver.and_then(|receiver| {
+            (receiver_name == receiver.name && !context.body_bindings.contains(receiver_name))
+                .then(|| receiver.type_name.clone())
         })
-        .transpose()?;
+    } else {
+        None
+    };
     Ok(receiver_type.map(|receiver_type| format!("{receiver_type}::{method_name}")))
 }
 
@@ -302,8 +368,7 @@ fn collect_direct_local_calls_from_node(
     node: Node<'_>,
     source: &str,
     deadline: Option<&WorkspaceScanDeadline>,
-    local_functions: &BTreeMap<String, String>,
-    bindings: &BTreeSet<String>,
+    context: &GoDirectCallContext<'_>,
     references: &mut BTreeSet<String>,
 ) -> Result<()> {
     if let Some(deadline) = deadline {
@@ -318,9 +383,10 @@ fn collect_direct_local_calls_from_node(
         match function.kind() {
             "identifier" => {
                 let name = node_text(function, source)?.trim();
-                if !name.is_empty() && !bindings.contains(name) {
+                if !name.is_empty() && !context.bindings.contains(name) {
                     references.insert(
-                        local_functions
+                        context
+                            .local_functions
                             .get(name)
                             .cloned()
                             .unwrap_or_else(|| name.to_string()),
@@ -328,10 +394,13 @@ fn collect_direct_local_calls_from_node(
                 }
             }
             "selector_expression" => {
-                if let Some(reference) = go_imported_selector_reference(function, source, bindings)?
+                if let Some(reference) =
+                    go_imported_selector_reference(function, source, context.bindings)?
                 {
                     references.insert(reference);
-                } else if let Some(reference) = go_direct_method_reference(function, source)? {
+                } else if let Some(reference) =
+                    go_direct_method_reference(function, source, context)?
+                {
                     references.insert(reference);
                 }
             }
@@ -341,14 +410,7 @@ fn collect_direct_local_calls_from_node(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        collect_direct_local_calls_from_node(
-            child,
-            source,
-            deadline,
-            local_functions,
-            bindings,
-            references,
-        )?;
+        collect_direct_local_calls_from_node(child, source, deadline, context, references)?;
     }
     Ok(())
 }
@@ -366,6 +428,7 @@ mod tests {
 package metrics
 
 type Counter struct { value int }
+type Other struct{}
 type Alias = Counter
 
 func helper() int { return 1 }
@@ -383,6 +446,15 @@ func shadowed_selector() int {
 }
 func literal_method() int { return Counter{}.Value() }
 func (Counter) Value() int { return 3 }
+func (Other) Value() int { return 4 }
+func (counter *Counter) receiver_call() int { return counter.Value() }
+func (counter *Counter) shadowed_receiver() int {
+    if true {
+        counter := Other{}
+        return counter.Value()
+    }
+    return 0
+}
 func (counter *Counter) Increment(amount int) int { return helper() + amount }
 "#;
         let path = Path::new("metrics.go");
@@ -397,6 +469,7 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 .collect::<Vec<_>>(),
             vec![
                 "Counter",
+                "Other",
                 "Alias",
                 "helper",
                 "direct",
@@ -407,6 +480,9 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
                 "shadowed_selector",
                 "literal_method",
                 "Counter::Value",
+                "Other::Value",
+                "Counter::receiver_call",
+                "Counter::shadowed_receiver",
                 "Counter::Increment",
             ]
         );
@@ -426,6 +502,22 @@ func (counter *Counter) Increment(amount int) int { return helper() + amount }
             assert_eq!(caller.references_by_name, ["helper".to_string()].into());
             assert_eq!(caller.reference_facts.len(), 1);
         }
+        let receiver_call = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "Counter::receiver_call")
+            .unwrap();
+        assert_eq!(
+            receiver_call.references_by_name,
+            ["Counter::Value".to_string()].into()
+        );
+        assert_eq!(receiver_call.reference_facts.len(), 1);
+        let shadowed_receiver = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "Counter::shadowed_receiver")
+            .unwrap();
+        assert!(shadowed_receiver.references_by_name.is_empty());
+        assert!(shadowed_receiver.reference_facts.is_empty());
+
         let literal_method = symbols
             .iter()
             .find(|symbol| symbol.semantic_path == "literal_method")

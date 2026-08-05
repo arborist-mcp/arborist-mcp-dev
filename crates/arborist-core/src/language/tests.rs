@@ -294,10 +294,7 @@ fn go_adapter_exposes_skeleton_indexing_dependencies_and_tracing_without_patchin
 
     assert_eq!(descriptor.display_name, "Go");
     assert_eq!(descriptor.extensions, &["go"]);
-    assert_eq!(
-        descriptor.analysis_revision,
-        "go-package-composite-method-trace-v4"
-    );
+    assert_eq!(descriptor.analysis_revision, "go-receiver-method-trace-v5");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
