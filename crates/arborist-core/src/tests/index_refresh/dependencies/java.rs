@@ -231,6 +231,70 @@ fn refreshes_java_default_interface_inheritance_dependents() {
 }
 
 #[test]
+fn refreshes_explicit_imported_java_default_interface_inheritance_dependents() {
+    let dir = temporary_dir();
+    let root_dir = dir.join("src").join("com").join("root");
+    let middle_dir = dir.join("src").join("com").join("middle");
+    let caller_dir = dir.join("src").join("com").join("child");
+    let root = root_dir.join("Root.java");
+    let child = middle_dir.join("Child.java");
+    let caller = caller_dir.join("Main.java");
+    let unrelated = caller_dir.join("Unrelated.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&root_dir).unwrap();
+    fs::create_dir_all(&middle_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &root,
+        "package com.root; interface Root { int helper(int value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child,
+        "package com.middle; import com.root.Root; interface Child extends Root {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "package com.child; import com.middle.Child; class Main implements Child { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &unrelated,
+        "package com.child; class Unrelated {}
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let target = "com::root::Root::helper";
+    assert!(
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers)
+            .unwrap()
+            .callers
+            .is_empty()
+    );
+
+    fs::write(
+        &root,
+        "package com.root; interface Root { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &root).unwrap();
+    assert_eq!(stats.indexed_files, 4);
+    assert_eq!(stats.rebuilt_files, 3);
+    assert_eq!(stats.reused_files, 1);
+
+    let after = trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::child::Main::caller");
+}
+
+#[test]
 fn refreshes_java_same_package_static_type_callers() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");

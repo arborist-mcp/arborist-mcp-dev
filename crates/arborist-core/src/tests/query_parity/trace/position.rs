@@ -5180,6 +5180,82 @@ fn traces_java_unique_default_interface_inheritance_chains_in_live_workspace_and
 }
 
 #[test]
+fn traces_java_explicit_imported_default_interface_inheritance_chains() {
+    let dir = temporary_dir();
+    let root_dir = dir.join("src").join("com").join("root");
+    let middle_dir = dir.join("src").join("com").join("middle");
+    let caller_dir = dir.join("src").join("com").join("child");
+    let root_path = root_dir.join("Root.java");
+    let child_path = middle_dir.join("Child.java");
+    let caller_path = caller_dir.join("Main.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&root_dir).unwrap();
+    fs::create_dir_all(&middle_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &root_path,
+        "package com.root; interface Root { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.middle; import com.root.Root; interface Child extends Root {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package com.child; import com.middle.Child; class Main implements Child { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+
+    let target = "com::root::Root::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::child::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::child::Main::caller");
+
+    let caller_overlay = "package com.child; import com.middle.Child; class Main implements Child { int caller() { return this.helper(1); } }
+";
+    let live_overlay = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        caller_overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live_overlay.callers.len(), 1);
+    assert_eq!(
+        live_overlay.callers[0].symbol_id,
+        "com::child::Main::caller"
+    );
+
+    let persisted_overlay = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        caller_overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted_overlay.callers.len(), 1);
+    assert_eq!(
+        persisted_overlay.callers[0].symbol_id,
+        "com::child::Main::caller"
+    );
+}
+
+#[test]
 fn traces_java_default_interface_methods_through_unique_empty_superclass_chains() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");
