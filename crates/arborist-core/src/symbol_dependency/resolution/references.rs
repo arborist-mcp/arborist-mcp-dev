@@ -11,9 +11,11 @@ use super::super::csharp::{
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_global_namespace_imports_for_reference,
+    resolve_csharp_global_nested_type_alias_binding_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
     resolve_csharp_global_type_alias_binding_for_reference,
     resolve_csharp_namespace_imports_for_reference,
+    resolve_csharp_nested_type_alias_binding_for_reference,
     resolve_csharp_static_type_imports_for_reference,
     resolve_csharp_type_alias_binding_for_reference,
 };
@@ -555,6 +557,53 @@ fn resolve_reference_path_with_deadline<'a>(
                     require_instance: false,
                     require_same_file: false,
                 },
+            ));
+        }
+        if let Some((nested_type_path, method_name, binding)) =
+            resolve_csharp_nested_type_alias_binding_for_reference(
+                &source_symbol.file_path,
+                reference_name,
+                source_namespace_path,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            let Some((alias_name, _)) = reference_name.split_once('.') else {
+                return Ok(None);
+            };
+            if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+                return Ok(None);
+            }
+            return Ok(resolve_csharp_imported_nested_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &binding,
+                &nested_type_path,
+                &method_name,
+                call_arity,
+            ));
+        }
+        if let Some(csharp_global_import_context) = csharp_global_import_context
+            && let Some((nested_type_path, method_name, binding)) =
+                resolve_csharp_global_nested_type_alias_binding_for_reference(
+                    reference_name,
+                    csharp_global_import_context,
+                )
+        {
+            let Some((alias_name, _)) = reference_name.split_once('.') else {
+                return Ok(None);
+            };
+            if !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols) {
+                return Ok(None);
+            }
+            return Ok(resolve_csharp_imported_nested_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &binding,
+                &nested_type_path,
+                &method_name,
+                call_arity,
             ));
         }
         if let Some((type_path, _)) = reference_name.rsplit_once('.')
@@ -2337,6 +2386,47 @@ fn resolve_csharp_static_type_imported_method(
         );
     }
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+}
+
+fn resolve_csharp_imported_nested_static_method(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    binding: &CSharpTypeAliasBinding,
+    nested_type_path: &str,
+    method_name: &str,
+    call_arity: usize,
+) -> Option<String> {
+    let mut type_path = binding.semantic_type_path.clone();
+    for segment in std::iter::once("").chain(nested_type_path.split("::")) {
+        if !segment.is_empty() {
+            type_path.push_str("::");
+            type_path.push_str(segment);
+        }
+        let type_candidates = semantic_path_index
+            .get(&type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .count();
+        if type_candidates != 1 {
+            return None;
+        }
+    }
+    let target_path = format!("{type_path}::{method_name}");
+    resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        None,
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: true,
+            require_instance: false,
+            require_same_file: false,
+        },
+    )
 }
 
 fn resolve_csharp_imported_static_method(

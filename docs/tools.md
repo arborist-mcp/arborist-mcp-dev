@@ -63,7 +63,7 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   conservative tracing of unshadowed unqualified calls, explicit `this.` method calls, inherited bare/explicit-`this.` instance calls through a unique class/record ancestor chain, and `: this(...)` constructor initializers,
   and conservative `base(...)` constructor initializers and `base.Method()` calls through a unique class/record ancestor chain with simple or generic, unshadowed qualified, `global::`, local, or root-level global type-alias/namespace-import base types,
   globally namespace-qualified `global::...` static calls, simple same-namespace and enclosing-namespace
-  `Type.Method()` static calls, plus `Outer.Helper.Method()` static calls when `Outer` is one unique local type in the caller's namespace or an enclosing namespace and `Helper` is one unique nested type, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
+  `Type.Method()` static calls, plus `Outer.Helper.Method()` or `AliasOuter.Helper.Method()` static calls when the outer type or type alias resolves uniquely in the caller's namespace, an enclosing namespace, or a root-level global using and every nested type is unique, including from nested source types, explicit type-alias calls of the form `Alias.Method()`,
   `using static Fully.Qualified.Type;` bare method calls, root-level `global using static Fully.Qualified.Type;` bare
   method calls contributed by any scanned C# source file (including directive-only files), and file-root
   `using Fully.Qualified.Namespace;` calls of the form `Type.Method()`, and root-level `global using Fully.Qualified.Namespace;`

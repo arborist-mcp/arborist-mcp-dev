@@ -153,6 +153,32 @@ pub(in crate::symbol_dependency) fn resolve_csharp_global_type_alias_binding_for
     Some((method_name.to_string(), binding))
 }
 
+pub(in crate::symbol_dependency) fn resolve_csharp_global_nested_type_alias_binding_for_reference(
+    reference_name: &str,
+    context: &CSharpGlobalImportContext,
+) -> Option<(String, String, CSharpTypeAliasBinding)> {
+    let (local_type_name, nested_reference) = reference_name.split_once('.')?;
+    let (nested_type_path, method_name) = nested_reference.rsplit_once('.')?;
+    if local_type_name.is_empty()
+        || nested_type_path.is_empty()
+        || method_name.is_empty()
+        || nested_type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return None;
+    }
+    let binding = context
+        .type_alias_bindings
+        .get(&(None, local_type_name.to_string()))?
+        .clone();
+    Some((
+        nested_type_path.replace('.', "::"),
+        method_name.to_string(),
+        binding,
+    ))
+}
+
 pub(in crate::symbol_dependency) fn resolve_csharp_global_base_type_alias(
     local_type_name: &str,
     context: &CSharpGlobalImportContext,
@@ -450,6 +476,52 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
     Ok(None)
 }
 
+pub(in crate::symbol_dependency) fn resolve_csharp_nested_type_alias_binding_for_reference(
+    source_file_path: &str,
+    reference_name: &str,
+    source_namespace_path: Option<&str>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(String, String, CSharpTypeAliasBinding)>> {
+    let Some((local_type_name, nested_reference)) = reference_name.split_once('.') else {
+        return Ok(None);
+    };
+    let Some((nested_type_path, method_name)) = nested_reference.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if local_type_name.is_empty()
+        || nested_type_path.is_empty()
+        || method_name.is_empty()
+        || nested_type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return Ok(None);
+    }
+
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    for scope_path in csharp_import_scope_paths(source_namespace_path) {
+        let key = (scope_path, local_type_name.to_string());
+        if context.ambiguous_type_alias_names.contains(&key) {
+            return Ok(None);
+        }
+        if let Some(binding) = context.type_alias_bindings.get(&key) {
+            return Ok(Some((
+                nested_type_path.replace('.', "::"),
+                method_name.to_string(),
+                binding.clone(),
+            )));
+        }
+    }
+    Ok(None)
+}
+
 pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_declared_for_reference(
     source_file_path: &str,
     local_type_name: &str,
@@ -512,6 +584,12 @@ pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_refe
         .into_iter()
         .map(|scope_path| (scope_path, local_type_name.to_string()))
         .any(|key| context.ambiguous_type_alias_names.contains(&key)))
+}
+
+fn is_safe_csharp_identifier(identifier: &str) -> bool {
+    let mut characters = identifier.chars();
+    matches!(characters.next(), Some(character) if character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn csharp_import_scope_paths(source_namespace_path: Option<&str>) -> Vec<Option<String>> {

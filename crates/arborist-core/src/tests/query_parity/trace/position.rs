@@ -3371,7 +3371,69 @@ class Caller {
 }
 
 #[test]
-fn does_not_trace_csharp_nested_type_static_calls_through_aliases_or_nearer_types() {
+fn traces_csharp_nested_type_static_calls_through_local_and_global_aliases() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Outer.cs"),
+        "namespace Demo;
+class Outer { class Helper { public static int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("LocalCaller.cs"),
+        "using LocalOuter = Demo.Outer;
+namespace Demo.App; class LocalCaller { int Call() => LocalOuter.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using GlobalOuter = Demo.Outer;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalCaller.cs"),
+        "namespace Demo.Other; class GlobalCaller { int Call() => GlobalOuter.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Outer::Helper::Utility";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 4);
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::App::LocalCaller::Call",
+            "Demo::Other::GlobalCaller::Call"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 4);
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::App::LocalCaller::Call",
+            "Demo::Other::GlobalCaller::Call"
+        ]
+    );
+}
+
+#[test]
+fn does_not_trace_csharp_nested_type_static_calls_past_a_nearer_type() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
     fs::write(
@@ -3381,21 +3443,8 @@ fn does_not_trace_csharp_nested_type_static_calls_through_aliases_or_nearer_type
     )
     .unwrap();
     fs::write(
-        dir.join("Other.cs"),
-        "namespace Demo.Other; class Outer { class Helper { public static int Utility(int value) => value; } }
-",
-    )
-    .unwrap();
-    fs::write(
         dir.join("Nearer.cs"),
         "namespace Demo.App; class Outer { class Helper { public int Utility(int value) => value; } }
-",
-    )
-    .unwrap();
-    fs::write(
-        dir.join("AliasCaller.cs"),
-        "using Outer = Demo.Other.Outer;
-namespace Demo.App; class AliasCaller { int Call() => Outer.Helper.Utility(1); }
 ",
     )
     .unwrap();
