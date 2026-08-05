@@ -450,6 +450,43 @@ pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_refere
     Ok(None)
 }
 
+pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_declared_for_reference(
+    source_file_path: &str,
+    local_type_name: &str,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<bool> {
+    if local_type_name.is_empty() {
+        return Ok(false);
+    }
+
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    if csharp_import_scope_paths(source_namespace_path)
+        .into_iter()
+        .map(|scope_path| (scope_path, local_type_name.to_string()))
+        .any(|key| {
+            context.type_alias_bindings.contains_key(&key)
+                || context.ambiguous_type_alias_names.contains(&key)
+        })
+    {
+        return Ok(true);
+    }
+
+    Ok(csharp_global_import_context.is_some_and(|context| {
+        let key = (None, local_type_name.to_string());
+        context.type_alias_bindings.contains_key(&key)
+            || context.ambiguous_type_alias_names.contains(&key)
+    }))
+}
+
 pub(in crate::symbol_dependency) fn csharp_type_alias_name_is_ambiguous_for_reference(
     source_file_path: &str,
     reference_name: &str,

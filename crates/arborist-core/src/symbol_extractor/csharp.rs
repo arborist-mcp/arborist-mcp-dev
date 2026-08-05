@@ -203,6 +203,14 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
         if receiver.kind() == "identifier" {
             return csharp_simple_type_static_invocation_name(receiver, member, source);
         }
+        if receiver.kind() == "member_access_expression" {
+            if let Some(name) =
+                csharp_global_qualified_static_invocation_name(receiver, member, source)?
+            {
+                return Ok(Some(name));
+            }
+            return csharp_qualified_type_static_invocation_name(receiver, member, source);
+        }
         return csharp_global_qualified_static_invocation_name(receiver, member, source);
     }
 
@@ -222,6 +230,32 @@ fn csharp_simple_type_static_invocation_name(
         return Ok(None);
     };
     Ok(Some(format!("{receiver_name}.{member_name}")))
+}
+
+fn csharp_qualified_type_static_invocation_name(
+    receiver: Node<'_>,
+    member: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let type_path = crate::language::node_text(receiver, source)?.trim();
+    if type_path.is_empty()
+        || type_path.contains(['<', '>', ':'])
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return Ok(None);
+    }
+    let Some(member_name) = csharp_invocation_member_name(member, source)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{type_path}.{member_name}")))
+}
+
+fn is_safe_csharp_identifier(identifier: &str) -> bool {
+    let mut characters = identifier.chars();
+    matches!(characters.next(), Some(character) if character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn csharp_global_qualified_static_invocation_name(

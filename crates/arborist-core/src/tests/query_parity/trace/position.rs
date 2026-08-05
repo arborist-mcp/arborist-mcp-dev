@@ -3317,6 +3317,106 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_nested_type_static_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Outer.cs"),
+        "namespace Demo;
+class Outer {
+    class Helper {
+        public static int Utility(int value) => value;
+        public static int Flexible(params int[] values) => values.Length;
+        public int Instance(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo.App;
+class Caller {
+    int Call() => Outer.Helper.Utility(1);
+    int InstanceCall() => Outer.Helper.Instance(1);
+    int ParamsCall() => Outer.Helper.Flexible(1);
+}
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Outer::Helper::Utility";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::App::Caller::Call");
+
+    for target in [
+        "Demo::Outer::Helper::Instance",
+        "Demo::Outer::Helper::Flexible",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{target}");
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty(), "{target}");
+    }
+}
+
+#[test]
+fn does_not_trace_csharp_nested_type_static_calls_through_aliases_or_nearer_types() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Outer.cs"),
+        "namespace Demo; class Outer { class Helper { public static int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Demo.Other; class Outer { class Helper { public static int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Nearer.cs"),
+        "namespace Demo.App; class Outer { class Helper { public int Utility(int value) => value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AliasCaller.cs"),
+        "using Outer = Demo.Other.Outer;
+namespace Demo.App; class AliasCaller { int Call() => Outer.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("NearerCaller.cs"),
+        "namespace Demo.App.Tools; class NearerCaller { int Call() => Outer.Helper.Utility(1); }
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Outer::Helper::Utility";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(live.callers.is_empty());
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_csharp_enclosing_namespace_static_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");

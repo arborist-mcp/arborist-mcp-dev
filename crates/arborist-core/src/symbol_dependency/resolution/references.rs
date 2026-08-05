@@ -8,6 +8,7 @@ use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext,
     CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
     csharp_global_type_alias_name_is_ambiguous, csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
@@ -542,6 +543,38 @@ fn resolve_reference_path_with_deadline<'a>(
             ));
         }
         if let Some(target_path) = csharp_global_qualified_static_target_path(reference_name) {
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                call_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            ));
+        }
+        if let Some((type_path, _)) = reference_name.rsplit_once('.')
+            && type_path.contains('.')
+            && let Some(first_type_segment) = type_path.split('.').next()
+            && csharp_type_alias_name_is_declared_for_reference(
+                &source_symbol.file_path,
+                first_type_segment,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(None);
+        }
+        if let Some(target_path) =
+            csharp_nested_type_static_target_path(reference_name, source_symbol, raw_symbols)
+        {
             return Ok(resolve_csharp_candidate(
                 raw_symbols,
                 semantic_path_index,
@@ -2034,6 +2067,69 @@ fn csharp_global_qualified_static_target_path(reference_name: &str) -> Option<St
         return None;
     }
     Some(format!("{}::{method_name}", type_path.replace('.', "::")))
+}
+
+fn csharp_nested_type_static_target_path(
+    reference_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let (type_path, method_name) = reference_name.rsplit_once('.')?;
+    if method_name.is_empty()
+        || type_path.is_empty()
+        || type_path.starts_with("global::")
+        || type_path
+            .split('.')
+            .any(|segment| !is_safe_csharp_identifier(segment))
+    {
+        return None;
+    }
+    let type_segments = type_path.split('.').collect::<Vec<_>>();
+    if type_segments.len() < 2 {
+        return None;
+    }
+    let first_type_name = type_segments[0];
+    let relative_type_path = type_path.replace('.', "::");
+
+    let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols)?;
+    loop {
+        let root_type_path = namespace_path
+            .map(|namespace_path| format!("{namespace_path}::{first_type_name}"))
+            .unwrap_or_else(|| first_type_name.to_string());
+        let root_type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.semantic_path == root_type_path && csharp_is_type_declaration(candidate)
+            })
+            .count();
+        if root_type_candidates > 0 {
+            if root_type_candidates != 1 {
+                return None;
+            }
+            let target_type_path = namespace_path
+                .map(|namespace_path| format!("{namespace_path}::{relative_type_path}"))
+                .unwrap_or_else(|| relative_type_path.clone());
+            let target_type_candidates = raw_symbols
+                .iter()
+                .filter(|candidate| {
+                    candidate.semantic_path == target_type_path
+                        && csharp_is_type_declaration(candidate)
+                })
+                .count();
+            return (target_type_candidates == 1)
+                .then(|| format!("{target_type_path}::{method_name}"));
+        }
+        namespace_path = match namespace_path {
+            Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
+            None => return None,
+        };
+    }
+}
+
+fn is_safe_csharp_identifier(identifier: &str) -> bool {
+    let mut characters = identifier.chars();
+    matches!(characters.next(), Some(character) if character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn csharp_simple_type_static_target_path(
