@@ -1516,7 +1516,7 @@ fn resolve_go_same_package_type_alias_method_reference(
     {
         return Ok(None);
     }
-    let Some(target_type) = go_same_package_simple_type_alias_target(
+    let Some(target_type) = go_same_package_simple_type_alias_terminal_target(
         source_symbol,
         alias_name,
         raw_symbols,
@@ -1528,20 +1528,6 @@ fn resolve_go_same_package_type_alias_method_reference(
     else {
         return Ok(None);
     };
-    if !matches!(
-        go_named_type_declaration_status(
-            source_symbol,
-            &target_type,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            go_import_contexts_by_file,
-            deadline,
-        )?,
-        GoNamedTypeDeclaration::Unique
-    ) {
-        return Ok(None);
-    }
     resolve_go_same_package_method_reference(
         source_symbol,
         &format!("{target_type}::{method_name}"),
@@ -1551,6 +1537,53 @@ fn resolve_go_same_package_type_alias_method_reference(
         go_import_contexts_by_file,
         deadline,
     )
+}
+
+fn go_same_package_simple_type_alias_terminal_target(
+    source_symbol: &IndexedSymbol,
+    alias_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut current_name = alias_name.to_string();
+    let mut visited_aliases = BTreeSet::new();
+    loop {
+        if let Some(deadline) = deadline {
+            deadline.check("resolving Go type alias chain")?;
+        }
+        if !visited_aliases.insert(current_name.clone()) {
+            return Ok(None);
+        }
+        match go_named_type_declaration_status(
+            source_symbol,
+            &current_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )? {
+            GoNamedTypeDeclaration::Unique => return Ok(Some(current_name)),
+            GoNamedTypeDeclaration::Ambiguous => return Ok(None),
+            GoNamedTypeDeclaration::Absent => {}
+        }
+        let Some(next_name) = go_same_package_simple_type_alias_target(
+            source_symbol,
+            &current_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            go_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        current_name = next_name;
+    }
 }
 
 fn go_same_package_simple_type_alias_target(

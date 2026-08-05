@@ -3779,23 +3779,25 @@ fn traces_go_simple_type_alias_method_calls() {
     let db_path = dir.join("symbols.db");
     fs::write(
         &source_path,
-        "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\nfunc (Counter) Value() int { return 1 }\nfunc compositeCaller() int { return Alias{}.Value() }\nfunc parameterCaller(value Alias) int { return value.Value() }\nfunc localCaller() int { value := Alias{}; return value.Value() }\nfunc chainedCaller() int { return Chained{}.Value() }\n",
+        "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\ntype LoopA = LoopB\ntype LoopB = LoopA\nfunc (Counter) Value() int { return 1 }\nfunc compositeCaller() int { return Alias{}.Value() }\nfunc parameterCaller(value Alias) int { return value.Value() }\nfunc localCaller() int { value := Alias{}; return value.Value() }\nfunc chainedCaller() int { return Chained{}.Value() }\nfunc loopCaller() int { return LoopA{}.Value() }\n",
     )
     .unwrap();
 
     let live = trace_symbol_graph(&dir, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 3);
-    assert_eq!(live.callers[0].symbol_id, "compositeCaller");
-    assert_eq!(live.callers[1].symbol_id, "localCaller");
-    assert_eq!(live.callers[2].symbol_id, "parameterCaller");
+    assert_eq!(live.callers.len(), 4);
+    assert_eq!(live.callers[0].symbol_id, "chainedCaller");
+    assert_eq!(live.callers[1].symbol_id, "compositeCaller");
+    assert_eq!(live.callers[2].symbol_id, "localCaller");
+    assert_eq!(live.callers[3].symbol_id, "parameterCaller");
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, "Counter::Value", TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 3);
-    assert_eq!(persisted.callers[0].symbol_id, "compositeCaller");
-    assert_eq!(persisted.callers[1].symbol_id, "localCaller");
-    assert_eq!(persisted.callers[2].symbol_id, "parameterCaller");
+    assert_eq!(persisted.callers.len(), 4);
+    assert_eq!(persisted.callers[0].symbol_id, "chainedCaller");
+    assert_eq!(persisted.callers[1].symbol_id, "compositeCaller");
+    assert_eq!(persisted.callers[2].symbol_id, "localCaller");
+    assert_eq!(persisted.callers[3].symbol_id, "parameterCaller");
 }
 
 #[test]
@@ -3814,7 +3816,7 @@ fn traces_go_simple_type_alias_method_calls_from_dirty_vfs_overrides() {
         "package metrics\n\nfunc (Counter) Value() int { return 1 }\n",
     )
     .unwrap();
-    let caller_overlay = "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\nfunc caller() int { return Alias{}.Value() }\n";
+    let caller_overlay = "package metrics\n\ntype Counter struct{}\ntype Alias = Counter\ntype Chained = Alias\nfunc caller() int { return Chained{}.Value() }\n";
 
     let live = trace_symbol_graph_with_source(
         &dir,
