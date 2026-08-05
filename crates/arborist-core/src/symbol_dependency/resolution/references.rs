@@ -45,8 +45,8 @@ use super::type_alias::{
     is_cpp_constructible_type,
 };
 use crate::language::{
-    JavaDirectSuperclassReference, detect_language, java_direct_superclass_reference,
-    normalize_path, parse_document, read_source,
+    JavaDirectSuperclassReference, detect_language, java_direct_interface_references,
+    java_direct_superclass_reference, normalize_path, parse_document, read_source,
 };
 use crate::model::LanguageId;
 use crate::patching::resolve_local_python_imported_symbol;
@@ -862,6 +862,18 @@ fn resolve_reference_path_with_deadline<'a>(
             );
         }
         if let Some(symbol_id) = resolve_java_simple_super_method_reference(
+            source_symbol,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
+        if let Some(symbol_id) = resolve_java_direct_interface_default_method_reference(
             source_symbol,
             method_name,
             raw_symbols,
@@ -2316,6 +2328,124 @@ fn resolve_java_inherited_method_from_type_path(
 
 #[allow(
     clippy::too_many_arguments,
+    reason = "keeps Java direct interface resolution inputs explicit"
+)]
+fn resolve_java_direct_interface_default_method_reference(
+    source_symbol: &IndexedSymbol,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(interface_path) = java_unique_direct_interface_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{interface_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_default)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java direct interface resolution inputs explicit"
+)]
+fn java_unique_direct_interface_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let path = Path::new(&source_symbol.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    let mut interface_references = None;
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Java direct interface")?;
+        }
+        if (node.kind() == "method_declaration" || node.kind() == "constructor_declaration")
+            && (node.start_byte(), node.end_byte()) == source_symbol.byte_range
+        {
+            let mut ancestor = node.parent();
+            while let Some(candidate) = ancestor {
+                if candidate.kind() == "class_declaration" {
+                    if candidate.child_by_field_name("superclass").is_some() {
+                        return Ok(None);
+                    }
+                    let Some(interfaces) = candidate.child_by_field_name("interfaces") else {
+                        return Ok(None);
+                    };
+                    interface_references = java_direct_interface_references(interfaces, &source)?;
+                    break;
+                }
+                ancestor = candidate.parent();
+            }
+            break;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    let Some(interface_references) = interface_references else {
+        return Ok(None);
+    };
+    let [interface_reference] = interface_references.as_slice() else {
+        return Ok(None);
+    };
+    let enclosing_scope_path = scope_path.rsplit_once("::").map(|(parent, _)| parent);
+    resolve_java_direct_interface_target_path(
+        &source_symbol.file_path,
+        enclosing_scope_path,
+        interface_reference,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
     reason = "keeps Java nested static resolution inputs explicit"
 )]
 fn resolve_java_nested_static_method_reference(
@@ -2451,7 +2581,62 @@ fn resolve_java_direct_superclass_target_path(
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    match superclass_reference {
+    resolve_java_direct_type_target_path(
+        source_file_path,
+        enclosing_scope_path,
+        superclass_reference,
+        "class_declaration",
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java direct interface resolution inputs explicit"
+)]
+fn resolve_java_direct_interface_target_path(
+    source_file_path: &str,
+    enclosing_scope_path: Option<&str>,
+    interface_reference: &JavaDirectSuperclassReference,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    resolve_java_direct_type_target_path(
+        source_file_path,
+        enclosing_scope_path,
+        interface_reference,
+        "interface_declaration",
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java direct type resolution inputs explicit"
+)]
+fn resolve_java_direct_type_target_path(
+    source_file_path: &str,
+    enclosing_scope_path: Option<&str>,
+    type_reference: &JavaDirectSuperclassReference,
+    declaration_kind: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    match type_reference {
         JavaDirectSuperclassReference::Simple(superclass_name) => {
             let local_path = enclosing_scope_path.map_or_else(
                 || superclass_name.to_string(),
@@ -2462,7 +2647,7 @@ fn resolve_java_direct_superclass_target_path(
                 .into_iter()
                 .flatten()
                 .copied()
-                .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+                .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
                 .collect::<Vec<_>>();
             match local_candidates.as_slice() {
                 [_] => return Ok(Some(local_path)),
@@ -2488,7 +2673,7 @@ fn resolve_java_direct_superclass_target_path(
                 .filter(|index| {
                     let candidate = &raw_symbols[*index];
                     candidate.file_path == binding.source_path
-                        && candidate.node_kind == "class_declaration"
+                        && candidate.node_kind == declaration_kind
                 })
                 .collect::<Vec<_>>();
             Ok((candidates.len() == 1).then_some(binding.semantic_path))
@@ -2503,7 +2688,7 @@ fn resolve_java_direct_superclass_target_path(
                     .into_iter()
                     .flatten()
                     .copied()
-                    .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+                    .filter(|index| raw_symbols[*index].node_kind == declaration_kind)
                     .collect::<Vec<_>>();
                 match candidates.as_slice() {
                     [_] => return Ok(Some(semantic_path.clone())),
@@ -2538,7 +2723,7 @@ fn resolve_java_direct_superclass_target_path(
                 .filter(|index| {
                     let candidate = &raw_symbols[*index];
                     candidate.file_path == binding.source_path
-                        && candidate.node_kind == "class_declaration"
+                        && candidate.node_kind == declaration_kind
                 })
                 .collect::<Vec<_>>();
             Ok((candidates.len() == 1).then_some(semantic_path))
@@ -2734,6 +2919,10 @@ fn resolve_java_imported_static_method(
 
 fn java_method_signature_is_static(signature: &str) -> bool {
     signature.split_whitespace().any(|token| token == "static")
+}
+
+fn java_method_signature_is_default(signature: &str) -> bool {
+    signature.split_whitespace().any(|token| token == "default")
 }
 
 #[cfg(test)]

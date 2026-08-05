@@ -88,18 +88,18 @@ Arborist uses case-insensitive extension routing with explicit per-language capa
   slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports, single-member `import static`
-  imports, and direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type maps to a local
+  imports, direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling, and direct interface links whose interface resolves by the same local-source rules. Those links require an owning type that maps to a local
   `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors use package-qualified paths. It
   traces an explicit `this(...)` constructor initializer only when one same-type, same-file, non-varargs constructor has the call arity; a direct local-source `super(...)` constructor initializer only when one unique direct base-class non-varargs constructor has the call arity; plus unqualified and `this.method()` calls only when one same-type, same-file, non-varargs method has the call arity; `Type.method()` through a unique explicit non-static local type import
   with an unshadowed type name; and a bare call through a unique explicit local static-method import
   only when no same-type method has that name. It also traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
   non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
-  unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
+  unchanged Java source files. As a deliberately limited interface-dispatch slice, a bare call in a class with no explicit `extends` clause and exactly one uniquely resolved direct local interface traces to one directly declared, uniquely arity-matched non-varargs `default` method on that interface. Explicit `super.method()` calls and bare calls without a same-type
   declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous
   classes, nested/outer generic bases, and nearer nonmatching declarations fail closed. A generic direct base such as `Base<String>` or `com.base.Base<String>` is normalized to its simple or exact qualified base name without type-argument selection. A same-package or explicitly imported outer-qualified direct base such as `Outer.Base` is supported only when one local outer source file and one indexed nested `class_declaration` remain. Wildcard outer imports and broader nested/outer scope semantics beyond this direct source or explicit-import form remain unsupported. Imported targets require a
   unique static-method arity match. Wildcard imports, static wildcard imports, static field/type imports, missing or ambiguous
-  imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call selection, and patch operations return explicit
+  imports, general interface dispatch (including multiple direct interfaces, interface inheritance, explicit `this.` default calls, and classes with explicit base classes), instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call selection, and patch operations return explicit
   unsupported-operation errors.
 
 C++ files use the dedicated `tree-sitter-cpp` grammar. C-family symbol

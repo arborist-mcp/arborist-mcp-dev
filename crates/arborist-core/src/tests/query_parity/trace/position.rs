@@ -4972,6 +4972,139 @@ fn traces_java_static_interface_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_java_same_package_default_interface_methods_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let caller_path = source_dir.join("Main.java");
+    let interface_path = source_dir.join("Defaults.java");
+    let abstract_interface_path = source_dir.join("Abstracts.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example;
+class Main implements Defaults { int caller() { return helper(1); } }
+class AbstractMain implements Abstracts { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package com.example; interface Defaults { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &abstract_interface_path,
+        "package com.example; interface Abstracts { int helper(int value); }
+",
+    )
+    .unwrap();
+
+    let default_target = "com::example::Defaults::helper";
+    let abstract_target = "com::example::Abstracts::helper";
+    let live = trace_symbol_graph(&dir, default_target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+    assert!(
+        trace_symbol_graph(&dir, abstract_target, TraceDirection::Callers)
+            .unwrap()
+            .callers
+            .is_empty()
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, default_target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 3);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+    assert!(
+        trace_symbol_graph_from_index(&db_path, abstract_target, TraceDirection::Callers)
+            .unwrap()
+            .callers
+            .is_empty()
+    );
+}
+
+#[test]
+fn traces_java_default_interface_methods_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Defaults.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example; interface Defaults { default int helper(int value) { return value; } } class Main implements Defaults { int caller() { return helper(1); } }
+";
+    let target = "com::example::Defaults::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Main::caller");
+}
+
+#[test]
+fn traces_java_explicit_imported_default_interface_methods_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let interface_dir = dir.join("src").join("com").join("base");
+    let caller_dir = dir.join("src").join("com").join("child");
+    let caller_path = caller_dir.join("Main.java");
+    let interface_path = interface_dir.join("Defaults.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&interface_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.child; import com.base.Defaults; class Main implements Defaults { int caller() { return helper(1); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package com.base; interface Defaults { default int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+
+    let target = "com::base::Defaults::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::child::Main::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::child::Main::caller");
+}
+
+#[test]
 fn traces_java_same_package_static_type_calls_across_files_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_dir = dir.join("src").join("com").join("example");

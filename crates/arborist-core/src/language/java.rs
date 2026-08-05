@@ -44,6 +44,9 @@ pub(crate) fn java_local_file_dependency_paths(
     dependencies.extend(java_local_simple_superclass_dependency_paths(
         path, root, source,
     )?);
+    dependencies.extend(java_local_direct_interface_dependency_paths(
+        path, root, source,
+    )?);
     Ok(dependencies)
 }
 
@@ -67,23 +70,11 @@ fn java_local_simple_superclass_dependency_paths(
         else {
             continue;
         };
-        let source_path = match superclass_reference {
-            JavaDirectSuperclassReference::Simple(superclass_name) => {
-                if let Some(package_name) = package_name.as_deref() {
-                    let import_path = format!("{package_name}.{superclass_name}");
-                    resolve_unique_java_source_path(path, &import_path)
-                } else {
-                    resolve_unique_java_default_package_source_path(path, &superclass_name)
-                }
-            }
-            JavaDirectSuperclassReference::Qualified(qualified_name) => {
-                resolve_unique_java_qualified_superclass_source_path(
-                    path,
-                    package_name.as_deref(),
-                    &qualified_name,
-                )
-            }
-        };
+        let source_path = java_direct_type_reference_source_path(
+            path,
+            package_name.as_deref(),
+            &superclass_reference,
+        );
         if let Some(source_path) = source_path
             && source_path != normalized_path
         {
@@ -93,6 +84,62 @@ fn java_local_simple_superclass_dependency_paths(
     Ok(dependencies)
 }
 
+fn java_local_direct_interface_dependency_paths(
+    path: &Path,
+    root: Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<PathBuf>> {
+    let normalized_path = normalize_absolute_path(path)?;
+    let package_name = java_package_name(root, source)?;
+    let mut dependencies = BTreeSet::new();
+    let mut cursor = root.walk();
+    for declaration in root
+        .named_children(&mut cursor)
+        .filter(|node| node.kind() == "class_declaration")
+    {
+        let Some(interfaces) = declaration.child_by_field_name("interfaces") else {
+            continue;
+        };
+        let Some(interface_references) = java_direct_interface_references(interfaces, source)?
+        else {
+            continue;
+        };
+        for interface_reference in interface_references {
+            let source_path = java_direct_type_reference_source_path(
+                path,
+                package_name.as_deref(),
+                &interface_reference,
+            );
+            if let Some(source_path) = source_path
+                && source_path != normalized_path
+            {
+                dependencies.insert(source_path);
+            }
+        }
+    }
+    Ok(dependencies)
+}
+
+fn java_direct_type_reference_source_path(
+    path: &Path,
+    package_name: Option<&str>,
+    reference: &JavaDirectSuperclassReference,
+) -> Option<PathBuf> {
+    match reference {
+        JavaDirectSuperclassReference::Simple(type_name) => {
+            if let Some(package_name) = package_name {
+                let import_path = format!("{package_name}.{type_name}");
+                resolve_unique_java_source_path(path, &import_path)
+            } else {
+                resolve_unique_java_default_package_source_path(path, type_name)
+            }
+        }
+        JavaDirectSuperclassReference::Qualified(qualified_name) => {
+            resolve_unique_java_qualified_superclass_source_path(path, package_name, qualified_name)
+        }
+    }
+}
+
 pub(crate) fn java_direct_superclass_reference(
     superclass: Node<'_>,
     source: &str,
@@ -100,6 +147,35 @@ pub(crate) fn java_direct_superclass_reference(
     let Some(type_node) = superclass.named_child(0) else {
         return Ok(None);
     };
+    java_direct_type_reference(type_node, source)
+}
+
+pub(crate) fn java_direct_interface_references(
+    interfaces: Node<'_>,
+    source: &str,
+) -> Result<Option<Vec<JavaDirectSuperclassReference>>> {
+    let mut cursor = interfaces.walk();
+    let Some(type_list) = interfaces
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "type_list")
+    else {
+        return Ok(None);
+    };
+    let mut cursor = type_list.walk();
+    let mut references = Vec::new();
+    for type_node in type_list.named_children(&mut cursor) {
+        let Some(reference) = java_direct_type_reference(type_node, source)? else {
+            return Ok(None);
+        };
+        references.push(reference);
+    }
+    Ok((!references.is_empty()).then_some(references))
+}
+
+fn java_direct_type_reference(
+    type_node: Node<'_>,
+    source: &str,
+) -> Result<Option<JavaDirectSuperclassReference>> {
     match type_node.kind() {
         "type_identifier" => java_simple_superclass_reference(type_node, source),
         "scoped_type_identifier" => java_qualified_superclass_reference(type_node, source),

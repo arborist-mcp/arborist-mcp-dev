@@ -93,7 +93,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   unavailable until dedicated C# adapter slices establish their contracts and fixtures.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports, single-member `import static`
-  imports, and direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type resolves to a local
+  imports, direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling, and direct interface links whose interface resolves by the same local-source rules. Those links require an owning type that resolves to a local
   `.java` file under an ancestor source root. Classes,
   interfaces, enums, annotation types, methods, and constructors are indexed by package-qualified
   paths. It traces an explicit `this(...)` constructor initializer to a single same-type, same-file, non-varargs constructor with a unique arity match; a direct local-source `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity; plus unqualified and `this.method()` calls to a single same-type, same-file, non-varargs method with a unique arity match; `Type.method()` calls through a unique explicit
@@ -101,10 +101,10 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   explicit local static-method import when no same-type method has that name. It also traces a
   `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
   non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
-  unchanged Java source files. Explicit `super.method()` calls and bare calls without a same-type
+  unchanged Java source files. As a deliberately limited interface-dispatch slice, a bare call in a class with no explicit `extends` clause and exactly one uniquely resolved direct local interface traces to one directly declared, uniquely arity-matched non-varargs `default` method on that interface. Explicit `super.method()` calls and bare calls without a same-type
   declaration also walk a unique local-source chain of direct base classes, resolved from the same package, a unique explicit local type import, or an exact qualified local source spelling; cycles, ambiguous
   classes, nested/outer generic bases, and nearer nonmatching declarations fail closed. A generic direct base such as `Base<String>` or `com.base.Base<String>` is normalized to its simple or exact qualified base name without type-argument selection. A same-package or explicitly imported outer-qualified direct base such as `Outer.Base` is supported only when one local outer source file and one indexed nested `class_declaration` remain. Wildcard outer imports and broader nested/outer scope semantics beyond this direct source or explicit-import form remain unsupported. Imported targets must be static with a unique exact arity match. Wildcard imports, static wildcard imports, static
-  field/type imports, missing or ambiguous imports, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call
+  field/type imports, missing or ambiguous imports, general interface dispatch (including multiple direct interfaces, interface inheritance, explicit `this.` default calls, and classes with explicit base classes), instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, overloaded-call
   selection, and patch operations remain capability-gated.
 
 Python overload groups retain one compatibility `semantic_path` while exposing
@@ -626,14 +626,14 @@ same-file bare plus unambiguous local-package imported-function direct-call grap
 now contributes extension routing, raw Tree-sitter query execution, and package-qualified
 semantic skeletons and declaration indexing for top-level and nested Java declarations, plus
 conservative refresh for explicit local type imports, single-member `import static` imports, and
-direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling and whose owning type maps to a local `.java` file under
+direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling, and direct interface links whose interface resolves by the same local-source rules. Those links require an owning type that maps to a local `.java` file under
 an ancestor source root. It traces an explicit `this(...)` constructor initializer to a unique same-type, same-file nonvarargs constructor with a matching arity, plus a direct local-source `super(...)` constructor initializer to a unique direct base-class non-varargs constructor with a matching arity, plus unqualified and `this.method()` calls to a unique same-type, same-file nonvarargs method with a matching arity,
 `Type.method()` calls through a unique unshadowed explicit local type import, and bare calls through
 unique explicit local static-method imports only when no same-type method has that name. It also
 traces a `Type.method()` call from a top-level caller class to a unique same-package top-level class or interface static method with an exact,
 non-varargs arity match, plus `Outer.Helper.method()` through a unique same-package or explicitly imported outer type and nested class. Matching callers are re-resolved during refresh without reindexing
-unchanged Java source files. Imported trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
-instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, and patch features remain deliberately
+unchanged Java source files. A bare call in a class with no explicit `extends` clause and exactly one uniquely resolved direct local interface also traces to one directly declared, uniquely arity-matched nonvarargs `default` method on that interface. Imported trace targets must be static with an exact unique arity. General cross-file/package/import resolution,
+general interface dispatch beyond that limited default-method case, instance/member dispatch other than explicit simple `super.method()` calls and inherited bare calls across unique local-source base chains, and patch features remain deliberately
 capability-gated; Go module replacements, workspaces, vendoring, and build tags do not influence
 these capabilities.
 
