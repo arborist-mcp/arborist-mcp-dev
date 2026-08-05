@@ -758,7 +758,7 @@ fn resolve_reference_path_with_deadline<'a>(
             if method_name.is_empty() || method_name.contains('.') {
                 return Ok(None);
             }
-            return resolve_java_same_file_super_method_reference(
+            return resolve_java_simple_super_method_reference(
                 source_symbol,
                 method_name,
                 raw_symbols,
@@ -843,7 +843,7 @@ fn resolve_reference_path_with_deadline<'a>(
                 (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
             );
         }
-        if let Some(symbol_id) = resolve_java_same_file_super_method_reference(
+        if let Some(symbol_id) = resolve_java_simple_super_method_reference(
             source_symbol,
             method_name,
             raw_symbols,
@@ -2182,7 +2182,7 @@ fn resolve_csharp_imported_static_method(
     )
 }
 
-fn resolve_java_same_file_super_method_reference(
+fn resolve_java_simple_super_method_reference(
     source_symbol: &IndexedSymbol,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
@@ -2191,7 +2191,7 @@ fn resolve_java_same_file_super_method_reference(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(superclass_path) = java_same_file_simple_superclass_path(
+    let Some(superclass_path) = java_simple_superclass_path(
         source_symbol,
         raw_symbols,
         semantic_path_index,
@@ -2201,7 +2201,7 @@ fn resolve_java_same_file_super_method_reference(
     else {
         return Ok(None);
     };
-    resolve_java_same_file_inherited_method_from_type_path(
+    resolve_java_inherited_method_from_type_path(
         &superclass_path,
         method_name,
         raw_symbols,
@@ -2212,7 +2212,7 @@ fn resolve_java_same_file_super_method_reference(
     )
 }
 
-fn resolve_java_same_file_inherited_method_from_type_path(
+fn resolve_java_inherited_method_from_type_path(
     initial_type_path: &str,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
@@ -2268,7 +2268,7 @@ fn resolve_java_same_file_inherited_method_from_type_path(
         let [class_index] = class_candidates.as_slice() else {
             return Ok(None);
         };
-        let Some(superclass_path) = java_same_file_simple_superclass_path_for_class(
+        let Some(superclass_path) = java_simple_superclass_path_for_class(
             &raw_symbols[*class_index],
             raw_symbols,
             semantic_path_index,
@@ -2339,7 +2339,7 @@ fn resolve_java_same_package_static_method_reference(
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
-fn java_same_file_simple_superclass_path(
+fn java_simple_superclass_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -2403,13 +2403,12 @@ fn java_same_file_simple_superclass_path(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == "class_declaration"
+            candidate.node_kind == "class_declaration"
         })
         .collect::<Vec<_>>();
     Ok((candidates.len() == 1).then_some(superclass_path))
 }
-fn java_same_file_simple_superclass_path_for_class(
+fn java_simple_superclass_path_for_class(
     source_class: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
@@ -2466,8 +2465,7 @@ fn java_same_file_simple_superclass_path_for_class(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_class.file_path
-                && candidate.node_kind == "class_declaration"
+            candidate.node_kind == "class_declaration"
         })
         .collect::<Vec<_>>();
     Ok((candidates.len() == 1).then_some(superclass_path))
@@ -2484,7 +2482,7 @@ fn resolve_java_same_file_super_constructor_reference(
     if source_symbol.node_kind != "constructor_declaration" {
         return Ok(None);
     }
-    let Some(superclass_path) = java_same_file_simple_superclass_path(
+    let Some(superclass_path) = java_simple_superclass_path(
         source_symbol,
         raw_symbols,
         semantic_path_index,
@@ -2505,8 +2503,7 @@ fn resolve_java_same_file_super_constructor_reference(
         .copied()
         .filter(|index| {
             let candidate = &raw_symbols[*index];
-            candidate.file_path == source_symbol.file_path
-                && candidate.node_kind == "constructor_declaration"
+            candidate.node_kind == "constructor_declaration"
                 && candidate.parameters.len() == call_arity
                 && !candidate
                     .parameters

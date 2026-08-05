@@ -1360,6 +1360,124 @@ class Child extends First { int caller() { return helper(); } }
 }
 
 #[test]
+fn traces_java_same_package_simple_superclasses_across_files() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let grand_path = source_dir.join("Grand.java");
+    let base_path = source_dir.join("Base.java");
+    let child_path = source_dir.join("Child.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &grand_path,
+        "package com.example; class Grand { int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &base_path,
+        "package com.example; class Base extends Grand { Base() {} Base(int value) {} Base(int... values) {} }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.example; class Child extends Base { Child() { super(); } Child(int value) { super(value); } Child(boolean first, boolean second) { super(1, 2); } int bareCaller() { return helper(); } int superCaller() { return super.helper(); } }
+",
+    )
+    .unwrap();
+
+    let base_file_path = normalize_path(&base_path);
+    let child_file_path = normalize_path(&child_path);
+    let base_zero = format!("{base_file_path}::com::example::Base::Base#overload[1]");
+    let base_one = format!("{base_file_path}::com::example::Base::Base#overload[2]");
+    let base_params = format!("{base_file_path}::com::example::Base::Base#overload[3]");
+    let child_zero = format!("{child_file_path}::com::example::Child::Child#overload[1]");
+    let child_one = format!("{child_file_path}::com::example::Child::Child#overload[2]");
+    for (target, caller) in [
+        (base_zero.as_str(), child_zero.as_str()),
+        (base_one.as_str(), child_one.as_str()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, caller);
+    }
+    let live_params = trace_symbol_graph(&dir, &base_params, TraceDirection::Callers).unwrap();
+    assert!(live_params.callers.is_empty());
+    let helper_live =
+        trace_symbol_graph(&dir, "com::example::Grand::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 2);
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, caller) in [
+        (base_zero.as_str(), child_zero.as_str()),
+        (base_one.as_str(), child_one.as_str()),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, caller);
+    }
+    let persisted_params =
+        trace_symbol_graph_from_index(&db_path, &base_params, TraceDirection::Callers).unwrap();
+    assert!(persisted_params.callers.is_empty());
+    let helper_persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "com::example::Grand::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 2);
+}
+
+#[test]
+fn traces_java_same_package_simple_superclasses_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_dir = dir.join("src").join("com").join("example");
+    let base_path = source_dir.join("Base.java");
+    let child_path = source_dir.join("Child.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::write(
+        &base_path,
+        "package com.example; class Base { Base() {} int helper() { return 1; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &child_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example; class Child extends Base { Child() { super(); } int caller() { return helper(); } }
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &child_path,
+        overlay,
+        "com::example::Base::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Child::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &child_path,
+        overlay,
+        "com::example::Base::Base",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Child::Child");
+}
+
+#[test]
 fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.cs");
