@@ -28,6 +28,7 @@ pub(in crate::symbol_dependency) struct JavaImportContext {
 pub(in crate::symbol_dependency) struct JavaReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
+    initializer_calls_by_name: BTreeMap<String, (String, usize)>,
 }
 
 impl JavaReceiverTypeBindings {
@@ -49,6 +50,19 @@ impl JavaReceiverTypeBindings {
             .get(name)
             .filter(|type_name| !type_name.is_empty())
             .cloned()
+    }
+
+    /// Returns the factory callee name and call arity for a `var` local bound
+    /// from a bare method-call initializer such as `var value = makeFoo(...)`.
+    /// Ambiguous bindings and names without a factory initializer return `None`.
+    pub(in crate::symbol_dependency) fn initializer_call_for(
+        &self,
+        name: &str,
+    ) -> Option<(String, usize)> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.initializer_calls_by_name.get(name).cloned()
     }
 }
 
@@ -372,11 +386,25 @@ fn collect_java_body_bindings(
                 if let Some(name) = java_declared_name(declarator, source)? {
                     // `var` locals have no usable declared type; infer the
                     // receiver type from a constructor initializer such as
-                    // `var value = new Helper(...)`.
+                    // `var value = new Helper(...)`, or record a bare factory
+                    // initializer such as `var value = makeFoo(...)` for
+                    // trace-time resolution.
                     let type_name = match &declared_type {
                         Some(type_name) => type_name.clone(),
-                        None => java_constructor_type_from_declarator(declarator, source)?
-                            .unwrap_or_default(),
+                        None => {
+                            if let Some(type_name) =
+                                java_constructor_type_from_declarator(declarator, source)?
+                            {
+                                type_name
+                            } else if let Some((function_name, arity)) =
+                                java_initializer_call_from_declarator(declarator, source)?
+                            {
+                                insert_java_initializer_call(bindings, &name, function_name, arity);
+                                String::new()
+                            } else {
+                                String::new()
+                            }
+                        }
                     };
                     insert_java_receiver_binding(bindings, name, type_name);
                 }
@@ -477,6 +505,37 @@ fn java_constructor_type_from_declarator(
     Ok(java_dotted_type_name(type_name))
 }
 
+/// Records a `var` local whose initializer is a bare method call such as
+/// `var value = makeFoo(...)`. The callee name and call arity are stored for
+/// trace-time factory resolution; qualified initializers such as
+/// `Util.makeFoo(...)` fail closed like other non-constructor initializers.
+fn java_initializer_call_from_declarator(
+    declarator: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<(String, usize)>> {
+    let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    if initializer.kind() != "method_invocation"
+        || initializer.child_by_field_name("object").is_some()
+    {
+        return Ok(None);
+    }
+    let Some(name_node) = initializer.child_by_field_name("name") else {
+        return Ok(None);
+    };
+    let name = node_text(name_node, source)?.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let Some(arguments) = initializer.child_by_field_name("arguments") else {
+        return Ok(None);
+    };
+    let mut cursor = arguments.walk();
+    let arity = arguments.named_children(&mut cursor).count();
+    Ok(Some((name.to_string(), arity)))
+}
+
 fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(None);
@@ -521,6 +580,32 @@ pub(crate) fn java_dotted_type_name(text: &str) -> Option<String> {
         return None;
     }
     Some(name.to_string())
+}
+
+/// Records the factory initializer for a bound `var` local. Repeated
+/// declarations with different factories make the name ambiguous so
+/// trace-time resolution fails closed.
+fn insert_java_initializer_call(
+    bindings: &mut JavaReceiverTypeBindings,
+    name: &str,
+    function_name: String,
+    arity: usize,
+) {
+    if name.is_empty() || bindings.ambiguous_names.contains(name) {
+        return;
+    }
+    match bindings.initializer_calls_by_name.get(name) {
+        Some(existing) if *existing != (function_name.clone(), arity) => {
+            bindings.initializer_calls_by_name.remove(name);
+            bindings.ambiguous_names.insert(name.to_string());
+        }
+        Some(_) => {}
+        None => {
+            bindings
+                .initializer_calls_by_name
+                .insert(name.to_string(), (function_name, arity));
+        }
+    }
 }
 
 fn insert_java_receiver_binding(
@@ -646,11 +731,73 @@ class Caller {
             run_bindings.type_for("nested"),
             Some("Outer.Inner".to_string())
         );
-        // Method-call and array initializers have no inferred class type.
+        // Bare method-call initializers record a factory binding for
+        // trace-time resolution; array initializers have no inferred type.
         assert!(run_bindings.contains("factory"));
         assert_eq!(run_bindings.type_for("factory"), None);
+        assert_eq!(
+            run_bindings.initializer_call_for("factory"),
+            Some(("makeHelper".to_string(), 0))
+        );
         assert!(run_bindings.contains("array"));
         assert_eq!(run_bindings.type_for("array"), None);
+        assert_eq!(run_bindings.initializer_call_for("array"), None);
+    }
+
+    #[test]
+    fn var_locals_record_factory_initializer_calls_and_reject_qualified_or_conflicting_ones() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Util {
+    static Helper qualifiedFactory() { return new Helper(); }
+}
+class Caller {
+    int run(int value) {
+        var bare = makeHelper(value);
+        var qualified = Util.qualifiedFactory();
+        var array = new int[3];
+        return bare.helper(1) + qualified.helper(2) + array.helper(3);
+    }
+    int shadowed() {
+        var factory = makeHelper(1);
+        var factory = makeOther();
+        return factory.helper(1);
+    }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| {
+                bindings.initializer_call_for("bare") == Some(("makeHelper".to_string(), 1))
+            })
+            .unwrap();
+        assert_eq!(
+            run_bindings.initializer_call_for("bare"),
+            Some(("makeHelper".to_string(), 1))
+        );
+        // Qualified and array initializers record no factory binding.
+        assert!(run_bindings.contains("qualified"));
+        assert_eq!(run_bindings.initializer_call_for("qualified"), None);
+        assert!(run_bindings.contains("array"));
+        assert_eq!(run_bindings.initializer_call_for("array"), None);
+        // Conflicting factory declarations make the name ambiguous.
+        let shadowed_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.contains("factory"))
+            .unwrap();
+        assert!(shadowed_bindings.ambiguous_names.contains("factory"));
+        assert_eq!(shadowed_bindings.type_for("factory"), None);
+        assert_eq!(shadowed_bindings.initializer_call_for("factory"), None);
     }
 
     #[test]

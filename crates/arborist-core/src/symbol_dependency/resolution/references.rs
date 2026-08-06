@@ -2669,20 +2669,41 @@ fn resolve_java_instance_receiver_call(
     }
     // A bound receiver is always an instance expression: receivers without a
     // resolvable declared type fail closed instead of falling through to a
-    // same-named static type call.
-    let Some(type_name) = bindings.type_for(receiver_name) else {
-        return Ok(JavaInstanceReceiverResolution::Blocked);
-    };
-    let Some(type_path) = resolve_java_receiver_type_path(
-        source_symbol,
-        &type_name,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    // same-named static type call. A `var` local whose initializer is a bare
+    // factory call such as `var value = makeFoo()` infers its receiver type
+    // from the unique factory's declared return type.
+    let type_path = if let Some(type_name) = bindings.type_for(receiver_name) {
+        let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        type_path
+    } else if let Some((function_name, initializer_arity)) =
+        bindings.initializer_call_for(receiver_name)
+    {
+        let Some(type_path) = resolve_java_initializer_type_path(
+            source_symbol,
+            &function_name,
+            initializer_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        type_path
+    } else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
     // Member chains such as `group.member.helper(...)` resolve each
@@ -2793,6 +2814,132 @@ fn java_field_type_path(
         java_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Resolves a `var` local's bare method-call initializer such as `makeFoo` in
+/// `var value = makeFoo()` to a receiver type path. The factory must be a
+/// unique same-file same-type method or unique explicit static-method import
+/// with a declared return type matching the call arity; the return type
+/// resolves in the factory's own file and package scope. Unknown, ambiguous,
+/// arity-mismatched, and undeclared-return factories fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java initializer type resolution inputs explicit"
+)]
+fn resolve_java_initializer_type_path(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(factory_path) = resolve_java_initializer_function_path(
+        source_symbol,
+        function_name,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == factory_path)
+    else {
+        return Ok(None);
+    };
+    let Some(function_return_type) = factory
+        .return_type
+        .as_deref()
+        .and_then(java_dotted_type_name)
+    else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        factory,
+        &function_return_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves a `var` local's factory callee such as `makeFoo` in
+/// `var value = makeFoo()` to a unique factory method symbol path. Same-file
+/// same-type methods with a declared return type and matching non-varargs
+/// arity shadow static-method imports; otherwise a unique explicit static
+/// method import is eligible. Unknown or ambiguous callees fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java initializer function resolution inputs explicit"
+)]
+fn resolve_java_initializer_function_path(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let same_type_candidates = source_symbol
+        .scope_path
+        .as_deref()
+        .map(|scope_path| {
+            let target_path = format!("{scope_path}::{function_name}");
+            semantic_path_index
+                .get(&target_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.file_path == source_symbol.file_path
+                        && candidate.node_kind == "method_declaration"
+                        && candidate
+                            .return_type
+                            .as_deref()
+                            .is_some_and(|return_type| java_dotted_type_name(return_type).is_some())
+                        && candidate.parameters.len() == call_arity
+                        && !candidate
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.contains("..."))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !same_type_candidates.is_empty() {
+        return Ok((same_type_candidates.len() == 1)
+            .then(|| raw_symbols[same_type_candidates[0]].symbol_id.clone()));
+    }
+    let Some(binding) = resolve_java_static_method_import_binding_for_reference(
+        &source_symbol.file_path,
+        function_name,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(resolve_java_imported_static_method(
+        raw_symbols,
+        semantic_path_index,
+        &binding,
+        function_name,
+        call_arity,
+    ))
 }
 
 #[allow(
