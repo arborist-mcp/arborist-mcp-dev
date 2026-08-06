@@ -4041,6 +4041,63 @@ fn resolve_kotlin_chained_receiver_call(
             deadline,
         );
     }
+    // A nested object receiver such as `Outer.Inner.helper(...)` or
+    // `Outer.Inner.holder.run(...)` resolves the first hop as a type path and
+    // requires the second hop to name exactly one nested object declaration.
+    // A local binding of the first-hop name shadows the class receiver, and a
+    // nested object that shares its name with a nested class or interface
+    // fails closed instead of guessing a target.
+    if hops.len() >= 3
+        && !bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+        && let Some(class_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            hops[0],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(nested_object_path) =
+            kotlin_path_nested_object(&class_path, hops[1], raw_symbols)
+    {
+        let mut receiver_path = nested_object_path;
+        for property_name in hops.iter().skip(2).take(hops.len() - 3) {
+            let Some(next_path) = kotlin_property_type_path(
+                &receiver_path,
+                property_name,
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            receiver_path = next_path;
+        }
+        let method = hops[hops.len() - 1];
+        let type_name = receiver_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(method)
+            .to_string();
+        return resolve_kotlin_member_or_extension(
+            source_symbol,
+            &receiver_path,
+            &type_name,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // The first hop is either a locally bound receiver or a named object
     // declaration such as `Config` in `Config.holder.run()`. An ambiguous local
     // binding fails closed instead of falling through to a same-named object.
@@ -4524,6 +4581,30 @@ fn kotlin_path_object_count(path: &str, raw_symbols: &[IndexedSymbol]) -> usize 
             candidate.semantic_path == path && candidate.node_kind == "object_declaration"
         })
         .count()
+}
+
+/// Returns the nested object path when `object_name` under `owner_type_path`
+/// names exactly one object declaration and no same-named class or interface
+/// declaration conflicts; unknown and ambiguous nested objects fail closed.
+fn kotlin_path_nested_object(
+    owner_type_path: &str,
+    object_name: &str,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let nested_path = format!("{owner_type_path}::{object_name}");
+    let mut object_count = 0usize;
+    let mut other_type_count = 0usize;
+    for candidate in raw_symbols {
+        if candidate.semantic_path != nested_path {
+            continue;
+        }
+        match candidate.node_kind.as_str() {
+            "object_declaration" => object_count += 1,
+            "class_declaration" | "interface_declaration" => other_type_count += 1,
+            _ => {}
+        }
+    }
+    (object_count == 1 && other_type_count == 0).then_some(nested_path)
 }
 
 /// Resolves a bare call to a class name such as `Other(...)` to the class

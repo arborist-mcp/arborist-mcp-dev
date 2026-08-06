@@ -8642,6 +8642,145 @@ fn does_not_trace_kotlin_qualified_receiver_calls_with_missing_nested_types() {
 }
 
 #[test]
+fn traces_kotlin_nested_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    object Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int = Outer.Inner.helper(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_nested_object_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    object Inner {\n        val holder: Holder = Holder()\n    }\n}\n\nfun caller(): Int = Outer.Inner.holder.run(1)\n",
+    )
+    .unwrap();
+
+    let run_path = "com::example::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_imported_nested_object_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir
+        .join("src")
+        .join("com")
+        .join("example")
+        .join("Caller.kt");
+    let outer_path = dir.join("src").join("org").join("util").join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(outer_path.parent().unwrap()).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Outer\n\nfun caller(): Int = Outer.Inner.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &outer_path,
+        "package org.util\n\nclass Outer {\n    object Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_object_rooted_nested_object_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nobject Config {\n    object Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int = Config.Inner.helper(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Config::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_nested_object_receiver_calls_with_unknown_or_conflicting_names() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n    object Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nclass Outer2 {\n    class Inner2 {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun unknownNestedObject(): Int = Outer.Absent.helper(1)\n\nfun conflictingNestedObject(): Int = Outer.Inner.helper(1)\n\nfun nestedClassReceiver(): Int = Outer2.Inner2.helper(1)\n\nfun shadowedNestedObject(): Int {\n    val Outer = Holder()\n    return Outer.Inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown nested object name, a nested class that conflicts with a
+    // same-named nested object, an instance-member call through a nested class
+    // name, and a local binding that shadows the outer class all fail closed
+    // instead of guessing a chain target.
+    for helper_path in [
+        "com::example::Outer::Inner::helper",
+        "com::example::Outer2::Inner2::helper",
+        "com::example::Holder::run",
+    ] {
+        let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert!(
+            trace.callers.is_empty(),
+            "expected no callers for {helper_path}"
+        );
+    }
+}
+
+#[test]
 fn does_not_trace_kotlin_object_property_chains_with_unknown_or_shadowed_objects() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
