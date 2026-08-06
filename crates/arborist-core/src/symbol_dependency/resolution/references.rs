@@ -4081,35 +4081,67 @@ fn resolve_kotlin_receiver_type_path(
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    if type_name.is_empty()
-        || !type_name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '_')
-    {
-        return Ok(None);
+    // A receiver type may be a type alias such as `typealias Helper = Other`,
+    // so resolution walks the alias chain until it reaches a concrete class or
+    // interface declaration. Each hop applies the same scope/import rules, and
+    // a visited set fails closed on cyclic aliases instead of looping forever.
+    let mut current_name = type_name.to_string();
+    let mut visited = BTreeSet::new();
+    loop {
+        if current_name.is_empty()
+            || !current_name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        {
+            return Ok(None);
+        }
+        let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+            .map(|scope| format!("{scope}::{current_name}"));
+        let same_package_is_type = same_package_path
+            .as_deref()
+            .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+        let imported_binding = resolve_kotlin_import_binding_for_reference(
+            &source_symbol.file_path,
+            &current_name,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?;
+        let imported_path = imported_binding
+            .map(|binding| binding.semantic_path)
+            .filter(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+        let candidate_path = match (same_package_is_type, imported_path) {
+            // A same-package declaration and an explicit import of the same name conflict.
+            (true, Some(_)) => return Ok(None),
+            (true, None) => same_package_path,
+            (false, Some(path)) => Some(path),
+            (false, None) => return Ok(None),
+        };
+        let Some(candidate_path) = candidate_path else {
+            return Ok(None);
+        };
+        if !visited.insert(candidate_path.clone()) {
+            return Ok(None);
+        }
+        let Some(alias_target) = kotlin_type_alias_target(&candidate_path, raw_symbols) else {
+            return Ok(Some(candidate_path));
+        };
+        current_name = alias_target;
     }
-    let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
-        .map(|scope| format!("{scope}::{type_name}"));
-    let same_package_is_type = same_package_path
-        .as_deref()
-        .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
-    let imported_binding = resolve_kotlin_import_binding_for_reference(
-        &source_symbol.file_path,
-        type_name,
-        file_overrides,
-        kotlin_import_contexts_by_file,
-        deadline,
-    )?;
-    let imported_path = imported_binding
-        .map(|binding| binding.semantic_path)
-        .filter(|path| kotlin_path_is_type_declaration(path, raw_symbols));
-    match (same_package_is_type, imported_path) {
-        // A same-package declaration and an explicit import of the same name conflict.
-        (true, Some(_)) => Ok(None),
-        (true, None) => Ok(same_package_path),
-        (false, Some(path)) => Ok(Some(path)),
-        (false, None) => Ok(None),
+}
+
+/// Returns the target type name of a uniquely declared type alias such as
+/// `typealias Helper = Other`. Generic, qualified, and ambiguous or missing
+/// alias targets fail closed because they cannot pin a receiver.
+fn kotlin_type_alias_target(path: &str, raw_symbols: &[IndexedSymbol]) -> Option<String> {
+    let aliases = raw_symbols
+        .iter()
+        .filter(|candidate| candidate.semantic_path == path && candidate.node_kind == "type_alias")
+        .collect::<Vec<_>>();
+    if aliases.len() != 1 {
+        return None;
     }
+    kotlin_simple_type_name(aliases[0].return_type.as_deref()?)
 }
 
 fn kotlin_path_is_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) -> bool {
@@ -4303,7 +4335,7 @@ fn kotlin_package_scope<'a>(
 fn is_kotlin_type_declaration(symbol: &IndexedSymbol) -> bool {
     matches!(
         symbol.node_kind.as_str(),
-        "class_declaration" | "interface_declaration" | "object_declaration"
+        "class_declaration" | "interface_declaration" | "object_declaration" | "type_alias"
     )
 }
 

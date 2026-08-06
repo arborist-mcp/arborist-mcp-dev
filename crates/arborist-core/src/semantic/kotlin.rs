@@ -293,6 +293,15 @@ pub(crate) fn kotlin_return_type(node: Node<'_>, source: &str) -> Option<String>
                 .map(str::to_string)
         }
         "property_declaration" => kotlin_property_declared_or_inferred_type(node, source),
+        "type_alias" => {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find(|child| is_kotlin_type_node(*child))
+                .and_then(|type_node| node_text(type_node, source).ok())
+                .map(str::trim)
+                .filter(|return_type| !return_type.is_empty())
+                .map(str::to_string)
+        }
         _ => None,
     }
 }
@@ -486,6 +495,42 @@ object Config {
         .unwrap()
         .unwrap();
         assert_eq!(found.kind(), "function_declaration");
+    }
+
+    #[test]
+    fn records_type_alias_target_as_return_type() {
+        let source = r#"
+package demo
+
+typealias Helper = Other
+typealias Generic<T> = List<T>
+typealias Nullable = Other?
+"#;
+        let path = Path::new("Aliases.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let skeleton = build_kotlin_skeleton(path, source, &document.tree, 5, &[], None).unwrap();
+
+        let helper = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "demo::Helper")
+            .unwrap();
+        assert_eq!(helper.return_type.as_deref(), Some("Other"));
+
+        let generic = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "demo::Generic")
+            .unwrap();
+        assert_eq!(generic.return_type.as_deref(), Some("List<T>"));
+
+        let nullable = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "demo::Nullable")
+            .unwrap();
+        assert_eq!(nullable.return_type.as_deref(), Some("Other?"));
     }
 
     #[test]

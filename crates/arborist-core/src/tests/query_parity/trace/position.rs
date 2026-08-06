@@ -7764,6 +7764,71 @@ fn traces_kotlin_cross_file_imported_interface_receiver_member_calls_in_live_wor
 }
 
 #[test]
+fn traces_kotlin_typealias_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\ntypealias Helper = Other\n\nfun caller(): Int {\n    val helper: Helper = Other()\n    return helper.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_typealias_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\ntypealias Helper = Other\n\nclass Group {\n    val member: Helper = Other()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.member.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_typealias_receiver_calls_with_generic_or_cyclic_targets() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\ntypealias Box<T> = List<T>\n\ntypealias First = Second\ntypealias Second = First\n\nfun genericTarget(): Int {\n    val box: Box<Other> = emptyList()\n    return box.helper(1)\n}\n\nfun cyclicTarget(): Int {\n    val first: First = Other()\n    return first.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Generic alias targets and cyclic alias chains fail closed instead of
+    // guessing a receiver or looping forever.
+    let helper_path = "com::example::Other::helper";
+    let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
