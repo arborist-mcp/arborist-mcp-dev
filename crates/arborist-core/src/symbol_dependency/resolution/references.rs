@@ -3892,8 +3892,9 @@ fn resolve_kotlin_chained_receiver_call(
         return Ok(None);
     };
     // Each intermediate hop must resolve to a uniquely declared property whose
-    // explicit type pins the next receiver; inferred, generic, or missing
-    // property types fail closed.
+    // explicit type pins the next receiver; a bare constructor initializer such
+    // as `val member = Other()` also pins the type, while generic, nullable,
+    // function-call-inferred, and missing property types fail closed.
     for property_name in hops.iter().skip(1).take(hops.len() - 2) {
         let Some(next_path) = kotlin_property_type_path(
             &type_path,
@@ -3926,9 +3927,10 @@ fn resolve_kotlin_chained_receiver_call(
     )
 }
 
-/// Resolves the declared type path of `property_name` on `owner_type_path`. Only a
-/// unique property with an explicit simple, non-nullable type resolves; inferred,
-/// generic, nullable, and ambiguous property types fail closed.
+/// Resolves the declared type path of `property_name` on `owner_type_path`. A
+/// unique property resolves when it carries an explicit simple, non-nullable
+/// type or a bare constructor initializer; generic, nullable, function-call
+/// inferred, and ambiguous property types fail closed.
 #[allow(clippy::too_many_arguments)]
 fn kotlin_property_type_path(
     owner_type_path: &str,

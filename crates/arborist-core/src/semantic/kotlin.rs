@@ -292,19 +292,37 @@ pub(crate) fn kotlin_return_type(node: Node<'_>, source: &str) -> Option<String>
                 .filter(|return_type| !return_type.is_empty())
                 .map(str::to_string)
         }
-        "property_declaration" => kotlin_direct_child_by_kind(node, &["variable_declaration"])
-            .and_then(|declaration| {
-                let mut cursor = declaration.walk();
-                declaration
-                    .named_children(&mut cursor)
-                    .find(|child| is_kotlin_type_node(*child))
-            })
-            .and_then(|return_type| node_text(return_type, source).ok())
-            .map(str::trim)
-            .filter(|return_type| !return_type.is_empty())
-            .map(str::to_string),
+        "property_declaration" => kotlin_property_declared_or_inferred_type(node, source),
         _ => None,
     }
+}
+
+/// Returns a property's explicit declared type, or infers a bare constructor
+/// initializer such as `val value = Other()`. Complex, nullable, generic, and
+/// non-identifier initializers fail closed so inferred types never guess a
+/// target, keeping property chains and summaries conservative.
+fn kotlin_property_declared_or_inferred_type(node: Node<'_>, source: &str) -> Option<String> {
+    let declared = kotlin_direct_child_by_kind(node, &["variable_declaration"])
+        .and_then(|declaration| {
+            let mut cursor = declaration.walk();
+            declaration
+                .named_children(&mut cursor)
+                .find(|child| is_kotlin_type_node(*child))
+        })
+        .and_then(|return_type| node_text(return_type, source).ok())
+        .map(str::trim)
+        .filter(|return_type| !return_type.is_empty())
+        .map(str::to_string);
+    if declared.is_some() {
+        return declared;
+    }
+    let call = kotlin_direct_child_by_kind(node, &["call_expression"])?;
+    let callee = call.named_child(0)?;
+    if callee.kind() != "identifier" {
+        return None;
+    }
+    let type_name = node_text(callee, source).ok()?.trim().to_string();
+    (!type_name.is_empty()).then_some(type_name)
 }
 
 fn kotlin_full_declaration(node: Node<'_>, source: &str) -> Result<String> {
