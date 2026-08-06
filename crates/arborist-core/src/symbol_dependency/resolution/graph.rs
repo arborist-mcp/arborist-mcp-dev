@@ -33,6 +33,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
+    let mut kotlin_import_contexts_by_file = BTreeMap::new();
     let mut csharp_import_contexts_by_file = BTreeMap::new();
     let csharp_global_import_context =
         csharp_global_import_context_for_files_with_overrides_and_deadline(
@@ -65,6 +66,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides(
                 &mut go_import_contexts_by_file,
                 &rust_out_of_line_module_context,
                 &mut java_import_contexts_by_file,
+                &mut kotlin_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
                 Some(&csharp_global_import_context),
             ));
@@ -125,6 +127,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
     let mut javascript_import_contexts_by_file = BTreeMap::new();
     let mut go_import_contexts_by_file = BTreeMap::new();
     let mut java_import_contexts_by_file = BTreeMap::new();
+    let mut kotlin_import_contexts_by_file = BTreeMap::new();
     let mut csharp_import_contexts_by_file = BTreeMap::new();
     let csharp_global_import_context =
         csharp_global_import_context_for_files_with_overrides_and_deadline(
@@ -156,6 +159,7 @@ pub(crate) fn resolve_symbol_dependencies_with_overrides_with_deadline(
                 &mut go_import_contexts_by_file,
                 &rust_out_of_line_module_context,
                 &mut java_import_contexts_by_file,
+                &mut kotlin_import_contexts_by_file,
                 &mut csharp_import_contexts_by_file,
                 Some(&csharp_global_import_context),
                 Some(deadline),

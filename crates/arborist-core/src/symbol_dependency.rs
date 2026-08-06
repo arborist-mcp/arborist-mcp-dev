@@ -3,6 +3,7 @@ mod csharp;
 mod go;
 mod java;
 mod javascript;
+mod kotlin;
 mod refresh;
 mod resolution;
 mod rust;

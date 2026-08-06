@@ -30,6 +30,9 @@ use super::super::java::{
 use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
+use super::super::kotlin::{
+    KotlinImportContext, resolve_kotlin_function_import_binding_for_reference,
+};
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
     cpp_callable_accepts_arity, cpp_const_member_candidates, cpp_lvalue_member_candidates,
@@ -141,6 +144,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
 ) -> Vec<String> {
@@ -156,6 +160,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol<'a>(
         go_import_contexts_by_file,
         rust_out_of_line_module_context,
         java_import_contexts_by_file,
+        kotlin_import_contexts_by_file,
         csharp_import_contexts_by_file,
         csharp_global_import_context,
         None,
@@ -176,6 +181,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -242,6 +248,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
                     go_import_contexts_by_file,
                     rust_out_of_line_module_context,
                     java_import_contexts_by_file,
+                    kotlin_import_contexts_by_file,
                     csharp_import_contexts_by_file,
                     csharp_global_import_context,
                     deadline,
@@ -266,6 +273,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
             go_import_contexts_by_file,
             rust_out_of_line_module_context,
             java_import_contexts_by_file,
+            kotlin_import_contexts_by_file,
             csharp_import_contexts_by_file,
             csharp_global_import_context,
             deadline,
@@ -297,6 +305,7 @@ fn resolve_reference_path_with_deadline<'a>(
     go_import_contexts_by_file: &mut BTreeMap<String, GoImportContext>,
     rust_out_of_line_module_context: &RustOutOfLineModuleContext,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     csharp_global_import_context: Option<&CSharpGlobalImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
@@ -877,13 +886,16 @@ fn resolve_reference_path_with_deadline<'a>(
         ));
     }
     if language_id == Some(LanguageId::Kotlin) {
-        return Ok(resolve_kotlin_reference_with_deadline(
+        return resolve_kotlin_reference_with_deadline(
             source_symbol,
             reference_name,
             raw_symbols,
             semantic_path_index,
             call_context,
-        ));
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
     }
     if language_id == Some(LanguageId::Java) {
         let Some(call_arity) = call_context.arity else {
@@ -3593,16 +3605,22 @@ fn java_method_signature_is_default(signature: &str) -> bool {
     signature.split_whitespace().any(|token| token == "default")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_reference_with_deadline(
     source_symbol: &IndexedSymbol,
     reference_name: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     call_context: CallResolutionContext,
-) -> Option<String> {
-    let call_arity = call_context.arity?;
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(call_arity) = call_context.arity else {
+        return Ok(None);
+    };
     if reference_name.is_empty() || reference_name.contains('.') || reference_name.contains("::") {
-        return None;
+        return Ok(None);
     }
 
     // Unqualified calls resolve first against the caller's own scope: an enclosing-type
@@ -3620,36 +3638,64 @@ fn resolve_kotlin_reference_with_deadline(
             })
             .collect::<Vec<_>>();
         if same_scope_candidates.len() == 1 {
-            return Some(raw_symbols[same_scope_candidates[0]].symbol_id.clone());
+            return Ok(Some(
+                raw_symbols[same_scope_candidates[0]].symbol_id.clone(),
+            ));
         }
         if same_scope_candidates.len() > 1 {
-            return None;
+            return Ok(None);
         }
     }
 
     // Callers nested inside a type fall through to a package-level top-level function.
-    let scope_path = source_symbol.scope_path.as_deref()?;
-    let package_scope = kotlin_package_scope(source_symbol, raw_symbols)?;
-    if scope_path == package_scope {
-        return None;
+    if let Some(package_scope) = kotlin_package_scope(source_symbol, raw_symbols) {
+        let target_path = format!("{package_scope}::{reference_name}");
+        let package_candidates = semantic_path_index
+            .get(&target_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.scope_path.as_deref() == Some(package_scope)
+                    && candidate.parameters.len() == call_arity
+            })
+            .collect::<Vec<_>>();
+        if package_candidates.len() == 1 {
+            return Ok(Some(raw_symbols[package_candidates[0]].symbol_id.clone()));
+        }
+        if package_candidates.len() > 1 {
+            return Ok(None);
+        }
     }
-    let target_path = format!("{package_scope}::{reference_name}");
-    let package_candidates = semantic_path_index
-        .get(&target_path)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "function_declaration"
-                && candidate.scope_path.as_deref() == Some(package_scope)
-                && candidate.parameters.len() == call_arity
-        })
-        .collect::<Vec<_>>();
-    if package_candidates.len() == 1 {
-        return Some(raw_symbols[package_candidates[0]].symbol_id.clone());
+
+    // A unique explicit import can bind an unqualified call to a top-level function in
+    // another package. Wildcard imports, aliases that collide, and multiple matching
+    // declarations fail closed.
+    if let Some(binding) = resolve_kotlin_function_import_binding_for_reference(
+        &source_symbol.file_path,
+        reference_name,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        let imported_candidates = semantic_path_index
+            .get(&binding.semantic_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.parameters.len() == call_arity
+            })
+            .collect::<Vec<_>>();
+        if imported_candidates.len() == 1 {
+            return Ok(Some(raw_symbols[imported_candidates[0]].symbol_id.clone()));
+        }
     }
-    None
+    Ok(None)
 }
 
 fn kotlin_package_scope<'a>(
@@ -3721,6 +3767,7 @@ mod tests {
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &RustOutOfLineModuleContext::default(),
+            &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             &mut std::collections::BTreeMap::new(),
             None,

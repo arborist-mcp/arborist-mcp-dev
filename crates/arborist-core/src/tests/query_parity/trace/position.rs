@@ -7209,3 +7209,112 @@ fn does_not_trace_kotlin_qualified_calls_or_ambiguous_package_functions() {
         trace_symbol_graph(&dir, "com::example::Other::helper", TraceDirection::Callers).unwrap();
     assert!(other_helper.callers.is_empty());
 }
+#[test]
+fn traces_kotlin_cross_package_imported_top_level_function_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.helper\n\nfun caller(): Int = helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    let helper_semantic_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_semantic_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_semantic_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_semantic_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, helper_semantic_path);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_aliased_imported_top_level_function_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.helper as h\n\nfun caller(): Int = h(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    let helper_semantic_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_semantic_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_semantic_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_wildcard_or_competing_imported_function_calls() {
+    let dir = temporary_dir();
+    let wildcard_caller = dir.join("WildcardCaller.kt");
+    let competing_caller = dir.join("CompetingCaller.kt");
+    let wildcard_helper = dir.join("WildcardHelper.kt");
+    let first_helper = dir.join("FirstHelper.kt");
+    let second_helper = dir.join("SecondHelper.kt");
+    fs::write(
+        &wildcard_caller,
+        "package com.example\n\nimport org.util.*\n\nfun wildcardCaller(): Int = helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &competing_caller,
+        "package com.example\n\nimport org.first.helper\nimport org.second.helper\n\nfun competingCaller(): Int = helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &wildcard_helper,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+    fs::write(
+        &first_helper,
+        "package org.first\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_helper,
+        "package org.second\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    // Wildcard imports do not produce a unique binding.
+    let wildcard = trace_symbol_graph(&dir, "org::util::helper", TraceDirection::Callers).unwrap();
+    assert!(wildcard.callers.is_empty());
+
+    // Competing explicit imports of the same simple name fail closed.
+    let first = trace_symbol_graph(&dir, "org::first::helper", TraceDirection::Callers).unwrap();
+    assert!(first.callers.is_empty());
+    let second = trace_symbol_graph(&dir, "org::second::helper", TraceDirection::Callers).unwrap();
+    assert!(second.callers.is_empty());
+}

@@ -740,3 +740,28 @@ fn traces_kotlin_same_package_top_level_function_calls_from_dirty_vfs_overrides(
     assert_eq!(trace.callers.len(), 1);
     assert_eq!(trace.callers[0].symbol_id, "com::example::caller");
 }
+#[test]
+fn traces_kotlin_imported_top_level_function_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let helper = dir.join("Helper.kt");
+    let caller = dir.join("Caller.kt");
+    fs::write(
+        &helper,
+        "package org.util\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+    fs::write(&caller, "package com.example\n\nfun caller(): Int = 0\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &caller,
+        Some("package com.example\n\nimport org.util.helper\n\nfun caller(): Int = helper(1)\n"),
+    )
+    .unwrap();
+
+    let trace = vfs
+        .trace_symbol_graph(&dir, "org::util::helper", TraceDirection::Callers)
+        .unwrap();
+    assert_eq!(trace.callers.len(), 1);
+    assert_eq!(trace.callers[0].symbol_id, "com::example::caller");
+}
