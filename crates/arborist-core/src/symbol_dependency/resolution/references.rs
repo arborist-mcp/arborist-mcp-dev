@@ -3874,6 +3874,34 @@ fn resolve_kotlin_qualified_receiver_call(
     Ok(None)
 }
 
+/// Maps the second hop of a companion chain such as `Config.Factory.member(...)`
+/// or `Config.Companion.member(...)` to the class's canonical companion scope
+/// `{class_path}::Companion`. The literal `Companion` is always available; any
+/// other name resolves only when exactly one companion object is declared under
+/// that name. Object declarations cannot host companion objects, so an
+/// object-resolved class path fails closed.
+fn resolve_kotlin_explicit_companion_scope(
+    class_path: &str,
+    companion_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    if kotlin_path_object_count(class_path, raw_symbols) != 0 {
+        return None;
+    }
+    if companion_name == "Companion" {
+        return Some(format!("{class_path}::Companion"));
+    }
+    let companion_indexes = semantic_path_index
+        .get(&format!("{class_path}::{companion_name}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "companion_object")
+        .collect::<Vec<_>>();
+    (companion_indexes.len() == 1).then(|| format!("{class_path}::Companion"))
+}
+
 /// Resolves `method` on the companion object of `type_path`. Only a unique
 /// member indexed under `Type::Companion::method` with a matching arity
 /// resolves; an ambiguous overload set fails closed.
@@ -3922,13 +3950,13 @@ fn resolve_kotlin_chained_receiver_call(
         kotlin_import_contexts_by_file,
         deadline,
     )?;
-    // A companion chain such as `Config.Companion.member(...)` or
-    // `Config.Companion.holder.run(...)` resolves the class name as a type path
-    // and dispatches only within the companion scope; instance members and
-    // extensions fail closed because a class name cannot be an instance
-    // receiver. A local binding of the same name shadows the class receiver.
+    // A companion chain such as `Config.Companion.member(...)`,
+    // `Config.Factory.member(...)`, or `Config.Companion.holder.run(...)`
+    // resolves the class name as a type path and dispatches only within the
+    // companion scope; instance members and extensions fail closed because a
+    // class name cannot be an instance receiver. A local binding of the same
+    // name shadows the class receiver.
     if hops.len() >= 3
-        && hops[1] == "Companion"
         && !bindings
             .as_ref()
             .is_some_and(|bindings| bindings.contains(hops[0]))
@@ -3940,8 +3968,13 @@ fn resolve_kotlin_chained_receiver_call(
             kotlin_import_contexts_by_file,
             deadline,
         )?
+        && let Some(companion_scope) = resolve_kotlin_explicit_companion_scope(
+            &class_path,
+            hops[1],
+            raw_symbols,
+            semantic_path_index,
+        )
     {
-        let companion_scope = format!("{class_path}::Companion");
         let mut receiver_path = companion_scope.clone();
         for property_name in hops.iter().skip(2).take(hops.len() - 3) {
             let Some(next_path) = kotlin_property_type_path(

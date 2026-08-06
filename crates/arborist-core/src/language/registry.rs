@@ -470,7 +470,7 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "kotlin-companion-v12",
+    analysis_revision: "kotlin-named-companion-v13",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

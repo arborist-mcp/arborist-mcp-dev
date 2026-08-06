@@ -7968,6 +7968,102 @@ fn does_not_trace_kotlin_instance_or_unknown_members_via_companion_chains() {
 }
 
 #[test]
+fn traces_kotlin_named_companion_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Config {\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun canonicalCaller(): Int = Config.Companion.helper(1)\n\nfun namedCaller(): Int = Config.Factory.helper(1)\n",
+    )
+    .unwrap();
+
+    // Both the canonical `Companion` spelling and the declared companion name
+    // resolve to the same canonical companion-member ID.
+    let helper_path = "com::example::Config::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    let mut caller_ids = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut persisted_ids = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    persisted_ids.sort_unstable();
+    assert_eq!(
+        persisted_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_named_companion_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Config {\n    companion object Factory {\n        val holder = Holder()\n    }\n}\n\nfun caller(): Int = Config.Factory.holder.run(1)\n",
+    )
+    .unwrap();
+
+    let run_path = "com::example::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_unknown_or_instance_members_via_named_companion_chains() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Config {\n    fun instance(value: Int): Int = value\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n}\n\nobject Registry {\n    companion object F {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun unknownCompanionName(): Int = Config.Missing.helper(1)\n\nfun instanceViaNamedCompanion(): Int = Config.Factory.instance(1)\n\nfun objectCompanionChain(): Int = Registry.F.helper(1)\n",
+    )
+    .unwrap();
+
+    // An unknown companion name, an instance member reached through the
+    // companion, and a companion chain rooted at an object declaration all fail
+    // closed instead of guessing a target.
+    let helper_path = "com::example::Config::Companion::helper";
+    let helper_trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(helper_trace.callers.is_empty());
+
+    let instance_path = "com::example::Config::instance";
+    let instance_trace = trace_symbol_graph(&dir, instance_path, TraceDirection::Callers).unwrap();
+    assert!(instance_trace.callers.is_empty());
+
+    let object_helper_path = "com::example::Registry::Companion::helper";
+    let object_trace =
+        trace_symbol_graph(&dir, object_helper_path, TraceDirection::Callers).unwrap();
+    assert!(object_trace.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

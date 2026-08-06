@@ -175,6 +175,7 @@ pub(crate) fn is_kotlin_symbol_node(node: Node<'_>) -> bool {
             | "function_declaration"
             | "property_declaration"
             | "type_alias"
+            | "companion_object"
     )
 }
 
@@ -195,9 +196,10 @@ pub(crate) fn is_kotlin_semantic_symbol_node(node: Node<'_>) -> bool {
 
 pub(crate) fn kotlin_symbol_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
     let name = match node.kind() {
-        "class_declaration" | "object_declaration" | "function_declaration" => {
-            node.child_by_field_name("name")
-        }
+        "class_declaration"
+        | "object_declaration"
+        | "function_declaration"
+        | "companion_object" => node.child_by_field_name("name"),
         "property_declaration" => kotlin_property_name_node(node),
         "type_alias" => kotlin_type_alias_name_node(node),
         _ => None,
@@ -245,7 +247,7 @@ pub(crate) fn kotlin_semantic_path(
 
 pub(crate) fn kotlin_signature(node: Node<'_>, source: &str) -> Option<String> {
     let end_byte = match node.kind() {
-        "class_declaration" | "object_declaration" => {
+        "class_declaration" | "object_declaration" | "companion_object" => {
             kotlin_direct_child_by_kind(node, &["class_body", "enum_class_body"])
                 .map(|body| body.start_byte())
                 .unwrap_or(node.end_byte())
@@ -595,5 +597,43 @@ class Config {
             helper.scope_path.as_deref(),
             Some("demo::Config::Companion")
         );
+    }
+
+    #[test]
+    fn namespaces_named_companion_objects_and_keeps_members_canonical() {
+        let source = r#"
+package demo
+
+class Config {
+    companion object Factory {
+        fun helper(value: Int): Int = value
+        val label = "x"
+    }
+}
+"#;
+        let path = Path::new("Companion.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let skeleton = build_kotlin_skeleton(path, source, &document.tree, 5, &[], None).unwrap();
+
+        // The named companion object is indexed under its declared name, while
+        // its members stay under the canonical `Type::Companion::` scope so
+        // `Config.Companion.helper` and `Config.Factory.helper` share one ID.
+        assert_eq!(
+            skeleton.available_paths,
+            vec![
+                "demo::Config",
+                "demo::Config::Factory",
+                "demo::Config::Companion::helper",
+                "demo::Config::Companion::label",
+            ]
+        );
+        let companion = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "demo::Config::Factory")
+            .unwrap();
+        assert_eq!(companion.node_kind, "companion_object");
+        assert_eq!(companion.scope_path.as_deref(), Some("demo::Config"));
     }
 }
