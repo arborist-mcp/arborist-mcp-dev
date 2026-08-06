@@ -8781,6 +8781,195 @@ fn does_not_trace_kotlin_nested_object_receiver_calls_with_unknown_or_conflictin
 }
 
 #[test]
+fn traces_kotlin_nested_companion_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        companion object {\n            fun helper(value: Int): Int = value\n        }\n    }\n    interface Service {\n        companion object {\n            fun serve(value: Int): Int = value\n        }\n    }\n}\n\nfun classCaller(): Int = Outer.Inner.helper(1)\n\nfun interfaceCaller(): Int = Outer.Service.serve(1)\n",
+    )
+    .unwrap();
+
+    // A nested class or interface inside `Outer` may host the companion, so
+    // the class-name receiver dispatches to the nested type's companion scope.
+    let helper_path = "com::example::Outer::Inner::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::classCaller");
+
+    let serve_path = "com::example::Outer::Service::Companion::serve";
+    let serve_trace = trace_symbol_graph(&dir, serve_path, TraceDirection::Callers).unwrap();
+    assert_eq!(serve_trace.callers.len(), 1);
+    assert_eq!(
+        serve_trace.callers[0].symbol_id,
+        "com::example::interfaceCaller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::classCaller");
+    let persisted_serve =
+        trace_symbol_graph_from_index(&db_path, serve_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_serve.callers.len(), 1);
+    assert_eq!(
+        persisted_serve.callers[0].symbol_id,
+        "com::example::interfaceCaller"
+    );
+}
+
+#[test]
+fn traces_kotlin_nested_companion_explicit_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        companion object {\n            fun helper(value: Int): Int = value\n            val holder = Holder()\n        }\n    }\n}\n\nfun companionCaller(): Int = Outer.Inner.Companion.helper(1)\n\nfun chainCaller(): Int = Outer.Inner.Companion.holder.run(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Outer::Inner::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::companionCaller");
+
+    let run_path = "com::example::Holder::run";
+    let run_trace = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(run_trace.callers.len(), 1);
+    assert_eq!(run_trace.callers[0].symbol_id, "com::example::chainCaller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted_helper =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_helper.callers.len(), 1);
+    assert_eq!(
+        persisted_helper.callers[0].symbol_id,
+        "com::example::companionCaller"
+    );
+    let persisted_run =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted_run.callers.len(), 1);
+    assert_eq!(
+        persisted_run.callers[0].symbol_id,
+        "com::example::chainCaller"
+    );
+}
+
+#[test]
+fn traces_kotlin_named_nested_companion_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        companion object Factory {\n            fun helper(value: Int): Int = value\n        }\n    }\n}\n\nfun canonicalCaller(): Int = Outer.Inner.Companion.helper(1)\n\nfun namedCaller(): Int = Outer.Inner.Factory.helper(1)\n",
+    )
+    .unwrap();
+
+    // Both the canonical `Companion` spelling and the declared nested companion
+    // name resolve to the same canonical companion-member ID.
+    let helper_path = "com::example::Outer::Inner::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    let mut caller_ids = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut persisted_ids = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    persisted_ids.sort_unstable();
+    assert_eq!(
+        persisted_ids,
+        vec!["com::example::canonicalCaller", "com::example::namedCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_imported_nested_companion_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir
+        .join("src")
+        .join("com")
+        .join("example")
+        .join("Caller.kt");
+    let outer_path = dir.join("src").join("org").join("util").join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(outer_path.parent().unwrap()).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Outer\n\nfun caller(): Int = Outer.Inner.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &outer_path,
+        "package org.util\n\nclass Outer {\n    class Inner {\n        companion object {\n            fun helper(value: Int): Int = value\n        }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::Outer::Inner::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_nested_companion_receiver_calls_without_companions_or_with_unknown_names()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Plain {\n        fun helper(value: Int): Int = value\n    }\n    companion object {\n        fun helper(value: Int): Int = value\n    }\n}\n\nclass Outer2 {\n    class Inner {\n        companion object {\n            fun helper(value: Int): Int = value\n        }\n    }\n}\n\nfun nestedClassWithoutCompanion(): Int = Outer.Plain.helper(1)\n\nfun unknownNestedType(): Int = Outer.Inner.helper(1)\n\nfun shadowedNestedCompanion(): Int {\n    val Outer2 = Holder()\n    return Outer2.Inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An instance member called through a nested class name, an unknown nested
+    // type, and a local binding that shadows the outer class name all fail
+    // closed instead of dispatching to the outer or nested companion scope.
+    for helper_path in [
+        "com::example::Outer::Plain::helper",
+        "com::example::Outer::Companion::helper",
+        "com::example::Outer2::Inner::Companion::helper",
+    ] {
+        let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert!(
+            trace.callers.is_empty(),
+            "expected no callers for {helper_path}"
+        );
+    }
+}
+
+#[test]
 fn does_not_trace_kotlin_object_property_chains_with_unknown_or_shadowed_objects() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

@@ -3974,29 +3974,54 @@ fn resolve_kotlin_chained_receiver_call(
     // `Config.Factory.member(...)`, or `Config.Companion.holder.run(...)`
     // resolves the class name as a type path and dispatches only within the
     // companion scope; instance members and extensions fail closed because a
-    // class name cannot be an instance receiver. A local binding of the same
-    // name shadows the class receiver.
-    if hops.len() >= 3
-        && !bindings
-            .as_ref()
-            .is_some_and(|bindings| bindings.contains(hops[0]))
-        && let Some(class_path) = resolve_kotlin_receiver_type_path(
-            source_symbol,
-            hops[0],
-            raw_symbols,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?
-        && let Some(companion_scope) = resolve_kotlin_explicit_companion_scope(
+    // class name cannot be an instance receiver. The companion may also be
+    // hosted by a nested class or interface, so `Outer.Inner.helper(...)`,
+    // `Outer.Inner.Companion.helper(...)`, and
+    // `Outer.Inner.Factory.holder.run(...)` dispatch through the nested
+    // type's canonical companion scope. A local binding of the same name
+    // shadows the class receiver.
+    let companion_chain = if bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        None
+    } else if let Some(class_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        hops[0],
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        let direct_scope = resolve_kotlin_explicit_companion_scope(
             &class_path,
             hops[1],
             raw_symbols,
             semantic_path_index,
-        )
-    {
+        );
+        let nested_path = kotlin_path_nested_class_path(&class_path, hops[1], raw_symbols);
+        match (direct_scope.is_some(), nested_path) {
+            (true, _) => Some((class_path, 2)),
+            (false, Some(nested_path)) => {
+                let nested_companion = hops.len() >= 4
+                    && resolve_kotlin_explicit_companion_scope(
+                        &nested_path,
+                        hops[2],
+                        raw_symbols,
+                        semantic_path_index,
+                    )
+                    .is_some();
+                Some((nested_path, if nested_companion { 3 } else { 2 }))
+            }
+            (false, None) => None,
+        }
+    } else {
+        None
+    };
+    if let Some((companion_root, consumed)) = companion_chain {
+        let companion_scope = format!("{companion_root}::Companion");
         let mut receiver_path = companion_scope.clone();
-        for property_name in hops.iter().skip(2).take(hops.len() - 3) {
+        for property_name in hops.iter().skip(consumed).take(hops.len() - consumed - 1) {
             let Some(next_path) = kotlin_property_type_path(
                 &receiver_path,
                 property_name,
@@ -4016,7 +4041,7 @@ fn resolve_kotlin_chained_receiver_call(
         if receiver_path == companion_scope {
             // A direct companion member call never falls through to extensions.
             return Ok(resolve_kotlin_companion_member(
-                &class_path,
+                &companion_root,
                 method,
                 call_arity,
                 raw_symbols,
@@ -4605,6 +4630,30 @@ fn kotlin_path_nested_object(
         }
     }
     (object_count == 1 && other_type_count == 0).then_some(nested_path)
+}
+
+/// Returns the nested type path when `type_name` under `owner_type_path` names
+/// exactly one class or interface declaration and no same-named object or type
+/// alias declaration conflicts; unknown and ambiguous nested types fail closed.
+/// Only classes and interfaces can host companion objects.
+fn kotlin_path_nested_class_path(
+    owner_type_path: &str,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let nested_path = format!("{owner_type_path}::{type_name}");
+    let mut class_count = 0usize;
+    let mut other_declaration_count = 0usize;
+    for candidate in raw_symbols {
+        if candidate.semantic_path != nested_path {
+            continue;
+        }
+        match candidate.node_kind.as_str() {
+            "class_declaration" | "interface_declaration" => class_count += 1,
+            _ => other_declaration_count += 1,
+        }
+    }
+    (class_count == 1 && other_declaration_count == 0).then_some(nested_path)
 }
 
 /// Resolves a bare call to a class name such as `Other(...)` to the class
