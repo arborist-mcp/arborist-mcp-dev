@@ -26,6 +26,7 @@ class GatewayRuntimeCatalogTestsMixin:
                 "rust",
                 "go",
                 "java",
+                "kotlin",
             ],
         )
 
