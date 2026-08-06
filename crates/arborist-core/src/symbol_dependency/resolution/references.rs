@@ -23,8 +23,8 @@ use super::super::go::{
     GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
 };
 use super::super::java::{
-    JavaImportBinding, JavaImportContext, java_receiver_type_bindings_for_function,
-    resolve_java_import_binding_for_reference,
+    JavaImportBinding, JavaImportContext, java_dotted_type_name,
+    java_receiver_type_bindings_for_function, resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
     resolve_java_type_import_binding_for_name,
 };
@@ -2667,12 +2667,9 @@ fn resolve_java_instance_receiver_call(
     if !bindings.contains(receiver_name) {
         return Ok(JavaInstanceReceiverResolution::NoBinding);
     }
-    // A bound receiver is always an instance expression: chains through fields
-    // and receivers without a resolvable declared type fail closed instead of
-    // falling through to a same-named static type call.
-    if member_chain.contains('.') {
-        return Ok(JavaInstanceReceiverResolution::Blocked);
-    }
+    // A bound receiver is always an instance expression: receivers without a
+    // resolvable declared type fail closed instead of falling through to a
+    // same-named static type call.
     let Some(type_name) = bindings.type_for(receiver_name) else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
@@ -2688,8 +2685,48 @@ fn resolve_java_instance_receiver_call(
     else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
+    // Member chains such as `group.member.helper(...)` resolve each
+    // intermediate field's declared type before dispatching the final method;
+    // unknown, ambiguous, or unresolvable hops fail closed.
+    let mut current_type_path = type_path;
+    let mut hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.len() > 1 {
+        let Some(final_member) = hops.pop() else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        for hop in hops {
+            let Some(next_path) = java_field_type_path(
+                &current_type_path,
+                hop,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(JavaInstanceReceiverResolution::Blocked);
+            };
+            current_type_path = next_path;
+        }
+        let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
+            &current_type_path,
+            final_member,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            true,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        return Ok(JavaInstanceReceiverResolution::Resolved(symbol_id));
+    }
     let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
-        &type_path,
+        &current_type_path,
         member_chain,
         raw_symbols,
         semantic_path_index,
@@ -2703,6 +2740,59 @@ fn resolve_java_instance_receiver_call(
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
     Ok(JavaInstanceReceiverResolution::Resolved(symbol_id))
+}
+
+/// Resolves the declared type of a field on an owning type path, used to walk
+/// member chains such as `group.member.helper(...)`. The field's declared type
+/// resolves in the field's own file and enclosing scope so explicit imports in
+/// the owning file apply. Unknown, ambiguous, or complex field types fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java field type resolution inputs explicit"
+)]
+fn java_field_type_path(
+    owner_type_path: &str,
+    field_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if field_name.is_empty() {
+        return Ok(None);
+    }
+    let candidates = semantic_path_index
+        .get(&format!("{owner_type_path}::{field_name}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "field_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let field = &raw_symbols[candidates[0]];
+    let Some(field_type) = field.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(type_name) = java_dotted_type_name(field_type) else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        field,
+        &type_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
 }
 
 #[allow(

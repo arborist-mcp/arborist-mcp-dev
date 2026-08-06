@@ -41,7 +41,9 @@ fn collect_symbols(
     if let Some(deadline) = deadline {
         deadline.check("extracting Java symbols")?;
     }
-    if is_java_symbol_node(node)
+    if node.kind() == "field_declaration" {
+        collect_field_symbols(path, source, root, node, deadline, symbols)?;
+    } else if is_java_symbol_node(node)
         && let Some(symbol) = indexed_symbol(path, source, root, node, deadline)?
     {
         symbols.push(symbol);
@@ -50,6 +52,53 @@ fn collect_symbols(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         collect_symbols(path, source, root, child, deadline, symbols)?;
+    }
+    Ok(())
+}
+
+/// Indexes each named field in a `field_declaration` (one symbol per
+/// declarator) under the enclosing type path. Field symbols carry their
+/// declared type as the return type and record no direct calls.
+fn collect_field_symbols(
+    path: &Path,
+    source: &str,
+    root: Node<'_>,
+    node: Node<'_>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    symbols: &mut Vec<IndexedSymbol>,
+) -> Result<()> {
+    if let Some(deadline) = deadline {
+        deadline.check("extracting Java field symbols")?;
+    }
+    let Some(field_type) = java_return_type(node, source) else {
+        return Ok(());
+    };
+    let mut cursor = node.walk();
+    for declarator in node.children_by_field_name("declarator", &mut cursor) {
+        let Some(name) = java_symbol_name(declarator, source)? else {
+            continue;
+        };
+        let Some(semantic_path) = java_semantic_path(root, node, source, &name)? else {
+            continue;
+        };
+        symbols.push(IndexedSymbol {
+            extension_receiver: None,
+            symbol_id: String::new(),
+            base_name: symbol_base_name(&semantic_path),
+            scope_path: semantic_parent_path(&semantic_path),
+            semantic_path,
+            file_path: normalize_path(path),
+            node_kind: "field_declaration".to_string(),
+            byte_range: (declarator.start_byte(), declarator.end_byte()),
+            signature: None,
+            is_overload: false,
+            parameters: Vec::new(),
+            return_type: Some(field_type.clone()),
+            docstring: None,
+            reference_facts: Vec::new(),
+            references_by_name: BTreeSet::new(),
+            call_arities_by_name: BTreeMap::new(),
+        });
     }
     Ok(())
 }
@@ -329,6 +378,7 @@ enum Kind { BASIC }
                 "com::example::Counter::patternShadowed",
                 "com::example::Counter::ambiguousIncrement",
                 "com::example::Outer",
+                "com::example::Outer::Helper",
                 "com::example::Outer::Nested",
                 "com::example::Outer::Nested::outerFieldShadowed",
                 "com::example::Renderer",
