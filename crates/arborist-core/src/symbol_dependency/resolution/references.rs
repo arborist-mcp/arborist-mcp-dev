@@ -4132,14 +4132,97 @@ fn kotlin_property_type_path(
     let Some(type_name) = kotlin_simple_type_name(return_type) else {
         return Ok(None);
     };
-    resolve_kotlin_receiver_type_path(
+    if let Some(path) = resolve_kotlin_receiver_type_path(
         source_symbol,
         &type_name,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
+    )? {
+        return Ok(Some(path));
+    }
+    // A function-call initializer such as `val derived = makeOther()` records
+    // the callee name instead of a type. When that name resolves to a unique
+    // top-level function with a declared return type, the return type pins the
+    // property receiver; unknown, ambiguous, and undeclared-return factories
+    // fail closed so chains never guess a target.
+    let Some(function_path) = resolve_kotlin_property_initializer_function_path(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(factory) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == function_path)
+    else {
+        return Ok(None);
+    };
+    let Some(function_return_type) = factory
+        .return_type
+        .as_deref()
+        .and_then(kotlin_simple_type_name)
+    else {
+        return Ok(None);
+    };
+    // Resolve the factory's declared return type in the factory's own file and
+    // package scope; the caller need not import the returned type to call a
+    // member on the inferred property.
+    resolve_kotlin_receiver_type_path(
+        factory,
+        &function_return_type,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
     )
+}
+
+/// Resolves an inferred property initializer callee such as `makeOther` in
+/// `val derived = makeOther()` to a unique top-level function whose declared
+/// return type can pin the property receiver. Same-file, same-package, and
+/// explicitly imported functions are eligible; unknown names, ambiguous
+/// candidates, and functions without a declared return type fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_property_initializer_function_path(
+    source_symbol: &IndexedSymbol,
+    function_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        function_name,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.node_kind == "function_declaration"
+                && candidate.base_name == function_name
+                && candidate.return_type.is_some()
+                && kotlin_symbol_is_top_level(candidate, raw_symbols)
+                && (candidate.file_path == source_symbol.file_path
+                    || package_scope
+                        .is_some_and(|scope| candidate.scope_path.as_deref() == Some(scope))
+                    || imported_binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.semantic_path == candidate.semantic_path))
+        })
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| candidates[0].clone()))
 }
 
 /// Dispatches `method` on `type_path`: a unique member function shadows extensions,

@@ -7665,22 +7665,122 @@ fn traces_kotlin_constructor_inferred_property_chain_receiver_calls_in_live_work
 }
 
 #[test]
-fn does_not_trace_kotlin_property_chain_receiver_calls_with_non_constructor_or_missing_property_types()
+fn does_not_trace_kotlin_property_chain_receiver_calls_with_missing_properties_or_undeclared_factories()
  {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = makeOther()\n}\n\nfun unknownReceiver(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n\nfun missingProperty(): Int {\n    val group = Group()\n    return group.absent.helper(1)\n}\n\nfun unknownReceiverBinding(): Int {\n    val group = makeGroup()\n    return group.derived.helper(1)\n}\n\nfun makeOther(): Other = Other()\n\nfun makeGroup(): Group = Group()\n",
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = makeOther()\n}\n\nfun missingProperty(): Int {\n    val group = Group()\n    return group.absent.helper(1)\n}\n\nfun unknownReceiverBinding(): Int {\n    val group = makeGroup()\n    return group.derived.helper(1)\n}\n\nfun undeclaredReturn(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n\nfun makeOther() = Other()\n\nfun makeGroup(): Group = Group()\n",
     )
     .unwrap();
 
-    // Function-call-inferred properties, missing properties, and function-return
-    // receiver bindings all fail closed instead of guessing a chain target. Only
-    // bare constructor initializers such as `val member = Other()` pin a type.
+    // Missing properties, function-return receiver bindings, and factory calls
+    // without a declared return type all fail closed instead of guessing a
+    // chain target. Only bare constructor initializers and factories with a
+    // declared return type pin a receiver.
     let helper_path = "com::example::Other::helper";
     let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert!(trace.callers.is_empty());
+}
+
+#[test]
+fn traces_kotlin_function_return_type_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val derived = makeOther()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n\nfun makeOther(): Other = Other()\n",
+    )
+    .unwrap();
+
+    // A function-call property initializer pins the receiver through the
+    // function's declared return type.
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_same_package_factory_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factories_path = dir.join("Factories.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nclass Group {\n    val derived = makeOther()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factories_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun makeOther(): Other = Other()\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_imported_factory_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir
+        .join("src")
+        .join("com")
+        .join("example")
+        .join("Caller.kt");
+    let factory_path = dir
+        .join("src")
+        .join("org")
+        .join("util")
+        .join("Factories.kt");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(factory_path.parent().unwrap()).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeOther\n\nclass Group {\n    val derived = makeOther()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.derived.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun makeOther(): Other = Other()\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
 }
 
 #[test]
