@@ -7536,10 +7536,23 @@ fn does_not_trace_kotlin_extension_calls_with_ambiguous_or_unknown_receivers() {
     assert!(unknown_trace.callers.is_empty());
 
     // Two same-package extension declarations of the same name and arity for the same
-    // receiver type make the extension lookup ambiguous and fail closed.
+    // receiver type make the extension lookup ambiguous and fail closed; the local
+    // `Other()` constructor call still resolves to the class.
     let ambiguous_trace =
         trace_symbol_graph(&dir, "com::example::Holder::run", TraceDirection::Callees).unwrap();
-    assert!(ambiguous_trace.callees.is_empty());
+    assert!(
+        ambiguous_trace
+            .callees
+            .iter()
+            .all(|callee| callee.symbol_id != "com::example::helper"),
+        "ambiguous extension must not resolve"
+    );
+    assert!(
+        ambiguous_trace
+            .callees
+            .iter()
+            .any(|callee| callee.symbol_id == "com::example::Other")
+    );
 }
 
 #[test]
@@ -7754,6 +7767,103 @@ fn does_not_trace_kotlin_object_receiver_calls_with_unknown_shadowed_or_conflict
         assert!(
             trace.callers.is_empty(),
             "expected no callers for {helper_path}"
+        );
+    }
+}
+
+#[test]
+fn traces_kotlin_constructor_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other\n\ndata class Record(val id: Int)\n\nfun caller(): Other {\n    Other()\n    Record(1)\n    return Other()\n}\n",
+    )
+    .unwrap();
+
+    let other_path = "com::example::Other";
+    let live = trace_symbol_graph(&dir, other_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, other_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, other_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+
+    // Data classes are constructible and trace through the same path.
+    let record_path = "com::example::Record";
+    let record_live = trace_symbol_graph(&dir, record_path, TraceDirection::Callers).unwrap();
+    assert_eq!(record_live.callers.len(), 1);
+    assert_eq!(record_live.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_and_imported_constructor_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let same_path = dir.join("SamePackage.kt");
+    let imported_path = dir.join("Imported.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Imported\n\nfun caller(): Int {\n    SamePackage()\n    Imported()\n    return 0\n}\n",
+    )
+    .unwrap();
+    fs::write(&same_path, "package com.example\n\nclass SamePackage\n").unwrap();
+    fs::write(&imported_path, "package org.util\n\nclass Imported\n").unwrap();
+
+    let same_package_path = "com::example::SamePackage";
+    let live = trace_symbol_graph(&dir, same_package_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 3);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    let imported_class_path = "org::util::Imported";
+    let imported_live =
+        trace_symbol_graph(&dir, imported_class_path, TraceDirection::Callers).unwrap();
+    assert_eq!(imported_live.callers.len(), 1);
+    assert_eq!(imported_live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, imported_class_path, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_constructor_calls_for_non_constructible_or_ambiguous_classes() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let imported_path = dir.join("Imported.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nimport org.util.Other\n\ninterface Service\n\nenum class Color { RED }\n\nsealed class Shape\n\nabstract class Base\n\nannotation class Marker\n\nfun interface Listener\n\nclass Other\n\nfun caller(): Int {\n    Service()\n    Color.RED\n    Shape()\n    Base()\n    Marker()\n    Listener()\n    Other()\n    return 0\n}\n",
+    )
+    .unwrap();
+    fs::write(&imported_path, "package org.util\n\nclass Other\n").unwrap();
+
+    // Interfaces, enums, sealed/abstract/annotation classes, fun interfaces, and a
+    // same-package class that conflicts with an explicit import all fail closed.
+    for target_path in [
+        "com::example::Service",
+        "com::example::Color",
+        "com::example::Shape",
+        "com::example::Base",
+        "com::example::Marker",
+        "com::example::Listener",
+        "com::example::Other",
+        "org::util::Other",
+    ] {
+        let trace = trace_symbol_graph(&dir, target_path, TraceDirection::Callers).unwrap();
+        assert!(
+            trace.callers.is_empty(),
+            "expected no constructor callers for {target_path}"
         );
     }
 }

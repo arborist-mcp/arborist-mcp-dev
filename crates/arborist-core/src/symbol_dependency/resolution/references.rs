@@ -3731,6 +3731,21 @@ fn resolve_kotlin_reference_with_deadline(
             return Ok(Some(raw_symbols[imported_candidates[0]].symbol_id.clone()));
         }
     }
+
+    // A bare call to a class name such as `Other(...)` is a constructor call. It
+    // resolves only when no function candidate matched and the name uniquely names
+    // a constructible class in the caller's scope, package, or explicit imports.
+    if let Some(target) = resolve_kotlin_constructor_call(
+        source_symbol,
+        reference_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(Some(target));
+    }
     Ok(None)
 }
 
@@ -4133,6 +4148,117 @@ fn kotlin_path_object_count(path: &str, raw_symbols: &[IndexedSymbol]) -> usize 
             candidate.semantic_path == path && candidate.node_kind == "object_declaration"
         })
         .count()
+}
+
+/// Resolves a bare call to a class name such as `Other(...)` to the class
+/// declaration that the call constructs. A nested class inside the caller's
+/// enclosing type shadows package-level declarations; a same-package class that
+/// conflicts with an explicit import of the same name, an unknown name, and
+/// non-constructible declarations (interfaces, enums, sealed/abstract/annotation/
+/// inner classes) fail closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_constructor_call(
+    source_symbol: &IndexedSymbol,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if type_name.is_empty() || type_name.contains('.') || type_name.contains("::") {
+        return Ok(None);
+    }
+    // A nested class inside the caller's enclosing type shadows package-level and
+    // imported declarations of the same name. The scope is only a type scope when
+    // it differs from the caller's package scope; a top-level caller's scope is
+    // its package, so the conflict checks below still apply.
+    let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+    if let Some(scope_path) = source_symbol.scope_path.as_deref()
+        && package_scope != Some(scope_path)
+    {
+        let nested_candidates = kotlin_constructible_class_indexes(
+            &format!("{scope_path}::{type_name}"),
+            raw_symbols,
+            semantic_path_index,
+        );
+        if nested_candidates.len() == 1 {
+            return Ok(Some(raw_symbols[nested_candidates[0]].symbol_id.clone()));
+        }
+        if nested_candidates.len() > 1 {
+            return Ok(None);
+        }
+    }
+    let package_path = package_scope.map(|scope| format!("{scope}::{type_name}"));
+    let package_candidates = package_path
+        .as_deref()
+        .map(|path| kotlin_constructible_class_indexes(path, raw_symbols, semantic_path_index))
+        .unwrap_or_default();
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        type_name,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let imported_candidates = imported_binding
+        .map(|binding| binding.semantic_path)
+        .map(|path| kotlin_constructible_class_indexes(&path, raw_symbols, semantic_path_index))
+        .unwrap_or_default();
+    // A same-package class and an explicit import of the same name conflict.
+    if !package_candidates.is_empty() && !imported_candidates.is_empty() {
+        return Ok(None);
+    }
+    if package_candidates.len() == 1 {
+        return Ok(Some(raw_symbols[package_candidates[0]].symbol_id.clone()));
+    }
+    if imported_candidates.len() == 1 {
+        return Ok(Some(raw_symbols[imported_candidates[0]].symbol_id.clone()));
+    }
+    Ok(None)
+}
+
+fn kotlin_constructible_class_indexes(
+    path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Vec<usize> {
+    semantic_path_index
+        .get(path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| kotlin_class_is_constructible(&raw_symbols[*index]))
+        .collect()
+}
+
+/// A Kotlin class is constructible through `Name(...)` only when it is a plain
+/// class declaration whose keyword is `class` (not `interface`) and whose
+/// modifiers do not forbid direct construction. Interfaces, enums, sealed,
+/// abstract, annotation, and inner classes fail closed.
+fn kotlin_class_is_constructible(symbol: &IndexedSymbol) -> bool {
+    if symbol.node_kind != "class_declaration" {
+        return false;
+    }
+    let Some(signature) = symbol.signature.as_deref() else {
+        return false;
+    };
+    let tokens = signature.split_whitespace().collect::<Vec<_>>();
+    let Some(keyword_position) = tokens
+        .iter()
+        .position(|token| *token == "class" || *token == "interface")
+    else {
+        return false;
+    };
+    if tokens[keyword_position] == "interface" {
+        return false;
+    }
+    !tokens[..keyword_position].iter().any(|token| {
+        matches!(
+            *token,
+            "enum" | "sealed" | "abstract" | "annotation" | "inner"
+        )
+    })
 }
 
 fn kotlin_package_scope<'a>(
