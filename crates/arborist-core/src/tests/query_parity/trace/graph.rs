@@ -177,6 +177,88 @@ fn traces_csharp_generic_nested_static_calls_from_dirty_vfs_overrides() {
 }
 
 #[test]
+fn traces_csharp_generic_import_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let targets = dir.join("Targets.cs");
+    let caller = dir.join("Caller.cs");
+    let global_usings = dir.join("GlobalUsings.cs");
+    fs::write(
+        &targets,
+        "namespace Demo.Utility;
+class LocalAliasTarget<T> { public static int FromLocalAlias(int value) => value; }
+class LocalStaticTarget<T> { public static int FromLocalStatic(int value) => value; }
+class GlobalAliasTarget<T> { public static int FromGlobalAlias(int value) => value; }
+class GlobalStaticTarget<T> { public static int FromGlobalStatic(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "namespace Demo.App; class Caller { int Call() => 0; }
+",
+    )
+    .unwrap();
+    fs::write(
+        &global_usings,
+        "// no global imports
+",
+    )
+    .unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &caller,
+        Some(
+            "using LocalAlias = Demo.Utility.LocalAliasTarget<int>;
+using static Demo.Utility.LocalStaticTarget<int>;
+namespace Demo.App;
+class Caller {
+    int LocalAliasCall() => LocalAlias.FromLocalAlias(1);
+    int LocalStaticCall() => FromLocalStatic(1);
+    int GlobalAliasCall() => GlobalAlias.FromGlobalAlias(1);
+    int GlobalStaticCall() => FromGlobalStatic(1);
+}
+",
+        ),
+    )
+    .unwrap();
+    vfs.open_file(
+        &global_usings,
+        Some(
+            "global using GlobalAlias = Demo.Utility.GlobalAliasTarget<int>;
+global using static Demo.Utility.GlobalStaticTarget<int>;
+",
+        ),
+    )
+    .unwrap();
+
+    for (target, expected_caller) in [
+        (
+            "Demo::Utility::LocalAliasTarget::FromLocalAlias",
+            "Demo::App::Caller::LocalAliasCall",
+        ),
+        (
+            "Demo::Utility::LocalStaticTarget::FromLocalStatic",
+            "Demo::App::Caller::LocalStaticCall",
+        ),
+        (
+            "Demo::Utility::GlobalAliasTarget::FromGlobalAlias",
+            "Demo::App::Caller::GlobalAliasCall",
+        ),
+        (
+            "Demo::Utility::GlobalStaticTarget::FromGlobalStatic",
+            "Demo::App::Caller::GlobalStaticCall",
+        ),
+    ] {
+        let trace = vfs
+            .trace_symbol_graph(&dir, target, TraceDirection::Callers)
+            .unwrap();
+        assert_eq!(trace.callers.len(), 1, "{target}");
+        assert_eq!(trace.callers[0].symbol_id, expected_caller, "{target}");
+    }
+}
+
+#[test]
 fn traces_csharp_nested_type_static_calls_from_dirty_vfs_overrides() {
     let dir = temporary_dir();
     let outer = dir.join("Outer.cs");

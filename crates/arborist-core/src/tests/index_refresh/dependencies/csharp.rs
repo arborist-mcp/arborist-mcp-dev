@@ -414,3 +414,52 @@ fn refreshes_csharp_global_using_dependents_from_persisted_index_overrides() {
         .unwrap();
     assert!(caller.dependencies.is_empty());
 }
+
+#[test]
+fn refreshes_csharp_generic_static_import_callers_when_the_target_becomes_instance_only() {
+    let dir = temporary_dir();
+    let helper = dir.join("Helper.cs");
+    let caller = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper,
+        "namespace Demo; class Helper<T> { public static int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller,
+        "using static Demo.Helper<int>;
+namespace Demo; class Caller { int Call(int value) => Ping(value); }
+",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let initial =
+        trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert_eq!(
+        initial
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Helper::Ping"]
+    );
+
+    fs::write(
+        &helper,
+        "namespace Demo; class Helper<T> { public int Ping(int value) => value; }
+",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &helper).unwrap();
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let refreshed =
+        trace_symbol_graph_from_index(&db_path, "Demo::Caller::Call", TraceDirection::Callees)
+            .unwrap();
+    assert!(refreshed.callees.is_empty());
+}
