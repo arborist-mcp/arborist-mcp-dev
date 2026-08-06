@@ -467,9 +467,10 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
             | LanguageCapabilities::SYMBOL_INDEX.0
-            | LanguageCapabilities::FILE_DEPENDENCIES.0,
+            | LanguageCapabilities::FILE_DEPENDENCIES.0
+            | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "kotlin-import-dependency-v4",
+    analysis_revision: "kotlin-direct-trace-v5",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {

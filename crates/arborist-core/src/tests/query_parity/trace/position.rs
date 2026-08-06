@@ -7073,3 +7073,139 @@ fn does_not_trace_go_same_directory_calls_across_different_or_test_packages() {
         trace_symbol_graph_from_index(&db_path, "helper", TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_kotlin_same_file_top_level_function_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nfun helper(value: Int): Int = value\n\nfun caller(): Int = helper(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.symbol.symbol_id, helper_path);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_same_package_top_level_function_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let main_path = dir.join("Main.kt");
+    let helper_path_file = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &main_path,
+        "package com.example\n\nfun caller(): Int = helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path_file,
+        "package com.example\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.symbol.symbol_id, helper_path);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_enclosing_type_members_and_package_functions_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nfun helper(value: Int): Int = value\n\nclass Counter {\n    fun own(): Int = 1\n    fun caller(): Int = own() + helper(2)\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Counter::caller");
+
+    let own_path = "com::example::Counter::own";
+    let own_live = trace_symbol_graph(&dir, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(own_live.callers.len(), 1);
+    assert_eq!(
+        own_live.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+    let own_persisted =
+        trace_symbol_graph_from_index(&db_path, own_path, TraceDirection::Callers).unwrap();
+    assert_eq!(own_persisted.callers.len(), 1);
+    assert_eq!(
+        own_persisted.callers[0].symbol_id,
+        "com::example::Counter::caller"
+    );
+}
+
+#[test]
+fn does_not_trace_kotlin_qualified_calls_or_ambiguous_package_functions() {
+    let dir = temporary_dir();
+    let first = dir.join("First.kt");
+    let second = dir.join("Second.kt");
+    let holder = dir.join("Holder.kt");
+    fs::write(
+        &first,
+        "package com.example\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+    fs::write(
+        &second,
+        "package com.example\n\nfun helper(value: Int): Int = value + 1\n",
+    )
+    .unwrap();
+    fs::write(
+        &holder,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // Ambiguous package-level name: two same-package top-level functions fail closed.
+    let trace = trace_symbol_graph(&dir, "com::example::helper", TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+
+    // Qualified receiver calls do not produce direct reference facts.
+    let other_helper =
+        trace_symbol_graph(&dir, "com::example::Other::helper", TraceDirection::Callers).unwrap();
+    assert!(other_helper.callers.is_empty());
+}

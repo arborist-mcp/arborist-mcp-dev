@@ -211,23 +211,23 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn kotlin_adapter_exposes_tree_query_skeleton_index_and_dependency_capabilities() {
+fn kotlin_adapter_exposes_tree_query_skeleton_index_dependency_and_trace_capabilities() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Kotlin).unwrap();
 
     assert_eq!(descriptor.display_name, "Kotlin");
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
-    assert_eq!(descriptor.analysis_revision, "kotlin-import-dependency-v4");
+    assert_eq!(descriptor.analysis_revision, "kotlin-direct-trace-v5");
     for capability in [
         LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
+        LanguageCapabilities::REFERENCE_TRACE,
     ] {
         assert!(descriptor.capabilities.contains(capability));
     }
     for capability in [
-        LanguageCapabilities::REFERENCE_TRACE,
         LanguageCapabilities::PATCH_TARGETING,
         LanguageCapabilities::PATCH_VALIDATION,
     ] {

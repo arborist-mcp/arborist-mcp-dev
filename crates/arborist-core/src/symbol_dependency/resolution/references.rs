@@ -209,7 +209,7 @@ pub(in crate::symbol_dependency) fn resolve_dependencies_for_symbol_with_deadlin
         };
         if matches!(
             language_id,
-            Some(LanguageId::Cpp | LanguageId::Java | LanguageId::CSharp)
+            Some(LanguageId::Cpp | LanguageId::Java | LanguageId::CSharp | LanguageId::Kotlin)
         ) && let Some(call_arities) = reference.call_arities.as_ref()
         {
             for call_arity in call_arities {
@@ -874,6 +874,15 @@ fn resolve_reference_path_with_deadline<'a>(
             &static_type_imports,
             method_name,
             call_arity,
+        ));
+    }
+    if language_id == Some(LanguageId::Kotlin) {
+        return Ok(resolve_kotlin_reference_with_deadline(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            call_context,
         ));
     }
     if language_id == Some(LanguageId::Java) {
@@ -3582,6 +3591,89 @@ fn java_method_signature_is_static(signature: &str) -> bool {
 
 fn java_method_signature_is_default(signature: &str) -> bool {
     signature.split_whitespace().any(|token| token == "default")
+}
+
+fn resolve_kotlin_reference_with_deadline(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    call_context: CallResolutionContext,
+) -> Option<String> {
+    let call_arity = call_context.arity?;
+    if reference_name.is_empty() || reference_name.contains('.') || reference_name.contains("::") {
+        return None;
+    }
+
+    // Unqualified calls resolve first against the caller's own scope: an enclosing-type
+    // member shadows a package-level function, and a top-level caller's scope is its package.
+    if let Some(scope_path) = source_symbol.scope_path.as_deref() {
+        let same_scope_candidates = semantic_path_index
+            .get(&format!("{scope_path}::{reference_name}"))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                candidate.node_kind == "function_declaration"
+                    && candidate.parameters.len() == call_arity
+            })
+            .collect::<Vec<_>>();
+        if same_scope_candidates.len() == 1 {
+            return Some(raw_symbols[same_scope_candidates[0]].symbol_id.clone());
+        }
+        if same_scope_candidates.len() > 1 {
+            return None;
+        }
+    }
+
+    // Callers nested inside a type fall through to a package-level top-level function.
+    let scope_path = source_symbol.scope_path.as_deref()?;
+    let package_scope = kotlin_package_scope(source_symbol, raw_symbols)?;
+    if scope_path == package_scope {
+        return None;
+    }
+    let target_path = format!("{package_scope}::{reference_name}");
+    let package_candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "function_declaration"
+                && candidate.scope_path.as_deref() == Some(package_scope)
+                && candidate.parameters.len() == call_arity
+        })
+        .collect::<Vec<_>>();
+    if package_candidates.len() == 1 {
+        return Some(raw_symbols[package_candidates[0]].symbol_id.clone());
+    }
+    None
+}
+
+fn kotlin_package_scope<'a>(
+    source_symbol: &'a IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<&'a str> {
+    let mut scope = source_symbol.scope_path.as_deref()?;
+    while let Some((parent, _)) = scope.rsplit_once("::") {
+        if raw_symbols.iter().any(|candidate| {
+            candidate.semantic_path == scope && is_kotlin_type_declaration(candidate)
+        }) {
+            scope = parent;
+        } else {
+            break;
+        }
+    }
+    Some(scope)
+}
+
+fn is_kotlin_type_declaration(symbol: &IndexedSymbol) -> bool {
+    matches!(
+        symbol.node_kind.as_str(),
+        "class_declaration" | "object_declaration"
+    )
 }
 
 #[cfg(test)]
