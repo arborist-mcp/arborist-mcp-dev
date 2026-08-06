@@ -2,6 +2,7 @@ mod c;
 mod csharp;
 mod go;
 mod java;
+pub(crate) use java::java_dotted_type_name;
 mod javascript;
 mod kotlin;
 mod refresh;

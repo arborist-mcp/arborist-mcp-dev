@@ -9927,3 +9927,164 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_java_constructor_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    int run() { return new Helper().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_constructor_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    int run() { return new Helper().helper(1); }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_constructor_receiver_nested_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Outer {
+    static class Inner { int helper(int value) { return value; } }
+}
+class Caller {
+    int run() { return new Outer.Inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_constructor_receiver_inherited_methods() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Grand { int helper(int value) { return value; } }
+class Base extends Grand {}
+class Helper extends Base {}
+class Caller {
+    int run() { return new Helper().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Grand::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_constructor_receiver_calls_fail_closed_for_unknown_and_anonymous_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { static int run(int value) { return value; } }
+class Caller {
+    int missing() { return new Missing().run(1); }
+    int anonymous() { return new Helper() { }.run(2); }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Helper::run";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "unknown and anonymous constructor receivers must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}

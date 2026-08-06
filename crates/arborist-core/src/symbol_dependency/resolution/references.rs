@@ -975,6 +975,20 @@ fn resolve_reference_path_with_deadline<'a>(
             JavaInstanceReceiverResolution::Blocked => return Ok(None),
             JavaInstanceReceiverResolution::NoBinding => {}
         }
+        // A constructor-call receiver such as `new Foo().helper(...)` is
+        // recorded as `Foo().helper` and dispatches on the constructed type.
+        if let Some(symbol_id) = resolve_java_constructor_receiver_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         if let Some(symbol_id) = resolve_java_nested_static_method_reference(
             source_symbol,
             reference_name,
@@ -2718,6 +2732,81 @@ fn resolve_java_receiver_type_path(
         semantic_path_index,
         file_overrides,
         java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves a constructor-call receiver such as `new Foo().helper(...)`, which
+/// the extractor records as `Foo().helper`, or `Outer.Inner().helper` for a
+/// nested constructed type. The constructed type path resolves through the same
+/// constructible-class rules as typed receivers, then dispatches the member as
+/// an instance call. Anonymous-class bodies and malformed spellings produce no
+/// fact in the extractor; member chains through additional hops and unresolved
+/// or ambiguous constructed types fail closed here.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java constructor receiver resolution inputs explicit"
+)]
+fn resolve_java_constructor_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let segments = reference_name.split('.').collect::<Vec<_>>();
+    let Some((marker_index, marker_base)) = segments
+        .iter()
+        .enumerate()
+        .find_map(|(index, segment)| segment.strip_suffix("()").map(|base| (index, base)))
+    else {
+        return Ok(None);
+    };
+    let mut type_segments = segments[..marker_index].to_vec();
+    type_segments.push(marker_base);
+    if type_segments.is_empty()
+        || type_segments.iter().any(|segment| {
+            segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
+        })
+    {
+        return Ok(None);
+    }
+    let member_chain = segments[marker_index + 1..].join(".");
+    if member_chain.is_empty() || member_chain.contains('.') {
+        return Ok(None);
+    }
+    let type_name = type_segments.join(".");
+    let reference = if type_segments.len() > 1 {
+        JavaDirectSuperclassReference::Qualified(type_name)
+    } else {
+        JavaDirectSuperclassReference::Simple(type_name)
+    };
+    let Some(type_path) = resolve_java_direct_type_target_path(
+        &source_symbol.file_path,
+        source_symbol.scope_path.as_deref(),
+        &reference,
+        "class_declaration",
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_java_inherited_method_from_type_path(
+        &type_path,
+        &member_chain,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        true,
         deadline,
     )
 }

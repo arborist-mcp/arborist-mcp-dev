@@ -497,7 +497,7 @@ fn java_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<
 /// `Outer.Inner`. Generic, array, varargs, and otherwise complex spellings
 /// still fail closed; empty or malformed dotted segments are rejected by the
 /// receiver path resolver.
-pub(in crate::symbol_dependency) fn java_dotted_type_name(text: &str) -> Option<String> {
+pub(crate) fn java_dotted_type_name(text: &str) -> Option<String> {
     let name = text.trim();
     if name.is_empty()
         || name.starts_with('.')

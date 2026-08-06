@@ -10,6 +10,7 @@ use crate::semantic::java::{
     java_symbol_name,
 };
 use crate::semantic::semantic_parent_path;
+use crate::symbol_dependency::java_dotted_type_name;
 use crate::symbol_index_model::{IndexedSymbol, symbol_base_name};
 use crate::symbol_reference_compat::reference_facts_from_legacy;
 use crate::workspace_scan::WorkspaceScanDeadline;
@@ -87,6 +88,26 @@ fn indexed_symbol(
         references_by_name,
         call_arities_by_name,
     }))
+}
+
+/// Records a constructor-call receiver such as `new Helper(...)` as
+/// `Helper()`, or `Outer.Inner()` for a nested constructed type, so resolution
+/// can dispatch the constructed type like any other instance receiver.
+/// Anonymous-class bodies and malformed type spellings produce no fact and fail
+/// closed.
+fn java_constructor_receiver_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut cursor = node.walk();
+    let has_anonymous_body = node
+        .named_children(&mut cursor)
+        .any(|child| child.kind() == "class_body");
+    if has_anonymous_body {
+        return Ok(None);
+    }
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let type_name = crate::language::node_text(type_node, source)?.trim();
+    Ok(java_dotted_type_name(type_name).map(|name| format!("{name}()")))
 }
 
 fn collect_direct_local_calls(
@@ -168,6 +189,10 @@ fn collect_direct_local_calls_from_node(
             }
             Some(object) if matches!(object.kind(), "this" | "super") && !name.is_empty() => {
                 Some(format!("{}.{name}", object.kind()))
+            }
+            Some(object) if object.kind() == "object_creation_expression" && !name.is_empty() => {
+                java_constructor_receiver_spelling(object, source)?
+                    .map(|spelling| format!("{spelling}.{name}"))
             }
             Some(_) => None,
         };
@@ -358,5 +383,46 @@ enum Kind { BASIC }
             })
             .unwrap();
         assert_eq!(method.return_type.as_deref(), Some("int"));
+    }
+
+    #[test]
+    fn records_constructor_call_receivers_for_qualified_direct_calls() {
+        let source = r#"
+package com.example;
+class Helper { int helper(int value) { return value; } }
+class Outer { static class Inner { int helper(int value) { return value; } } }
+class Caller {
+    int first() { return new Helper().helper(1); }
+    int nested() { return new Outer.Inner().helper(2); }
+    int anonymous() { return new Helper() { }.helper(3); }
+}
+"#;
+        let path = Path::new("Caller.java");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_java_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let first = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::first")
+            .unwrap();
+        assert_eq!(
+            first.references_by_name,
+            ["Helper().helper".to_string()].into()
+        );
+        let nested = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::nested")
+            .unwrap();
+        assert_eq!(
+            nested.references_by_name,
+            ["Outer.Inner().helper".to_string()].into()
+        );
+        // Anonymous-class receivers produce no direct-call fact.
+        let anonymous = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::anonymous")
+            .unwrap();
+        assert!(anonymous.references_by_name.is_empty());
     }
 }
