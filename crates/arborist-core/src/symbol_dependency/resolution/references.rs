@@ -4303,7 +4303,7 @@ fn kotlin_package_scope<'a>(
 fn is_kotlin_type_declaration(symbol: &IndexedSymbol) -> bool {
     matches!(
         symbol.node_kind.as_str(),
-        "class_declaration" | "object_declaration"
+        "class_declaration" | "interface_declaration" | "object_declaration"
     )
 }
 

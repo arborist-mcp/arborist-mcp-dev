@@ -7684,6 +7684,86 @@ fn does_not_trace_kotlin_property_chain_receiver_calls_with_non_constructor_or_m
 }
 
 #[test]
+fn traces_kotlin_interface_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Renderer {\n    fun render(value: Int): Int = value\n}\n\nclass Screen : Renderer\n\nfun caller(): Int {\n    val renderer: Renderer = Screen()\n    return renderer.render(1)\n}\n",
+    )
+    .unwrap();
+
+    let render_path = "com::example::Renderer::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, render_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_interface_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Renderer {\n    fun render(value: Int): Int = value\n}\n\nclass Screen : Renderer\n\nclass Group {\n    val renderer: Renderer = Screen()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.renderer.render(1)\n}\n",
+    )
+    .unwrap();
+
+    let render_path = "com::example::Renderer::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, render_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_imported_interface_receiver_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Renderer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Renderer\n\nfun caller(): Int {\n    val renderer: Renderer = makeRenderer()\n    return renderer.render(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\ninterface Renderer {\n    fun render(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    let render_path = "org::util::Renderer::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
