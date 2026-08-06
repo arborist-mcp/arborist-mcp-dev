@@ -2723,7 +2723,9 @@ fn resolve_java_receiver_type_path(
     } else {
         JavaDirectSuperclassReference::Simple(type_name.to_string())
     };
-    resolve_java_direct_type_target_path(
+    // A declared receiver type may name a class or an interface. When the same
+    // name resolves to both, the binding is ambiguous and fails closed.
+    let class_path = resolve_java_direct_type_target_path(
         &source_symbol.file_path,
         source_symbol.scope_path.as_deref(),
         &reference,
@@ -2733,7 +2735,24 @@ fn resolve_java_receiver_type_path(
         file_overrides,
         java_import_contexts_by_file,
         deadline,
-    )
+    )?;
+    let interface_path = resolve_java_direct_type_target_path(
+        &source_symbol.file_path,
+        source_symbol.scope_path.as_deref(),
+        &reference,
+        "interface_declaration",
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?;
+    match (class_path, interface_path) {
+        (Some(_), Some(_)) => Ok(None),
+        (Some(class_path), None) => Ok(Some(class_path)),
+        (None, Some(interface_path)) => Ok(Some(interface_path)),
+        (None, None) => Ok(None),
+    }
 }
 
 /// Resolves a constructor-call receiver such as `new Foo().helper(...)`, which
