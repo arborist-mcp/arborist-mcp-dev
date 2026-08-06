@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::Path;
 
 use anyhow::Result;
@@ -32,7 +32,7 @@ use super::super::javascript::{
 };
 use super::super::kotlin::{
     KotlinImportContext, kotlin_dotted_type_name, kotlin_receiver_type_bindings_for_function,
-    kotlin_simple_type_name, resolve_kotlin_import_binding_for_reference,
+    resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
@@ -4457,7 +4457,9 @@ fn resolve_kotlin_receiver_type_path(
     // interface declaration. Each hop applies the same scope/import rules, and
     // a visited set fails closed on cyclic aliases instead of looping forever.
     // A dotted name such as `Outer.Inner` resolves its first segment with the
-    // same scope/import rules and then walks nested type declarations.
+    // same scope/import rules and then walks nested type declarations; a dotted
+    // alias target such as `typealias Helper = Outer.Inner` expands into those
+    // nested segments before the remaining path continues.
     let segments = type_name.split('.').collect::<Vec<_>>();
     if segments.is_empty()
         || segments.iter().any(|segment| {
@@ -4470,29 +4472,43 @@ fn resolve_kotlin_receiver_type_path(
         return Ok(None);
     }
     let mut visited = BTreeSet::new();
-    let mut current_name = segments[0].to_string();
-    let resolved_path = loop {
-        let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
-            .map(|scope| format!("{scope}::{current_name}"));
-        let same_package_is_type = same_package_path
-            .as_deref()
-            .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
-        let imported_binding = resolve_kotlin_import_binding_for_reference(
-            &source_symbol.file_path,
-            &current_name,
-            file_overrides,
-            kotlin_import_contexts_by_file,
-            deadline,
-        )?;
-        let imported_path = imported_binding
-            .map(|binding| binding.semantic_path)
-            .filter(|path| kotlin_path_is_type_declaration(path, raw_symbols));
-        let candidate_path = match (same_package_is_type, imported_path) {
-            // A same-package declaration and an explicit import of the same name conflict.
-            (true, Some(_)) => return Ok(None),
-            (true, None) => same_package_path,
-            (false, Some(path)) => Some(path),
-            (false, None) => return Ok(None),
+    let mut pending = segments
+        .iter()
+        .map(|segment| segment.to_string())
+        .collect::<VecDeque<_>>();
+    let mut resolved_path = None;
+    while let Some(name) = pending.pop_front() {
+        let candidate_path = if let Some(current_path) = resolved_path.as_deref() {
+            // A later segment must name a concrete nested type declaration under
+            // the resolved path; nested aliases and missing members fail closed.
+            let nested_path = format!("{current_path}::{name}");
+            if !kotlin_path_is_nested_type_declaration(&nested_path, raw_symbols) {
+                return Ok(None);
+            }
+            Some(nested_path)
+        } else {
+            let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+                .map(|scope| format!("{scope}::{name}"));
+            let same_package_is_type = same_package_path
+                .as_deref()
+                .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+            let imported_binding = resolve_kotlin_import_binding_for_reference(
+                &source_symbol.file_path,
+                &name,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?;
+            let imported_path = imported_binding
+                .map(|binding| binding.semantic_path)
+                .filter(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+            match (same_package_is_type, imported_path) {
+                // A same-package declaration and an explicit import of the same name conflict.
+                (true, Some(_)) => return Ok(None),
+                (true, None) => same_package_path,
+                (false, Some(path)) => Some(path),
+                (false, None) => return Ok(None),
+            }
         };
         let Some(candidate_path) = candidate_path else {
             return Ok(None);
@@ -4500,32 +4516,35 @@ fn resolve_kotlin_receiver_type_path(
         if !visited.insert(candidate_path.clone()) {
             return Ok(None);
         }
-        let Some(alias_target) = kotlin_type_alias_target(&candidate_path, raw_symbols) else {
-            break candidate_path;
-        };
-        current_name = alias_target;
-    };
-    // Remaining segments must name nested type declarations under the resolved
-    // path; nested aliases and missing or ambiguous members fail closed.
-    for segment in segments.iter().skip(1) {
-        let nested_path = format!("{resolved_path}::{segment}");
-        if !kotlin_path_is_nested_type_declaration(&nested_path, raw_symbols)
-            || !visited.insert(nested_path.clone())
+        if resolved_path.is_none()
+            && let Some(alias_target) = kotlin_type_alias_target(&candidate_path, raw_symbols)
         {
-            return Ok(None);
+            let target_segments = alias_target.split('.').collect::<Vec<_>>();
+            if target_segments.is_empty()
+                || target_segments.iter().any(|segment| {
+                    segment.is_empty()
+                        || !segment
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+                })
+            {
+                return Ok(None);
+            }
+            for segment in target_segments.iter().rev() {
+                pending.push_front(segment.to_string());
+            }
+            continue;
         }
+        resolved_path = Some(candidate_path);
     }
-    Ok(Some(
-        segments
-            .iter()
-            .skip(1)
-            .fold(resolved_path, |path, segment| format!("{path}::{segment}")),
-    ))
+    Ok(resolved_path)
 }
 
 /// Returns the target type name of a uniquely declared type alias such as
-/// `typealias Helper = Other`. Generic, qualified, and ambiguous or missing
-/// alias targets fail closed because they cannot pin a receiver.
+/// `typealias Helper = Other`. Generic, ambiguous, and missing alias targets
+/// fail closed because they cannot pin a receiver; a dotted target such as
+/// `typealias Helper = Outer.Inner` resolves through the same dotted type-path
+/// rules as a directly declared nested type.
 fn kotlin_type_alias_target(path: &str, raw_symbols: &[IndexedSymbol]) -> Option<String> {
     let aliases = raw_symbols
         .iter()
@@ -4534,7 +4553,7 @@ fn kotlin_type_alias_target(path: &str, raw_symbols: &[IndexedSymbol]) -> Option
     if aliases.len() != 1 {
         return None;
     }
-    kotlin_simple_type_name(aliases[0].return_type.as_deref()?)
+    kotlin_dotted_type_name(aliases[0].return_type.as_deref()?)
 }
 
 fn kotlin_path_is_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) -> bool {

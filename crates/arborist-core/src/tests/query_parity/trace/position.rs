@@ -8349,6 +8349,125 @@ fn does_not_trace_kotlin_factory_inferred_nested_receiver_calls_with_missing_or_
 }
 
 #[test]
+fn traces_kotlin_dotted_alias_constructor_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\ntypealias Helper = Outer.Inner\n\nfun caller(): Int {\n    val inner = Helper()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A constructor call through a dotted alias target pins the nested class
+    // receiver exactly like the qualified `Outer.Inner()` spelling.
+    let helper_path = "com::example::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_dotted_alias_property_type_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n\ntypealias Helper = Outer.Inner\n\nclass Group {\n    val inner: Helper = Helper()\n}\n\nfun caller(): Int {\n    val group = Group()\n    return group.inner.holder.run(1)\n}\n",
+    )
+    .unwrap();
+
+    // A declared property type spelled through a dotted alias resolves to the
+    // nested type before the property chain dispatches the terminal member.
+    let run_path = "com::example::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_dotted_alias_companion_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        companion object {\n            fun helper(value: Int): Int = value\n        }\n    }\n}\n\ntypealias InnerAlias = Outer.Inner\ntypealias OuterAlias = Outer\n\nfun dottedTargetCaller(): Int = InnerAlias.helper(1)\n\nfun aliasHopCaller(): Int = OuterAlias.Inner.helper(1)\n",
+    )
+    .unwrap();
+
+    // A dotted alias target reaches the nested companion directly, and an alias
+    // first hop reaches it through the nested-companion chain.
+    let helper_path = "com::example::Outer::Inner::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 2);
+    let mut caller_ids = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::aliasHopCaller",
+            "com::example::dottedTargetCaller"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut persisted_ids = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    persisted_ids.sort_unstable();
+    assert_eq!(
+        persisted_ids,
+        vec![
+            "com::example::aliasHopCaller",
+            "com::example::dottedTargetCaller"
+        ]
+    );
+}
+
+#[test]
+fn does_not_trace_kotlin_dotted_alias_receiver_calls_with_missing_or_cyclic_targets() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\ntypealias MissingAlias = Outer.Absent\n\ntypealias A = B.C\ntypealias B = A\n\nfun missingTarget(): Int {\n    val inner = MissingAlias()\n    return inner.helper(1)\n}\n\nfun cyclicTarget(): Int {\n    val value = A()\n    return 1\n}\n",
+    )
+    .unwrap();
+
+    // A dotted alias target naming a missing nested type and a cyclic dotted
+    // alias chain both fail closed instead of guessing a receiver or looping.
+    let helper_path = "com::example::Outer::Inner::helper";
+    let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
