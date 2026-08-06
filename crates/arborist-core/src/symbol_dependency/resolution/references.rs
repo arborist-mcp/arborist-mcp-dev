@@ -2821,7 +2821,7 @@ fn resolve_java_member_chain_from_type_path(
             };
             current_type_path = next_path;
         }
-        return resolve_java_inherited_method_from_type_path(
+        return resolve_java_instance_receiver_member(
             &current_type_path,
             final_member,
             raw_symbols,
@@ -2829,11 +2829,10 @@ fn resolve_java_member_chain_from_type_path(
             file_overrides,
             java_import_contexts_by_file,
             call_arity,
-            true,
             deadline,
         );
     }
-    resolve_java_inherited_method_from_type_path(
+    resolve_java_instance_receiver_member(
         &current_type_path,
         member_chain,
         raw_symbols,
@@ -2841,9 +2840,59 @@ fn resolve_java_member_chain_from_type_path(
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
-        true,
         deadline,
     )
+}
+
+/// Dispatches the final member of an instance-receiver chain. The receiver's
+/// class type resolves through the superclass chain as usual; when the
+/// receiver is declared with an interface type and the interface itself does
+/// not declare the method, a uniquely resolved direct super-interface chain
+/// (abstract or default declarations) resolves it. Multiple, unresolved, or
+/// ambiguous super-interface branches fail closed, and class-typed receivers
+/// never dispatch through implemented interfaces.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java instance receiver member dispatch inputs explicit"
+)]
+fn resolve_java_instance_receiver_member(
+    receiver_type_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
+        receiver_type_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        true,
+        deadline,
+    )? {
+        return Ok(Some(symbol_id));
+    }
+    match resolve_java_interface_chain_method_from_type_path(
+        receiver_type_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        false,
+        deadline,
+    )? {
+        JavaInterfaceChainMethodResolution::Resolved(symbol_id) => Ok(Some(symbol_id)),
+        JavaInterfaceChainMethodResolution::NoMethod
+        | JavaInterfaceChainMethodResolution::Blocked => Ok(None),
+    }
 }
 
 /// Resolves a `var` local's bare method-call initializer such as `makeFoo` in
@@ -3216,7 +3265,7 @@ fn resolve_java_inherited_method_from_type_path(
     }
 }
 
-enum JavaDefaultInterfaceMethodResolution {
+enum JavaInterfaceChainMethodResolution {
     Resolved(String),
     NoMethod,
     Blocked,
@@ -3250,7 +3299,7 @@ fn resolve_java_direct_interface_default_method_reference(
     };
     let mut resolved_symbol_id = None;
     for interface_path in interface_paths {
-        match resolve_java_default_interface_method_from_type_path(
+        match resolve_java_interface_chain_method_from_type_path(
             &interface_path,
             method_name,
             raw_symbols,
@@ -3258,15 +3307,16 @@ fn resolve_java_direct_interface_default_method_reference(
             file_overrides,
             java_import_contexts_by_file,
             call_arity,
+            true,
             deadline,
         )? {
-            JavaDefaultInterfaceMethodResolution::Resolved(symbol_id) => {
+            JavaInterfaceChainMethodResolution::Resolved(symbol_id) => {
                 if resolved_symbol_id.replace(symbol_id).is_some() {
                     return Ok(None);
                 }
             }
-            JavaDefaultInterfaceMethodResolution::NoMethod => {}
-            JavaDefaultInterfaceMethodResolution::Blocked => return Ok(None),
+            JavaInterfaceChainMethodResolution::NoMethod => {}
+            JavaInterfaceChainMethodResolution::Blocked => return Ok(None),
         }
     }
     Ok(resolved_symbol_id)
@@ -3276,7 +3326,7 @@ fn resolve_java_direct_interface_default_method_reference(
     clippy::too_many_arguments,
     reason = "keeps Java interface inheritance resolution inputs explicit"
 )]
-fn resolve_java_default_interface_method_from_type_path(
+fn resolve_java_interface_chain_method_from_type_path(
     initial_interface_path: &str,
     method_name: &str,
     raw_symbols: &[IndexedSymbol],
@@ -3284,16 +3334,17 @@ fn resolve_java_default_interface_method_from_type_path(
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
+    require_default: bool,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<JavaDefaultInterfaceMethodResolution> {
+) -> Result<JavaInterfaceChainMethodResolution> {
     let mut visited_interface_paths = BTreeSet::new();
     let mut current_interface_path = initial_interface_path.to_string();
     loop {
         if let Some(deadline) = deadline {
-            deadline.check("resolving Java default interface method")?;
+            deadline.check("resolving Java interface chain method")?;
         }
         if !visited_interface_paths.insert(current_interface_path.clone()) {
-            return Ok(JavaDefaultInterfaceMethodResolution::Blocked);
+            return Ok(JavaInterfaceChainMethodResolution::Blocked);
         }
         let target_path = format!("{current_interface_path}::{method_name}");
         let declared_candidates = semantic_path_index
@@ -3308,10 +3359,15 @@ fn resolve_java_default_interface_method_from_type_path(
                 .into_iter()
                 .filter(|index| {
                     let candidate = &raw_symbols[*index];
-                    candidate
-                        .signature
-                        .as_deref()
-                        .is_some_and(java_method_signature_is_default)
+                    (!require_default
+                        || candidate
+                            .signature
+                            .as_deref()
+                            .is_some_and(java_method_signature_is_default))
+                        && !candidate
+                            .signature
+                            .as_deref()
+                            .is_some_and(java_method_signature_is_static)
                         && candidate.parameters.len() == call_arity
                         && !candidate
                             .parameters
@@ -3320,10 +3376,10 @@ fn resolve_java_default_interface_method_from_type_path(
                 })
                 .collect::<Vec<_>>();
             return Ok(match candidates.as_slice() {
-                [candidate_index] => JavaDefaultInterfaceMethodResolution::Resolved(
+                [candidate_index] => JavaInterfaceChainMethodResolution::Resolved(
                     raw_symbols[*candidate_index].symbol_id.clone(),
                 ),
-                _ => JavaDefaultInterfaceMethodResolution::Blocked,
+                _ => JavaInterfaceChainMethodResolution::Blocked,
             });
         }
         let interface_candidates = semantic_path_index
@@ -3334,7 +3390,7 @@ fn resolve_java_default_interface_method_from_type_path(
             .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
             .collect::<Vec<_>>();
         let [interface_index] = interface_candidates.as_slice() else {
-            return Ok(JavaDefaultInterfaceMethodResolution::Blocked);
+            return Ok(JavaInterfaceChainMethodResolution::Blocked);
         };
         let source_interface = &raw_symbols[*interface_index];
         let Some(parent_interface_path) = java_unique_direct_parent_interface_path(
@@ -3350,9 +3406,9 @@ fn resolve_java_default_interface_method_from_type_path(
                 if java_interface_has_no_direct_parents(source_interface, file_overrides, deadline)?
                     == Some(true)
                 {
-                    JavaDefaultInterfaceMethodResolution::NoMethod
+                    JavaInterfaceChainMethodResolution::NoMethod
                 } else {
-                    JavaDefaultInterfaceMethodResolution::Blocked
+                    JavaInterfaceChainMethodResolution::Blocked
                 },
             );
         };
