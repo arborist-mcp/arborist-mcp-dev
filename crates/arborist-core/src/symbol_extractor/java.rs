@@ -159,6 +159,41 @@ fn java_constructor_receiver_spelling(node: Node<'_>, source: &str) -> Result<Op
     Ok(java_dotted_type_name(type_name).map(|name| format!("{name}()")))
 }
 
+/// Canonicalizes a field-access chain whose leading object is a constructor
+/// call, such as `new Group().inner.helper`, to `Group().inner.helper` so the
+/// resolver can dispatch the constructed type through the member chain. Chains
+/// rooted at any other expression keep their raw spelling and fail closed.
+fn java_constructor_field_chain_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let mut segments = Vec::new();
+    let mut current = node;
+    loop {
+        if current.kind() == "field_access" {
+            let Some(field) = current.child_by_field_name("field") else {
+                return Ok(None);
+            };
+            let field_name = crate::language::node_text(field, source)?.trim();
+            if field_name.is_empty() {
+                return Ok(None);
+            }
+            segments.push(field_name.to_string());
+            let Some(object) = current.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            current = object;
+        } else if current.kind() == "object_creation_expression" {
+            let Some(spelling) = java_constructor_receiver_spelling(current, source)? else {
+                return Ok(None);
+            };
+            segments.push(spelling);
+            break;
+        } else {
+            return Ok(None);
+        }
+    }
+    segments.reverse();
+    Ok(Some(segments.join(".")))
+}
+
 fn collect_direct_local_calls(
     symbol_node: Node<'_>,
     source: &str,
@@ -229,12 +264,16 @@ fn collect_direct_local_calls_from_node(
                     .then(|| format!("{object_name}.{name}"))
             }
             Some(object) if object.kind() == "field_access" && !name.is_empty() => {
-                let object_name = crate::language::node_text(object, source)?.trim();
-                let receiver_name = object_name.split('.').next().unwrap_or_default();
-                (!object_name.is_empty()
-                    && !receiver_name.is_empty()
-                    && !qualified_call_exclusions.contains(receiver_name))
-                .then(|| format!("{object_name}.{name}"))
+                if let Some(spelling) = java_constructor_field_chain_spelling(object, source)? {
+                    Some(format!("{spelling}.{name}"))
+                } else {
+                    let object_name = crate::language::node_text(object, source)?.trim();
+                    let receiver_name = object_name.split('.').next().unwrap_or_default();
+                    (!object_name.is_empty()
+                        && !receiver_name.is_empty()
+                        && !qualified_call_exclusions.contains(receiver_name))
+                    .then(|| format!("{object_name}.{name}"))
+                }
             }
             Some(object) if matches!(object.kind(), "this" | "super") && !name.is_empty() => {
                 Some(format!("{}.{name}", object.kind()))
@@ -441,10 +480,12 @@ enum Kind { BASIC }
 package com.example;
 class Helper { int helper(int value) { return value; } }
 class Outer { static class Inner { int helper(int value) { return value; } } }
+class Group { Helper inner = new Helper(); }
 class Caller {
     int first() { return new Helper().helper(1); }
     int nested() { return new Outer.Inner().helper(2); }
     int anonymous() { return new Helper() { }.helper(3); }
+    int chained() { return new Group().inner.helper(4); }
 }
 "#;
         let path = Path::new("Caller.java");
@@ -467,6 +508,15 @@ class Caller {
         assert_eq!(
             nested.references_by_name,
             ["Outer.Inner().helper".to_string()].into()
+        );
+        // Constructor-call chains canonicalize to `Group().inner.helper`.
+        let chained = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::chained")
+            .unwrap();
+        assert_eq!(
+            chained.references_by_name,
+            ["Group().inner.helper".to_string()].into()
         );
         // Anonymous-class receivers produce no direct-call fact.
         let anonymous = symbols

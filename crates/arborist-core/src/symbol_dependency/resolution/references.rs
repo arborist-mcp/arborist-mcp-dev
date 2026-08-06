@@ -2709,58 +2709,19 @@ fn resolve_java_instance_receiver_call(
     // Member chains such as `group.member.helper(...)` resolve each
     // intermediate field's declared type before dispatching the final method;
     // unknown, ambiguous, or unresolvable hops fail closed.
-    let mut current_type_path = type_path;
-    let mut hops = member_chain.split('.').collect::<Vec<_>>();
-    if hops.len() > 1 {
-        let Some(final_member) = hops.pop() else {
-            return Ok(JavaInstanceReceiverResolution::Blocked);
-        };
-        for hop in hops {
-            let Some(next_path) = java_field_type_path(
-                &current_type_path,
-                hop,
-                raw_symbols,
-                semantic_path_index,
-                file_overrides,
-                java_import_contexts_by_file,
-                deadline,
-            )?
-            else {
-                return Ok(JavaInstanceReceiverResolution::Blocked);
-            };
-            current_type_path = next_path;
-        }
-        let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
-            &current_type_path,
-            final_member,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            java_import_contexts_by_file,
-            call_arity,
-            true,
-            deadline,
-        )?
-        else {
-            return Ok(JavaInstanceReceiverResolution::Blocked);
-        };
-        return Ok(JavaInstanceReceiverResolution::Resolved(symbol_id));
-    }
-    let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
-        &current_type_path,
+    match resolve_java_member_chain_from_type_path(
+        &type_path,
         member_chain,
         raw_symbols,
         semantic_path_index,
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
-        true,
         deadline,
-    )?
-    else {
-        return Ok(JavaInstanceReceiverResolution::Blocked);
-    };
-    Ok(JavaInstanceReceiverResolution::Resolved(symbol_id))
+    )? {
+        Some(symbol_id) => Ok(JavaInstanceReceiverResolution::Resolved(symbol_id)),
+        None => Ok(JavaInstanceReceiverResolution::Blocked),
+    }
 }
 
 /// Resolves the declared type of a field on an owning type path, used to walk
@@ -2812,6 +2773,75 @@ fn java_field_type_path(
         semantic_path_index,
         file_overrides,
         java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Dispatches a member chain such as `group.member.helper(...)` or
+/// `Group().member.helper(...)` on an already-resolved receiver type path:
+/// each intermediate hop must resolve to a uniquely declared field whose
+/// declared type continues the chain, and the final member must be a unique
+/// non-static, non-varargs method with a matching arity. Unknown, ambiguous,
+/// or unresolvable hops and missing final members fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java member-chain dispatch inputs explicit"
+)]
+fn resolve_java_member_chain_from_type_path(
+    type_path: &str,
+    member_chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut current_type_path = type_path.to_string();
+    let mut hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    if hops.len() > 1 {
+        let Some(final_member) = hops.pop() else {
+            return Ok(None);
+        };
+        for hop in hops {
+            let Some(next_path) = java_field_type_path(
+                &current_type_path,
+                hop,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            current_type_path = next_path;
+        }
+        return resolve_java_inherited_method_from_type_path(
+            &current_type_path,
+            final_member,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            true,
+            deadline,
+        );
+    }
+    resolve_java_inherited_method_from_type_path(
+        &current_type_path,
+        member_chain,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        true,
         deadline,
     )
 }
@@ -3031,7 +3061,7 @@ fn resolve_java_constructor_receiver_call(
         return Ok(None);
     }
     let member_chain = segments[marker_index + 1..].join(".");
-    if member_chain.is_empty() || member_chain.contains('.') {
+    if member_chain.is_empty() {
         return Ok(None);
     }
     let type_name = type_segments.join(".");
@@ -3054,7 +3084,7 @@ fn resolve_java_constructor_receiver_call(
     else {
         return Ok(None);
     };
-    resolve_java_inherited_method_from_type_path(
+    resolve_java_member_chain_from_type_path(
         &type_path,
         &member_chain,
         raw_symbols,
@@ -3062,7 +3092,6 @@ fn resolve_java_constructor_receiver_call(
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
-        true,
         deadline,
     )
 }
