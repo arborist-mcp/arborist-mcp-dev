@@ -3803,7 +3803,7 @@ fn resolve_kotlin_qualified_receiver_call(
         else {
             return Ok(None);
         };
-        let Some(type_path) = resolve_kotlin_receiver_type_path(
+        let Some(type_path) = resolve_kotlin_initializer_type_path(
             source_symbol,
             &type_name,
             raw_symbols,
@@ -3814,10 +3814,15 @@ fn resolve_kotlin_qualified_receiver_call(
         else {
             return Ok(None);
         };
+        let resolved_type_name = type_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(&type_name)
+            .to_string();
         return resolve_kotlin_member_or_extension(
             source_symbol,
             &type_path,
-            &type_name,
+            &resolved_type_name,
             method,
             call_arity,
             raw_symbols,
@@ -4034,7 +4039,7 @@ fn resolve_kotlin_chained_receiver_call(
         else {
             return Ok(None);
         };
-        let Some(path) = resolve_kotlin_receiver_type_path(
+        let Some(path) = resolve_kotlin_initializer_type_path(
             source_symbol,
             &type_name,
             raw_symbols,
@@ -4132,9 +4137,34 @@ fn kotlin_property_type_path(
     let Some(type_name) = kotlin_simple_type_name(return_type) else {
         return Ok(None);
     };
-    if let Some(path) = resolve_kotlin_receiver_type_path(
+    resolve_kotlin_initializer_type_path(
         source_symbol,
         &type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves an inferred receiver/initializer name such as `Other` in
+/// `val member = Other()` or `makeOther` in `val member = makeOther()` to a
+/// type path. A directly declared type wins; otherwise a uniquely resolved
+/// top-level function's declared return type pins the receiver, resolved in the
+/// factory's own file and package scope. Unknown, ambiguous, and
+/// undeclared-return factories fail closed so receivers never guess a target.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_initializer_type_path(
+    source_symbol: &IndexedSymbol,
+    initializer_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        initializer_name,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
@@ -4142,14 +4172,9 @@ fn kotlin_property_type_path(
     )? {
         return Ok(Some(path));
     }
-    // A function-call initializer such as `val derived = makeOther()` records
-    // the callee name instead of a type. When that name resolves to a unique
-    // top-level function with a declared return type, the return type pins the
-    // property receiver; unknown, ambiguous, and undeclared-return factories
-    // fail closed so chains never guess a target.
     let Some(function_path) = resolve_kotlin_property_initializer_function_path(
         source_symbol,
-        &type_name,
+        initializer_name,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
@@ -4171,9 +4196,6 @@ fn kotlin_property_type_path(
     else {
         return Ok(None);
     };
-    // Resolve the factory's declared return type in the factory's own file and
-    // package scope; the caller need not import the returned type to call a
-    // member on the inferred property.
     resolve_kotlin_receiver_type_path(
         factory,
         &function_return_type,
