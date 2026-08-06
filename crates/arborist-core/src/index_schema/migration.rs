@@ -36,6 +36,7 @@ pub(crate) fn migrate_symbol_index_schema_to_current(connection: &mut Connection
             parameters_json TEXT NOT NULL DEFAULT '[]',
             return_type TEXT,
             docstring TEXT,
+            extension_receiver TEXT,
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',

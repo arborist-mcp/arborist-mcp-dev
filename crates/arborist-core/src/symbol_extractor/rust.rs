@@ -70,6 +70,7 @@ fn indexed_symbol(
     let call_arities_by_name = BTreeMap::new();
 
     Ok(Some(IndexedSymbol {
+        extension_receiver: None,
         symbol_id: semantic_path.clone(),
         base_name: symbol_base_name(&semantic_path),
         semantic_path,

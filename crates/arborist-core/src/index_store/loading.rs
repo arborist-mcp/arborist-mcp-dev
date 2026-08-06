@@ -21,7 +21,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json, reference_facts_json
+                reference_call_arities_json, reference_facts_json, extension_receiver
          FROM symbols
          ORDER BY file_path, semantic_path",
     )
@@ -35,7 +35,7 @@ pub(crate) fn load_indexed_symbols_grouped_by_file_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json, reference_facts_json
+                reference_call_arities_json, reference_facts_json, extension_receiver
          FROM symbols
          ORDER BY file_path, semantic_path",
         Some(deadline),
@@ -54,7 +54,7 @@ pub(crate) fn validate_pre_provenance_indexed_symbols_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json, reference_facts_json
+                reference_call_arities_json, reference_facts_json, extension_receiver
          FROM symbols
          ORDER BY file_path, semantic_path",
         deadline,
@@ -75,7 +75,7 @@ pub(crate) fn validate_previous_indexed_symbols_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                reference_call_arities_json, '[]' AS reference_facts_json
+                reference_call_arities_json, '[]' AS reference_facts_json, NULL AS extension_receiver
          FROM symbols
          ORDER BY file_path, semantic_path",
         deadline,
@@ -96,7 +96,8 @@ pub(crate) fn validate_legacy_indexed_symbols_with_deadline(
         connection,
         "SELECT symbol_id, semantic_path, scope_path, file_path, node_kind, start_byte, end_byte,
                 signature, parameters_json, return_type, docstring, reference_names_json,
-                '{}' AS reference_call_arities_json, '[]' AS reference_facts_json
+                '{}' AS reference_call_arities_json, '[]' AS reference_facts_json,
+                NULL AS extension_receiver
          FROM symbols
          ORDER BY file_path, semantic_path",
         deadline,
@@ -123,6 +124,7 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         let reference_names_json: String = row.get(11)?;
         let reference_call_arities_json: String = row.get(12)?;
         let reference_facts_json: String = row.get(13)?;
+        let extension_receiver = optional_nonempty_string_from_row(row, 14, "extension_receiver")?;
         let parameters = string_list_from_json_column(&parameters_json, 8, "parameters_json")?;
         let reference_names: std::collections::BTreeSet<_> =
             string_list_from_json_column(&reference_names_json, 11, "reference_names_json")?
@@ -152,6 +154,7 @@ fn load_indexed_symbols_grouped_by_file_with_query_and_deadline(
         let scope_path = validated_scope_path(row, 2, &semantic_path)?;
         let reference_facts = reference_facts_from_json_column(&reference_facts_json, 13)?;
         Ok(IndexedSymbol {
+            extension_receiver,
             symbol_id,
             base_name: symbol_base_name(&semantic_path),
             semantic_path,

@@ -195,6 +195,7 @@ mod tests {
 
     fn cpp_callable(parameters: &[&str]) -> IndexedSymbol {
         IndexedSymbol {
+            extension_receiver: None,
             symbol_id: "api::convert".to_string(),
             base_name: "convert".to_string(),
             semantic_path: "api::convert".to_string(),

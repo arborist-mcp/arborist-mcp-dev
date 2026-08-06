@@ -35,6 +35,7 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
             parameters_json TEXT NOT NULL DEFAULT '[]',
             return_type TEXT,
             docstring TEXT,
+            extension_receiver TEXT,
             dependencies_json TEXT NOT NULL,
             references_json TEXT NOT NULL,
             reference_names_json TEXT NOT NULL DEFAULT '[]',
@@ -66,6 +67,12 @@ pub(crate) fn ensure_symbol_tables(connection: &Connection) -> Result<()> {
         &mut symbol_columns,
         "reference_facts_json",
         "ALTER TABLE symbols ADD COLUMN reference_facts_json TEXT NOT NULL DEFAULT '[]'",
+    )?;
+    ensure_symbols_column(
+        connection,
+        &mut symbol_columns,
+        "extension_receiver",
+        "ALTER TABLE symbols ADD COLUMN extension_receiver TEXT",
     )?;
     if ensure_symbols_column(
         connection,

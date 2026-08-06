@@ -70,6 +70,7 @@ fn indexed_symbol(
         collect_direct_local_calls(node, source, deadline)?;
 
     Ok(Some(IndexedSymbol {
+        extension_receiver: None,
         symbol_id: String::new(),
         base_name: symbol_base_name(&semantic_path),
         scope_path: semantic_parent_path(&semantic_path),

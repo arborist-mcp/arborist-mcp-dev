@@ -75,6 +75,7 @@ fn indexed_symbol(
     );
 
     Ok(Some(IndexedSymbol {
+        extension_receiver: None,
         symbol_id: semantic_path.clone(),
         base_name: symbol_base_name(&semantic_path),
         semantic_path,

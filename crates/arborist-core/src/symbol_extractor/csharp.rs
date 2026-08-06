@@ -69,6 +69,7 @@ fn indexed_symbol(
     let (references_by_name, call_arities_by_name) = collect_direct_same_type_calls(node, source)?;
 
     Ok(Some(IndexedSymbol {
+        extension_receiver: None,
         symbol_id: String::new(),
         base_name: symbol_base_name(&semantic_path),
         scope_path: semantic_parent_path(&semantic_path),

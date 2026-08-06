@@ -104,3 +104,53 @@ fn refreshes_kotlin_cross_package_import_dependents() {
     assert_eq!(stats.rebuilt_files, 2);
     assert_eq!(stats.reused_files, 1);
 }
+
+#[test]
+fn refreshes_kotlin_extension_function_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("Caller.kt");
+    let extensions = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller,
+        "package com.example\n\nclass Other\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &extensions,
+        "package com.example\n\nfun Other.helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let before =
+        trace_symbol_graph_from_index(&db_path, "com::example::helper", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(before.callers.len(), 1);
+    assert_eq!(before.callers[0].symbol_id, "com::example::Holder::run");
+
+    // Editing the caller must re-resolve the unchanged extension target (loaded from the
+    // persisted index) instead of dropping the edge.
+    fs::write(
+        &caller,
+        "package com.example\n\nclass Other\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(2)\n    }\n    fun second(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &caller).unwrap();
+    assert_eq!(stats.indexed_files, 2);
+    assert_eq!(stats.rebuilt_files, 1);
+
+    let after =
+        trace_symbol_graph_from_index(&db_path, "com::example::helper", TraceDirection::Callers)
+            .unwrap();
+    let mut caller_ids = after
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec!["com::example::Holder::run", "com::example::Holder::second"]
+    );
+}

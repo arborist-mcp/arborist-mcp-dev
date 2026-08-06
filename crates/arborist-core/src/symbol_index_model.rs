@@ -59,6 +59,7 @@ pub(crate) struct IndexedSymbol {
     pub(crate) parameters: Vec<String>,
     pub(crate) return_type: Option<String>,
     pub(crate) docstring: Option<String>,
+    pub(crate) extension_receiver: Option<String>,
     pub(crate) reference_facts: Vec<ReferenceFact>,
     // Retained until persisted indexes have fully transitioned to reference_facts_json.
     pub(crate) references_by_name: BTreeSet<String>,

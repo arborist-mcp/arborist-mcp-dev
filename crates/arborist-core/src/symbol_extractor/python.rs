@@ -82,6 +82,7 @@ pub(crate) fn index_python_symbols_with_deadline(
         );
 
         symbols.push(IndexedSymbol {
+            extension_receiver: None,
             symbol_id: String::new(),
             base_name: symbol_base_name(&path),
             semantic_path: path,

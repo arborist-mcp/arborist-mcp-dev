@@ -50,6 +50,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
+                        extension_receiver: None,
                         symbol_id: String::new(),
                         base_name: symbol_base_name(&name),
                         semantic_path: name,
@@ -72,6 +73,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                 if let Some(name) = c_semantic_path(path, child, source)? {
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
+                        extension_receiver: None,
                         symbol_id: String::new(),
                         base_name: symbol_base_name(&name),
                         semantic_path: name,
@@ -131,6 +133,7 @@ pub(crate) fn index_c_symbols_with_deadline(
                     let reference_facts = reference_facts_from_legacy(&references, &call_arities);
                     let scope_path = semantic_parent_path(&name);
                     symbols.push(IndexedSymbol {
+                        extension_receiver: None,
                         symbol_id: String::new(),
                         base_name: symbol_base_name(&name),
                         semantic_path: name,

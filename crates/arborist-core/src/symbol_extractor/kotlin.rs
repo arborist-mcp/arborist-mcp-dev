@@ -70,6 +70,7 @@ fn indexed_symbol(
         collect_direct_local_calls(node, source, deadline)?;
 
     Ok(Some(IndexedSymbol {
+        extension_receiver: kotlin_extension_receiver(node, source)?,
         symbol_id: String::new(),
         base_name: symbol_base_name(&semantic_path),
         scope_path: semantic_parent_path(&semantic_path),
@@ -86,6 +87,37 @@ fn indexed_symbol(
         references_by_name,
         call_arities_by_name,
     }))
+}
+
+/// Records the receiver type of a top-level extension function such as
+/// `fun Other.helper(...)`. Only simple named non-nullable receivers are
+/// recorded; generic, nullable, parenthesized, and modifier-laden receivers
+/// fail closed so resolution never guesses a target.
+fn kotlin_extension_receiver(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    if node.kind() != "function_declaration" {
+        return Ok(None);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "function_value_parameters" {
+            return Ok(None);
+        }
+        if child.kind() == "user_type" {
+            return Ok(kotlin_simple_type_name(node_text(child, source)?));
+        }
+    }
+    Ok(None)
+}
+
+fn kotlin_simple_type_name(text: &str) -> Option<String> {
+    let mut name = text.trim();
+    if let Some(stripped) = name.strip_suffix('?') {
+        name = stripped.trim();
+    }
+    if name.is_empty() || name.contains(['.', '<', '(', '[', ':', ',', ' ']) {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 fn collect_direct_local_calls(
@@ -312,5 +344,70 @@ fun caller(other: Other): Int {
             caller.call_arities_by_name.get("other.helper"),
             Some(&[1usize].into_iter().collect())
         );
+    }
+
+    #[test]
+    fn records_extension_receivers_for_simple_top_level_extension_functions() {
+        let source = r#"
+package com.example
+
+fun Other.helper(value: Int): Int = value
+fun String.describe(): String = this
+class Other {
+    fun member(value: Int): Int = value
+}
+fun regular(value: Int): Int = value
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let helper = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::helper")
+            .unwrap();
+        assert_eq!(helper.extension_receiver.as_deref(), Some("Other"));
+        let describe = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::describe")
+            .unwrap();
+        assert_eq!(describe.extension_receiver.as_deref(), Some("String"));
+        let member = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Other::member")
+            .unwrap();
+        assert_eq!(member.extension_receiver, None);
+        let regular = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::regular")
+            .unwrap();
+        assert_eq!(regular.extension_receiver, None);
+    }
+
+    #[test]
+    fn does_not_record_extension_receivers_for_complex_receiver_shapes() {
+        let source = r#"
+package com.example
+
+fun Other?.nullableHelper(value: Int): Int = value
+fun List<Int>.summed(): Int = 0
+fun Outer.Inner.nested(): Int = 0
+fun regular(value: Int): Int = value
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        for symbol in symbols {
+            assert_eq!(
+                symbol.extension_receiver, None,
+                "complex receiver on {} must fail closed",
+                symbol.semantic_path
+            );
+        }
     }
 }

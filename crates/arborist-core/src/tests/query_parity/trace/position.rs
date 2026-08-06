@@ -7396,3 +7396,148 @@ fn does_not_trace_kotlin_qualified_receiver_calls_with_unknown_or_ambiguous_rece
     let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert!(trace.callers.is_empty());
 }
+#[test]
+fn traces_kotlin_same_file_extension_function_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Caller.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun member(value: Int): Int = value\n}\n\nfun Other.helper(value: Int): Int = value\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_cross_file_same_package_extension_function_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let extension_path = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nclass Other\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &extension_path,
+        "package com.example\n\nfun Other.helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_cross_package_imported_extension_function_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let extension_path = dir.join("Extensions.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Other\nimport org.util.helper\n\nclass Holder {\n    fun run(other: Other): Int = other.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &extension_path,
+        "package org.util\n\nclass Other\n\nfun Other.helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn does_not_trace_kotlin_extension_calls_when_member_or_ambiguous_targets_exist() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun Other.helper(value: Int): Int = value + 1\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A member function shadows the extension and resolves to the member, not the extension.
+    let member_path = "com::example::Other::helper";
+    let member_trace = trace_symbol_graph(&dir, member_path, TraceDirection::Callers).unwrap();
+    assert_eq!(member_trace.callers.len(), 1);
+    assert_eq!(
+        member_trace.callers[0].symbol_id,
+        "com::example::Holder::run"
+    );
+    let extension_path = "com::example::helper";
+    let extension_trace =
+        trace_symbol_graph(&dir, extension_path, TraceDirection::Callers).unwrap();
+    assert!(extension_trace.callers.is_empty());
+}
+
+#[test]
+fn does_not_trace_kotlin_extension_calls_with_ambiguous_or_unknown_receivers() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let first_extension = dir.join("FirstExtensions.kt");
+    let second_extension = dir.join("SecondExtensions.kt");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nclass Other\n\nfun unknownReceiver(): Int {\n    val other = makeOther()\n    return other.helper(1)\n}\n\nfun makeOther(): Other = Other()\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &first_extension,
+        "package com.example\n\nfun Other.helper(value: Int): Int = value + 1\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_extension,
+        "package com.example\n\nfun Other.helper(value: Int): Int = value + 2\n",
+    )
+    .unwrap();
+
+    // An unknown receiver binding (function-return initializer) fails closed.
+    let unknown_trace =
+        trace_symbol_graph(&dir, "com::example::helper", TraceDirection::Callers).unwrap();
+    assert!(unknown_trace.callers.is_empty());
+
+    // Two same-package extension declarations of the same name and arity for the same
+    // receiver type make the extension lookup ambiguous and fail closed.
+    let ambiguous_trace =
+        trace_symbol_graph(&dir, "com::example::Holder::run", TraceDirection::Callees).unwrap();
+    assert!(ambiguous_trace.callees.is_empty());
+}

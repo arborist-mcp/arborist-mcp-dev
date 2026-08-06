@@ -69,6 +69,7 @@ fn persist_symbol_index_rejects_duplicate_raw_symbol_rows() {
     let file_path = workspace.join("helper.py");
     let normalized_file = file_path.to_string_lossy().replace('\\', "/");
     let raw_symbol = IndexedSymbol {
+        extension_receiver: None,
         symbol_id: "helper".to_string(),
         semantic_path: "helper".to_string(),
         base_name: "helper".to_string(),
@@ -260,6 +261,7 @@ fn indexed_files_metadata(db_path: &Path) -> String {
 
 fn invalid_indexed_symbol(file_path: &str) -> IndexedSymbol {
     IndexedSymbol {
+        extension_receiver: None,
         symbol_id: "helper".to_string(),
         semantic_path: "helper".to_string(),
         base_name: "helper".to_string(),
@@ -291,6 +293,7 @@ fn invalid_symbol_meta(file_path: &str) -> SymbolMeta {
 
 fn valid_indexed_symbol(file_path: &str) -> IndexedSymbol {
     IndexedSymbol {
+        extension_receiver: None,
         symbol_id: "helper".to_string(),
         semantic_path: "helper".to_string(),
         base_name: "helper".to_string(),

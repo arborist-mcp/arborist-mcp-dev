@@ -3756,8 +3756,10 @@ fn resolve_kotlin_qualified_receiver_call(
     else {
         return Ok(None);
     };
+    // Member functions shadow extensions, so an ambiguous member overload set
+    // fails closed instead of guessing an extension target.
     let target_path = format!("{type_path}::{method}");
-    let candidates = semantic_path_index
+    let member_candidates = semantic_path_index
         .get(&target_path)
         .into_iter()
         .flatten()
@@ -3769,7 +3771,73 @@ fn resolve_kotlin_qualified_receiver_call(
                 && candidate.parameters.len() == call_arity
         })
         .collect::<Vec<_>>();
+    if member_candidates.len() == 1 {
+        return Ok(Some(raw_symbols[member_candidates[0]].symbol_id.clone()));
+    }
+    if !member_candidates.is_empty() {
+        return Ok(None);
+    }
+    resolve_kotlin_extension_call(
+        source_symbol,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_extension_call(
+    source_symbol: &IndexedSymbol,
+    receiver_type: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let package_scope = kotlin_package_scope(source_symbol, raw_symbols);
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        method,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let candidates = raw_symbols
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
+            candidate.node_kind == "function_declaration"
+                && candidate.extension_receiver.as_deref() == Some(receiver_type)
+                && candidate.base_name == method
+                && candidate.parameters.len() == call_arity
+                && kotlin_symbol_is_top_level(candidate, raw_symbols)
+                && (candidate.file_path == source_symbol.file_path
+                    || package_scope
+                        .is_some_and(|scope| candidate.scope_path.as_deref() == Some(scope))
+                    || imported_binding
+                        .as_ref()
+                        .is_some_and(|binding| binding.semantic_path == candidate.semantic_path))
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn kotlin_symbol_is_top_level(candidate: &IndexedSymbol, raw_symbols: &[IndexedSymbol]) -> bool {
+    match (
+        candidate.scope_path.as_deref(),
+        kotlin_package_scope(candidate, raw_symbols),
+    ) {
+        (None, None) => true,
+        (Some(scope), Some(package)) => scope == package,
+        _ => false,
+    }
 }
 
 fn resolve_kotlin_receiver_type_path(
@@ -3854,6 +3922,7 @@ mod tests {
     #[test]
     fn deadline_resolver_checks_each_symbol_reference() {
         let symbol = IndexedSymbol {
+            extension_receiver: None,
             symbol_id: "caller".to_string(),
             semantic_path: "caller".to_string(),
             base_name: "caller".to_string(),

@@ -162,6 +162,7 @@ mod tests {
     #[test]
     fn explicit_reference_facts_take_precedence_over_legacy_fields() {
         let symbol = IndexedSymbol {
+            extension_receiver: None,
             symbol_id: "caller".to_string(),
             semantic_path: "caller".to_string(),
             base_name: "caller".to_string(),

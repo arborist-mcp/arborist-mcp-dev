@@ -245,6 +245,7 @@ mod tests {
         byte_range: (usize, usize),
     ) -> IndexedSymbol {
         IndexedSymbol {
+            extension_receiver: None,
             symbol_id: String::new(),
             semantic_path: semantic_path.to_string(),
             base_name: semantic_path.rsplit("::").next().unwrap().to_string(),
