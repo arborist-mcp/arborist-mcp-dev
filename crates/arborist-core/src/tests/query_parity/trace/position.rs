@@ -7867,3 +7867,76 @@ fn does_not_trace_kotlin_constructor_calls_for_non_constructible_or_ambiguous_cl
         );
     }
 }
+
+#[test]
+fn traces_kotlin_object_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nobject Config {\n    val holder: Holder = Holder()\n}\n\nfun caller(): Int = Config.holder.run(1)\n",
+    )
+    .unwrap();
+
+    let run_path = "com::example::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_imported_object_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\nimport org.util.Holder\n\nfun caller(): Int = Config.holder.run(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package org.util\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nobject Config {\n    val holder: Holder = Holder()\n}\n",
+    )
+    .unwrap();
+
+    let run_path = "org::util::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_object_property_chains_with_unknown_or_shadowed_objects() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nobject Config {\n    val holder: Holder = Holder()\n}\n\nfun unknownObject(): Int = Missing.holder.run(1)\n\nfun shadowedObject(): Int {\n    val Config = Holder()\n    return Config.holder.run(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown object name and a local binding that shadows the object name
+    // both fail closed instead of guessing a chain target.
+    let run_path = "com::example::Holder::run";
+    let trace = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}

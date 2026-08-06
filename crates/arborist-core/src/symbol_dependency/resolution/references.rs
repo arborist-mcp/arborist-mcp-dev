@@ -3847,28 +3847,48 @@ fn resolve_kotlin_chained_receiver_call(
     if hops.len() < 3 {
         return Ok(None);
     }
-    let Some(bindings) = kotlin_receiver_type_bindings_for_function(
+    let bindings = kotlin_receiver_type_bindings_for_function(
         &source_symbol.file_path,
         source_symbol.byte_range,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    let Some(first_type_name) = bindings.type_for(hops[0]) else {
-        return Ok(None);
-    };
-    let Some(mut type_path) = resolve_kotlin_receiver_type_path(
+    )?;
+    // The first hop is either a locally bound receiver or a named object
+    // declaration such as `Config` in `Config.holder.run()`. An ambiguous local
+    // binding fails closed instead of falling through to a same-named object.
+    let mut type_path = if bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains(hops[0]))
+    {
+        let Some(type_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(hops[0]))
+        else {
+            return Ok(None);
+        };
+        let Some(path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        path
+    } else if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
-        &first_type_name,
+        hops[0],
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )?
-    else {
+    )? {
+        object_path
+    } else {
         return Ok(None);
     };
     // Each intermediate hop must resolve to a uniquely declared property whose
