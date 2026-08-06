@@ -96,7 +96,12 @@ fn executes_tree_queries_for_javascript_typescript_rust_go_java_kotlin_and_cshar
         ),
         (
             "Sample.kt",
-            "package demo; class Sample { fun add(left: Int, right: Int) = left + right; }",
+            "package demo
+
+class Sample {
+    fun add(left: Int, right: Int) = left + right
+}
+",
             "(function_declaration name: (identifier) @name)",
             "add",
         ),

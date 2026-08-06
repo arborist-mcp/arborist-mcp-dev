@@ -12,6 +12,7 @@ pub(crate) mod csharp;
 pub(crate) mod go;
 pub(crate) mod java;
 pub(crate) mod javascript;
+pub(crate) mod kotlin;
 mod paths;
 pub(crate) mod python;
 mod python_identity;
@@ -174,6 +175,13 @@ mod tests {
             (
                 Path::new("sample.js"),
                 "export function sample() { return 1; }
+",
+            ),
+            (
+                Path::new("sample.kt"),
+                "package sample
+
+fun sample() = 1
 ",
             ),
         ];

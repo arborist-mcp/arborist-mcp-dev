@@ -483,3 +483,35 @@ func (counter *Counter) Increment(amount int) int { return counter.value + amoun
     assert_eq!(increment.parameters, vec!["amount int"]);
     assert_eq!(increment.return_type.as_deref(), Some("int"));
 }
+
+#[test]
+fn builds_kotlin_skeleton_through_public_entrypoint() {
+    let source = r#"
+package demo.tools
+
+object Config {
+    val label: String = "demo"
+    fun create(value: Int): Int = value
+}
+
+fun top(value: Int) = value
+"#;
+    let skeleton = get_semantic_skeleton(Path::new("Config.kt"), source, 4, &[]).unwrap();
+
+    assert_eq!(
+        skeleton.available_paths,
+        vec![
+            "demo::tools::Config",
+            "demo::tools::Config::label",
+            "demo::tools::Config::create",
+            "demo::tools::top",
+        ]
+    );
+    let create = skeleton
+        .available_symbols
+        .iter()
+        .find(|symbol| symbol.semantic_path == "demo::tools::Config::create")
+        .unwrap();
+    assert_eq!(create.parameters, vec!["value: Int"]);
+    assert_eq!(create.return_type.as_deref(), Some("Int"));
+}

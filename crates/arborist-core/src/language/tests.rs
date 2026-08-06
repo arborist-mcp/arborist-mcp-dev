@@ -211,20 +211,20 @@ fn javascript_and_typescript_adapters_expose_dependency_capabilities() {
 }
 
 #[test]
-fn kotlin_adapter_exposes_only_tree_query_capability() {
+fn kotlin_adapter_exposes_tree_query_and_semantic_skeleton_capabilities() {
     let registry = builtin_language_registry();
     let descriptor = registry.descriptor(LanguageId::Kotlin).unwrap();
 
     assert_eq!(descriptor.display_name, "Kotlin");
     assert_eq!(descriptor.extensions, &["kt", "kts"]);
-    assert_eq!(descriptor.analysis_revision, "kotlin-query-v1");
-    assert!(
-        descriptor
-            .capabilities
-            .contains(LanguageCapabilities::TREE_QUERY)
-    );
+    assert_eq!(descriptor.analysis_revision, "kotlin-skeleton-v2");
     for capability in [
+        LanguageCapabilities::TREE_QUERY,
         LanguageCapabilities::SEMANTIC_SKELETON,
+    ] {
+        assert!(descriptor.capabilities.contains(capability));
+    }
+    for capability in [
         LanguageCapabilities::SYMBOL_INDEX,
         LanguageCapabilities::FILE_DEPENDENCIES,
         LanguageCapabilities::REFERENCE_TRACE,
@@ -378,8 +378,11 @@ fn parse_document_uses_csharp_grammar_and_recovers_from_invalid_source() {
 #[test]
 fn parse_document_uses_kotlin_grammar_and_recovers_from_invalid_source() {
     let path = Path::new("Sample.kt");
-    let source = "package demo;
-class Sample { fun add(left: Int, right: Int) = left + right; }
+    let source = "package demo
+
+class Sample {
+    fun add(left: Int, right: Int) = left + right
+}
 ";
     let document = parse_document(path, source).unwrap();
     assert_eq!(document.language_id, LanguageId::Kotlin);
@@ -397,6 +400,49 @@ class Sample { fun add(left: Int, right: Int) = left + right; }
     let malformed = parse_document(path, "class Sample {").unwrap();
     assert_eq!(malformed.language_id, LanguageId::Kotlin);
     assert!(malformed.tree.root_node().has_error());
+}
+
+#[test]
+fn kotlin_grammar_parses_idiomatic_multiline_declarations_without_semicolons() {
+    for (path, source) in [
+        (
+            "Sample.kt",
+            "package demo
+
+import kotlin.collections.List
+
+fun top(value: Int) = value
+
+class Sample {
+    val answer: Int = 42
+    fun add(left: Int, right: Int) = left + right
+}
+
+interface Renderer {
+    fun render(value: String): String
+}
+
+object Config {
+    val enabled = true
+}
+
+enum class State { Ready, Done }
+",
+        ),
+        (
+            "build.kts",
+            "val answer = 42
+fun answer() = answer
+",
+        ),
+    ] {
+        let document = parse_document(Path::new(path), source).unwrap();
+        assert_eq!(document.language_id, LanguageId::Kotlin);
+        assert!(
+            !document.tree.root_node().has_error(),
+            "expected idiomatic Kotlin fixture `{path}` to parse without errors"
+        );
+    }
 }
 
 #[test]
