@@ -104,14 +104,14 @@ fn collect_direct_local_calls(
         return Ok((BTreeSet::new(), BTreeMap::new()));
     };
 
-    let qualified_call_exclusions = collect_qualified_call_exclusions(symbol_node, source)?;
+    let type_name_exclusions = collect_local_type_name_exclusions(symbol_node, source)?;
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
     collect_direct_local_calls_from_node(
         body,
         source,
         deadline,
-        &qualified_call_exclusions,
+        &type_name_exclusions,
         &mut references,
         &mut call_arities_by_name,
     )?;
@@ -196,7 +196,7 @@ fn collect_direct_local_calls_from_node(
     Ok(())
 }
 
-fn collect_qualified_call_exclusions(
+fn collect_local_type_name_exclusions(
     symbol_node: Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<String>> {
@@ -232,112 +232,8 @@ fn collect_qualified_call_exclusions(
         Ok(())
     }
 
-    fn collect_value_bindings(
-        node: Node<'_>,
-        source: &str,
-        exclusions: &mut BTreeSet<String>,
-    ) -> Result<()> {
-        if node.kind() == "class_body" {
-            return Ok(());
-        }
-        if matches!(
-            node.kind(),
-            "variable_declarator"
-                | "formal_parameter"
-                | "catch_formal_parameter"
-                | "enhanced_for_statement"
-                | "instanceof_expression"
-                | "resource"
-        ) && let Some(name) = node.child_by_field_name("name")
-        {
-            insert_name(name, source, exclusions)?;
-        }
-        if node.kind() == "lambda_expression"
-            && let Some(parameters) = node.child_by_field_name("parameters")
-        {
-            match parameters.kind() {
-                "identifier" | "_reserved_identifier" => {
-                    insert_name(parameters, source, exclusions)?;
-                }
-                "inferred_parameters" => {
-                    let mut cursor = parameters.walk();
-                    for parameter in parameters.named_children(&mut cursor) {
-                        insert_name(parameter, source, exclusions)?;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if matches!(node.kind(), "type_pattern" | "record_pattern_component") {
-            let mut cursor = node.walk();
-            if let Some(name) = node
-                .named_children(&mut cursor)
-                .last()
-                .filter(|child| matches!(child.kind(), "identifier" | "_reserved_identifier"))
-            {
-                insert_name(name, source, exclusions)?;
-            }
-        }
-        if node.kind() == "spread_parameter" {
-            let mut cursor = node.walk();
-            for declarator in node
-                .named_children(&mut cursor)
-                .filter(|child| child.kind() == "variable_declarator")
-            {
-                if let Some(name) = declarator.child_by_field_name("name") {
-                    insert_name(name, source, exclusions)?;
-                }
-            }
-        }
-
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            collect_value_bindings(child, source, exclusions)?;
-        }
-        Ok(())
-    }
-
-    fn collect_enclosing_type_fields(
-        type_node: Node<'_>,
-        source: &str,
-        exclusions: &mut BTreeSet<String>,
-    ) -> Result<()> {
-        let Some(body) = type_node.child_by_field_name("body") else {
-            return Ok(());
-        };
-        let mut cursor = body.walk();
-        for field in body
-            .named_children(&mut cursor)
-            .filter(|child| child.kind() == "field_declaration")
-        {
-            let mut cursor = field.walk();
-            for declarator in field.children_by_field_name("declarator", &mut cursor) {
-                if let Some(name) = declarator.child_by_field_name("name") {
-                    insert_name(name, source, exclusions)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     let mut exclusions = BTreeSet::new();
     collect_type_names(symbol_node, source, &mut exclusions)?;
-    collect_value_bindings(symbol_node, source, &mut exclusions)?;
-
-    let mut current = symbol_node.parent();
-    while let Some(candidate) = current {
-        if matches!(
-            candidate.kind(),
-            "annotation_type_declaration"
-                | "class_declaration"
-                | "enum_declaration"
-                | "interface_declaration"
-                | "record_declaration"
-        ) {
-            collect_enclosing_type_fields(candidate, source, &mut exclusions)?;
-        }
-        current = candidate.parent();
-    }
     Ok(exclusions)
 }
 
@@ -433,33 +329,26 @@ enum Kind { BASIC }
             qualified.references_by_name,
             ["Helper.run".to_string()].into()
         );
-        let shadowed = symbols
-            .iter()
-            .find(|symbol| symbol.semantic_path == "com::example::Counter::shadowed")
-            .unwrap();
-        assert!(shadowed.references_by_name.is_empty());
-        let lambda_shadowed = symbols
-            .iter()
-            .find(|symbol| symbol.semantic_path == "com::example::Counter::lambdaShadowed")
-            .unwrap();
-        assert!(lambda_shadowed.references_by_name.is_empty());
-        let resource_shadowed = symbols
-            .iter()
-            .find(|symbol| symbol.semantic_path == "com::example::Counter::resourceShadowed")
-            .unwrap();
-        assert!(resource_shadowed.references_by_name.is_empty());
-        let pattern_shadowed = symbols
-            .iter()
-            .find(|symbol| symbol.semantic_path == "com::example::Counter::patternShadowed")
-            .unwrap();
-        assert!(pattern_shadowed.references_by_name.is_empty());
-        let outer_field_shadowed = symbols
-            .iter()
-            .find(|symbol| {
-                symbol.semantic_path == "com::example::Outer::Nested::outerFieldShadowed"
-            })
-            .unwrap();
-        assert!(outer_field_shadowed.references_by_name.is_empty());
+        for method_name in [
+            "com::example::Counter::shadowed",
+            "com::example::Counter::lambdaShadowed",
+            "com::example::Counter::resourceShadowed",
+            "com::example::Counter::patternShadowed",
+            "com::example::Outer::Nested::outerFieldShadowed",
+        ] {
+            let bound_receiver = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == method_name)
+                .unwrap();
+            // Receivers that resolve to a local value binding (parameter,
+            // lambda/resource/pattern binding, or enclosing field) are recorded
+            // as instance calls and dispatched by the resolver on the declared
+            // receiver type.
+            assert_eq!(
+                bound_receiver.references_by_name,
+                ["Helper.run".to_string()].into()
+            );
+        }
 
         let method = symbols
             .iter()

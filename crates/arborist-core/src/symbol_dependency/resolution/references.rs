@@ -23,7 +23,8 @@ use super::super::go::{
     GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
 };
 use super::super::java::{
-    JavaImportBinding, JavaImportContext, resolve_java_import_binding_for_reference,
+    JavaImportBinding, JavaImportContext, java_receiver_type_bindings_for_function,
+    resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
     resolve_java_type_import_binding_for_name,
 };
@@ -955,6 +956,24 @@ fn resolve_reference_path_with_deadline<'a>(
                 call_arity,
                 deadline,
             );
+        }
+        // A dotted call whose leading receiver names a locally bound value is
+        // an instance call on that value's declared type; it shadows any
+        // same-named type. Bound-but-unresolvable receivers fail closed instead
+        // of falling through to the static type-call paths below.
+        match resolve_java_instance_receiver_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            JavaInstanceReceiverResolution::Resolved(symbol_id) => return Ok(Some(symbol_id)),
+            JavaInstanceReceiverResolution::Blocked => return Ok(None),
+            JavaInstanceReceiverResolution::NoBinding => {}
         }
         if let Some(symbol_id) = resolve_java_nested_static_method_reference(
             source_symbol,
@@ -2595,6 +2614,114 @@ fn resolve_csharp_imported_static_method(
     )
 }
 
+enum JavaInstanceReceiverResolution {
+    Resolved(String),
+    NoBinding,
+    Blocked,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java instance receiver resolution inputs explicit"
+)]
+fn resolve_java_instance_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<JavaInstanceReceiverResolution> {
+    let Some((receiver_name, member_chain)) = reference_name.split_once('.') else {
+        return Ok(JavaInstanceReceiverResolution::NoBinding);
+    };
+    if receiver_name.is_empty() || member_chain.is_empty() {
+        return Ok(JavaInstanceReceiverResolution::NoBinding);
+    }
+    let Some(bindings) = java_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(JavaInstanceReceiverResolution::NoBinding);
+    };
+    if !bindings.contains(receiver_name) {
+        return Ok(JavaInstanceReceiverResolution::NoBinding);
+    }
+    // A bound receiver is always an instance expression: chains through fields
+    // and receivers without a resolvable declared type fail closed instead of
+    // falling through to a same-named static type call.
+    if member_chain.contains('.') {
+        return Ok(JavaInstanceReceiverResolution::Blocked);
+    }
+    let Some(type_name) = bindings.type_for(receiver_name) else {
+        return Ok(JavaInstanceReceiverResolution::Blocked);
+    };
+    let Some(type_path) = resolve_java_receiver_type_path(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(JavaInstanceReceiverResolution::Blocked);
+    };
+    let Some(symbol_id) = resolve_java_inherited_method_from_type_path(
+        &type_path,
+        member_chain,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        true,
+        deadline,
+    )?
+    else {
+        return Ok(JavaInstanceReceiverResolution::Blocked);
+    };
+    Ok(JavaInstanceReceiverResolution::Resolved(symbol_id))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java receiver type resolution inputs explicit"
+)]
+fn resolve_java_receiver_type_path(
+    source_symbol: &IndexedSymbol,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let reference = if type_name.contains('.') {
+        JavaDirectSuperclassReference::Qualified(type_name.to_string())
+    } else {
+        JavaDirectSuperclassReference::Simple(type_name.to_string())
+    };
+    resolve_java_direct_type_target_path(
+        &source_symbol.file_path,
+        source_symbol.scope_path.as_deref(),
+        &reference,
+        "class_declaration",
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java superclass resolution inputs explicit"
@@ -2628,6 +2755,7 @@ fn resolve_java_simple_super_method_reference(
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
+        false,
         deadline,
     )
 }
@@ -2644,6 +2772,7 @@ fn resolve_java_inherited_method_from_type_path(
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     call_arity: usize,
+    require_instance: bool,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     let mut visited_type_paths = BTreeSet::new();
@@ -2664,6 +2793,11 @@ fn resolve_java_inherited_method_from_type_path(
             .filter(|index| {
                 let candidate = &raw_symbols[*index];
                 candidate.node_kind == "method_declaration"
+                    && (!require_instance
+                        || !candidate
+                            .signature
+                            .as_deref()
+                            .is_some_and(java_method_signature_is_static))
             })
             .collect::<Vec<_>>();
         if !declared_candidates.is_empty() {
