@@ -2181,9 +2181,9 @@ fn csharp_nested_type_static_target_path(
             return (target_type_candidates == 1)
                 .then(|| format!("{target_type_path}::{method_name}"));
         }
-        namespace_path = match namespace_path {
-            Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
-            None => return None,
+        namespace_path = {
+            let current_path = namespace_path?;
+            current_path.rsplit_once("::").map(|(parent, _)| parent)
         };
     }
 }
@@ -2265,9 +2265,9 @@ fn csharp_simple_type_static_target_path(
             return (target_type_candidates == 1)
                 .then(|| format!("{target_type_path}::{method_name}"));
         }
-        namespace_path = match namespace_path {
-            Some(current_path) => current_path.rsplit_once("::").map(|(parent, _)| parent),
-            None => return None,
+        namespace_path = {
+            let current_path = namespace_path?;
+            current_path.rsplit_once("::").map(|(parent, _)| parent)
         };
     }
 }
