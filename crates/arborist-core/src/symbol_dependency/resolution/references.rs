@@ -2848,9 +2848,10 @@ fn resolve_java_member_chain_from_type_path(
 /// class type resolves through the superclass chain as usual; when the
 /// receiver is declared with an interface type and the interface itself does
 /// not declare the method, a uniquely resolved direct super-interface chain
-/// (abstract or default declarations) resolves it. Multiple, unresolved, or
-/// ambiguous super-interface branches fail closed, and class-typed receivers
-/// never dispatch through implemented interfaces.
+/// (abstract or default declarations) resolves it; and when the receiver is a
+/// class that does not declare the method, a `default` method through uniquely
+/// resolved direct interfaces resolves it. Multiple, unresolved, or ambiguous
+/// interface branches and competing declarations fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java instance receiver member dispatch inputs explicit"
@@ -2878,7 +2879,32 @@ fn resolve_java_instance_receiver_member(
     )? {
         return Ok(Some(symbol_id));
     }
-    match resolve_java_interface_chain_method_from_type_path(
+    let receiver_type_is_interface = semantic_path_index
+        .get(receiver_type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
+        .count()
+        == 1;
+    if receiver_type_is_interface {
+        match resolve_java_interface_chain_method_from_type_path(
+            receiver_type_path,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            false,
+            deadline,
+        )? {
+            JavaInterfaceChainMethodResolution::Resolved(symbol_id) => return Ok(Some(symbol_id)),
+            JavaInterfaceChainMethodResolution::NoMethod
+            | JavaInterfaceChainMethodResolution::Blocked => {}
+        }
+    }
+    resolve_java_class_receiver_interface_default_method(
         receiver_type_path,
         method_name,
         raw_symbols,
@@ -2886,13 +2912,116 @@ fn resolve_java_instance_receiver_member(
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
-        false,
         deadline,
-    )? {
-        JavaInterfaceChainMethodResolution::Resolved(symbol_id) => Ok(Some(symbol_id)),
-        JavaInterfaceChainMethodResolution::NoMethod
-        | JavaInterfaceChainMethodResolution::Blocked => Ok(None),
+    )
+}
+
+/// Dispatches a `default` method for a class-typed instance receiver whose
+/// class and direct superclass chain do not declare the method. The receiver's
+/// direct interfaces resolve in its own file and enclosing scope; exactly one
+/// direct-interface chain must provide a uniquely arity-matched non-static
+/// `default` method and every other chain must prove it has no declaration.
+/// Any same-name method declared in the receiver class hierarchy, competing
+/// or unresolved interface chains, and ambiguous chains fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java class receiver interface dispatch inputs explicit"
+)]
+fn resolve_java_class_receiver_interface_default_method(
+    receiver_class_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let class_candidates = semantic_path_index
+        .get(receiver_class_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+        .collect::<Vec<_>>();
+    let [class_index] = class_candidates.as_slice() else {
+        return Ok(None);
+    };
+    let receiver_class = &raw_symbols[*class_index];
+    if java_class_hierarchy_defines_method_from_type_path(
+        receiver_class_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )? != Some(false)
+    {
+        return Ok(None);
     }
+    let path = Path::new(&receiver_class.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    let mut interface_references = None;
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Java receiver interfaces")?;
+        }
+        if node.kind() == "class_declaration"
+            && (node.start_byte(), node.end_byte()) == receiver_class.byte_range
+        {
+            interface_references = java_direct_interface_references_for_declaration(node, &source)?;
+            break;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    let Some(interface_references) = interface_references else {
+        return Ok(None);
+    };
+    let mut resolved_symbol_id = None;
+    for interface_reference in interface_references {
+        let Some(interface_path) = resolve_java_direct_interface_target_path(
+            &receiver_class.file_path,
+            receiver_class.scope_path.as_deref(),
+            &interface_reference,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        match resolve_java_interface_chain_method_from_type_path(
+            &interface_path,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            true,
+            deadline,
+        )? {
+            JavaInterfaceChainMethodResolution::Resolved(symbol_id) => {
+                if resolved_symbol_id.replace(symbol_id).is_some() {
+                    return Ok(None);
+                }
+            }
+            JavaInterfaceChainMethodResolution::NoMethod => {}
+            JavaInterfaceChainMethodResolution::Blocked => return Ok(None),
+        }
+    }
+    Ok(resolved_symbol_id)
 }
 
 /// Resolves a `var` local's bare method-call initializer such as `makeFoo` in

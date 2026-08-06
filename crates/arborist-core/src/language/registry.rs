@@ -456,7 +456,7 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
             | LanguageCapabilities::FILE_DEPENDENCIES.0
             | LanguageCapabilities::REFERENCE_TRACE.0,
     ),
-    analysis_revision: "java-interface-chain-receiver-trace-v32",
+    analysis_revision: "java-class-receiver-interface-trace-v33",
     grammar: java_grammar,
 };
 static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
