@@ -3402,6 +3402,93 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_generic_alias_and_static_import_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Targets.cs"),
+        "namespace Demo.Utility;
+class LocalAliasTarget<T> { public static int FromLocalAlias(int value) => value; }
+class LocalStaticTarget<T> { public static int FromLocalStatic(int value) => value; }
+class GlobalAliasTarget<T> { public static int FromGlobalAlias(int value) => value; }
+class GlobalStaticTarget<T> { public static int FromGlobalStatic(int value) => value; }
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("GlobalUsings.cs"),
+        "global using GlobalAlias = Demo.Utility.GlobalAliasTarget<int>;
+global using static Demo.Utility.GlobalStaticTarget<int>;
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using LocalAlias = Demo.Utility.LocalAliasTarget<int>;
+using static Demo.Utility.LocalStaticTarget<int>;
+namespace Demo.App;
+class Caller {
+    int LocalAliasCall() => LocalAlias.FromLocalAlias(1);
+    int LocalStaticCall() => FromLocalStatic(1);
+    int GlobalAliasCall() => GlobalAlias.FromGlobalAlias(1);
+    int GlobalStaticCall() => FromGlobalStatic(1);
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected_caller) in [
+        (
+            "Demo::Utility::LocalAliasTarget::FromLocalAlias",
+            "Demo::App::Caller::LocalAliasCall",
+        ),
+        (
+            "Demo::Utility::LocalStaticTarget::FromLocalStatic",
+            "Demo::App::Caller::LocalStaticCall",
+        ),
+        (
+            "Demo::Utility::GlobalAliasTarget::FromGlobalAlias",
+            "Demo::App::Caller::GlobalAliasCall",
+        ),
+        (
+            "Demo::Utility::GlobalStaticTarget::FromGlobalStatic",
+            "Demo::App::Caller::GlobalStaticCall",
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 3);
+        assert_eq!(live.callers.len(), 1, "{target}");
+        assert_eq!(live.callers[0].symbol_id, expected_caller, "{target}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for (target, expected_caller) in [
+        (
+            "Demo::Utility::LocalAliasTarget::FromLocalAlias",
+            "Demo::App::Caller::LocalAliasCall",
+        ),
+        (
+            "Demo::Utility::LocalStaticTarget::FromLocalStatic",
+            "Demo::App::Caller::LocalStaticCall",
+        ),
+        (
+            "Demo::Utility::GlobalAliasTarget::FromGlobalAlias",
+            "Demo::App::Caller::GlobalAliasCall",
+        ),
+        (
+            "Demo::Utility::GlobalStaticTarget::FromGlobalStatic",
+            "Demo::App::Caller::GlobalStaticCall",
+        ),
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 3);
+        assert_eq!(persisted.callers.len(), 1, "{target}");
+        assert_eq!(persisted.callers[0].symbol_id, expected_caller, "{target}");
+    }
+}
+
+#[test]
 fn traces_csharp_nested_type_static_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

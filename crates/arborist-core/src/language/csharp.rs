@@ -112,7 +112,7 @@ fn csharp_type_alias_import_from_directive(
         return Ok(None);
     };
     let target_path = node_text(target, source)?.trim();
-    let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
+    let Some(semantic_type_path) = csharp_generic_type_semantic_path(target_path) else {
         return Ok(None);
     };
     Ok(Some(CSharpFileTypeAliasImport {
@@ -139,7 +139,7 @@ pub(crate) fn csharp_file_static_type_imports(
             continue;
         };
         let target_path = node_text(target, source)?.trim();
-        let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) else {
+        let Some(semantic_type_path) = csharp_generic_type_semantic_path(target_path) else {
             continue;
         };
         imports.push(CSharpFileStaticTypeImport {
@@ -171,7 +171,7 @@ pub(crate) fn csharp_global_static_type_imports(
             continue;
         };
         let target_path = node_text(target, source)?.trim();
-        if let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) {
+        if let Some(semantic_type_path) = csharp_generic_type_semantic_path(target_path) {
             imports.push(semantic_type_path);
         }
     }
@@ -232,7 +232,7 @@ pub(crate) fn csharp_global_type_alias_imports(
             continue;
         };
         let target_path = node_text(target, source)?.trim();
-        if let Some(semantic_type_path) = csharp_qualified_type_semantic_path(target_path) {
+        if let Some(semantic_type_path) = csharp_generic_type_semantic_path(target_path) {
             imports.push((local_name.to_string(), semantic_type_path));
         }
     }
@@ -523,6 +523,7 @@ class GenericDerived : Base<int> {}
         let source = r#"
 using HelperAlias = Demo.Utility.Helper;
 using GlobalAlias = global::Demo.Utility.GlobalHelper;
+using GenericAlias = Demo.Utility.GenericHelper<int>;
 global using ProjectAlias = Demo.Utility.ProjectHelper;
 using unsafe UnsafeAlias = Demo.Utility.UnsafeHelper;
 using Demo.Utility;
@@ -546,6 +547,11 @@ class Caller {}
                     local_name: "GlobalAlias".to_string(),
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
                 },
+                super::CSharpFileTypeAliasImport {
+                    scope_path: None,
+                    local_name: "GenericAlias".to_string(),
+                    semantic_type_path: "Demo::Utility::GenericHelper".to_string(),
+                },
             ]
         );
 
@@ -564,6 +570,7 @@ global using static Demo.Utility.ProjectHelper;
 using static unsafe Demo.Utility.UnsafeHelper;
 using static static Demo.Utility.DuplicateStaticHelper;
 using static Demo.Utility.GenericHelper<int>;
+using static Demo.Utility.InvalidGenericHelper<>;
 using Demo.Utility;
 
 namespace Demo.App;
@@ -582,6 +589,10 @@ class Caller {}
                 super::CSharpFileStaticTypeImport {
                     scope_path: None,
                     semantic_type_path: "Demo::Utility::GlobalHelper".to_string(),
+                },
+                super::CSharpFileStaticTypeImport {
+                    scope_path: None,
+                    semantic_type_path: "Demo::Utility::GenericHelper".to_string(),
                 },
             ]
         );
@@ -642,6 +653,7 @@ class Caller {}
             vec![
                 "Demo::Utility::Helper".to_string(),
                 "Demo::Utility::GlobalHelper".to_string(),
+                "Demo::Utility::GenericHelper".to_string(),
             ]
         );
     }
@@ -694,6 +706,10 @@ class Caller {}
                 (
                     "GlobalAlias".to_string(),
                     "Demo::Utility::GlobalHelper".to_string(),
+                ),
+                (
+                    "GenericAlias".to_string(),
+                    "Demo::Utility::Generic".to_string(),
                 ),
             ]
         );
