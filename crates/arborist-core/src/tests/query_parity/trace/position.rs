@@ -9460,3 +9460,87 @@ fn does_not_trace_kotlin_constructor_chain_receiver_calls_with_function_call_or_
         );
     }
 }
+
+#[test]
+fn traces_kotlin_enum_companion_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nenum class Color {\n    companion object Factory {\n        fun helper(value: Int): Int = value\n    }\n    fun memberHelper(value: Int): Int = value\n}\n\nfun caller(): Int {\n    Color.Factory.helper(1)\n    Color.Companion.helper(2)\n    Color.memberHelper(3)\n    return 0\n}\n",
+    )
+    .unwrap();
+
+    // Enums are class declarations that can host companion objects, so both
+    // the declared-name and canonical `Companion` spellings dispatch to the
+    // companion scope; an instance member reached through the class name fails
+    // closed.
+    let helper_path = "com::example::Color::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+
+    let member_path = "com::example::Color::memberHelper";
+    let trace = trace_symbol_graph(&dir, member_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}
+
+#[test]
+fn traces_kotlin_deep_constructor_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Inner {\n    fun helper(value: Int): Int = value\n}\n\nclass Mid {\n    val inner: Inner = Inner()\n}\n\nclass Group {\n    val mid: Mid = Mid()\n}\n\nfun caller(): Int {\n    return Group().mid.inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A constructor-call receiver followed by multiple property hops resolves
+    // each intermediate property's declared type before the final dispatch.
+    let helper_path = "com::example::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_deep_object_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Member {\n    fun run(value: Int): Int = value\n}\n\nclass Holder {\n    val member: Member = Member()\n}\n\nobject Outer {\n    object Inner {\n        val holder: Holder = Holder()\n    }\n}\n\nfun caller(): Int {\n    return Outer.Inner.holder.member.run(2)\n}\n",
+    )
+    .unwrap();
+
+    // An object-rooted nested-object chain resolves each intermediate
+    // property's declared type before dispatching the terminal member.
+    let run_path = "com::example::Member::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
