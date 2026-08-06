@@ -9,6 +9,7 @@ use crate::language::{
     read_source,
 };
 use crate::model::LanguageId;
+use crate::semantic::kotlin::is_kotlin_semantic_symbol_node;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,7 +19,23 @@ pub(in crate::symbol_dependency) struct KotlinImportBinding {
 
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct KotlinImportContext {
-    function_bindings: BTreeMap<String, KotlinImportBinding>,
+    import_bindings: BTreeMap<String, KotlinImportBinding>,
+    receiver_type_bindings_by_range: BTreeMap<(usize, usize), KotlinReceiverTypeBindings>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
+    types_by_name: BTreeMap<String, String>,
+    ambiguous_names: BTreeSet<String>,
+}
+
+impl KotlinReceiverTypeBindings {
+    pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.types_by_name.get(name).cloned()
+    }
 }
 
 fn kotlin_import_context_for_file_with_overrides_and_deadline(
@@ -56,8 +73,8 @@ fn kotlin_import_context_for_file_with_overrides_and_deadline(
         return Ok(KotlinImportContext::default());
     }
 
-    let mut function_bindings = BTreeMap::new();
-    let mut ambiguous_names = BTreeSet::new();
+    let mut import_bindings = BTreeMap::new();
+    let mut ambiguous_import_names = BTreeSet::new();
     let mut cursor = root.walk();
     for import in root
         .named_children(&mut cursor)
@@ -65,14 +82,21 @@ fn kotlin_import_context_for_file_with_overrides_and_deadline(
     {
         if let Some((local_name, binding)) = kotlin_explicit_import_binding(import, &source)? {
             insert_unique_kotlin_import_binding(
-                &mut function_bindings,
-                &mut ambiguous_names,
+                &mut import_bindings,
+                &mut ambiguous_import_names,
                 local_name,
                 binding,
             );
         }
     }
-    Ok(KotlinImportContext { function_bindings })
+
+    let mut receiver_type_bindings_by_range = BTreeMap::new();
+    collect_kotlin_receiver_type_bindings(root, &source, &mut receiver_type_bindings_by_range)?;
+
+    Ok(KotlinImportContext {
+        import_bindings,
+        receiver_type_bindings_by_range,
+    })
 }
 
 fn kotlin_explicit_import_binding(
@@ -139,7 +163,208 @@ fn is_safe_kotlin_qualified_name(name: &str) -> bool {
     })
 }
 
-pub(in crate::symbol_dependency) fn resolve_kotlin_function_import_binding_for_reference(
+fn collect_kotlin_receiver_type_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings_by_range: &mut BTreeMap<(usize, usize), KotlinReceiverTypeBindings>,
+) -> Result<()> {
+    if node.kind() == "function_declaration" && is_kotlin_semantic_symbol_node(node) {
+        bindings_by_range.insert(
+            (node.start_byte(), node.end_byte()),
+            kotlin_receiver_type_bindings_for_node(node, source)?,
+        );
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_kotlin_receiver_type_bindings(child, source, bindings_by_range)?;
+    }
+    Ok(())
+}
+
+fn kotlin_receiver_type_bindings_for_node(
+    function: Node<'_>,
+    source: &str,
+) -> Result<KotlinReceiverTypeBindings> {
+    let mut bindings = KotlinReceiverTypeBindings::default();
+
+    // Enclosing-type properties are visible to member functions.
+    if let Some(type_node) = kotlin_enclosing_type_declaration(function)
+        && let Some(class_body) = type_node
+            .named_children(&mut type_node.walk())
+            .find(|child| child.kind() == "class_body")
+    {
+        let mut cursor = class_body.walk();
+        for child in class_body.named_children(&mut cursor) {
+            if child.kind() == "property_declaration"
+                && let Some((name, type_name)) = kotlin_property_binding(child, source)?
+            {
+                insert_kotlin_receiver_binding(&mut bindings, name, type_name);
+            }
+        }
+    }
+
+    // Parameters carry explicit types.
+    if let Some(parameters) = function
+        .named_children(&mut function.walk())
+        .find(|child| child.kind() == "function_value_parameters")
+    {
+        let mut cursor = parameters.walk();
+        for parameter in parameters.named_children(&mut cursor) {
+            if parameter.kind() == "parameter"
+                && let Some((name, type_name)) = kotlin_parameter_binding(parameter, source)?
+            {
+                insert_kotlin_receiver_binding(&mut bindings, name, type_name);
+            }
+        }
+    }
+
+    // Body locals, stopping at nested declarations that have their own scope.
+    if let Some(body) = function
+        .named_children(&mut function.walk())
+        .find(|child| child.kind() == "function_body")
+    {
+        collect_kotlin_body_property_bindings(body, source, &mut bindings)?;
+    }
+    Ok(bindings)
+}
+
+fn kotlin_enclosing_type_declaration<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    let mut current = node.parent();
+    while let Some(candidate) = current {
+        if matches!(candidate.kind(), "class_declaration" | "object_declaration") {
+            return Some(candidate);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn collect_kotlin_body_property_bindings(
+    node: Node<'_>,
+    source: &str,
+    bindings: &mut KotlinReceiverTypeBindings,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "function_declaration" | "class_declaration" | "object_declaration"
+    ) {
+        return Ok(());
+    }
+    if node.kind() == "property_declaration"
+        && let Some((name, type_name)) = kotlin_property_binding(node, source)?
+    {
+        insert_kotlin_receiver_binding(bindings, name, type_name);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_kotlin_body_property_bindings(child, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(String, String)>> {
+    let mut cursor = property.walk();
+    let children = property.named_children(&mut cursor).collect::<Vec<_>>();
+    let Some(variable) = children
+        .iter()
+        .find(|child| child.kind() == "variable_declaration")
+    else {
+        return Ok(None);
+    };
+    let mut variable_cursor = variable.walk();
+    let variable_children = variable
+        .named_children(&mut variable_cursor)
+        .collect::<Vec<_>>();
+    let Some(name_node) = variable_children
+        .iter()
+        .find(|child| child.kind() == "identifier")
+    else {
+        return Ok(None);
+    };
+    let name = node_text(*name_node, source)?.trim().to_string();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    if let Some(type_node) = variable_children
+        .iter()
+        .find(|child| kotlin_is_type_node_kind(child.kind()))
+        && let Some(type_name) = kotlin_simple_type_name(node_text(*type_node, source)?)
+    {
+        return Ok(Some((name, type_name)));
+    }
+    // Fall back to a constructor-call initializer such as `val x = Other()`.
+    let initializer = children
+        .iter()
+        .find(|child| child.kind() == "call_expression")
+        .copied();
+    if let Some(expression) = initializer
+        && let Some(callee) = expression.named_child(0)
+        && callee.kind() == "identifier"
+    {
+        let type_name = node_text(callee, source)?.trim().to_string();
+        if !type_name.is_empty() {
+            return Ok(Some((name, type_name)));
+        }
+    }
+    Ok(None)
+}
+
+fn kotlin_parameter_binding(parameter: Node<'_>, source: &str) -> Result<Option<(String, String)>> {
+    let mut cursor = parameter.walk();
+    let children = parameter.named_children(&mut cursor).collect::<Vec<_>>();
+    let Some(name_node) = children.iter().find(|child| child.kind() == "identifier") else {
+        return Ok(None);
+    };
+    let Some(type_node) = children
+        .iter()
+        .find(|child| kotlin_is_type_node_kind(child.kind()))
+    else {
+        return Ok(None);
+    };
+    let name = node_text(*name_node, source)?.trim().to_string();
+    let Some(type_name) = kotlin_simple_type_name(node_text(*type_node, source)?) else {
+        return Ok(None);
+    };
+    if name.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((name, type_name)))
+}
+
+fn kotlin_is_type_node_kind(kind: &str) -> bool {
+    matches!(kind, "type" | "user_type" | "nullable_type")
+}
+
+fn kotlin_simple_type_name(text: &str) -> Option<String> {
+    let mut name = text.trim();
+    if let Some(stripped) = name.strip_suffix('?') {
+        name = stripped.trim();
+    }
+    if name.is_empty() || name.contains(['.', '<', '(', '[', ':', ',', ' ']) {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn insert_kotlin_receiver_binding(
+    bindings: &mut KotlinReceiverTypeBindings,
+    name: String,
+    type_name: String,
+) {
+    if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    if bindings
+        .types_by_name
+        .insert(name.clone(), type_name)
+        .is_some()
+    {
+        bindings.types_by_name.remove(&name);
+        bindings.ambiguous_names.insert(name);
+    }
+}
+
+pub(in crate::symbol_dependency) fn resolve_kotlin_import_binding_for_reference(
     source_file_path: &str,
     reference_name: &str,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -155,7 +380,26 @@ pub(in crate::symbol_dependency) fn resolve_kotlin_function_import_binding_for_r
         contexts_by_file,
         deadline,
     )?;
-    Ok(context.function_bindings.get(reference_name).cloned())
+    Ok(context.import_bindings.get(reference_name).cloned())
+}
+
+pub(in crate::symbol_dependency) fn kotlin_receiver_type_bindings_for_function(
+    source_file_path: &str,
+    function_range: (usize, usize),
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<KotlinReceiverTypeBindings>> {
+    let context = kotlin_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context
+        .receiver_type_bindings_by_range
+        .get(&function_range)
+        .cloned())
 }
 
 fn kotlin_import_context_from_cache(
@@ -176,45 +420,52 @@ fn kotlin_import_context_from_cache(
     contexts_by_file.insert(normalized_file_path, context.clone());
     Ok(context)
 }
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        KotlinImportBinding, kotlin_import_context_for_file_with_overrides_and_deadline,
-        resolve_kotlin_function_import_binding_for_reference,
+        KotlinImportBinding, KotlinReceiverTypeBindings,
+        kotlin_import_context_for_file_with_overrides_and_deadline,
+        kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
     };
     use crate::language::normalize_path;
 
-    static NEXT_KOTLIN_IMPORT_TEST_ID: AtomicUsize = AtomicUsize::new(0);
+    static NEXT_KOTLIN_TEST_ID: AtomicUsize = AtomicUsize::new(0);
 
-    fn context_for(source: &str) -> super::KotlinImportContext {
-        let test_id = NEXT_KOTLIN_IMPORT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+    struct TestFile {
+        normalized_path: String,
+    }
+
+    fn write_test_file(source: &str) -> TestFile {
+        let test_id = NEXT_KOTLIN_TEST_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "arborist-kotlin-import-{}-{}",
+            "arborist-kotlin-{}-{}",
             std::process::id(),
             test_id
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let file_path = dir.join("Caller.kt");
         std::fs::write(&file_path, source).unwrap();
-        kotlin_import_context_for_file_with_overrides_and_deadline(
-            &normalize_path(&file_path),
-            None,
-            None,
-        )
-        .unwrap()
+        TestFile {
+            normalized_path: normalize_path(&file_path),
+        }
     }
 
     #[test]
     fn binds_explicit_top_level_function_imports_to_semantic_paths() {
-        let context = context_for(
+        let file = write_test_file(
             "package com.example\n\nimport org.util.helper\n\nfun caller(): Int = helper(1)\n",
         );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            context.function_bindings.get("helper"),
+            context.import_bindings.get("helper"),
             Some(&KotlinImportBinding {
                 semantic_path: "org::util::helper".to_string()
             })
@@ -223,53 +474,46 @@ mod tests {
 
     #[test]
     fn binds_aliased_imports_to_the_alias_name() {
-        let context = context_for(
+        let file = write_test_file(
             "package com.example\n\nimport org.util.helper as h\n\nfun caller(): Int = h(1)\n",
         );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            context.function_bindings.get("h"),
+            context.import_bindings.get("h"),
             Some(&KotlinImportBinding {
                 semantic_path: "org::util::helper".to_string()
             })
         );
-        assert!(!context.function_bindings.contains_key("helper"));
+        assert!(!context.import_bindings.contains_key("helper"));
     }
 
     #[test]
     fn ignores_wildcard_and_ambiguous_imports() {
-        let context = context_for(
+        let file = write_test_file(
             "package com.example\n\nimport org.util.*\nimport org.a.helper\nimport org.b.helper\n\nfun caller(): Int = helper(1)\n",
         );
-        assert!(context.function_bindings.is_empty());
-    }
-
-    #[test]
-    fn keeps_unique_import_among_colliding_names_fail_closed() {
-        let context = context_for(
-            "package com.example\n\nimport org.a.helper\nimport org.b.helper\n\nfun caller(): Int = helper(1)\n",
-        );
-        assert!(context.function_bindings.is_empty());
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(context.import_bindings.is_empty());
     }
 
     #[test]
     fn resolves_import_binding_by_reference_name_without_parsing_again() {
-        let test_id = NEXT_KOTLIN_IMPORT_TEST_ID.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "arborist-kotlin-import-{}-{}",
-            std::process::id(),
-            test_id
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file_path = dir.join("Caller.kt");
-        std::fs::write(
-            &file_path,
+        let file = write_test_file(
             "package com.example\n\nimport org.util.helper\n\nfun caller(): Int = helper(1)\n",
-        )
-        .unwrap();
-        let normalized = normalize_path(&file_path);
+        );
         let mut contexts = BTreeMap::new();
-        let binding = resolve_kotlin_function_import_binding_for_reference(
-            &normalized,
+        let binding = resolve_kotlin_import_binding_for_reference(
+            &file.normalized_path,
             "helper",
             None,
             &mut contexts,
@@ -280,8 +524,8 @@ mod tests {
         assert_eq!(binding.semantic_path, "org::util::helper");
         assert_eq!(contexts.len(), 1);
         assert!(
-            resolve_kotlin_function_import_binding_for_reference(
-                &normalized,
+            resolve_kotlin_import_binding_for_reference(
+                &file.normalized_path,
                 "missing",
                 None,
                 &mut contexts,
@@ -291,5 +535,119 @@ mod tests {
             .is_none()
         );
         assert_eq!(contexts.len(), 1);
+    }
+
+    #[test]
+    fn binds_local_constructor_receivers_and_parameter_types() {
+        let file = write_test_file(
+            "package com.example\n\nclass Counter {\n    fun run() {\n        val other = Other()\n        other.helper(1)\n    }\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun process(counter: Counter): Int = counter.increment()\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("other") == Some("Other".to_string()))
+            .unwrap();
+        assert_eq!(run_bindings.type_for("other"), Some("Other".to_string()));
+
+        let process_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("counter") == Some("Counter".to_string()))
+            .unwrap();
+        assert_eq!(
+            process_bindings.type_for("counter"),
+            Some("Counter".to_string())
+        );
+    }
+
+    #[test]
+    fn binds_class_property_receivers_with_explicit_and_constructor_types() {
+        let file = write_test_file(
+            "package com.example\n\nclass Holder {\n    val explicit: Other = Other()\n    val constructed = Other()\n    fun run() {\n        explicit.touch()\n        constructed.touch()\n    }\n}\n\nclass Other {\n    fun touch(): Int = 1\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("explicit").is_some())
+            .unwrap();
+        assert_eq!(run_bindings.type_for("explicit"), Some("Other".to_string()));
+        assert_eq!(
+            run_bindings.type_for("constructed"),
+            Some("Other".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_or_uninferrable_receiver_bindings() {
+        let file = write_test_file(
+            "package com.example\n\nfun caller(flag: Boolean): Int {\n    val other = Other()\n    val other = Third()\n    val unknown = makeOther()\n    return other.helper(1)\n}\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Third {\n    fun helper(value: Int): Int = value\n}\n\nfun makeOther(): Other = Other()\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let caller_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("unknown").is_none())
+            .unwrap();
+        assert_eq!(caller_bindings.type_for("other"), None);
+        assert_eq!(caller_bindings.type_for("unknown"), None);
+    }
+
+    #[test]
+    fn receiver_bindings_are_keyed_by_function_byte_range() {
+        let file = write_test_file(
+            "package com.example\n\nfun first(): Int {\n    val other = Other()\n    return other.helper(1)\n}\n\nfun second(): Int = 0\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(context.receiver_type_bindings_by_range.len(), 2);
+        let first_range = *context
+            .receiver_type_bindings_by_range
+            .keys()
+            .next()
+            .unwrap();
+        let first_bindings = context
+            .receiver_type_bindings_by_range
+            .get(&first_range)
+            .unwrap();
+        assert_eq!(first_bindings.type_for("other"), Some("Other".to_string()));
+        let mut contexts = BTreeMap::new();
+        let fetched = kotlin_receiver_type_bindings_for_function(
+            &file.normalized_path,
+            first_range,
+            None,
+            &mut contexts,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(fetched.type_for("other"), Some("Other".to_string()));
+    }
+
+    #[test]
+    fn receiver_binding_type_for_returns_none_for_unknown_names() {
+        let bindings = KotlinReceiverTypeBindings::default();
+        assert_eq!(bindings.type_for("missing"), None);
     }
 }

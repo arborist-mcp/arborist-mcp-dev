@@ -7179,7 +7179,7 @@ fn traces_kotlin_enclosing_type_members_and_package_functions_in_live_workspace_
 }
 
 #[test]
-fn does_not_trace_kotlin_qualified_calls_or_ambiguous_package_functions() {
+fn handles_kotlin_ambiguous_package_names_and_qualified_receiver_calls() {
     let dir = temporary_dir();
     let first = dir.join("First.kt");
     let second = dir.join("Second.kt");
@@ -7204,10 +7204,14 @@ fn does_not_trace_kotlin_qualified_calls_or_ambiguous_package_functions() {
     let trace = trace_symbol_graph(&dir, "com::example::helper", TraceDirection::Callers).unwrap();
     assert!(trace.callers.is_empty());
 
-    // Qualified receiver calls do not produce direct reference facts.
+    // Qualified receiver calls resolve when the receiver type is pinned to a local class.
     let other_helper =
         trace_symbol_graph(&dir, "com::example::Other::helper", TraceDirection::Callers).unwrap();
-    assert!(other_helper.callers.is_empty());
+    assert_eq!(other_helper.callers.len(), 1);
+    assert_eq!(
+        other_helper.callers[0].symbol_id,
+        "com::example::Holder::run"
+    );
 }
 #[test]
 fn traces_kotlin_cross_package_imported_top_level_function_calls_in_live_workspace_and_persisted_index()
@@ -7317,4 +7321,78 @@ fn does_not_trace_kotlin_wildcard_or_competing_imported_function_calls() {
     assert!(first.callers.is_empty());
     let second = trace_symbol_graph(&dir, "org::second::helper", TraceDirection::Callers).unwrap();
     assert!(second.callers.is_empty());
+}
+#[test]
+fn traces_kotlin_qualified_receiver_calls_via_local_constructor_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let holder = dir.join("Holder.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &holder,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    fun run(): Int {\n        val other = Other()\n        return other.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_qualified_receiver_calls_via_parameter_and_class_property_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counters.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Counter {\n    fun increment(value: Int): Int = value\n}\n\nclass Holder {\n    val counter = Counter()\n    fun viaProperty(): Int = counter.increment(1)\n}\n\nfun viaParameter(counter: Counter): Int = counter.increment(2)\n",
+    )
+    .unwrap();
+
+    let increment_path = "com::example::Counter::increment";
+    let live = trace_symbol_graph(&dir, increment_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut caller_ids = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    caller_ids.sort_unstable();
+    assert_eq!(
+        caller_ids,
+        vec![
+            "com::example::Holder::viaProperty",
+            "com::example::viaParameter"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, increment_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+}
+
+#[test]
+fn does_not_trace_kotlin_qualified_receiver_calls_with_unknown_or_ambiguous_receiver_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Third {\n    fun helper(value: Int): Int = value\n}\n\nfun unknownReceiver(): Int {\n    val other = makeOther()\n    return other.helper(1)\n}\n\nfun makeOther(): Other = Other()\n\nfun chainedReceiver(): Int {\n    val holder = Holder()\n    return holder.other.helper(1)\n}\n\nclass Holder {\n    val other = Other()\n}\n\nfun ambiguousReceiver(): Int {\n    val other = if (true) Other() else Third()\n    return other.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
 }

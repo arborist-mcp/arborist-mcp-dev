@@ -115,6 +115,37 @@ fn collect_direct_local_calls(
     Ok((references, call_arities_by_name))
 }
 
+fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>> {
+    if callee.kind() == "identifier" {
+        let reference = node_text(callee, source)?.trim().to_string();
+        return Ok((!reference.is_empty()).then_some(reference));
+    }
+    // Qualified receiver calls such as `other.helper(...)` record the receiver and
+    // member together. Nullable (`?.`), callable-reference (`::`), chained, and
+    // complex receivers fail closed and produce no direct-call fact.
+    if callee.kind() != "navigation_expression" {
+        return Ok(None);
+    }
+    let text = node_text(callee, source)?.trim();
+    if text.contains('?') || text.contains("::") {
+        return Ok(None);
+    }
+    let mut cursor = callee.walk();
+    let children = callee.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2
+        || children[0].kind() != "identifier"
+        || children[1].kind() != "identifier"
+    {
+        return Ok(None);
+    }
+    let receiver = node_text(children[0], source)?.trim();
+    let member = node_text(children[1], source)?.trim();
+    if receiver.is_empty() || member.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("{receiver}.{member}")))
+}
+
 fn collect_direct_local_calls_from_node(
     node: Node<'_>,
     source: &str,
@@ -133,21 +164,18 @@ fn collect_direct_local_calls_from_node(
     }
     if node.kind() == "call_expression"
         && let Some(callee) = node.named_child(0)
-        && callee.kind() == "identifier"
         && let Some(arguments) = node
             .named_children(&mut node.walk())
             .find(|child| child.kind() == "value_arguments")
+        && let Some(reference) = kotlin_call_spelling(callee, source)?
     {
         let mut cursor = arguments.walk();
         let arity = arguments.named_children(&mut cursor).count();
-        let reference = node_text(callee, source)?.trim().to_string();
-        if !reference.is_empty() {
-            references.insert(reference.clone());
-            call_arities_by_name
-                .entry(reference)
-                .or_default()
-                .insert(arity);
-        }
+        references.insert(reference.clone());
+        call_arities_by_name
+            .entry(reference)
+            .or_default()
+            .insert(arity);
     }
 
     let mut cursor = node.walk();
@@ -248,5 +276,41 @@ object Config {
             })
             .unwrap();
         assert_eq!(increment.return_type.as_deref(), Some("Int"));
+    }
+
+    #[test]
+    fn records_kotlin_qualified_receiver_calls_and_skips_chained_or_nullable_receivers() {
+        let source = r#"
+package com.example
+
+class Other {
+    fun helper(value: Int): Int = value
+}
+
+fun caller(other: Other): Int {
+    other.helper(1)
+    other?.helper(2)
+    val group = Group()
+    group.member.helper(3)
+    return 0
+}
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::caller")
+            .unwrap();
+        assert!(caller.references_by_name.contains("other.helper"));
+        assert!(!caller.references_by_name.contains("other?.helper"));
+        assert!(!caller.references_by_name.contains("group.member.helper"));
+        assert_eq!(
+            caller.call_arities_by_name.get("other.helper"),
+            Some(&[1usize].into_iter().collect())
+        );
     }
 }

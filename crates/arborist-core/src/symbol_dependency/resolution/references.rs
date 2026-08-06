@@ -31,7 +31,8 @@ use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
-    KotlinImportContext, resolve_kotlin_function_import_binding_for_reference,
+    KotlinImportContext, kotlin_receiver_type_bindings_for_function,
+    resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
@@ -3619,7 +3620,28 @@ fn resolve_kotlin_reference_with_deadline(
     let Some(call_arity) = call_context.arity else {
         return Ok(None);
     };
-    if reference_name.is_empty() || reference_name.contains('.') || reference_name.contains("::") {
+    if reference_name.is_empty() {
+        return Ok(None);
+    }
+    // A qualified call such as `other.helper(...)` resolves the receiver's type from the
+    // caller's local scope and then dispatches to that type's member function.
+    if let Some((receiver, method)) = reference_name.split_once('.') {
+        if receiver.is_empty() || method.is_empty() || method.contains('.') {
+            return Ok(None);
+        }
+        return resolve_kotlin_qualified_receiver_call(
+            source_symbol,
+            receiver,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if reference_name.contains("::") {
         return Ok(None);
     }
 
@@ -3673,7 +3695,7 @@ fn resolve_kotlin_reference_with_deadline(
     // A unique explicit import can bind an unqualified call to a top-level function in
     // another package. Wildcard imports, aliases that collide, and multiple matching
     // declarations fail closed.
-    if let Some(binding) = resolve_kotlin_function_import_binding_for_reference(
+    if let Some(binding) = resolve_kotlin_import_binding_for_reference(
         &source_symbol.file_path,
         reference_name,
         file_overrides,
@@ -3696,6 +3718,103 @@ fn resolve_kotlin_reference_with_deadline(
         }
     }
     Ok(None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_qualified_receiver_call(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(bindings) = kotlin_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(type_name) = bindings.type_for(receiver) else {
+        return Ok(None);
+    };
+    let Some(type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{type_path}::{method}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "function_declaration"
+                && candidate.scope_path.as_deref() == Some(type_path.as_str())
+                && candidate.parameters.len() == call_arity
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
+}
+
+fn resolve_kotlin_receiver_type_path(
+    source_symbol: &IndexedSymbol,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if type_name.is_empty()
+        || !type_name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Ok(None);
+    }
+    let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+        .map(|scope| format!("{scope}::{type_name}"));
+    let same_package_is_type = same_package_path
+        .as_deref()
+        .is_some_and(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        type_name,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let imported_path = imported_binding
+        .map(|binding| binding.semantic_path)
+        .filter(|path| kotlin_path_is_type_declaration(path, raw_symbols));
+    match (same_package_is_type, imported_path) {
+        // A same-package declaration and an explicit import of the same name conflict.
+        (true, Some(_)) => Ok(None),
+        (true, None) => Ok(same_package_path),
+        (false, Some(path)) => Ok(Some(path)),
+        (false, None) => Ok(None),
+    }
+}
+
+fn kotlin_path_is_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) -> bool {
+    raw_symbols
+        .iter()
+        .any(|candidate| candidate.semantic_path == path && is_kotlin_type_declaration(candidate))
 }
 
 fn kotlin_package_scope<'a>(
