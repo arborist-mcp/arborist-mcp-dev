@@ -19,6 +19,7 @@ const TSX_EXTENSIONS: &[&str] = &["tsx"];
 const RUST_EXTENSIONS: &[&str] = &["rs"];
 const GO_EXTENSIONS: &[&str] = &["go"];
 const JAVA_EXTENSIONS: &[&str] = &["java"];
+const KOTLIN_EXTENSIONS: &[&str] = &["kt", "kts"];
 const CSHARP_EXTENSIONS: &[&str] = &["cs"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,7 +218,7 @@ pub struct LanguageRegistry {
 
 impl LanguageRegistry {
     fn builtin() -> Self {
-        let adapters: [&'static dyn LanguageAdapter; 10] = [
+        let adapters: [&'static dyn LanguageAdapter; 11] = [
             &PYTHON_ADAPTER,
             &C_ADAPTER,
             &CPP_ADAPTER,
@@ -227,6 +228,7 @@ impl LanguageRegistry {
             &RUST_ADAPTER,
             &GO_ADAPTER,
             &JAVA_ADAPTER,
+            &KOTLIN_ADAPTER,
             &CSHARP_ADAPTER,
         ];
         Self::new(adapters)
@@ -353,6 +355,7 @@ fn persisted_language_id(language_id: LanguageId) -> &'static str {
         LanguageId::Rust => "rust",
         LanguageId::Go => "go",
         LanguageId::Java => "java",
+        LanguageId::Kotlin => "kotlin",
     }
 }
 
@@ -456,6 +459,14 @@ static JAVA_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     analysis_revision: "java-outer-interface-default-trace-v24",
     grammar: java_grammar,
 };
+static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
+    id: LanguageId::Kotlin,
+    display_name: "Kotlin",
+    extensions: KOTLIN_EXTENSIONS,
+    capabilities: LanguageCapabilities(LanguageCapabilities::TREE_QUERY.0),
+    analysis_revision: "kotlin-query-v1",
+    grammar: kotlin_grammar,
+};
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     id: LanguageId::CSharp,
     display_name: "C#",
@@ -496,6 +507,9 @@ static JAVA_ADAPTER: JavaAdapter = JavaAdapter {
     syntax: SyntaxOnlyAdapter {
         descriptor: &JAVA_DESCRIPTOR,
     },
+};
+static KOTLIN_ADAPTER: SyntaxOnlyAdapter = SyntaxOnlyAdapter {
+    descriptor: &KOTLIN_DESCRIPTOR,
 };
 static CSHARP_ADAPTER: CSharpAdapter = CSharpAdapter {
     syntax: SyntaxOnlyAdapter {
@@ -2195,6 +2209,10 @@ fn go_grammar() -> Language {
 
 fn java_grammar() -> Language {
     tree_sitter_java::LANGUAGE.into()
+}
+
+fn kotlin_grammar() -> Language {
+    tree_sitter_kotlin_ng::LANGUAGE.into()
 }
 
 fn csharp_grammar() -> Language {

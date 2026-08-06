@@ -91,6 +91,7 @@ Arborist uses extension-based routing with explicit per-language capabilities:
   unchanged C# source files are not reindexed; a refreshed source that has changed may safely shrink because its stale byte ranges do not block validation before the rebuilt index replaces them. Outer-namespace alias/import inheritance, other member dispatch, overload
   type selection, and patching remain explicitly
   unavailable until dedicated C# adapter slices establish their contracts and fixtures.
+- Kotlin: `.kt`, `.kts` — Tree-sitter parsing and raw query execution only. Kotlin currently makes no Java/JVM source-linkage assumptions and does not advertise semantic skeletons, indexing, dependencies, tracing, or patch operations.
 - Java: `.java` — Tree-sitter parsing, raw queries, semantic skeletons, declaration indexing, and
   conservative dependency refresh for explicit local type imports, single-member `import static`
   imports, direct superclass links whose base resolves from the same package, a unique explicit local type import, or an exact qualified local source spelling, and direct interface links whose interface resolves by the same local-source rules. Those links require an owning type that resolves to a local

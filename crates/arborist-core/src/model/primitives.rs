@@ -25,6 +25,7 @@ pub enum LanguageId {
     Rust,
     Go,
     Java,
+    Kotlin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

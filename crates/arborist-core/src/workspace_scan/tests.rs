@@ -89,6 +89,32 @@ fn collect_source_files_includes_rust_and_go_after_symbol_indexing_support_lands
 }
 
 #[test]
+fn collect_source_files_skips_kotlin_until_symbol_indexing_support_lands() {
+    let workspace = temporary_dir();
+    let kotlin = workspace.join("query_only.kt");
+    let python = workspace.join("indexed.py");
+    fs::write(
+        &kotlin,
+        "package demo; class QueryOnly;
+",
+    )
+    .unwrap();
+    fs::write(
+        &python,
+        "def indexed():
+    return 1
+",
+    )
+    .unwrap();
+
+    let files =
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
+            .unwrap();
+
+    assert_eq!(files, vec![python]);
+}
+
+#[test]
 fn collect_source_files_rejects_workspace_file_limit_overflow() {
     let workspace = temporary_dir();
     fs::write(workspace.join("a.py"), "def a():\n    return 1\n").unwrap();

@@ -1,6 +1,6 @@
 # Multi-Language Support Design
 
-**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices, Java query/semantic-skeleton/declaration-indexing/import-dependency/direct-trace slices, and C# parsing/raw-query/semantic-skeleton/declaration-indexing/local/root-and-exact-namespace-alias-static-and-namespace-import/global-alias-static-namespace-import-and-base-constructor/base-method/local-and-global-base-alias-import/unshadowed-qualified-base/cross-file-same-namespace-and-nested-source trace slices implemented
+**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices, Java query/semantic-skeleton/declaration-indexing/import-dependency/direct-trace slices, C# parsing/raw-query/semantic-skeleton/declaration-indexing/local/root-and-exact-namespace-alias-static-and-namespace-import/global-alias-static-namespace-import-and-base-constructor/base-method/local-and-global-base-alias-import/unshadowed-qualified-base/cross-file-same-namespace-and-nested-source trace slices, and Kotlin query-only routing implemented
 **Audience:** Arborist core, PyO3, gateway, and release maintainers
 **Scope:** Rust core architecture for adding source languages without weakening existing Python, C, and C++ behavior.
 
@@ -486,7 +486,7 @@ The default resolver considers only candidates in the same language. Explicit, t
 - C and C++ through include and `extern "C"`-aware behavior;
 - JavaScript and TypeScript as one JS/TS module family;
 - Objective-C++ with C++ and Objective-C after dedicated adapter support;
-- Kotlin and Java only after an explicit JVM interop model exists.
+- Kotlin and Java cross-language edges only after an explicit JVM interop model exists.
 
 Python-to-native extensions, Java JNI, Node native bindings, FFI, reflection, `eval`, and framework injection remain unresolved unless a future dedicated bridge can provide sound enough rules. Name equality alone is never sufficient to create a cross-language edge.
 
@@ -717,7 +717,7 @@ Suggested order:
    type-alias/static-import bare-call tracing, root-level global-alias/static/namespace-import tracing from all scanned C# files,
    generic static type-receiver, type-alias, and static-import tracing and conservative dependency refresh are
    established; add broader
-   tracing only through dedicated adapter slices; Kotlin after explicit JVM interop assumptions are documented.
+   tracing only through dedicated adapter slices. Kotlin currently provides only `.kt`/`.kts` routing and raw Tree-sitter queries: it makes no Java/JVM source-linkage assumptions and intentionally withholds skeleton, indexing, dependency, tracing, and patch capabilities until dedicated Kotlin adapter slices establish their contracts.
 
 ## 17. Test And Validation Strategy
 

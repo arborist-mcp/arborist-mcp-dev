@@ -50,7 +50,7 @@ fn execute_tree_query_rejects_capture_limit_overflow() {
 }
 
 #[test]
-fn executes_tree_queries_for_javascript_typescript_rust_go_java_and_csharp_adapters() {
+fn executes_tree_queries_for_javascript_typescript_rust_go_java_kotlin_and_csharp_adapters() {
     for (path, source, query, expected) in [
         (
             "Sample.cs",
@@ -92,6 +92,12 @@ fn executes_tree_queries_for_javascript_typescript_rust_go_java_and_csharp_adapt
             "Sample.java",
             "class Sample { int add(int left, int right) { return left + right; } }",
             "(method_declaration name: (identifier) @name)",
+            "add",
+        ),
+        (
+            "Sample.kt",
+            "package demo; class Sample { fun add(left: Int, right: Int) = left + right; }",
+            "(function_declaration name: (identifier) @name)",
             "add",
         ),
     ] {
