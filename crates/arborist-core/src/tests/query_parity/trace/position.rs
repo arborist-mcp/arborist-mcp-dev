@@ -7639,3 +7639,121 @@ fn does_not_trace_kotlin_property_chain_receiver_calls_with_inferred_or_missing_
     let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert!(trace.callers.is_empty());
 }
+
+#[test]
+fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nobject Config {\n    fun helper(value: Int): Int = value\n}\n\nfun caller(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Config::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nfun caller(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package com.example\n\nobject Config {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Config::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_imported_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nfun caller(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package org.util\n\nobject Config {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::Config::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_object_receiver_calls_with_unknown_shadowed_or_conflicting_names() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let config_path = dir.join("Config.kt");
+    let imported_path = dir.join("Imported.kt");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Config\n\nclass Other\n\nfun unknownObject(): Int = Missing.helper(1)\n\nfun shadowedObject(): Int {\n    val Config = Other()\n    return Config.helper(1)\n}\n\nfun conflictingObject(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &config_path,
+        "package com.example\n\nobject Config {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &imported_path,
+        "package org.util\n\nobject Config {\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Unknown object names, local shadowing of the object name, and a same-package
+    // object that conflicts with an explicit import all fail closed.
+    for helper_path in ["com::example::Config::helper", "org::util::Config::helper"] {
+        let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert!(
+            trace.callers.is_empty(),
+            "expected no callers for {helper_path}"
+        );
+    }
+}

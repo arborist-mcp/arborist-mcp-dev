@@ -3746,42 +3746,75 @@ fn resolve_kotlin_qualified_receiver_call(
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(bindings) = kotlin_receiver_type_bindings_for_function(
+    let bindings = kotlin_receiver_type_bindings_for_function(
         &source_symbol.file_path,
         source_symbol.byte_range,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    let Some(type_name) = bindings.type_for(receiver) else {
-        return Ok(None);
-    };
-    let Some(type_path) = resolve_kotlin_receiver_type_path(
+    )?;
+    // A locally bound receiver (parameter, local property, or enclosing-class
+    // property) resolves first; an ambiguous local binding fails closed instead
+    // of falling through to a same-named object or type.
+    if bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains(receiver))
+    {
+        let Some(type_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(receiver))
+        else {
+            return Ok(None);
+        };
+        let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_kotlin_member_or_extension(
+            source_symbol,
+            &type_path,
+            &type_name,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    // An unbound receiver can still be a named object declaration such as
+    // `Config.helper(...)`. Object names resolve from the same package or an
+    // explicit import; conflicts and unknown names fail closed.
+    if let Some(object_path) = resolve_kotlin_object_receiver_path(
         source_symbol,
-        &type_name,
+        receiver,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )?
-    else {
-        return Ok(None);
-    };
-    resolve_kotlin_member_or_extension(
-        source_symbol,
-        &type_path,
-        &type_name,
-        method,
-        call_arity,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        kotlin_import_contexts_by_file,
-        deadline,
-    )
+    )? {
+        return resolve_kotlin_member_or_extension(
+            source_symbol,
+            &object_path,
+            receiver,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4046,6 +4079,60 @@ fn kotlin_path_is_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) ->
     raw_symbols
         .iter()
         .any(|candidate| candidate.semantic_path == path && is_kotlin_type_declaration(candidate))
+}
+
+/// Resolves an unbound receiver name to a named object declaration such as
+/// `Config` in `Config.helper(...)`. The object must be uniquely declared in the
+/// caller's package or bound by an explicit import; a same-package object that
+/// conflicts with an imported binding, an unknown name, or a name that matches
+/// multiple declarations fails closed.
+fn resolve_kotlin_object_receiver_path(
+    source_symbol: &IndexedSymbol,
+    receiver: &str,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if receiver.is_empty()
+        || !receiver
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Ok(None);
+    }
+    let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
+        .map(|scope| format!("{scope}::{receiver}"));
+    let same_package_object_count = same_package_path
+        .as_deref()
+        .map(|path| kotlin_path_object_count(path, raw_symbols))
+        .unwrap_or(0);
+    let imported_binding = resolve_kotlin_import_binding_for_reference(
+        &source_symbol.file_path,
+        receiver,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    let imported_path = imported_binding
+        .map(|binding| binding.semantic_path)
+        .filter(|path| kotlin_path_object_count(path, raw_symbols) == 1);
+    match (same_package_object_count, imported_path) {
+        // A same-package object and an explicit import of the same name conflict.
+        (1, Some(_)) => Ok(None),
+        (1, None) => Ok(same_package_path),
+        (0, Some(path)) => Ok(Some(path)),
+        _ => Ok(None),
+    }
+}
+
+fn kotlin_path_object_count(path: &str, raw_symbols: &[IndexedSymbol]) -> usize {
+    raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.semantic_path == path && candidate.node_kind == "object_declaration"
+        })
+        .count()
 }
 
 fn kotlin_package_scope<'a>(

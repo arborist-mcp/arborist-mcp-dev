@@ -30,6 +30,13 @@ pub(in crate::symbol_dependency) struct KotlinReceiverTypeBindings {
 }
 
 impl KotlinReceiverTypeBindings {
+    /// Returns whether `name` is bound locally, including as an ambiguous
+    /// binding. Callers use this to distinguish "not bound" (a receiver may be
+    /// a named object or type instead) from "bound but ambiguous" (fail closed).
+    pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
+        self.types_by_name.contains_key(name) || self.ambiguous_names.contains(name)
+    }
+
     pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
         if self.ambiguous_names.contains(name) {
             return None;
