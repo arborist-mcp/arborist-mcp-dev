@@ -366,11 +366,19 @@ fn collect_java_body_bindings(
     }
     match node.kind() {
         "local_variable_declaration" => {
-            let type_name = java_declared_type_name(node, source)?.unwrap_or_default();
+            let declared_type = java_declared_type_name(node, source)?;
             let mut cursor = node.walk();
             for declarator in node.children_by_field_name("declarator", &mut cursor) {
                 if let Some(name) = java_declared_name(declarator, source)? {
-                    insert_java_receiver_binding(bindings, name, type_name.clone());
+                    // `var` locals have no usable declared type; infer the
+                    // receiver type from a constructor initializer such as
+                    // `var value = new Helper(...)`.
+                    let type_name = match &declared_type {
+                        Some(type_name) => type_name.clone(),
+                        None => java_constructor_type_from_declarator(declarator, source)?
+                            .unwrap_or_default(),
+                    };
+                    insert_java_receiver_binding(bindings, name, type_name);
                 }
             }
         }
@@ -447,6 +455,26 @@ fn java_parameter_binding(
         return Ok(None);
     };
     Ok(Some((name, type_name)))
+}
+
+/// Infers a receiver type for `var` locals whose initializer is a constructor
+/// call such as `var value = new Helper(...)`. Non-constructor initializers,
+/// array creations, and malformed type spellings return `None` and fail closed.
+fn java_constructor_type_from_declarator(
+    declarator: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    if initializer.kind() != "object_creation_expression" {
+        return Ok(None);
+    }
+    let Some(type_node) = initializer.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let type_name = node_text(type_node, source)?;
+    Ok(java_dotted_type_name(type_name))
 }
 
 fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
@@ -583,6 +611,46 @@ class Holder {
         assert_eq!(run_bindings.type_for("inferred"), None);
         assert_eq!(run_bindings.type_for("primitive"), None);
         assert!(run_bindings.contains("inferred"));
+    }
+
+    #[test]
+    fn var_locals_infer_receiver_types_from_constructor_initializers() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Outer { static class Inner { int helper(int value) { return value; } } }
+class Caller {
+    int run() {
+        var first = new Helper();
+        var nested = new Outer.Inner();
+        var factory = makeHelper();
+        var array = new int[3];
+        return first.helper(1) + nested.helper(2) + factory.helper(3);
+    }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("first") == Some("Helper".to_string()))
+            .unwrap();
+        assert_eq!(run_bindings.type_for("first"), Some("Helper".to_string()));
+        assert_eq!(
+            run_bindings.type_for("nested"),
+            Some("Outer.Inner".to_string())
+        );
+        // Method-call and array initializers have no inferred class type.
+        assert!(run_bindings.contains("factory"));
+        assert_eq!(run_bindings.type_for("factory"), None);
+        assert!(run_bindings.contains("array"));
+        assert_eq!(run_bindings.type_for("array"), None);
     }
 
     #[test]
