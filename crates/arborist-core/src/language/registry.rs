@@ -466,9 +466,10 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     capabilities: LanguageCapabilities(
         LanguageCapabilities::TREE_QUERY.0
             | LanguageCapabilities::SEMANTIC_SKELETON.0
-            | LanguageCapabilities::SYMBOL_INDEX.0,
+            | LanguageCapabilities::SYMBOL_INDEX.0
+            | LanguageCapabilities::FILE_DEPENDENCIES.0,
     ),
-    analysis_revision: "kotlin-index-v3",
+    analysis_revision: "kotlin-import-dependency-v4",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -1484,7 +1485,7 @@ impl LanguageAdapter for KotlinAdapter {
     }
 
     fn supports_incremental_file_dependencies(&self) -> bool {
-        self.syntax.supports_incremental_file_dependencies()
+        true
     }
 
     fn collect_local_file_dependencies(
@@ -1493,8 +1494,8 @@ impl LanguageAdapter for KotlinAdapter {
         root: Node<'_>,
         source: &str,
     ) -> Result<Vec<PathBuf>> {
-        self.syntax
-            .collect_local_file_dependencies(path, root, source)
+        crate::language::kotlin_local_file_dependency_paths(path, root, source)
+            .map(|paths| paths.into_iter().collect())
     }
 
     fn extract_symbols(

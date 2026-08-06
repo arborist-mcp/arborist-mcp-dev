@@ -1,6 +1,6 @@
 # Multi-Language Support Design
 
-**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices, Java query/semantic-skeleton/declaration-indexing/import-dependency/direct-trace slices, C# parsing/raw-query/semantic-skeleton/declaration-indexing/local/root-and-exact-namespace-alias-static-and-namespace-import/global-alias-static-namespace-import-and-base-constructor/base-method/local-and-global-base-alias-import/unshadowed-qualified-base/cross-file-same-namespace-and-nested-source trace slices, and Kotlin parsing/raw-query/semantic-skeleton/declaration-indexing slices implemented
+**Status:** Phases 1-4 implemented; Phase 5 Rust and Go skeleton/index/dependency/trace slices, Java query/semantic-skeleton/declaration-indexing/import-dependency/direct-trace slices, C# parsing/raw-query/semantic-skeleton/declaration-indexing/local/root-and-exact-namespace-alias-static-and-namespace-import/global-alias-static-namespace-import-and-base-constructor/base-method/local-and-global-base-alias-import/unshadowed-qualified-base/cross-file-same-namespace-and-nested-source trace slices, and Kotlin parsing/raw-query/semantic-skeleton/declaration-indexing/import-dependency slices implemented
 **Audience:** Arborist core, PyO3, gateway, and release maintainers
 **Scope:** Rust core architecture for adding source languages without weakening existing Python, C, and C++ behavior.
 
@@ -717,7 +717,7 @@ Suggested order:
    type-alias/static-import bare-call tracing, root-level global-alias/static/namespace-import tracing from all scanned C# files,
    generic static type-receiver, type-alias, and static-import tracing and conservative dependency refresh are
    established; add broader
-   tracing only through dedicated adapter slices. Kotlin now provides `.kt`/`.kts` routing, raw Tree-sitter queries, package-qualified semantic skeletons, and conservative declaration indexing for top-level and nested classes, interfaces, enums, named objects, functions, simple properties, and type aliases. Local declarations inside function bodies are omitted because they lack stable file-level semantic paths. Kotlin contributes no reference facts, so dependency refresh, tracing, and patch capabilities remain capability-gated; Kotlin makes no Java/JVM source-linkage assumptions and intentionally withholds those capabilities until dedicated Kotlin adapter slices establish their contracts.
+   tracing only through dedicated adapter slices. Kotlin now provides `.kt`/`.kts` routing, raw Tree-sitter queries, package-qualified semantic skeletons, and conservative declaration indexing for top-level and nested classes, interfaces, enums, named objects, functions, simple properties, and type aliases. Local declarations inside function bodies are omitted because they lack stable file-level semantic paths. Kotlin contributes no reference facts yet; unique explicit import dependents are now refreshed against `.kt` files that declare the imported package, while tracing and patch capabilities remain capability-gated. Kotlin makes no Java/JVM source-linkage assumptions and intentionally withholds those capabilities until dedicated Kotlin adapter slices establish their contracts.
 
 ## 17. Test And Validation Strategy
 

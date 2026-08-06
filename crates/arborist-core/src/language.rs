@@ -4,6 +4,7 @@ mod go;
 mod io;
 mod java;
 mod javascript;
+mod kotlin;
 mod parser;
 mod paths;
 mod positions;
@@ -35,6 +36,7 @@ pub(crate) use javascript::{
     javascript_named_import_module_paths_with_overrides_and_check,
     javascript_named_reexport_module_paths_with_overrides_and_check,
 };
+pub(crate) use kotlin::kotlin_local_file_dependency_paths;
 pub use parser::{
     ParsedDocument, detect_language, language_for_id, parse_document, parse_document_with_timeout,
     parser_for_language, supported_languages,
