@@ -3681,6 +3681,28 @@ fn resolve_kotlin_reference_with_deadline(
         if same_scope_candidates.len() > 1 {
             return Ok(None);
         }
+        // Companion members are callable unqualified from within the enclosing
+        // class, so a type-scoped caller falls back to `Type::Companion::name`
+        // before package-level and imported functions.
+        if kotlin_package_scope(source_symbol, raw_symbols) != Some(scope_path) {
+            let companion_candidates = semantic_path_index
+                .get(&format!("{scope_path}::Companion::{reference_name}"))
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| {
+                    let candidate = &raw_symbols[*index];
+                    candidate.node_kind == "function_declaration"
+                        && candidate.parameters.len() == call_arity
+                })
+                .collect::<Vec<_>>();
+            if companion_candidates.len() == 1 {
+                return Ok(Some(raw_symbols[companion_candidates[0]].symbol_id.clone()));
+            }
+            if companion_candidates.len() > 1 {
+                return Ok(None);
+            }
+        }
     }
 
     // Callers nested inside a type fall through to a package-level top-level function.
@@ -3829,7 +3851,53 @@ fn resolve_kotlin_qualified_receiver_call(
             deadline,
         );
     }
+    // A class name such as `Config.helper(...)` can also dispatch to a member
+    // of the class's companion object. The receiver resolves as a type path and
+    // only members indexed under `Type::Companion::` are eligible; instance
+    // members and extensions fail closed because they need an instance receiver.
+    if let Some(type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        receiver,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? && let Some(target) = resolve_kotlin_companion_member(
+        &type_path,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+    ) {
+        return Ok(Some(target));
+    }
     Ok(None)
+}
+
+/// Resolves `method` on the companion object of `type_path`. Only a unique
+/// member indexed under `Type::Companion::method` with a matching arity
+/// resolves; an ambiguous overload set fails closed.
+fn resolve_kotlin_companion_member(
+    type_path: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    let companion_scope = format!("{type_path}::Companion");
+    let candidates = semantic_path_index
+        .get(&format!("{companion_scope}::{method}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "function_declaration"
+                && candidate.scope_path.as_deref() == Some(companion_scope.as_str())
+                && candidate.parameters.len() == call_arity
+        })
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4323,6 +4391,10 @@ fn kotlin_package_scope<'a>(
     while let Some((parent, _)) = scope.rsplit_once("::") {
         if raw_symbols.iter().any(|candidate| {
             candidate.semantic_path == scope && is_kotlin_type_declaration(candidate)
+        }) || raw_symbols.iter().any(|candidate| {
+            // Companion scopes such as `Type::Companion` are not indexed as
+            // type declarations themselves, but their parent type is.
+            candidate.semantic_path == parent && is_kotlin_type_declaration(candidate)
         }) {
             scope = parent;
         } else {

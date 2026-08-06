@@ -7829,6 +7829,76 @@ fn does_not_trace_kotlin_typealias_receiver_calls_with_generic_or_cyclic_targets
 }
 
 #[test]
+fn traces_kotlin_companion_object_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Config {\n    companion object {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Config::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_unqualified_companion_member_calls_from_enclosing_class_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Config {\n    companion object {\n        fun helper(value: Int): Int = value\n    }\n    fun run(): Int = helper(1)\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Config::Companion::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Config::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Config::run");
+}
+
+#[test]
+fn does_not_trace_kotlin_instance_or_unknown_member_calls_via_class_name() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Config {\n    fun instance(value: Int): Int = value\n    companion object {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun instanceCall(): Int = Config.instance(1)\n\nfun missingCompanionCall(): Int = Config.missing(1)\n",
+    )
+    .unwrap();
+
+    // A class-name receiver only dispatches to companion members; instance
+    // members and unknown companion members fail closed.
+    let instance_path = "com::example::Config::instance";
+    let instance_trace = trace_symbol_graph(&dir, instance_path, TraceDirection::Callers).unwrap();
+    assert!(instance_trace.callers.is_empty());
+
+    let helper_path = "com::example::Config::Companion::helper";
+    let helper_trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(helper_trace.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

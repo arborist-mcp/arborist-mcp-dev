@@ -229,6 +229,11 @@ pub(crate) fn kotlin_semantic_path(
             && let Some(ancestor_name) = kotlin_symbol_name(candidate, source)?
         {
             ancestors.push(ancestor_name);
+        } else if candidate.kind() == "companion_object" {
+            // Companion members are indexed under `Type::Companion::member` so
+            // class-name receiver calls can dispatch without confusing them
+            // with instance members.
+            ancestors.push("Companion".to_string());
         }
         current = candidate.parent();
     }
@@ -552,5 +557,43 @@ fun outer() {
         assert_eq!(skeleton.available_paths, vec!["demo::outer"]);
         assert!(!skeleton.skeleton.contains("class Local"));
         assert!(!skeleton.skeleton.contains("fun nested"));
+    }
+
+    #[test]
+    fn namespaces_companion_members_under_the_companion_scope() {
+        let source = r#"
+package demo
+
+class Config {
+    fun instance(value: Int): Int = value
+    companion object {
+        fun helper(value: Int): Int = value
+        val label = "x"
+    }
+}
+"#;
+        let path = Path::new("Companion.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let skeleton = build_kotlin_skeleton(path, source, &document.tree, 5, &[], None).unwrap();
+
+        assert_eq!(
+            skeleton.available_paths,
+            vec![
+                "demo::Config",
+                "demo::Config::instance",
+                "demo::Config::Companion::helper",
+                "demo::Config::Companion::label",
+            ]
+        );
+        let helper = skeleton
+            .available_symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "demo::Config::Companion::helper")
+            .unwrap();
+        assert_eq!(
+            helper.scope_path.as_deref(),
+            Some("demo::Config::Companion")
+        );
     }
 }
