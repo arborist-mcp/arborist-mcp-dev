@@ -295,7 +295,7 @@ fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(S
     if let Some(type_node) = variable_children
         .iter()
         .find(|child| kotlin_is_type_node_kind(child.kind()))
-        && let Some(type_name) = kotlin_simple_type_name(node_text(*type_node, source)?)
+        && let Some(type_name) = kotlin_dotted_type_name(node_text(*type_node, source)?)
     {
         return Ok(Some((name, type_name)));
     }
@@ -328,7 +328,7 @@ fn kotlin_parameter_binding(parameter: Node<'_>, source: &str) -> Result<Option<
         return Ok(None);
     };
     let name = node_text(*name_node, source)?.trim().to_string();
-    let Some(type_name) = kotlin_simple_type_name(node_text(*type_node, source)?) else {
+    let Some(type_name) = kotlin_dotted_type_name(node_text(*type_node, source)?) else {
         return Ok(None);
     };
     if name.is_empty() {
@@ -341,7 +341,7 @@ fn kotlin_is_type_node_kind(kind: &str) -> bool {
     matches!(kind, "type" | "user_type" | "nullable_type")
 }
 
-/// Like `kotlin_simple_type_name` but allows dotted qualified names such as
+/// Extracts a named receiver type, allowing dotted qualified names such as
 /// `Outer.Inner`. Generic, nullable, and otherwise complex spellings still fail
 /// closed; empty or malformed dotted segments are rejected by the receiver path
 /// resolver.
@@ -351,17 +351,6 @@ pub(in crate::symbol_dependency) fn kotlin_dotted_type_name(text: &str) -> Optio
         name = stripped.trim();
     }
     if name.is_empty() || name.contains(['<', '(', '[', ':', ',', ' ']) {
-        return None;
-    }
-    Some(name.to_string())
-}
-
-pub(in crate::symbol_dependency) fn kotlin_simple_type_name(text: &str) -> Option<String> {
-    let mut name = text.trim();
-    if let Some(stripped) = name.strip_suffix('?') {
-        name = stripped.trim();
-    }
-    if name.is_empty() || name.contains(['.', '<', '(', '[', ':', ',', ' ']) {
         return None;
     }
     Some(name.to_string())
