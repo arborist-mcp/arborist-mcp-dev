@@ -89,13 +89,15 @@ fn collect_source_files_includes_rust_and_go_after_symbol_indexing_support_lands
 }
 
 #[test]
-fn collect_source_files_skips_kotlin_until_symbol_indexing_support_lands() {
+fn collect_source_files_includes_kotlin_once_symbol_indexing_support_lands() {
     let workspace = temporary_dir();
-    let kotlin = workspace.join("query_only.kt");
+    let kotlin = workspace.join("indexed.kt");
     let python = workspace.join("indexed.py");
     fs::write(
         &kotlin,
-        "package demo; class QueryOnly;
+        "package demo
+
+class Indexed
 ",
     )
     .unwrap();
@@ -108,10 +110,10 @@ fn collect_source_files_skips_kotlin_until_symbol_indexing_support_lands() {
     .unwrap();
 
     let files =
-        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(1))
+        collect_source_files_with_limits(&workspace, WorkspaceScanLimits::with_max_files(2))
             .unwrap();
 
-    assert_eq!(files, vec![python]);
+    assert_eq!(files, vec![kotlin, python]);
 }
 
 #[test]

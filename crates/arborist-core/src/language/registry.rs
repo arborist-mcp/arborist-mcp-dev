@@ -464,9 +464,11 @@ static KOTLIN_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
     display_name: "Kotlin",
     extensions: KOTLIN_EXTENSIONS,
     capabilities: LanguageCapabilities(
-        LanguageCapabilities::TREE_QUERY.0 | LanguageCapabilities::SEMANTIC_SKELETON.0,
+        LanguageCapabilities::TREE_QUERY.0
+            | LanguageCapabilities::SEMANTIC_SKELETON.0
+            | LanguageCapabilities::SYMBOL_INDEX.0,
     ),
-    analysis_revision: "kotlin-skeleton-v2",
+    analysis_revision: "kotlin-index-v3",
     grammar: kotlin_grammar,
 };
 static CSHARP_DESCRIPTOR: LanguageDescriptor = LanguageDescriptor {
@@ -1502,8 +1504,12 @@ impl LanguageAdapter for KotlinAdapter {
         document: &ParsedDocument,
         deadline: Option<&WorkspaceScanDeadline>,
     ) -> Result<Vec<IndexedSymbol>> {
-        self.syntax
-            .extract_symbols(path, source, document, deadline)
+        crate::symbol_extractor::kotlin::index_kotlin_symbols_with_deadline(
+            path,
+            source,
+            document.tree.root_node(),
+            deadline,
+        )
     }
 }
 

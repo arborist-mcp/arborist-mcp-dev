@@ -70,7 +70,11 @@ pub(crate) fn assign_symbol_ids_with_deadline(
         .iter()
         .enumerate()
         .filter_map(|(index, language)| {
-            matches!(language, Some(LanguageId::Java | LanguageId::CSharp)).then_some(index)
+            matches!(
+                language,
+                Some(LanguageId::Java | LanguageId::Kotlin | LanguageId::CSharp)
+            )
+            .then_some(index)
         })
         .collect::<Vec<_>>();
     let java_like_ids_by_index = java_like_symbol_ids(raw_symbols, &java_like_indices);
@@ -180,7 +184,7 @@ fn java_like_symbol_ids(
         let suffix = if indexes.iter().all(|index| {
             matches!(
                 raw_symbols[*index].node_kind.as_str(),
-                "method_declaration" | "constructor_declaration"
+                "method_declaration" | "constructor_declaration" | "function_declaration"
             )
         }) {
             "overload"

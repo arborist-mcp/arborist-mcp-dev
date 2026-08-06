@@ -7,4 +7,5 @@ mod go;
 mod includes;
 mod java;
 mod javascript;
+mod kotlin;
 mod rust;

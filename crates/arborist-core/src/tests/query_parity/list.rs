@@ -94,6 +94,94 @@ public class Counter {
 }
 
 #[test]
+fn lists_kotlin_declarations_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Counter.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        r#"
+package demo.tools
+
+typealias UserId = String
+
+class Counter {
+    val label: String = "counter"
+    fun increment(value: Int): Int = value
+    fun increment(value: Long): Long = value
+}
+"#,
+    )
+    .unwrap();
+
+    let live = list_symbols(&dir, 10).unwrap();
+    assert_eq!(live.indexed_files, 1);
+    assert_eq!(live.total_symbols, 5);
+    assert_eq!(
+        live.symbols
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "demo::tools::Counter",
+            "demo::tools::Counter::increment",
+            "demo::tools::Counter::increment",
+            "demo::tools::Counter::label",
+            "demo::tools::UserId",
+        ]
+    );
+    assert!(
+        live.symbols
+            .iter()
+            .filter(|symbol| symbol.semantic_path == "demo::tools::Counter::increment")
+            .all(|symbol| symbol.symbol_id.contains("#overload["))
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = list_symbols_from_index(&db_path, 10).unwrap();
+    assert_eq!(persisted.indexed_files, 1);
+    assert_eq!(persisted.total_symbols, 5);
+    assert_eq!(
+        persisted
+            .symbols
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        live.symbols
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn list_symbols_uses_dirty_kotlin_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Config.kt");
+    fs::write(&source_path, "package demo\n\nclass Original\n").unwrap();
+
+    let mut vfs = VirtualFileSystem::new();
+    vfs.open_file(
+        &source_path,
+        Some("package demo\n\nobject Config {\n    val answer: Int = 42\n}\n"),
+    )
+    .unwrap();
+
+    let listed = vfs
+        .list_symbols_filtered(&dir, 10, Some("Config.kt"), None)
+        .unwrap();
+    assert_eq!(listed.total_symbols, 2);
+    assert_eq!(
+        listed
+            .symbols
+            .iter()
+            .map(|symbol| symbol.semantic_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["demo::Config", "demo::Config::answer"]
+    );
+}
+
+#[test]
 fn list_symbols_filters_and_honors_limit() {
     let dir = temporary_dir();
     let helper = dir.join("helper.py");
