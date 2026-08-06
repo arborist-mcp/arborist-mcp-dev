@@ -154,3 +154,129 @@ fn refreshes_kotlin_extension_function_dependents() {
         vec!["com::example::Holder::run", "com::example::Holder::second"]
     );
 }
+
+#[test]
+fn refreshes_kotlin_same_package_top_level_function_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("Caller.kt");
+    let callee = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller,
+        "package com.example\n\nfun caller(): Int = helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &callee,
+        "package com.example\n\nfun helper(value: Int): Int = value\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let before =
+        trace_symbol_graph_from_index(&db_path, "com::example::helper", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(before.callers.len(), 1);
+    assert_eq!(before.callers[0].symbol_id, "com::example::caller");
+
+    // Editing the callee must re-resolve the unchanged same-package caller
+    // (loaded from the persisted index) instead of dropping the edge.
+    fs::write(
+        &callee,
+        "package com.example\n\nfun helper(value: Int): Int = value + 1\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &callee).unwrap();
+    assert_eq!(stats.indexed_files, 2);
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let after =
+        trace_symbol_graph_from_index(&db_path, "com::example::helper", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn refreshes_kotlin_same_package_companion_receiver_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("Caller.kt");
+    let callee = dir.join("Config.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller,
+        "package com.example\n\nfun caller(): Int = Config.helper(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &callee,
+        "package com.example\n\nclass Config {\n    companion object {\n        fun helper(value: Int): Int = value\n    }\n}\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let helper_path = "com::example::Config::Companion::helper";
+    let before =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(before.callers.len(), 1);
+    assert_eq!(before.callers[0].symbol_id, "com::example::caller");
+
+    // Editing the callee must re-resolve the unchanged qualified-receiver caller
+    // instead of dropping the companion-member edge.
+    fs::write(
+        &callee,
+        "package com.example\n\nclass Config {\n    companion object {\n        fun helper(value: Int): Int = value + 1\n    }\n}\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &callee).unwrap();
+    assert_eq!(stats.indexed_files, 2);
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let after =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn refreshes_kotlin_same_package_object_chained_receiver_dependents() {
+    let dir = temporary_dir();
+    let caller = dir.join("Caller.kt");
+    let callee = dir.join("Registry.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nfun caller(): Int = Registry.holder.run(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        &callee,
+        "package com.example\n\nobject Registry {\n    val holder = Holder()\n}\n",
+    )
+    .unwrap();
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_path = "com::example::Holder::run";
+    let before =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(before.callers.len(), 1);
+    assert_eq!(before.callers[0].symbol_id, "com::example::caller");
+
+    // Editing the callee must re-resolve the unchanged object-chained-receiver
+    // caller instead of dropping the property-chain edge.
+    fs::write(
+        &callee,
+        "package com.example\n\nobject Registry {\n    val holder = Holder()\n    val extra = 1\n}\n",
+    )
+    .unwrap();
+    let stats = refresh_symbol_index_for_file(&dir, &db_path, &callee).unwrap();
+    assert_eq!(stats.indexed_files, 2);
+    assert_eq!(stats.rebuilt_files, 1);
+    assert_eq!(stats.reused_files, 1);
+
+    let after = trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(after.callers.len(), 1);
+    assert_eq!(after.callers[0].symbol_id, "com::example::caller");
+}
