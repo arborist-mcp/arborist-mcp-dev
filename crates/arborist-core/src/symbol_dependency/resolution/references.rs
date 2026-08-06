@@ -3623,6 +3623,27 @@ fn resolve_kotlin_reference_with_deadline(
     if reference_name.is_empty() {
         return Ok(None);
     }
+    // A constructor-call receiver such as `Outer.Inner().helper(...)` or
+    // `Group().member.helper(...)` resolves the constructed type path first and
+    // then dispatches the member chain like any other instance receiver. The
+    // `()` marker comes from the extractor's call-rooted navigation base; a
+    // function-call base such as `makeOther().helper(...)` fails closed because
+    // the callee does not resolve to a constructible type.
+    if let Some(marker) = reference_name.find("()")
+        && marker > 0
+        && reference_name[marker + 2..].starts_with('.')
+    {
+        return resolve_kotlin_constructor_receiver_call(
+            source_symbol,
+            reference_name,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // A qualified call such as `other.helper(...)` resolves the receiver's type from the
     // caller's local scope and then dispatches to that type's member function. A chained
     // call such as `group.member.helper(...)` additionally resolves each intermediate
@@ -4675,6 +4696,102 @@ fn kotlin_path_nested_class_path(
         }
     }
     (class_count == 1 && other_declaration_count == 0).then_some(nested_path)
+}
+
+/// Resolves a constructor-call receiver chain such as
+/// `Outer.Inner().helper(...)` or `Group().member.helper(...)`. The `()` marker
+/// in `reference_name` names a type path that must resolve to exactly one
+/// constructible class declaration; the remaining hops resolve each
+/// intermediate property's declared type and then dispatch the final member or
+/// extension exactly like an instance receiver. Function-call bases such as
+/// `makeOther().helper(...)`, unknown names, and non-constructible declarations
+/// (interfaces, enums, sealed, abstract, annotation, and inner classes) fail
+/// closed.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_constructor_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(marker) = reference_name.find("()") else {
+        return Ok(None);
+    };
+    if marker == 0 {
+        return Ok(None);
+    }
+    let type_path_text = &reference_name[..marker];
+    let chain_text = reference_name[marker + 2..]
+        .strip_prefix('.')
+        .unwrap_or_default();
+    if type_path_text.is_empty() || chain_text.is_empty() {
+        return Ok(None);
+    }
+    let hops = chain_text.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    // The constructed type path must resolve to exactly one constructible
+    // class; objects, aliases, unknown names, and non-constructible classes
+    // fail closed.
+    let Some(type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        type_path_text,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let candidates =
+        kotlin_constructible_class_indexes(&type_path, raw_symbols, semantic_path_index);
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    // Each intermediate hop must resolve to a uniquely declared property whose
+    // explicit type or bare constructor initializer pins the next receiver;
+    // missing and ambiguous property types fail closed.
+    let mut receiver_path = type_path;
+    for property_name in hops.iter().take(hops.len() - 1) {
+        let Some(next_path) = kotlin_property_type_path(
+            &receiver_path,
+            property_name,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        receiver_path = next_path;
+    }
+    let method = hops[hops.len() - 1];
+    let type_name = receiver_path
+        .rsplit("::")
+        .next()
+        .unwrap_or(method)
+        .to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &receiver_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
 }
 
 /// Resolves a bare call to a class name such as `Other(...)` to the class

@@ -154,14 +154,36 @@ fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>
     Ok((!segments.is_empty()).then(|| segments.join(".")))
 }
 
-/// Collects the dotted segments of a pure identifier navigation chain such as
-/// `other.helper` or `group.member.helper`. Nullable (`?.`), callable-reference
-/// (`::`), call, indexing, and parenthesized receivers fail closed and produce
-/// no direct-call fact so resolution never guesses a target.
+/// Collects the dotted segments of a navigation chain such as `other.helper`,
+/// `group.member.helper`, `Outer.Inner().helper`, or `Group().member.helper`.
+/// The base may be a plain identifier, a pure identifier navigation chain, or a
+/// call expression over either; a call base marks its last segment with `()` so
+/// resolution can distinguish a constructor-call receiver from a class-name
+/// receiver. Nullable (`?.`), callable-reference (`::`), indexing, and
+/// parenthesized receivers still fail closed and produce no direct-call fact so
+/// resolution never guesses a target.
 fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
     if node.kind() == "identifier" {
         let segment = node_text(node, source)?.trim().to_string();
         return Ok((!segment.is_empty()).then(|| vec![segment]));
+    }
+    // A call base such as `Group()` in `Group().member.helper(...)` or
+    // `Outer.Inner()` in `Outer.Inner().helper(...)` records the constructed
+    // type path with a `()` marker on its last segment. A function-call base
+    // such as `makeOther()` is recorded the same way and fails closed later in
+    // resolution because the callee is not a constructible type.
+    if node.kind() == "call_expression" {
+        let Some(callee) = node.named_child(0) else {
+            return Ok(None);
+        };
+        let Some(mut segments) = kotlin_navigation_segments(callee, source)? else {
+            return Ok(None);
+        };
+        let Some(last) = segments.last_mut() else {
+            return Ok(None);
+        };
+        last.push_str("()");
+        return Ok(Some(segments));
     }
     if node.kind() != "navigation_expression" {
         return Ok(None);
@@ -350,8 +372,12 @@ fun factory(): Other = Other()
             .unwrap();
         assert!(caller.references_by_name.contains("other.helper"));
         assert!(caller.references_by_name.contains("group.member.helper"));
+        // Call-rooted navigation bases are recorded with a `()` marker; the
+        // extractor cannot tell a constructor call from a function call, so
+        // `factory().helper` is recorded here and resolution fails closed
+        // because `factory` does not resolve to a constructible type.
+        assert!(caller.references_by_name.contains("factory().helper"));
         assert!(!caller.references_by_name.contains("other?.helper"));
-        assert!(!caller.references_by_name.contains("factory().helper"));
         assert_eq!(
             caller.call_arities_by_name.get("other.helper"),
             Some(&[1usize].into_iter().collect())
@@ -359,6 +385,56 @@ fun factory(): Other = Other()
         assert_eq!(
             caller.call_arities_by_name.get("group.member.helper"),
             Some(&[1usize].into_iter().collect())
+        );
+    }
+
+    #[test]
+    fn records_kotlin_constructor_chain_receiver_calls() {
+        let source = r#"
+package com.example
+
+class Outer {
+    class Inner {
+        fun helper(value: Int): Int = value
+    }
+}
+
+class Group {
+    val member: Inner = Inner()
+    fun helper(value: Int): Int = value
+}
+
+fun caller(): Int {
+    Outer.Inner().helper(1)
+    Group().member.helper(2)
+    Group().helper(3)
+    return 0
+}
+"#;
+        let path = Path::new("Caller.kt");
+        let document = parse_document(path, source).unwrap();
+        assert!(!document.tree.root_node().has_error());
+        let symbols =
+            index_kotlin_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+        let caller = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::caller")
+            .unwrap();
+        // A call-rooted navigation base records the constructed type path with
+        // a `()` marker, and the inner constructor call keeps its own fact.
+        assert!(caller.references_by_name.contains("Outer.Inner().helper"));
+        assert!(caller.references_by_name.contains("Group().member.helper"));
+        assert!(caller.references_by_name.contains("Group().helper"));
+        assert!(caller.references_by_name.contains("Outer.Inner"));
+        assert!(caller.references_by_name.contains("Group"));
+        assert_eq!(
+            caller.call_arities_by_name.get("Outer.Inner().helper"),
+            Some(&[1usize].into_iter().collect())
+        );
+        assert_eq!(
+            caller.call_arities_by_name.get("Outer.Inner"),
+            Some(&[0usize].into_iter().collect())
         );
     }
 

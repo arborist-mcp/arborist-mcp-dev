@@ -9347,3 +9347,116 @@ fn does_not_trace_kotlin_object_property_chains_with_unknown_or_shadowed_objects
     let trace = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
     assert!(trace.callers.is_empty());
 }
+
+#[test]
+fn traces_kotlin_constructor_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nclass Group {\n    val member: Outer.Inner = Outer.Inner()\n    fun helper(value: Int): Int = value\n}\n\nfun caller(): Int {\n    val a = Outer.Inner().helper(1)\n    val b = Group().member.helper(2)\n    val c = Group().helper(3)\n    return a + b + c\n}\n",
+    )
+    .unwrap();
+
+    // A constructor-call receiver chain dispatches like any other instance
+    // receiver: the constructed type path pins the receiver and each
+    // intermediate property hop resolves its declared type.
+    for helper_path in [
+        "com::example::Outer::Inner::helper",
+        "com::example::Group::helper",
+    ] {
+        let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, helper_path);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for helper_path in [
+        "com::example::Outer::Inner::helper",
+        "com::example::Group::helper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn traces_kotlin_imported_constructor_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir
+        .join("src")
+        .join("com")
+        .join("example")
+        .join("Caller.kt");
+    let outer_path = dir.join("src").join("org").join("util").join("Outer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(caller_path.parent().unwrap()).unwrap();
+    fs::create_dir_all(outer_path.parent().unwrap()).unwrap();
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Outer\nimport org.util.Group\n\nfun caller(): Int {\n    val a = Outer.Inner().helper(1)\n    val b = Group().member.helper(2)\n    val c = Group().helper(3)\n    return a + b + c\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &outer_path,
+        "package org.util\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nclass Group {\n    val member: Outer.Inner = Outer.Inner()\n    fun helper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    // Explicitly imported constructible types pin constructor-chain receivers
+    // exactly like same-package classes.
+    for helper_path in [
+        "org::util::Outer::Inner::helper",
+        "org::util::Group::helper",
+    ] {
+        let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(live.indexed_files, 2);
+        assert_eq!(live.symbol.symbol_id, helper_path);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for helper_path in [
+        "org::util::Outer::Inner::helper",
+        "org::util::Group::helper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.indexed_files, 2);
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn does_not_trace_kotlin_constructor_chain_receiver_calls_with_function_call_or_non_constructible_bases()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun makeOther(): Other = Other()\n\ninterface Shape {\n    fun draw(): Int\n}\n\nabstract class AbstractBase {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int {\n    val a = makeOther().helper(1)\n    val b = Unknown().helper(2)\n    val c = Outer.Missing().helper(3)\n    val d = Shape().draw(4)\n    val e = AbstractBase().run(5)\n    return a + b + c + d + e\n}\n",
+    )
+    .unwrap();
+
+    // A function-call base, an unknown type, a missing nested type, and
+    // non-constructible bases (interface, abstract class) all fail closed
+    // instead of guessing a chain target.
+    for helper_path in [
+        "com::example::Other::helper",
+        "com::example::Outer::Inner::helper",
+        "com::example::Shape::draw",
+        "com::example::AbstractBase::run",
+    ] {
+        let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+        assert!(
+            trace.callers.is_empty(),
+            "expected no callers for {helper_path}"
+        );
+    }
+}
