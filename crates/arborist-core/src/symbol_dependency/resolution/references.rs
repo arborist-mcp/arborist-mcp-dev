@@ -3922,6 +3922,72 @@ fn resolve_kotlin_chained_receiver_call(
         kotlin_import_contexts_by_file,
         deadline,
     )?;
+    // A companion chain such as `Config.Companion.member(...)` or
+    // `Config.Companion.holder.run(...)` resolves the class name as a type path
+    // and dispatches only within the companion scope; instance members and
+    // extensions fail closed because a class name cannot be an instance
+    // receiver. A local binding of the same name shadows the class receiver.
+    if hops.len() >= 3
+        && hops[1] == "Companion"
+        && !bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.contains(hops[0]))
+        && let Some(class_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            hops[0],
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        let companion_scope = format!("{class_path}::Companion");
+        let mut receiver_path = companion_scope.clone();
+        for property_name in hops.iter().skip(2).take(hops.len() - 3) {
+            let Some(next_path) = kotlin_property_type_path(
+                &receiver_path,
+                property_name,
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            receiver_path = next_path;
+        }
+        let method = hops[hops.len() - 1];
+        if receiver_path == companion_scope {
+            // A direct companion member call never falls through to extensions.
+            return Ok(resolve_kotlin_companion_member(
+                &class_path,
+                method,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+            ));
+        }
+        let type_name = receiver_path
+            .rsplit("::")
+            .next()
+            .unwrap_or(method)
+            .to_string();
+        return resolve_kotlin_member_or_extension(
+            source_symbol,
+            &receiver_path,
+            &type_name,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     // The first hop is either a locally bound receiver or a named object
     // declaration such as `Config` in `Config.holder.run()`. An ambiguous local
     // binding fails closed instead of falling through to a same-named object.
