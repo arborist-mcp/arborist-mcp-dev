@@ -335,7 +335,7 @@ fn kotlin_is_type_node_kind(kind: &str) -> bool {
     matches!(kind, "type" | "user_type" | "nullable_type")
 }
 
-fn kotlin_simple_type_name(text: &str) -> Option<String> {
+pub(in crate::symbol_dependency) fn kotlin_simple_type_name(text: &str) -> Option<String> {
     let mut name = text.trim();
     if let Some(stripped) = name.strip_suffix('?') {
         name = stripped.trim();

@@ -148,34 +148,42 @@ fn collect_direct_local_calls(
 }
 
 fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>> {
-    if callee.kind() == "identifier" {
-        let reference = node_text(callee, source)?.trim().to_string();
-        return Ok((!reference.is_empty()).then_some(reference));
+    let Some(segments) = kotlin_navigation_segments(callee, source)? else {
+        return Ok(None);
+    };
+    Ok((!segments.is_empty()).then(|| segments.join(".")))
+}
+
+/// Collects the dotted segments of a pure identifier navigation chain such as
+/// `other.helper` or `group.member.helper`. Nullable (`?.`), callable-reference
+/// (`::`), call, indexing, and parenthesized receivers fail closed and produce
+/// no direct-call fact so resolution never guesses a target.
+fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
+    if node.kind() == "identifier" {
+        let segment = node_text(node, source)?.trim().to_string();
+        return Ok((!segment.is_empty()).then(|| vec![segment]));
     }
-    // Qualified receiver calls such as `other.helper(...)` record the receiver and
-    // member together. Nullable (`?.`), callable-reference (`::`), chained, and
-    // complex receivers fail closed and produce no direct-call fact.
-    if callee.kind() != "navigation_expression" {
+    if node.kind() != "navigation_expression" {
         return Ok(None);
     }
-    let text = node_text(callee, source)?.trim();
+    let text = node_text(node, source)?.trim();
     if text.contains('?') || text.contains("::") {
         return Ok(None);
     }
-    let mut cursor = callee.walk();
-    let children = callee.named_children(&mut cursor).collect::<Vec<_>>();
-    if children.len() != 2
-        || children[0].kind() != "identifier"
-        || children[1].kind() != "identifier"
-    {
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 || children[1].kind() != "identifier" {
         return Ok(None);
     }
-    let receiver = node_text(children[0], source)?.trim();
-    let member = node_text(children[1], source)?.trim();
-    if receiver.is_empty() || member.is_empty() {
+    let Some(mut segments) = kotlin_navigation_segments(children[0], source)? else {
+        return Ok(None);
+    };
+    let member = node_text(children[1], source)?.trim().to_string();
+    if member.is_empty() {
         return Ok(None);
     }
-    Ok(Some(format!("{receiver}.{member}")))
+    segments.push(member);
+    Ok(Some(segments))
 }
 
 fn collect_direct_local_calls_from_node(
@@ -311,7 +319,7 @@ object Config {
     }
 
     #[test]
-    fn records_kotlin_qualified_receiver_calls_and_skips_chained_or_nullable_receivers() {
+    fn records_kotlin_qualified_receiver_calls_and_skips_complex_or_nullable_receivers() {
         let source = r#"
 package com.example
 
@@ -324,8 +332,11 @@ fun caller(other: Other): Int {
     other?.helper(2)
     val group = Group()
     group.member.helper(3)
+    factory().helper(4)
     return 0
 }
+
+fun factory(): Other = Other()
 "#;
         let path = Path::new("Caller.kt");
         let document = parse_document(path, source).unwrap();
@@ -338,10 +349,15 @@ fun caller(other: Other): Int {
             .find(|symbol| symbol.semantic_path == "com::example::caller")
             .unwrap();
         assert!(caller.references_by_name.contains("other.helper"));
+        assert!(caller.references_by_name.contains("group.member.helper"));
         assert!(!caller.references_by_name.contains("other?.helper"));
-        assert!(!caller.references_by_name.contains("group.member.helper"));
+        assert!(!caller.references_by_name.contains("factory().helper"));
         assert_eq!(
             caller.call_arities_by_name.get("other.helper"),
+            Some(&[1usize].into_iter().collect())
+        );
+        assert_eq!(
+            caller.call_arities_by_name.get("group.member.helper"),
             Some(&[1usize].into_iter().collect())
         );
     }

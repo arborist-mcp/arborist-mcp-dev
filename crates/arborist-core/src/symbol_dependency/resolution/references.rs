@@ -31,7 +31,7 @@ use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
-    KotlinImportContext, kotlin_receiver_type_bindings_for_function,
+    KotlinImportContext, kotlin_receiver_type_bindings_for_function, kotlin_simple_type_name,
     resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
@@ -3624,10 +3624,24 @@ fn resolve_kotlin_reference_with_deadline(
         return Ok(None);
     }
     // A qualified call such as `other.helper(...)` resolves the receiver's type from the
-    // caller's local scope and then dispatches to that type's member function.
+    // caller's local scope and then dispatches to that type's member function. A chained
+    // call such as `group.member.helper(...)` additionally resolves each intermediate
+    // property's declared type before dispatching the final member.
     if let Some((receiver, method)) = reference_name.split_once('.') {
-        if receiver.is_empty() || method.is_empty() || method.contains('.') {
+        if receiver.is_empty() || method.is_empty() {
             return Ok(None);
+        }
+        if method.contains('.') {
+            return resolve_kotlin_chained_receiver_call(
+                source_symbol,
+                reference_name,
+                call_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                kotlin_import_contexts_by_file,
+                deadline,
+            );
         }
         return resolve_kotlin_qualified_receiver_call(
             source_symbol,
@@ -3756,8 +3770,157 @@ fn resolve_kotlin_qualified_receiver_call(
     else {
         return Ok(None);
     };
-    // Member functions shadow extensions, so an ambiguous member overload set
-    // fails closed instead of guessing an extension target.
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &type_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_chained_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = reference_name.split('.').collect::<Vec<_>>();
+    if hops.len() < 3 {
+        return Ok(None);
+    }
+    let Some(bindings) = kotlin_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(first_type_name) = bindings.type_for(hops[0]) else {
+        return Ok(None);
+    };
+    let Some(mut type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        &first_type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    // Each intermediate hop must resolve to a uniquely declared property whose
+    // explicit type pins the next receiver; inferred, generic, or missing
+    // property types fail closed.
+    for property_name in hops.iter().skip(1).take(hops.len() - 2) {
+        let Some(next_path) = kotlin_property_type_path(
+            &type_path,
+            property_name,
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path = next_path;
+    }
+    let method = hops[hops.len() - 1];
+    let type_name = type_path.rsplit("::").next().unwrap_or(method).to_string();
+    resolve_kotlin_member_or_extension(
+        source_symbol,
+        &type_path,
+        &type_name,
+        method,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the declared type path of `property_name` on `owner_type_path`. Only a
+/// unique property with an explicit simple, non-nullable type resolves; inferred,
+/// generic, nullable, and ambiguous property types fail closed.
+#[allow(clippy::too_many_arguments)]
+fn kotlin_property_type_path(
+    owner_type_path: &str,
+    property_name: &str,
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if property_name.is_empty() {
+        return Ok(None);
+    }
+    let candidates = semantic_path_index
+        .get(&format!("{owner_type_path}::{property_name}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "property_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let Some(return_type) = raw_symbols[candidates[0]].return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(type_name) = kotlin_simple_type_name(return_type) else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Dispatches `method` on `type_path`: a unique member function shadows extensions,
+/// an ambiguous member overload set fails closed instead of guessing an extension
+/// target, and otherwise an unambiguous top-level extension resolves the call.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_member_or_extension(
+    source_symbol: &IndexedSymbol,
+    type_path: &str,
+    type_name: &str,
+    method: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
     let target_path = format!("{type_path}::{method}");
     let member_candidates = semantic_path_index
         .get(&target_path)
@@ -3767,7 +3930,7 @@ fn resolve_kotlin_qualified_receiver_call(
         .filter(|index| {
             let candidate = &raw_symbols[*index];
             candidate.node_kind == "function_declaration"
-                && candidate.scope_path.as_deref() == Some(type_path.as_str())
+                && candidate.scope_path.as_deref() == Some(type_path)
                 && candidate.parameters.len() == call_arity
         })
         .collect::<Vec<_>>();
@@ -3779,7 +3942,7 @@ fn resolve_kotlin_qualified_receiver_call(
     }
     resolve_kotlin_extension_call(
         source_symbol,
-        &type_name,
+        type_name,
         method,
         call_arity,
         raw_symbols,

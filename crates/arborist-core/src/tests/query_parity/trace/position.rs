@@ -7541,3 +7541,101 @@ fn does_not_trace_kotlin_extension_calls_with_ambiguous_or_unknown_receivers() {
         trace_symbol_graph(&dir, "com::example::Holder::run", TraceDirection::Callees).unwrap();
     assert!(ambiguous_trace.callees.is_empty());
 }
+
+#[test]
+fn traces_kotlin_same_file_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val member: Other = Other()\n}\n\nclass Holder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Other::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_cross_file_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let helper_path = dir.join("Helper.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nclass Group {\n    val member: Other = Other()\n}\n\nclass Holder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.memberHelper(1)\n    }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &helper_path,
+        "package com.example\n\nclass Other {\n    fun memberHelper(value: Int): Int = value\n}\n",
+    )
+    .unwrap();
+
+    let member_helper = "com::example::Other::memberHelper";
+    let live = trace_symbol_graph(&dir, member_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.symbol.symbol_id, member_helper);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, member_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn traces_kotlin_property_chain_receiver_calls_to_extension_functions_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other\n\nfun Other.helper(value: Int): Int = value\n\nclass Group {\n    val member: Other = Other()\n}\n\nclass Holder {\n    fun run(): Int {\n        val group = Group()\n        return group.member.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Holder::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Holder::run");
+}
+
+#[test]
+fn does_not_trace_kotlin_property_chain_receiver_calls_with_inferred_or_missing_property_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nclass Group {\n    val inferred = Other()\n}\n\nfun unknownReceiver(): Int {\n    val group = Group()\n    return group.inferred.helper(1)\n}\n\nfun missingProperty(): Int {\n    val group = Group()\n    return group.absent.helper(1)\n}\n\nfun unknownReceiverBinding(): Int {\n    val group = makeGroup()\n    return group.inferred.helper(1)\n}\n\nfun makeGroup(): Group = Group()\n",
+    )
+    .unwrap();
+
+    // Inferred (untyped) and missing properties, plus function-return receiver
+    // bindings, all fail closed instead of guessing a chain target.
+    let helper_path = "com::example::Other::helper";
+    let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}
