@@ -31,8 +31,8 @@ use super::super::javascript::{
     JavaScriptImportContext, resolve_javascript_named_import_binding_for_reference,
 };
 use super::super::kotlin::{
-    KotlinImportContext, kotlin_receiver_type_bindings_for_function, kotlin_simple_type_name,
-    resolve_kotlin_import_binding_for_reference,
+    KotlinImportContext, kotlin_dotted_type_name, kotlin_receiver_type_bindings_for_function,
+    kotlin_simple_type_name, resolve_kotlin_import_binding_for_reference,
 };
 use super::super::rust::{RustOutOfLineModuleContext, resolve_rust_out_of_line_module_reference};
 use super::cpp_callables::{
@@ -3643,11 +3643,26 @@ fn resolve_kotlin_reference_with_deadline(
                 deadline,
             );
         }
-        return resolve_kotlin_qualified_receiver_call(
+        if let Some(target) = resolve_kotlin_qualified_receiver_call(
             source_symbol,
             receiver,
             method,
             call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(target));
+        }
+        // A qualified call such as `Outer.Inner(...)` may also construct a
+        // nested class when the member interpretation fails; the constructor
+        // path resolves the dotted type and requires a unique constructible
+        // class, so unknown or non-constructible names still fail closed.
+        return resolve_kotlin_constructor_call(
+            source_symbol,
+            reference_name,
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -4134,7 +4149,7 @@ fn kotlin_property_type_path(
     let Some(return_type) = raw_symbols[candidates[0]].return_type.as_deref() else {
         return Ok(None);
     };
-    let Some(type_name) = kotlin_simple_type_name(return_type) else {
+    let Some(type_name) = kotlin_dotted_type_name(return_type) else {
         return Ok(None);
     };
     resolve_kotlin_initializer_type_path(
@@ -4357,16 +4372,22 @@ fn resolve_kotlin_receiver_type_path(
     // so resolution walks the alias chain until it reaches a concrete class or
     // interface declaration. Each hop applies the same scope/import rules, and
     // a visited set fails closed on cyclic aliases instead of looping forever.
-    let mut current_name = type_name.to_string();
+    // A dotted name such as `Outer.Inner` resolves its first segment with the
+    // same scope/import rules and then walks nested type declarations.
+    let segments = type_name.split('.').collect::<Vec<_>>();
+    if segments.is_empty()
+        || segments.iter().any(|segment| {
+            segment.is_empty()
+                || !segment
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        })
+    {
+        return Ok(None);
+    }
     let mut visited = BTreeSet::new();
-    loop {
-        if current_name.is_empty()
-            || !current_name
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || character == '_')
-        {
-            return Ok(None);
-        }
+    let mut current_name = segments[0].to_string();
+    let resolved_path = loop {
         let same_package_path = kotlin_package_scope(source_symbol, raw_symbols)
             .map(|scope| format!("{scope}::{current_name}"));
         let same_package_is_type = same_package_path
@@ -4396,10 +4417,26 @@ fn resolve_kotlin_receiver_type_path(
             return Ok(None);
         }
         let Some(alias_target) = kotlin_type_alias_target(&candidate_path, raw_symbols) else {
-            return Ok(Some(candidate_path));
+            break candidate_path;
         };
         current_name = alias_target;
+    };
+    // Remaining segments must name nested type declarations under the resolved
+    // path; nested aliases and missing or ambiguous members fail closed.
+    for segment in segments.iter().skip(1) {
+        let nested_path = format!("{resolved_path}::{segment}");
+        if !kotlin_path_is_nested_type_declaration(&nested_path, raw_symbols)
+            || !visited.insert(nested_path.clone())
+        {
+            return Ok(None);
+        }
     }
+    Ok(Some(
+        segments
+            .iter()
+            .skip(1)
+            .fold(resolved_path, |path, segment| format!("{path}::{segment}")),
+    ))
 }
 
 /// Returns the target type name of a uniquely declared type alias such as
@@ -4420,6 +4457,19 @@ fn kotlin_path_is_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) ->
     raw_symbols
         .iter()
         .any(|candidate| candidate.semantic_path == path && is_kotlin_type_declaration(candidate))
+}
+
+/// A nested segment of a dotted receiver path must be a concrete class,
+/// interface, or object declaration; nested type aliases are not walked so they
+/// fail closed instead of returning a non-terminal path.
+fn kotlin_path_is_nested_type_declaration(path: &str, raw_symbols: &[IndexedSymbol]) -> bool {
+    raw_symbols.iter().any(|candidate| {
+        candidate.semantic_path == path
+            && matches!(
+                candidate.node_kind.as_str(),
+                "class_declaration" | "interface_declaration" | "object_declaration"
+            )
+    })
 }
 
 /// Resolves an unbound receiver name to a named object declaration such as
@@ -4492,8 +4542,27 @@ fn resolve_kotlin_constructor_call(
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    if type_name.is_empty() || type_name.contains('.') || type_name.contains("::") {
+    if type_name.is_empty() || type_name.contains("::") {
         return Ok(None);
+    }
+    // A qualified constructor call such as `Outer.Inner(...)` resolves the
+    // dotted type path first; the terminal path must name exactly one
+    // constructible class declaration.
+    if type_name.contains('.') {
+        let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let candidates =
+            kotlin_constructible_class_indexes(&type_path, raw_symbols, semantic_path_index);
+        return Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()));
     }
     // A nested class inside the caller's enclosing type shadows package-level and
     // imported declarations of the same name. The scope is only a type scope when

@@ -9,7 +9,7 @@ use crate::language::{
     read_source,
 };
 use crate::model::LanguageId;
-use crate::semantic::kotlin::is_kotlin_semantic_symbol_node;
+use crate::semantic::kotlin::{is_kotlin_semantic_symbol_node, kotlin_constructor_callee_name};
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,19 +299,18 @@ fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(S
     {
         return Ok(Some((name, type_name)));
     }
-    // Fall back to a constructor-call initializer such as `val x = Other()`.
+    // Fall back to a constructor-call initializer such as `val x = Other()` or
+    // `val x = Outer.Inner()`; qualified callees must be pure identifier chains.
     let initializer = children
         .iter()
         .find(|child| child.kind() == "call_expression")
         .copied();
     if let Some(expression) = initializer
         && let Some(callee) = expression.named_child(0)
-        && callee.kind() == "identifier"
+        && let Some(type_name) = kotlin_constructor_callee_name(callee, source)?
+        && !type_name.is_empty()
     {
-        let type_name = node_text(callee, source)?.trim().to_string();
-        if !type_name.is_empty() {
-            return Ok(Some((name, type_name)));
-        }
+        return Ok(Some((name, type_name)));
     }
     Ok(None)
 }
@@ -340,6 +339,21 @@ fn kotlin_parameter_binding(parameter: Node<'_>, source: &str) -> Result<Option<
 
 fn kotlin_is_type_node_kind(kind: &str) -> bool {
     matches!(kind, "type" | "user_type" | "nullable_type")
+}
+
+/// Like `kotlin_simple_type_name` but allows dotted qualified names such as
+/// `Outer.Inner`. Generic, nullable, and otherwise complex spellings still fail
+/// closed; empty or malformed dotted segments are rejected by the receiver path
+/// resolver.
+pub(in crate::symbol_dependency) fn kotlin_dotted_type_name(text: &str) -> Option<String> {
+    let mut name = text.trim();
+    if let Some(stripped) = name.strip_suffix('?') {
+        name = stripped.trim();
+    }
+    if name.is_empty() || name.contains(['<', '(', '[', ':', ',', ' ']) {
+        return None;
+    }
+    Some(name.to_string())
 }
 
 pub(in crate::symbol_dependency) fn kotlin_simple_type_name(text: &str) -> Option<String> {

@@ -334,11 +334,42 @@ fn kotlin_property_declared_or_inferred_type(node: Node<'_>, source: &str) -> Op
     }
     let call = kotlin_direct_child_by_kind(node, &["call_expression"])?;
     let callee = call.named_child(0)?;
-    if callee.kind() != "identifier" {
-        return None;
+    kotlin_constructor_callee_name(callee, source)
+        .ok()
+        .flatten()
+}
+
+/// Returns the pure dotted identifier spelling of a constructor callee such as
+/// `Other` in `Other()` or `Outer.Inner` in `Outer.Inner()`. Nullable,
+/// callable-reference, call, indexing, and parenthesized receivers fail closed.
+pub(crate) fn kotlin_constructor_callee_name(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    if node.kind() == "identifier" {
+        let name = node_text(node, source)?.trim().to_string();
+        return Ok((!name.is_empty()).then_some(name));
     }
-    let type_name = node_text(callee, source).ok()?.trim().to_string();
-    (!type_name.is_empty()).then_some(type_name)
+    if node.kind() != "navigation_expression" {
+        return Ok(None);
+    }
+    let text = node_text(node, source)?.trim();
+    if text.contains('?') || text.contains("::") {
+        return Ok(None);
+    }
+    let mut cursor = node.walk();
+    let children = node.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 || children[1].kind() != "identifier" {
+        return Ok(None);
+    }
+    let Some(prefix) = kotlin_constructor_callee_name(children[0], source)? else {
+        return Ok(None);
+    };
+    let member = node_text(children[1], source)?.trim().to_string();
+    if member.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("{prefix}.{member}")))
 }
 
 fn kotlin_full_declaration(node: Node<'_>, source: &str) -> Result<String> {
