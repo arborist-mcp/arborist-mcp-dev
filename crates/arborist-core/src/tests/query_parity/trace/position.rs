@@ -8215,6 +8215,140 @@ fn traces_kotlin_factory_inferred_binding_property_chain_receiver_calls_in_live_
 }
 
 #[test]
+fn traces_kotlin_factory_inferred_nested_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A dotted factory return type pins the receiver through the same nested
+    // type-path rules as a directly declared nested type.
+    let helper_path = "com::example::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_cross_file_factory_inferred_nested_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factory.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n",
+    )
+    .unwrap();
+
+    let helper_path = "com::example::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_imported_factory_inferred_nested_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let factory_path = dir.join("Factory.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.makeInner\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package org.util\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n",
+    )
+    .unwrap();
+
+    let helper_path = "org::util::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_factory_inferred_nested_binding_property_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Holder {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        val holder: Holder = Holder()\n    }\n}\n\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun caller(): Int {\n    val inner = makeInner()\n    return inner.holder.run(1)\n}\n",
+    )
+    .unwrap();
+
+    let run_path = "com::example::Holder::run";
+    let live = trace_symbol_graph(&dir, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, run_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn does_not_trace_kotlin_factory_inferred_nested_receiver_calls_with_missing_or_undeclared_returns()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun makeMissing(): Outer.Absent = Outer.Absent()\n\nfun makeExpressionBody() = Outer.Inner()\n\nfun missingNestedReturn(): Int {\n    val inner = makeMissing()\n    return inner.helper(1)\n}\n\nfun expressionBodyReturn(): Int {\n    val inner = makeExpressionBody()\n    return inner.helper(1)\n}\n\nfun unknownFactory(): Int {\n    val inner = missingFactory()\n    return inner.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A dotted factory return type that names a missing nested type, a factory
+    // without a declared return type, and an unknown factory all fail closed
+    // instead of guessing a receiver target.
+    let helper_path = "com::example::Outer::Inner::helper";
+    let trace = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(trace.callers.is_empty());
+}
+
+#[test]
 fn traces_kotlin_object_receiver_member_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");

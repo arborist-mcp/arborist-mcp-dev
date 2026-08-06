@@ -4248,8 +4248,10 @@ fn kotlin_property_type_path(
 /// `val member = Other()` or `makeOther` in `val member = makeOther()` to a
 /// type path. A directly declared type wins; otherwise a uniquely resolved
 /// top-level function's declared return type pins the receiver, resolved in the
-/// factory's own file and package scope. Unknown, ambiguous, and
-/// undeclared-return factories fail closed so receivers never guess a target.
+/// factory's own file and package scope. A dotted return type such as
+/// `Outer.Inner` pins the receiver through the same dotted type-path rules as
+/// a directly declared nested type. Unknown, ambiguous, and undeclared-return
+/// factories fail closed so receivers never guess a target.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_initializer_type_path(
     source_symbol: &IndexedSymbol,
@@ -4289,7 +4291,7 @@ fn resolve_kotlin_initializer_type_path(
     let Some(function_return_type) = factory
         .return_type
         .as_deref()
-        .and_then(kotlin_simple_type_name)
+        .and_then(kotlin_dotted_type_name)
     else {
         return Ok(None);
     };
