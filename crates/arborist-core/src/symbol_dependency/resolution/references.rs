@@ -3429,17 +3429,94 @@ fn resolve_java_qualified_initializer_function_path(
         deadline,
     )?
     else {
+        // No receiver bindings are available; fall through to the static
+        // type receiver interpretation below.
+        return resolve_java_static_type_initializer_function(
+            source_symbol,
+            normalized,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        );
+    };
+    // A bound receiver shadows any same-named type. Only receivers with an
+    // explicit or constructor-inferred type are eligible; factory-inferred
+    // `var` receivers would require recursive initializer resolution and fail
+    // closed instead of falling through to a static type interpretation.
+    if bindings.contains(receiver_name) {
+        let Some(type_name) = bindings.type_for(receiver_name) else {
+            return Ok(None);
+        };
+        let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_java_member_chain_from_type_path(
+            &type_path,
+            member_chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        );
+    }
+    resolve_java_static_type_initializer_function(
+        source_symbol,
+        normalized,
+        call_arity,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves a `var` local's qualified factory initializer whose receiver is a
+/// static type, such as `var value = Util.make()` or
+/// `var value = Util.Nested.nestedMake()`, to a unique directly declared
+/// static method symbol path on that type. The reference splits at the last
+/// dot so the leading segments name the type (including nested types); the
+/// type resolves through the same same-package, explicit-import,
+/// exact-qualified, and nested type rules as other Java receivers, and the
+/// method must be a unique, directly declared, non-varargs static method with
+/// the call arity. Unknown or ambiguous types and methods fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java static type initializer resolution inputs explicit"
+)]
+fn resolve_java_static_type_initializer_function(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((type_reference, method_name)) = reference_name.rsplit_once('.') else {
         return Ok(None);
     };
-    // Only receivers with an explicit or constructor-inferred type are
-    // eligible; factory-inferred `var` receivers would require recursive
-    // initializer resolution and fail closed instead.
-    let Some(type_name) = bindings.type_for(receiver_name) else {
+    if type_reference.is_empty() || method_name.is_empty() {
         return Ok(None);
-    };
+    }
     let Some(type_path) = resolve_java_receiver_type_path(
         source_symbol,
-        &type_name,
+        type_reference,
         raw_symbols,
         semantic_path_index,
         file_overrides,
@@ -3449,16 +3526,27 @@ fn resolve_java_qualified_initializer_function_path(
     else {
         return Ok(None);
     };
-    resolve_java_member_chain_from_type_path(
-        &type_path,
-        member_chain,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        call_arity,
-        deadline,
-    )
+    let target_path = format!("{type_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_static)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    Ok((candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone()))
 }
 
 /// Splits a constructor-rooted field chain such as `new Holder().group.entry`

@@ -12941,10 +12941,6 @@ class Caller {
         var v = unknown.makeInner();
         return v.helper(1);
     }
-    int staticTypeReceiver() {
-        var v = Util.make();
-        return v.helper(1);
-    }
     int factoryInferredHop() {
         var a = makeA();
         var b = a.make();
@@ -12972,7 +12968,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "unbound, static, factory-inferred, arity-mismatched, and unknown `this`/`super` qualified initializer receivers must fail closed"
+        "unbound, factory-inferred, arity-mismatched, and unknown `this`/`super` qualified initializer receivers must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -14210,4 +14206,270 @@ class Caller {
             "com::example::Caller::runDirect"
         ]
     );
+}
+
+#[test]
+fn traces_java_var_static_type_factory_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Util {
+    static Helper make() { return new Helper(); }
+    static Helper make(int value) { return new Helper(); }
+    static class Nested {
+        static Helper nestedMake() { return new Helper(); }
+    }
+}
+interface Factory {
+    static Helper make() { return new Helper(); }
+}
+class Caller {
+    int simpleFactory() {
+        var v = Util.make();
+        return v.helper(1);
+    }
+    int arityFactory() {
+        var v = Util.make(2);
+        return v.helper(1);
+    }
+    int nestedFactory() {
+        var v = Util.Nested.nestedMake();
+        return v.helper(1);
+    }
+    int interfaceFactory() {
+        var v = Factory.make();
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::arityFactory",
+            "com::example::Caller::interfaceFactory",
+            "com::example::Caller::nestedFactory",
+            "com::example::Caller::simpleFactory"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::arityFactory",
+            "com::example::Caller::interfaceFactory",
+            "com::example::Caller::nestedFactory",
+            "com::example::Caller::simpleFactory"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_static_type_factory_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Util { static Helper make() { return new Helper(); } }
+class Caller {
+    int run() {
+        var v = Util.make();
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_static_type_factory_receiver_calls_across_files_with_imports() {
+    let dir = temporary_dir();
+    let factory_dir = dir.join("src").join("pkg").join("factory");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let factory_path = factory_dir.join("Util.java");
+    let caller_path = caller_dir.join("Caller.java");
+    let helper_path = helper_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&factory_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Helper { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package pkg.factory;
+import pkg.helper.Helper;
+public class Util {
+    public static Helper make() { return new Helper(); }
+    public static class Nested {
+        public static Helper nestedMake() { return new Helper(); }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.factory.Util;
+public class Caller {
+    public int importedFactory() {
+        var v = Util.make();
+        return v.helper(1);
+    }
+    public int importedNestedFactory() {
+        var v = Util.Nested.nestedMake();
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::helper::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedFactory",
+            "pkg::caller::Caller::importedNestedFactory"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedFactory",
+            "pkg::caller::Caller::importedNestedFactory"
+        ]
+    );
+}
+
+#[test]
+fn java_var_static_type_factory_receiver_calls_fail_closed_for_unsupported_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Util {
+    static Helper make(int value) { return new Helper(); }
+    static Helper varargs(int... values) { return new Helper(); }
+}
+class Caller {
+    int arityMismatch() {
+        var v = Util.make();
+        return v.helper(1);
+    }
+    int varargsFactory() {
+        var v = Util.varargs(1);
+        return v.helper(1);
+    }
+    int unknownType() {
+        var v = Missing.make();
+        return v.helper(1);
+    }
+}
+class ShadowingCaller {
+    Helper Util;
+    int shadowedByField() {
+        var v = Util.make();
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "arity-mismatched static factories, varargs factories, unknown types, and bound-name shadowing of static type receivers must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
 }
