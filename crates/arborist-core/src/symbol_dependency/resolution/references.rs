@@ -1816,13 +1816,15 @@ fn resolve_csharp_var_factory_method<'a>(
     }
     // An explicit `base.`-rooted factory resolves as an instance method call
     // on the unique class/record base chain, such as
-    // `var helper = base.MakeHelper()`; missing bases and static,
-    // arity-mismatched, or missing base methods fail closed.
-    if let Some(method_name) = factory_name.strip_prefix("base.") {
-        if method_name.is_empty() || method_name.contains(['.', '(', ')']) {
-            return Ok(None);
-        }
-        if csharp_method_is_static(source_symbol) {
+    // `var helper = base.MakeHelper()` or `var helper = base.inner.MakeHelper()`;
+    // the first form dispatches directly on the base chain while a form with
+    // intermediate hops walks the same field/property and arity-matched
+    // method-call member-chain rules on the unique base type before
+    // dispatching the factory on the resulting type. Missing bases, missing
+    // or primitive hops, and static, arity-mismatched, or missing base
+    // factories fail closed.
+    if let Some(rest) = factory_name.strip_prefix("base.") {
+        if rest.is_empty() || csharp_method_is_static(source_symbol) {
             return Ok(None);
         }
         let Some(base_type_binding) = csharp_source_base_type_binding(
@@ -1837,13 +1839,83 @@ fn resolve_csharp_var_factory_method<'a>(
         else {
             return Ok(None);
         };
-        let Some(target_path) = csharp_base_method_target_path(
-            source_symbol,
+        let (hops, method_name) = match rest.rsplit_once('.') {
+            Some((hops, method_name)) => (hops, method_name),
+            None => ("", rest),
+        };
+        if method_name.is_empty() || method_name.contains(['(', ')', '.']) {
+            return Ok(None);
+        }
+        let hops = if hops.is_empty() {
+            Vec::new()
+        } else {
+            hops.split('.').collect::<Vec<_>>()
+        };
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(None);
+        }
+        if hops.is_empty() {
+            let Some(target_path) = csharp_base_method_target_path(
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                &base_type_binding,
+                method_name,
+                factory_arity,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                factory_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: false,
+                    require_instance: true,
+                    require_same_file: false,
+                },
+            )
+            .and_then(|symbol_id| {
+                raw_symbols
+                    .iter()
+                    .find(|candidate| candidate.symbol_id == symbol_id)
+            }));
+        }
+        let Some(base_type_path) =
+            csharp_base_type_path(source_symbol, raw_symbols, &base_type_binding)
+        else {
+            return Ok(None);
+        };
+        let base_indexes = semantic_path_index
+            .get(&base_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if base_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let base_symbol = &raw_symbols[base_indexes[0]];
+        let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+            base_symbol,
+            CSharpBaseTypeBinding {
+                semantic_type_path: base_type_path,
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            &hops,
             raw_symbols,
             semantic_path_index,
-            &base_type_binding,
-            method_name,
-            factory_arity,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -1852,20 +1924,19 @@ fn resolve_csharp_var_factory_method<'a>(
         else {
             return Ok(None);
         };
-        return Ok(resolve_csharp_candidate(
+        let symbol_id = resolve_csharp_instance_method_on_binding(
+            dispatch_source_symbol,
+            &binding,
+            method_name,
             raw_symbols,
             semantic_path_index,
-            &target_path,
-            Some(source_symbol),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
             factory_arity,
-            CSharpCandidateRequirements {
-                node_kind: "method_declaration",
-                require_static: false,
-                require_instance: true,
-                require_same_file: false,
-            },
-        )
-        .and_then(|symbol_id| {
+            deadline,
+        )?;
+        return Ok(symbol_id.and_then(|symbol_id| {
             raw_symbols
                 .iter()
                 .find(|candidate| candidate.symbol_id == symbol_id)
