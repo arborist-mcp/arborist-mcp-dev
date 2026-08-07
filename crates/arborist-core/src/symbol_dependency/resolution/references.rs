@@ -558,6 +558,27 @@ fn resolve_reference_path_with_deadline<'a>(
                 },
             ));
         }
+        // A `this.`-rooted member chain such as `this.member.helper(...)`
+        // walks each intermediate hop on the enclosing type before dispatching
+        // the final member; unknown or unresolvable hops fail closed instead
+        // of falling through to static type calls. Plain `this.method()` calls
+        // keep the same-type contract below.
+        if let Some(chain) = reference_name.strip_prefix("this.")
+            && !chain.is_empty()
+            && chain.contains('.')
+        {
+            return resolve_csharp_this_member_chain_call(
+                source_symbol,
+                chain,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                call_arity,
+                deadline,
+            );
+        }
         // A dotted call whose leading receiver names a locally bound value is
         // an instance call on that value's declared type; it shadows any
         // same-named type. Bound-but-unresolvable receivers fail closed
@@ -1595,10 +1616,7 @@ fn resolve_csharp_instance_receiver_call(
     else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
-    // An interface-typed receiver dispatches on the interface's own method
-    // declaration or its unique extends chain; class/record ancestor walking
-    // below does not apply.
-    if let Some(symbol_id) = resolve_csharp_interface_receiver_call(
+    match resolve_csharp_instance_method_on_binding(
         dispatch_source_symbol,
         &binding,
         final_member,
@@ -1610,51 +1628,6 @@ fn resolve_csharp_instance_receiver_call(
         call_arity,
         deadline,
     )? {
-        return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
-    }
-    // A struct-typed receiver dispatches on the struct's own method
-    // declaration; structs have no ancestor chain.
-    if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
-        dispatch_source_symbol,
-        &binding,
-        final_member,
-        raw_symbols,
-        semantic_path_index,
-        call_arity,
-    ) {
-        return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
-    }
-    // The declared type resolves in the caller's namespace/import scope; the
-    // instance method dispatches on that type and its unique class/record
-    // ancestor chain.
-    let Some(target_path) = csharp_base_method_target_path(
-        dispatch_source_symbol,
-        raw_symbols,
-        semantic_path_index,
-        &binding,
-        final_member,
-        call_arity,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(CSharpInstanceReceiverResolution::Blocked);
-    };
-    match resolve_csharp_candidate(
-        raw_symbols,
-        semantic_path_index,
-        &target_path,
-        Some(source_symbol),
-        call_arity,
-        CSharpCandidateRequirements {
-            node_kind: "method_declaration",
-            require_static: false,
-            require_instance: true,
-            require_same_file: false,
-        },
-    ) {
         Some(symbol_id) => Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id)),
         None => Ok(CSharpInstanceReceiverResolution::Blocked),
     }
@@ -1738,6 +1711,163 @@ fn resolve_csharp_member_chain_binding<'a>(
         scope_source_symbol = type_symbol;
     }
     Ok(Some((binding, scope_source_symbol)))
+}
+
+/// Dispatches a C# instance member call on an already-resolved receiver
+/// binding using the interface, struct, and class/record instance rules.
+/// `None` means the final member cannot be uniquely resolved and callers fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# instance member dispatch inputs explicit"
+)]
+fn resolve_csharp_instance_method_on_binding(
+    dispatch_source_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    member_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    // An interface-typed receiver dispatches on the interface's own method
+    // declaration or its unique extends chain; class/record ancestor walking
+    // below does not apply.
+    if let Some(symbol_id) = resolve_csharp_interface_receiver_call(
+        dispatch_source_symbol,
+        binding,
+        member_name,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )? {
+        return Ok(Some(symbol_id));
+    }
+    // A struct-typed receiver dispatches on the struct's own method
+    // declaration; structs have no ancestor chain.
+    if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
+        dispatch_source_symbol,
+        binding,
+        member_name,
+        raw_symbols,
+        semantic_path_index,
+        call_arity,
+    ) {
+        return Ok(Some(symbol_id));
+    }
+    // The declared type resolves in the caller's namespace/import scope; the
+    // instance method dispatches on that type and its unique class/record
+    // ancestor chain.
+    let Some(target_path) = csharp_base_method_target_path(
+        dispatch_source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        binding,
+        member_name,
+        call_arity,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(dispatch_source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: false,
+            require_instance: true,
+            require_same_file: false,
+        },
+    ))
+}
+
+/// Resolves a `this.`-rooted member chain such as `this.member.helper(...)`
+/// whose intermediate hops are fields, properties, or events on the enclosing
+/// type. The enclosing type must be uniquely declared in the source file;
+/// unknown or unresolvable hops and missing or static final members fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# this-chain member dispatch inputs explicit"
+)]
+fn resolve_csharp_this_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == scope_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .collect::<Vec<_>>();
+    if type_candidates.len() != 1 {
+        return Ok(None);
+    }
+    let type_symbol = type_candidates[0];
+    let mut hops = chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let Some(final_member) = hops.pop() else {
+        return Ok(None);
+    };
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        type_symbol,
+        CSharpBaseTypeBinding {
+            semantic_type_path: scope_path.to_string(),
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        },
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        dispatch_source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
 }
 
 enum CSharpConstructorReceiverResolution {
