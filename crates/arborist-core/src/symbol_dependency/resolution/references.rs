@@ -2019,7 +2019,7 @@ fn resolve_csharp_constructor_receiver_call(
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     }
     let member_chain = segments[marker_index + 1..].join(".");
-    if member_chain.is_empty() || member_chain.contains('.') {
+    if member_chain.is_empty() {
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     }
     let type_name = type_segments.join(".");
@@ -2037,51 +2037,96 @@ fn resolve_csharp_constructor_receiver_call(
     else {
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     };
-    // A struct-typed receiver dispatches on the struct's own method
-    // declaration; structs have no ancestor chain.
-    if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
-        source_symbol,
-        &binding,
-        &member_chain,
-        raw_symbols,
-        semantic_path_index,
-        call_arity,
-    ) {
-        return Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id));
-    }
-    // The constructed type resolves in the caller's namespace/import scope; the
-    // instance method dispatches on that type and its unique class/record
-    // ancestor chain.
-    let Some(target_path) = csharp_base_method_target_path(
-        source_symbol,
-        raw_symbols,
-        semantic_path_index,
-        &binding,
-        &member_chain,
-        call_arity,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(CSharpConstructorReceiverResolution::Blocked);
-    };
-    match resolve_csharp_candidate(
-        raw_symbols,
-        semantic_path_index,
-        &target_path,
-        Some(source_symbol),
-        call_arity,
-        CSharpCandidateRequirements {
-            node_kind: "method_declaration",
-            require_static: false,
-            require_instance: true,
-            require_same_file: false,
-        },
-    ) {
-        Some(symbol_id) => Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id)),
-        None => Ok(CSharpConstructorReceiverResolution::Blocked),
+    // A constructor-rooted member chain such as `new Group().Make().Run(1)`
+    // or `new Group().holder.helper.Run(1)` walks each intermediate hop as a
+    // uniquely declared field, property, event, or arity-matched non-static
+    // method-call hop on the constructed type before dispatching the final
+    // member; unknown, ambiguous, or unresolvable hops and missing or static
+    // final members fail closed.
+    if member_chain.contains('.') {
+        let hops = member_chain.split('.').collect::<Vec<_>>();
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        }
+        let Some(final_member) = hops.last() else {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        };
+        let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            binding,
+            &hops[..hops.len() - 1],
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        };
+        match resolve_csharp_instance_method_on_binding(
+            dispatch_source_symbol,
+            &binding,
+            final_member,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            Some(symbol_id) => Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id)),
+            None => Ok(CSharpConstructorReceiverResolution::Blocked),
+        }
+    } else {
+        // A struct-typed receiver dispatches on the struct's own method
+        // declaration; structs have no ancestor chain.
+        if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
+            source_symbol,
+            &binding,
+            &member_chain,
+            raw_symbols,
+            semantic_path_index,
+            call_arity,
+        ) {
+            return Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id));
+        }
+        // The constructed type resolves in the caller's namespace/import
+        // scope; the instance method dispatches on that type and its unique
+        // class/record ancestor chain.
+        let Some(target_path) = csharp_base_method_target_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &binding,
+            &member_chain,
+            call_arity,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(CSharpConstructorReceiverResolution::Blocked);
+        };
+        match resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            call_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: false,
+                require_instance: true,
+                require_same_file: false,
+            },
+        ) {
+            Some(symbol_id) => Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id)),
+            None => Ok(CSharpConstructorReceiverResolution::Blocked),
+        }
     }
 }
 

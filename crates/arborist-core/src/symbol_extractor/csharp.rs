@@ -264,6 +264,18 @@ fn csharp_instance_member_chain_spelling(
                 segments.push("this".to_string());
                 break;
             }
+            "object_creation_expression" => {
+                // A constructor-rooted chain such as
+                // `new Group().inner().helper` records the constructed type
+                // spelling as the leading segment; the resolver dispatches the
+                // remaining hops on the constructed type. Anonymous or
+                // malformed creations produce no spelling and fail closed.
+                let Some(spelling) = csharp_constructor_type_spelling(current, source)? else {
+                    return Ok(None);
+                };
+                segments.push(spelling);
+                break;
+            }
             _ => return Ok(None),
         }
     }
