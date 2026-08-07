@@ -204,6 +204,15 @@ fn csharp_direct_invocation_name(
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("base.{name}")));
         }
+        if receiver.kind() == "object_creation_expression" {
+            let Some(member_name) = csharp_invocation_member_name(member, source)? else {
+                return Ok(None);
+            };
+            let Some(spelling) = csharp_constructor_type_spelling(receiver, source)? else {
+                return Ok(None);
+            };
+            return Ok(Some(format!("{spelling}.{member_name}")));
+        }
         if receiver.kind() == "identifier" {
             let receiver_name = crate::language::node_text(receiver, source)?.trim();
             if let Some(binding_type) = bindings.get(receiver_name) {
@@ -245,6 +254,64 @@ fn csharp_direct_invocation_name(
 
     let name = csharp_invocation_member_name(node, source)?;
     Ok(name.filter(|name| !csharp_reference_is_shadowed(name, bindings)))
+}
+
+/// Records the constructed type spelling of an `object_creation_expression`
+/// such as `new Helper()` or `new Outer.Inner()`, ignoring object-initializer
+/// bodies and generic type arguments. Anonymous creations, `global::`-qualified
+/// spellings, and malformed type text produce no fact and fail closed.
+fn csharp_constructor_type_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let text = crate::language::node_text(node, source)?.trim();
+    let Some(type_name) = text.strip_prefix("new") else {
+        return Ok(None);
+    };
+    let type_name = type_name.trim_start();
+    if type_name.is_empty() || type_name.contains("::") {
+        return Ok(None);
+    }
+    let Some(type_name) = strip_csharp_constructor_suffix(type_name) else {
+        return Ok(None);
+    };
+    let type_name = type_name.trim();
+    if type_name.is_empty() || type_name == "var" {
+        return Ok(None);
+    }
+    let Some(semantic_type_path) = crate::language::csharp_generic_type_semantic_path(type_name)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{}()", semantic_type_path.replace("::", "."))))
+}
+
+/// Strips a trailing object-initializer body (`{ ... }`) and constructor
+/// argument list (`(...)`) from a constructed type spelling, leaving the bare
+/// type path such as `Helper` or `Outer.Inner`.
+fn strip_csharp_constructor_suffix(type_name: &str) -> Option<&str> {
+    let mut trimmed = type_name.trim_end();
+    if trimmed.ends_with('}') {
+        trimmed = strip_csharp_balanced_suffix(trimmed, '{', '}')?;
+        trimmed = trimmed.trim_end();
+    }
+    if trimmed.ends_with(')') {
+        trimmed = strip_csharp_balanced_suffix(trimmed, '(', ')')?;
+        trimmed = trimmed.trim_end();
+    }
+    Some(trimmed)
+}
+
+fn strip_csharp_balanced_suffix(text: &str, open: char, close: char) -> Option<&str> {
+    let mut depth = 0usize;
+    for (index, character) in text.char_indices().rev() {
+        if character == close {
+            depth += 1;
+        } else if character == open {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(&text[..index]);
+            }
+        }
+    }
+    None
 }
 
 fn csharp_simple_type_static_invocation_name(
@@ -666,6 +733,10 @@ class Counter<T> : Base {
     int Other(Counter counter) => counter.Helper();
     int Inherited(Counter counter) => counter.BaseHelper();
     int LocalTyped() { Counter local = new Counter(); return local.Helper(); }
+    int NewReceiver() => new Counter().Helper();
+    int NewGenericReceiver() => new Counter<int>().Helper();
+    int NewStaticReceiver() => new GlobalHelper().Utility();
+    int AnonymousToString() => new { Value = 1 }.ToString();
     int FieldReceiver() => field.Helper();
     int GlobalStaticCaller() => global::GlobalHelper.Utility();
     int GlobalGenericStaticCaller() => global::GlobalHelper.GenericUtility<int>();
@@ -753,6 +824,19 @@ class SimpleCaller {
             references("Counter::LocalTyped"),
             ["local.Helper".to_string()].into()
         );
+        assert_eq!(
+            references("Counter::NewReceiver"),
+            ["Counter().Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::NewGenericReceiver"),
+            ["Counter().Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::NewStaticReceiver"),
+            ["GlobalHelper().Utility".to_string()].into()
+        );
+        assert!(references("Counter::AnonymousToString").is_empty());
         assert_eq!(
             references("Counter::FieldReceiver"),
             ["field.Helper".to_string()].into()

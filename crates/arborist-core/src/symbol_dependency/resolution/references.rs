@@ -579,6 +579,28 @@ fn resolve_reference_path_with_deadline<'a>(
             CSharpInstanceReceiverResolution::Blocked => return Ok(None),
             CSharpInstanceReceiverResolution::NoBinding => {}
         }
+        // A receiver spelling such as `Helper().Run` names a fresh constructor
+        // call on a constructed type; it dispatches as an instance call and
+        // never falls through to the static type-call paths. Malformed or
+        // unresolvable constructed receivers fail closed.
+        match resolve_csharp_constructor_receiver_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            CSharpConstructorReceiverResolution::Resolved(symbol_id) => {
+                return Ok(Some(symbol_id));
+            }
+            CSharpConstructorReceiverResolution::Blocked => return Ok(None),
+            CSharpConstructorReceiverResolution::NotConstructorReceiver => {}
+        }
         if let Some(target_path) = csharp_global_qualified_static_target_path(reference_name) {
             return Ok(resolve_csharp_candidate(
                 raw_symbols,
@@ -1579,6 +1601,164 @@ fn resolve_csharp_instance_receiver_call(
         Some(symbol_id) => Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id)),
         None => Ok(CSharpInstanceReceiverResolution::Blocked),
     }
+}
+
+enum CSharpConstructorReceiverResolution {
+    Resolved(String),
+    NotConstructorReceiver,
+    Blocked,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# constructor receiver resolution inputs explicit"
+)]
+fn resolve_csharp_constructor_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<CSharpConstructorReceiverResolution> {
+    let segments = reference_name.split('.').collect::<Vec<_>>();
+    let Some((marker_index, marker_base)) = segments
+        .iter()
+        .enumerate()
+        .find_map(|(index, segment)| segment.strip_suffix("()").map(|base| (index, base)))
+    else {
+        return Ok(CSharpConstructorReceiverResolution::NotConstructorReceiver);
+    };
+    let mut type_segments = segments[..marker_index].to_vec();
+    type_segments.push(marker_base);
+    if type_segments.is_empty()
+        || type_segments.iter().any(|segment| {
+            segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
+        })
+    {
+        return Ok(CSharpConstructorReceiverResolution::Blocked);
+    }
+    let member_chain = segments[marker_index + 1..].join(".");
+    if member_chain.is_empty() || member_chain.contains('.') {
+        return Ok(CSharpConstructorReceiverResolution::Blocked);
+    }
+    let type_name = type_segments.join(".");
+    let binding = if type_name.contains('.') {
+        // Dotted constructed types resolve relative to the caller's namespace
+        // ancestors first and then globally, matching C# type-name resolution;
+        // the resolved path binds directly as a global-qualified type.
+        let semantic_path = type_name.replace('.', "::");
+        csharp_constructor_receiver_type_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &semantic_path,
+        )
+        .map(|type_path| CSharpBaseTypeBinding {
+            semantic_type_path: type_path,
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        })
+    } else {
+        resolve_csharp_declared_type_binding_for_reference(
+            &source_symbol.file_path,
+            &type_name,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(binding) = binding else {
+        return Ok(CSharpConstructorReceiverResolution::Blocked);
+    };
+    // The constructed type resolves in the caller's namespace/import scope; the
+    // instance method dispatches on that type and its unique class/record
+    // ancestor chain.
+    let Some(target_path) = csharp_base_method_target_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        &binding,
+        &member_chain,
+        call_arity,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(CSharpConstructorReceiverResolution::Blocked);
+    };
+    match resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: false,
+            require_instance: true,
+            require_same_file: false,
+        },
+    ) {
+        Some(symbol_id) => Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id)),
+        None => Ok(CSharpConstructorReceiverResolution::Blocked),
+    }
+}
+
+/// Resolves a dotted constructed type spelling such as `NestedContainer.Inner`
+/// to a unique constructible type path. The caller's namespace ancestors are
+/// searched innermost-first, then the global scope; the first scope with
+/// candidates must be unambiguous or resolution fails closed.
+fn csharp_constructor_receiver_type_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    semantic_path: &str,
+) -> Option<String> {
+    let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols).flatten();
+    while let Some(current_namespace) = namespace_path {
+        let candidate_path = format!("{current_namespace}::{semantic_path}");
+        let candidates =
+            csharp_constructible_type_candidates(raw_symbols, semantic_path_index, &candidate_path);
+        match candidates.as_slice() {
+            [_] => return Some(candidate_path),
+            [] => {}
+            _ => return None,
+        }
+        namespace_path = current_namespace
+            .rsplit_once("::")
+            .map(|(parent, _)| parent);
+    }
+    let candidates =
+        csharp_constructible_type_candidates(raw_symbols, semantic_path_index, semantic_path);
+    match candidates.as_slice() {
+        [_] => Some(semantic_path.to_string()),
+        [] => None,
+        _ => None,
+    }
+}
+
+fn csharp_constructible_type_candidates(
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    type_path: &str,
+) -> Vec<usize> {
+    semantic_path_index
+        .get(type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+        .collect()
 }
 
 fn csharp_source_type_declaration<'a>(
