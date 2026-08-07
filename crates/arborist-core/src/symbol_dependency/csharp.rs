@@ -53,11 +53,12 @@ impl CSharpReceiverTypeBindings {
     /// Returns the declared type spelling for a uniquely bound name. Names
     /// bound without a usable declared type (`var` locals, lambda parameters,
     /// `foreach` variables, local functions, and type parameters) and names
-    /// bound to a factory initializer return `None`.
+    /// bound to a marker-prefixed initializer (a factory call or a
+    /// field/property-access chain) return `None`.
     pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
         self.types_by_name
             .get(name)
-            .filter(|type_name| !type_name.is_empty() && !type_name.starts_with("@factory:"))
+            .filter(|type_name| !type_name.is_empty() && !type_name.starts_with('@'))
             .cloned()
     }
 }
@@ -604,11 +605,12 @@ fn collect_csharp_function_bindings(
                         Some(type_name) => Some(type_name),
                         // A `var` local infers its receiver type from a
                         // constructor initializer such as
-                        // `var helper = new Helper()` or from a factory call
-                        // initializer such as `var helper = MakeHelper()`;
-                        // other initializers bind an empty type and fail
-                        // closed.
-                        None => csharp_var_initializer_type_binding(node, source)?,
+                        // `var helper = new Helper()`, from a factory call
+                        // initializer such as `var helper = MakeHelper()`, or
+                        // from a field/property-access initializer such as
+                        // `var helper = this.holder.helper`; other
+                        // initializers bind an empty type and fail closed.
+                        None => csharp_var_initializer_type_binding(node, source, bindings)?,
                     }
                 }
                 _ => None,
@@ -641,13 +643,17 @@ fn collect_csharp_function_bindings(
 /// such as `var helper = new Helper()` or `var helper = new Outer.Inner()`
 /// bind the constructed type; invocation initializers such as
 /// `var helper = MakeHelper()` bind a factory marker the resolver expands to
-/// the factory method's declared return type. Other initializers,
-/// target-typed creations, array creations, and malformed spellings return
-/// `None` and fail closed. Mirrors the extractor's `var` binding rules so the
-/// resolver classifies initializers the same way the extractor recorded them.
+/// the factory method's declared return type; identifier and
+/// member-access initializers such as `var helper = this.holder.helper` bind
+/// a chain marker the resolver walks to the final member's declared type.
+/// Other initializers, target-typed creations, array creations, and malformed
+/// spellings return `None` and fail closed. Mirrors the extractor's `var`
+/// binding rules so the resolver classifies initializers the same way the
+/// extractor recorded them.
 fn csharp_var_initializer_type_binding(
     declarator: tree_sitter::Node<'_>,
     source: &str,
+    bindings: &CSharpReceiverTypeBindings,
 ) -> Result<Option<String>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
@@ -664,8 +670,167 @@ fn csharp_var_initializer_type_binding(
             Ok(Some(type_name.to_string()))
         }
         "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
+        "member_access_expression" | "identifier" => {
+            let Some(chain) = csharp_initializer_chain_spelling(initializer, source, bindings)?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(format!("@init:{chain}")))
+        }
         _ => Ok(None),
     }
+}
+
+/// Builds a field/property-access chain spelling such as `helper`,
+/// `this.holder.helper`, `holder.helper`, or `Holder().helper` for a `var`
+/// local initialized from an identifier or member-access expression. The
+/// spelling mirrors the extractor's instance member-chain spelling so the
+/// resolver can walk the chain to the final member's declared type. Unbound
+/// roots and unsupported initializer shapes return `None` and fail closed.
+fn csharp_initializer_chain_spelling(
+    initializer: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &CSharpReceiverTypeBindings,
+) -> Result<Option<String>> {
+    let mut segments = Vec::new();
+    let mut current = initializer;
+    loop {
+        match current.kind() {
+            "member_access_expression" => {
+                let Some(name) = current.child_by_field_name("name") else {
+                    return Ok(None);
+                };
+                let name = node_text(name, source)?.trim();
+                if name.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(name.to_string());
+                let Some(expression) = current.child_by_field_name("expression") else {
+                    return Ok(None);
+                };
+                current = expression;
+            }
+            "invocation_expression" => {
+                let Some(function) = current.child_by_field_name("function") else {
+                    return Ok(None);
+                };
+                if function.kind() != "member_access_expression" {
+                    return Ok(None);
+                }
+                let Some(name) = function.child_by_field_name("name") else {
+                    return Ok(None);
+                };
+                let name = node_text(name, source)?.trim();
+                if name.is_empty() {
+                    return Ok(None);
+                }
+                let Some(arguments) = current.child_by_field_name("arguments") else {
+                    return Ok(None);
+                };
+                let mut cursor = arguments.walk();
+                let arity = arguments.named_children(&mut cursor).count();
+                if arity == 0 {
+                    segments.push(format!("{name}()"));
+                } else {
+                    segments.push(format!("{name}({arity})"));
+                }
+                let Some(expression) = function.child_by_field_name("expression") else {
+                    return Ok(None);
+                };
+                current = expression;
+            }
+            "identifier" => {
+                let base = node_text(current, source)?.trim();
+                if base.is_empty() || bindings.type_for(base).is_none() {
+                    return Ok(None);
+                }
+                segments.push(base.to_string());
+                break;
+            }
+            "this" => {
+                segments.push("this".to_string());
+                break;
+            }
+            "base" => {
+                segments.push("base".to_string());
+                break;
+            }
+            "object_creation_expression" => {
+                let Some(spelling) = csharp_constructor_type_spelling(current, source)? else {
+                    return Ok(None);
+                };
+                segments.push(spelling);
+                break;
+            }
+            _ => return Ok(None),
+        }
+    }
+    segments.reverse();
+    Ok(Some(segments.join(".")))
+}
+
+/// Builds a constructed-type spelling such as `Holder()` or `Outer.Inner()`
+/// for an `object_creation_expression` chain root. Anonymous or malformed
+/// creations produce no spelling and fail closed. Mirrors the extractor's
+/// constructor spelling rules.
+fn csharp_constructor_type_spelling(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let text = node_text(node, source)?.trim();
+    let Some(type_name) = text.strip_prefix("new") else {
+        return Ok(None);
+    };
+    let type_name = type_name.trim_start();
+    if type_name.is_empty() || type_name.contains("::") {
+        return Ok(None);
+    }
+    let Some(type_name) = strip_csharp_constructor_suffix(type_name) else {
+        return Ok(None);
+    };
+    let type_name = type_name.trim();
+    if type_name.is_empty() || type_name == "var" {
+        return Ok(None);
+    }
+    let Some(semantic_type_path) = csharp_generic_type_semantic_path(type_name) else {
+        return Ok(None);
+    };
+    Ok(Some(format!("{}()", semantic_type_path.replace("::", "."))))
+}
+
+/// Strips a trailing object-initializer body (`{ ... }`) and constructor
+/// argument list (`(...)`) from a constructed type spelling, leaving the bare
+/// type path such as `Helper` or `Outer.Inner`. Mirrors the extractor's
+/// constructor suffix rules.
+fn strip_csharp_constructor_suffix(type_name: &str) -> Option<&str> {
+    let mut trimmed = type_name.trim_end();
+    if trimmed.ends_with('}') {
+        trimmed = strip_csharp_balanced_suffix(trimmed, '{', '}')?;
+        trimmed = trimmed.trim_end();
+    }
+    if trimmed.ends_with(')') {
+        trimmed = strip_csharp_balanced_suffix(trimmed, '(', ')')?;
+        trimmed = trimmed.trim_end();
+    }
+    Some(trimmed)
+}
+
+/// Strips a balanced trailing `open`/`close` pair from `text`, returning the
+/// text before it. Unbalanced or absent pairs return `None`. Mirrors the
+/// extractor's constructor suffix helper.
+fn strip_csharp_balanced_suffix(text: &str, open: char, close: char) -> Option<&str> {
+    let mut depth = 0usize;
+    for (index, character) in text.char_indices().rev() {
+        if character == close {
+            depth += 1;
+        } else if character == open {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(&text[..index]);
+            }
+        }
+    }
+    None
 }
 
 /// Builds a factory marker such as `@factory:MakeHelper(0)`,
@@ -711,21 +876,25 @@ fn csharp_factory_marker_from_initializer(
 }
 
 /// Returns the initializer expression of a `variable_declarator` such as
-/// `helper = new Helper()`. The grammar does not name the `= expression` child,
-/// so the last named child that is not the declared name or a tuple/indexer
-/// suffix is the initializer.
+/// `helper = new Helper()`, `helper = MakeHelper()`, or `helper = helper`.
+/// The grammar does not name the `= expression` child, so the last named
+/// child that is not the declared name or a tuple/indexer suffix is the
+/// initializer; a bare identifier initializer (`var helper = helper`) is kept
+/// because only the declared-name child is skipped. Mirrors the extractor's
+/// initializer rules.
 fn csharp_declarator_initializer<'a>(
     declarator: tree_sitter::Node<'a>,
 ) -> Option<tree_sitter::Node<'a>> {
+    let declared_name = declarator.child_by_field_name("name");
     let mut cursor = declarator.walk();
     let mut initializer = None;
     for child in declarator.named_children(&mut cursor) {
-        if !matches!(
-            child.kind(),
-            "identifier" | "tuple_pattern" | "bracketed_argument_list"
-        ) {
-            initializer = Some(child);
+        if matches!(child.kind(), "tuple_pattern" | "bracketed_argument_list")
+            || declared_name.is_some_and(|name| name == child)
+        {
+            continue;
         }
+        initializer = Some(child);
     }
     initializer
 }

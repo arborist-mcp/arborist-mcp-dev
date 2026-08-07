@@ -602,11 +602,12 @@ fn collect_typed_local_bindings(
                         Some(type_name) => Some(type_name),
                         // A `var` local infers its receiver type from a
                         // constructor initializer such as
-                        // `var helper = new Helper()` or from a factory call
-                        // initializer such as `var helper = MakeHelper()`;
-                        // other initializers bind an empty type and fail
-                        // closed.
-                        None => csharp_var_initializer_type_binding(node, source)?,
+                        // `var helper = new Helper()`, from a factory call
+                        // initializer such as `var helper = MakeHelper()`, or
+                        // from a field/property-access initializer such as
+                        // `var helper = this.holder.helper`; other
+                        // initializers bind an empty type and fail closed.
+                        None => csharp_var_initializer_type_binding(node, source, bindings)?,
                     }
                 }
                 _ => None,
@@ -641,12 +642,15 @@ fn collect_typed_local_bindings(
 /// such as `var helper = new Helper()` or `var helper = new Outer.Inner()`
 /// bind the constructed type; invocation initializers such as
 /// `var helper = MakeHelper()` bind a factory marker the resolver expands to
-/// the factory method's declared return type. Other initializers,
-/// target-typed creations, array creations, and malformed spellings return
-/// `None` and fail closed.
+/// the factory method's declared return type; identifier and
+/// member-access initializers such as `var helper = this.holder.helper` bind
+/// a chain marker the resolver walks to the final member's declared type.
+/// Other initializers, target-typed creations, array creations, and malformed
+/// spellings return `None` and fail closed.
 fn csharp_var_initializer_type_binding(
     declarator: Node<'_>,
     source: &str,
+    bindings: &BTreeMap<String, String>,
 ) -> Result<Option<String>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
@@ -663,6 +667,13 @@ fn csharp_var_initializer_type_binding(
             Ok(Some(type_name.to_string()))
         }
         "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
+        "member_access_expression" | "identifier" => {
+            let Some(chain) = csharp_instance_member_chain_spelling(initializer, source, bindings)?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(format!("@init:{chain}")))
+        }
         _ => Ok(None),
     }
 }
@@ -712,19 +723,22 @@ fn csharp_factory_marker_from_initializer(
 }
 
 /// Returns the initializer expression of a `variable_declarator` such as
-/// `helper = new Helper()`. The grammar does not name the `= expression` child,
-/// so the last named child that is not the declared name or a tuple/indexer
-/// suffix is the initializer.
+/// `helper = new Helper()`, `helper = MakeHelper()`, or `helper = helper`.
+/// The grammar does not name the `= expression` child, so the last named
+/// child that is not the declared name or a tuple/indexer suffix is the
+/// initializer; a bare identifier initializer (`var helper = helper`) is kept
+/// because only the declared-name child is skipped.
 fn csharp_declarator_initializer<'a>(declarator: Node<'a>) -> Option<Node<'a>> {
+    let declared_name = declarator.child_by_field_name("name");
     let mut cursor = declarator.walk();
     let mut initializer = None;
     for child in declarator.named_children(&mut cursor) {
-        if !matches!(
-            child.kind(),
-            "identifier" | "tuple_pattern" | "bracketed_argument_list"
-        ) {
-            initializer = Some(child);
+        if matches!(child.kind(), "tuple_pattern" | "bracketed_argument_list")
+            || declared_name.is_some_and(|name| name == child)
+        {
+            continue;
         }
+        initializer = Some(child);
     }
     initializer
 }

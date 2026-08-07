@@ -6,10 +6,10 @@ use anyhow::Result;
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
-    CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
-    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
-    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
-    csharp_type_alias_name_is_ambiguous_for_reference,
+    CSharpNamespaceImportBinding, CSharpReceiverTypeBindings, CSharpStaticTypeImportBinding,
+    CSharpTypeAliasBinding, csharp_global_type_alias_name_is_ambiguous,
+    csharp_interface_parent_bindings_for_interface, csharp_member_type_bindings_for_type,
+    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -1615,6 +1615,19 @@ fn resolve_csharp_instance_receiver_call(
                 csharp_import_contexts_by_file,
                 deadline,
             )?
+        } else if let Some(chain) = csharp_var_initializer_chain_spelling(raw_binding) {
+            resolve_csharp_initializer_chain_binding(
+                source_symbol,
+                chain,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
         } else if raw_binding.is_empty() {
             None
         } else {
@@ -2060,6 +2073,184 @@ fn resolve_csharp_factory_static_method<'a>(
             .iter()
             .find(|candidate| candidate.symbol_id == symbol_id)
     }))
+}
+
+/// Parses an initializer chain marker binding such as `@init:helper`,
+/// `@init:this.holder.helper`, `@init:holder.helper`, or `@init:Holder().helper`
+/// into the field/property-access chain spelling. Non-marker bindings return
+/// `None`.
+fn csharp_var_initializer_chain_spelling(binding: &str) -> Option<&str> {
+    binding.strip_prefix("@init:")
+}
+
+/// Resolves the receiver type binding for a `var` local initialized from a
+/// field/property-access chain such as `var helper = helper`,
+/// `var helper = this.holder.helper`, `var helper = holder.helper`, or
+/// `var helper = new Holder().helper`. A bare chain pins the receiver to the
+/// bound value's declared type; a `this.`-rooted chain walks hops on the
+/// unique enclosing type; a `Type()`-rooted chain walks hops on the
+/// constructed type; and a bound receiver walks hops on its declared type,
+/// with method-call hops resolving through the same member-chain rules.
+/// Unknown, ambiguous, untyped, `void`, and primitive chains return `None` and
+/// fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# initializer chain binding inputs explicit"
+)]
+fn resolve_csharp_initializer_chain_binding(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    bindings: &CSharpReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    // A bare chain names a bound field, property, local, or parameter whose
+    // declared type pins the `var` receiver.
+    if !chain.contains('.') {
+        let Some(type_name) = bindings.type_for(chain) else {
+            return Ok(None);
+        };
+        return resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    let Some((receiver_name, member_chain)) = chain.split_once('.') else {
+        return Ok(None);
+    };
+    if receiver_name.is_empty() || member_chain.is_empty() {
+        return Ok(None);
+    }
+    let hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    // A `this.`-rooted chain walks hops on the unique enclosing type.
+    if receiver_name == "this" {
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if type_candidates.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = type_candidates[0];
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            type_symbol,
+            CSharpBaseTypeBinding {
+                semantic_type_path: scope_path.to_string(),
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(binding));
+    }
+    // A constructed-type root (`new Holder().helper`) spells `Holder()` as the
+    // leading segment and walks hops on the constructed type.
+    if let Some(type_name) = receiver_name.strip_suffix("()") {
+        if type_name.is_empty()
+            || type_name.split('.').any(|segment| {
+                segment.is_empty() || segment.contains(['<', '>', '[', ']', '(', ')', '?', ' '])
+            })
+        {
+            return Ok(None);
+        }
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(binding));
+    }
+    // A bound receiver pins its declared type before the hops walk.
+    if bindings.contains(receiver_name) {
+        let Some(type_name) = bindings.type_for(receiver_name) else {
+            return Ok(None);
+        };
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            source_symbol,
+            binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(binding));
+    }
+    Ok(None)
 }
 
 /// Walks the intermediate hops of a receiver chain such as
