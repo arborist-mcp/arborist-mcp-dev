@@ -1690,12 +1690,25 @@ fn resolve_csharp_instance_receiver_call(
 }
 
 /// Parses a factory marker binding such as `@factory:MakeHelper(0)`,
-/// `@factory:this.MakeHelper(0)`, or `@factory:Factories.MakeHelper(1)` into
-/// the factory call spelling and its call arity. Non-marker bindings return
-/// `None`.
+/// `@factory:this.MakeHelper(0)`, `@factory:Factories.MakeHelper(1)`, or
+/// `@factory:holder.GetInner().MakeHelper(0)` into the factory call spelling
+/// and its call arity. The trailing `(arity)` is the factory call's own
+/// argument list; the spelling before it may contain balanced method-call
+/// parens from a receiver chain. Non-marker bindings return `None`.
 fn csharp_var_factory_spelling(binding: &str) -> Option<(String, usize)> {
     let call = binding.strip_prefix("@factory:")?;
-    csharp_method_call_hop_spelling(call)
+    let open = call.rfind('(')?;
+    let (factory_name, arguments) = call.split_at(open);
+    if factory_name.is_empty() {
+        return None;
+    }
+    let arguments = arguments.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    Some((factory_name.to_string(), arity))
 }
 
 /// Resolves the receiver type binding for a `var` local initialized from a
@@ -1764,7 +1777,8 @@ fn resolve_csharp_factory_receiver_binding(
 /// base-type and static-imported methods; `this.`-rooted names never fall
 /// through to static imports; a dotted name whose leading segment is a bound
 /// receiver resolves as an instance method call on the receiver's declared
-/// type; remaining dotted names resolve as type-qualified static calls.
+/// type after walking any field/property and method-call hops on the
+/// receiver; remaining dotted names resolve as type-qualified static calls.
 /// Unresolved or ambiguous factories return `None`.
 #[allow(
     clippy::too_many_arguments,
@@ -1801,15 +1815,34 @@ fn resolve_csharp_var_factory_method<'a>(
     }
     // A dotted factory whose leading segment is a bound receiver resolves as
     // an instance method call on the receiver's declared type, such as
-    // `var helper = holder.MakeHelper()`; unknown, untyped, `void`, or
-    // primitive receivers and missing, static, or arity-mismatched factory
+    // `var helper = holder.MakeHelper()`, `var helper = holder.GetInner().MakeHelper()`,
+    // or `var helper = holder.helper.MakeHelper()`; intermediate hops walk
+    // the same field/property and arity-matched method-call member-chain
+    // rules. Unknown, untyped, `void`, or primitive receivers, unknown or
+    // primitive hops, and missing, static, or arity-mismatched factory
     // methods fail closed.
-    if let Some((receiver_name, method_name)) = factory_name.split_once('.')
+    if let Some((receiver_name, remainder)) = factory_name.split_once('.')
         && !receiver_name.is_empty()
-        && !method_name.is_empty()
-        && !method_name.contains('.')
+        && !remainder.is_empty()
         && bindings.contains(receiver_name)
     {
+        let (hops, method_name) = match remainder.rsplit_once('.') {
+            Some((hops, method_name)) => {
+                let hops = if hops.is_empty() {
+                    Vec::new()
+                } else {
+                    hops.split('.').collect::<Vec<_>>()
+                };
+                (hops, method_name)
+            }
+            None => (Vec::new(), remainder),
+        };
+        if method_name.is_empty() || method_name.contains(['(', ')', '.']) {
+            return Ok(None);
+        }
+        if hops.iter().any(|hop| hop.is_empty()) {
+            return Ok(None);
+        }
         let Some(type_name) = bindings.type_for(receiver_name) else {
             return Ok(None);
         };
@@ -1827,27 +1860,45 @@ fn resolve_csharp_var_factory_method<'a>(
         else {
             return Ok(None);
         };
-        let Some(type_path) = csharp_dispatchable_type_path(
-            source_symbol,
-            raw_symbols,
-            &binding,
-            csharp_is_type_declaration,
-        ) else {
-            return Ok(None);
+        let (binding, dispatch_source_symbol) = if hops.is_empty() {
+            let Some(type_path) = csharp_dispatchable_type_path(
+                source_symbol,
+                raw_symbols,
+                &binding,
+                csharp_is_type_declaration,
+            ) else {
+                return Ok(None);
+            };
+            let type_indexes = semantic_path_index
+                .get(&type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .collect::<Vec<_>>();
+            if type_indexes.len() != 1 {
+                return Ok(None);
+            }
+            (binding, &raw_symbols[type_indexes[0]])
+        } else {
+            let Some((binding, dispatch)) = resolve_csharp_member_chain_binding(
+                source_symbol,
+                binding,
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            (binding, dispatch)
         };
-        let type_indexes = semantic_path_index
-            .get(&type_path)
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
-            .collect::<Vec<_>>();
-        if type_indexes.len() != 1 {
-            return Ok(None);
-        }
-        let type_symbol = &raw_symbols[type_indexes[0]];
         let symbol_id = resolve_csharp_instance_method_on_binding(
-            type_symbol,
+            dispatch_source_symbol,
             &binding,
             method_name,
             raw_symbols,
