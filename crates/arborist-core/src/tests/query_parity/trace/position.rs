@@ -2261,13 +2261,259 @@ fn traces_csharp_conservative_direct_calls_in_live_workspace_and_persisted_index
         ]
     );
 
-    for target in ["GlobalHelper::Instance", "GlobalHelper::Flexible"] {
+    // A property receiver named `GlobalHelper` of declared type `GlobalHelper`
+    // dispatches `GlobalHelper.Instance(1)` to the instance method, while the
+    // unbound same-named type interpretation from `SimpleCaller` stays static
+    // and the `params` method is never reached through an instance call.
+    let instance_live =
+        trace_symbol_graph(&dir, "GlobalHelper::Instance", TraceDirection::Callers).unwrap();
+    assert_eq!(instance_live.callers.len(), 1);
+    assert_eq!(
+        instance_live.callers[0].symbol_id,
+        "MemberShadowCaller::MemberShadow"
+    );
+    let instance_persisted =
+        trace_symbol_graph_from_index(&db_path, "GlobalHelper::Instance", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(instance_persisted.callers.len(), 1);
+    assert_eq!(
+        instance_persisted.callers[0].symbol_id,
+        "MemberShadowCaller::MemberShadow"
+    );
+    let flexible_live =
+        trace_symbol_graph(&dir, "GlobalHelper::Flexible", TraceDirection::Callers).unwrap();
+    assert!(flexible_live.callers.is_empty());
+    let flexible_persisted =
+        trace_symbol_graph_from_index(&db_path, "GlobalHelper::Flexible", TraceDirection::Callers)
+            .unwrap();
+    assert!(flexible_persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_csharp_typed_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Base {
+    public int BaseHelper(int value) => value;
+}
+class Counter : Base {
+    public int Helper(int value) => value;
+    public static int Utility(int value) => value;
+    public int Flexible(params int[] values) => values.Length;
+}
+class Box<T> {
+    public T Get() => default;
+}
+class GlobalHelper {
+    public int Instance(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using Demo.Utility;
+namespace Demo;
+class Caller {
+    int ParameterReceiver(Counter counter) => counter.Helper(1);
+    int InheritedReceiver(Counter counter) => counter.BaseHelper(1);
+    int LocalReceiver() { Counter local = new Counter(); return local.Helper(1); }
+    int StaticReceiver(Counter counter) => counter.Utility(1);
+    int ParamsReceiver(Counter counter) => counter.Flexible(1);
+    int PrimitiveShadow(int Counter) => Counter.Helper(1);
+    int GenericReceiver(Box<int> box) => box.Get();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("FieldCaller.cs"),
+        "namespace Demo;
+class FieldCaller {
+    Counter field = new Counter();
+    GlobalHelper GlobalHelper { get; } = new GlobalHelper();
+    int FieldReceiver() => field.Helper(1);
+    int PropertyReceiver() => GlobalHelper.Instance(1);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Worker.cs"),
+        "namespace Demo.Utility;
+class Worker {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("ImportedCaller.cs"),
+        "using Demo.Utility;
+namespace Demo.App;
+class ImportedCaller {
+    int ImportedReceiver(Worker worker) => worker.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    for (target, callers) in [
+        (
+            "Demo::Counter::Helper",
+            vec![
+                "Demo::Caller::LocalReceiver",
+                "Demo::Caller::ParameterReceiver",
+                "Demo::FieldCaller::FieldReceiver",
+            ],
+        ),
+        (
+            "Demo::Base::BaseHelper",
+            vec!["Demo::Caller::InheritedReceiver"],
+        ),
+        ("Demo::Box::Get", vec!["Demo::Caller::GenericReceiver"]),
+        (
+            "Demo::GlobalHelper::Instance",
+            vec!["Demo::FieldCaller::PropertyReceiver"],
+        ),
+        (
+            "Demo::Utility::Worker::Run",
+            vec!["Demo::App::ImportedCaller::ImportedReceiver"],
+        ),
+    ] {
         let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
-        assert!(live.callers.is_empty());
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
         let persisted =
             trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
-        assert!(persisted.callers.is_empty());
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
     }
+
+    for target in ["Demo::Counter::Utility", "Demo::Counter::Flexible"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{target}");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty(), "{target}");
+    }
+}
+
+#[test]
+fn fails_closed_on_csharp_unusable_instance_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Counter.cs"),
+        "namespace Demo;
+class Counter {
+    public int Helper(int value) => value;
+    public static int Utility(int value) => value;
+}
+class ShadowCaller {
+    int PrimitiveShadow(int Counter) => Counter.Helper(1);
+    int VarShadow() { var Counter = new Counter(); return Counter.Helper(1); }
+    int LambdaShadow() {
+        System.Func<Counter, int> f = Counter => Counter.Helper(1);
+        return f(new Counter());
+    }
+    int StaticThroughInstance(Counter counter) => counter.Utility(1);
+    int MissingMethod(Counter counter) => counter.Nope(1);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::ShadowCaller::PrimitiveShadow",
+        "Demo::ShadowCaller::VarShadow",
+        "Demo::ShadowCaller::LambdaShadow",
+        "Demo::ShadowCaller::StaticThroughInstance",
+        "Demo::ShadowCaller::MissingMethod",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+    }
+    for target in ["Demo::Counter::Helper", "Demo::Counter::Utility"] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert!(live.callers.is_empty(), "{target}");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in ["Demo::Counter::Helper", "Demo::Counter::Utility"] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert!(persisted.callers.is_empty(), "{target}");
+    }
+}
+
+#[test]
+fn traces_csharp_typed_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Counter.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo;
+class Counter {
+    public int Helper(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call(Counter counter) => counter.Helper(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Counter::Helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Counter::Helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
 }
 
 #[test]

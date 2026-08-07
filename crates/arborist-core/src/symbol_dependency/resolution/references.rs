@@ -7,9 +7,11 @@ use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides
 use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext,
     CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
-    csharp_global_type_alias_name_is_ambiguous, csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_global_type_alias_name_is_ambiguous, csharp_receiver_type_bindings_for_function,
+    csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
+    resolve_csharp_declared_type_binding_for_reference,
     resolve_csharp_global_namespace_imports_for_reference,
     resolve_csharp_global_nested_type_alias_binding_for_reference,
     resolve_csharp_global_static_type_imports_for_reference,
@@ -554,6 +556,28 @@ fn resolve_reference_path_with_deadline<'a>(
                     require_same_file: false,
                 },
             ));
+        }
+        // A dotted call whose leading receiver names a locally bound value is
+        // an instance call on that value's declared type; it shadows any
+        // same-named type. Bound-but-unresolvable receivers fail closed
+        // instead of falling through to the static type-call paths below.
+        match resolve_csharp_instance_receiver_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            CSharpInstanceReceiverResolution::Resolved(symbol_id) => {
+                return Ok(Some(symbol_id));
+            }
+            CSharpInstanceReceiverResolution::Blocked => return Ok(None),
+            CSharpInstanceReceiverResolution::NoBinding => {}
         }
         if let Some(target_path) = csharp_global_qualified_static_target_path(reference_name) {
             return Ok(resolve_csharp_candidate(
@@ -1459,6 +1483,102 @@ fn resolve_csharp_candidate(
         })
         .collect::<Vec<_>>();
     (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
+}
+
+enum CSharpInstanceReceiverResolution {
+    Resolved(String),
+    NoBinding,
+    Blocked,
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# instance receiver resolution inputs explicit"
+)]
+fn resolve_csharp_instance_receiver_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<CSharpInstanceReceiverResolution> {
+    let Some((receiver_name, member_name)) = reference_name.split_once('.') else {
+        return Ok(CSharpInstanceReceiverResolution::NoBinding);
+    };
+    if receiver_name.is_empty() || member_name.is_empty() || member_name.contains('.') {
+        return Ok(CSharpInstanceReceiverResolution::NoBinding);
+    }
+    let Some(bindings) = csharp_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(CSharpInstanceReceiverResolution::NoBinding);
+    };
+    if !bindings.contains(receiver_name) {
+        return Ok(CSharpInstanceReceiverResolution::NoBinding);
+    }
+    // A bound receiver is always an instance expression: receivers without a
+    // resolvable declared type (`var` locals, lambda parameters, type
+    // parameters) fail closed instead of falling through to a same-named
+    // static type call.
+    let Some(type_name) = bindings.type_for(receiver_name) else {
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    };
+    let Some(binding) = resolve_csharp_declared_type_binding_for_reference(
+        &source_symbol.file_path,
+        &type_name,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    };
+    // The declared type resolves in the caller's namespace/import scope; the
+    // instance method dispatches on that type and its unique class/record
+    // ancestor chain.
+    let Some(target_path) = csharp_base_method_target_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        &binding,
+        member_name,
+        call_arity,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    };
+    match resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: false,
+            require_instance: true,
+            require_same_file: false,
+        },
+    ) {
+        Some(symbol_id) => Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id)),
+        None => Ok(CSharpInstanceReceiverResolution::Blocked),
+    }
 }
 
 fn csharp_source_type_declaration<'a>(

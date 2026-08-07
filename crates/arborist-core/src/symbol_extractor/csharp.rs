@@ -95,7 +95,7 @@ fn collect_direct_same_type_calls(symbol_node: Node<'_>, source: &str) -> Result
     ) {
         return Ok((BTreeSet::new(), BTreeMap::new()));
     }
-    let bindings = collect_local_bindings(symbol_node, source)?;
+    let bindings = collect_typed_local_bindings(symbol_node, source)?;
     let mut references = BTreeSet::new();
     let mut call_arities_by_name = BTreeMap::new();
     collect_constructor_initializer_call(symbol_node, &mut references, &mut call_arities_by_name);
@@ -153,7 +153,7 @@ fn collect_constructor_initializer_call(
 fn collect_direct_same_type_calls_from_node(
     node: Node<'_>,
     source: &str,
-    bindings: &BTreeSet<String>,
+    bindings: &BTreeMap<String, String>,
     references: &mut ReferenceNames,
     call_arities_by_name: &mut CallAritiesByName,
 ) -> Result<()> {
@@ -163,8 +163,7 @@ fn collect_direct_same_type_calls_from_node(
     if node.kind() == "invocation_expression"
         && let Some(function) = node.child_by_field_name("function")
         && let Some(arguments) = node.child_by_field_name("arguments")
-        && let Some(name) = csharp_direct_invocation_name(function, source)?
-        && !csharp_reference_is_shadowed(&name, bindings)
+        && let Some(name) = csharp_direct_invocation_name(function, source, bindings)?
     {
         let mut cursor = arguments.walk();
         let arity = arguments.named_children(&mut cursor).count();
@@ -185,7 +184,11 @@ fn collect_direct_same_type_calls_from_node(
     Ok(())
 }
 
-fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+fn csharp_direct_invocation_name(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Option<String>> {
     if node.kind() == "member_access_expression" {
         let Some(receiver) = node.child_by_field_name("expression") else {
             return Ok(None);
@@ -201,8 +204,33 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("base.{name}")));
         }
+        if receiver.kind() == "identifier" {
+            let receiver_name = crate::language::node_text(receiver, source)?.trim();
+            if let Some(binding_type) = bindings.get(receiver_name) {
+                // A locally bound receiver records an instance fact only when
+                // its declared type is usable; untyped bindings (`var` locals,
+                // lambda parameters, type parameters) fail closed instead of
+                // guessing a static type call.
+                if binding_type.is_empty() {
+                    return Ok(None);
+                }
+                return csharp_invocation_member_name(member, source)
+                    .map(|name| name.map(|name| format!("{receiver_name}.{name}")));
+            }
+            if let Some(name) = csharp_simple_type_static_invocation_name(receiver, member, source)?
+                && !csharp_reference_is_shadowed(&name, bindings)
+            {
+                return Ok(Some(name));
+            }
+            return Ok(None);
+        }
         if matches!(receiver.kind(), "identifier" | "generic_name") {
-            return csharp_simple_type_static_invocation_name(receiver, member, source);
+            if let Some(name) = csharp_simple_type_static_invocation_name(receiver, member, source)?
+                && !csharp_reference_is_shadowed(&name, bindings)
+            {
+                return Ok(Some(name));
+            }
+            return Ok(None);
         }
         if receiver.kind() == "member_access_expression" {
             if let Some(name) =
@@ -215,7 +243,8 @@ fn csharp_direct_invocation_name(node: Node<'_>, source: &str) -> Result<Option<
         return csharp_global_qualified_static_invocation_name(receiver, member, source);
     }
 
-    csharp_invocation_member_name(node, source)
+    let name = csharp_invocation_member_name(node, source)?;
+    Ok(name.filter(|name| !csharp_reference_is_shadowed(name, bindings)))
 }
 
 fn csharp_simple_type_static_invocation_name(
@@ -282,9 +311,9 @@ fn csharp_global_qualified_static_invocation_name(
     )))
 }
 
-fn csharp_reference_is_shadowed(name: &str, bindings: &BTreeSet<String>) -> bool {
+fn csharp_reference_is_shadowed(name: &str, bindings: &BTreeMap<String, String>) -> bool {
     let binding_name = name.split_once('.').map_or(name, |(receiver, _)| receiver);
-    bindings.contains(binding_name)
+    bindings.contains_key(binding_name)
 }
 
 fn csharp_invocation_member_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
@@ -303,39 +332,99 @@ fn csharp_invocation_member_name(node: Node<'_>, source: &str) -> Result<Option<
         .map(|name| name.filter(|name| !name.is_empty()).map(str::to_string))
 }
 
-fn collect_local_bindings(symbol_node: Node<'_>, source: &str) -> Result<BTreeSet<String>> {
-    fn insert_name(node: Node<'_>, source: &str, bindings: &mut BTreeSet<String>) -> Result<()> {
-        let name = crate::language::node_text(node, source)?.trim();
-        if !name.is_empty() {
-            bindings.insert(name.to_string());
-        }
-        Ok(())
+fn csharp_insert_binding(
+    bindings: &mut BTreeMap<String, String>,
+    name: &str,
+    type_name: Option<String>,
+) {
+    if !name.is_empty() {
+        bindings.insert(name.to_string(), type_name.unwrap_or_default());
+    }
+}
+
+fn csharp_declared_type_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let type_name = crate::language::node_text(type_node, source)?.trim();
+    if type_name.is_empty() || type_name == "var" {
+        return Ok(None);
+    }
+    Ok(Some(type_name.to_string()))
+}
+
+/// Collects locally bound receiver names with their declared type spellings
+/// for a function. Parameters, typed locals, and enclosing-type fields and
+/// properties carry their declared type; `var` locals, lambda parameters,
+/// `foreach` variables, local functions, and type parameters are bound with an
+/// empty type so they still suppress static type interpretation while failing
+/// closed for instance dispatch.
+fn collect_typed_local_bindings(
+    symbol_node: Node<'_>,
+    source: &str,
+) -> Result<BTreeMap<String, String>> {
+    fn declarator_name(node: Node<'_>, source: &str) -> Result<Option<String>> {
+        let name = if let Some(name) = node.child_by_field_name("name") {
+            name
+        } else {
+            let mut cursor = node.walk();
+            let Some(declarator) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "variable_declarator")
+            else {
+                return Ok(None);
+            };
+            let Some(name) = declarator.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            name
+        };
+        let name = crate::language::node_text(name, source)?.trim();
+        Ok((!name.is_empty()).then(|| name.to_string()))
     }
 
-    fn collect(node: Node<'_>, source: &str, bindings: &mut BTreeSet<String>) -> Result<()> {
+    fn collect(
+        node: Node<'_>,
+        source: &str,
+        bindings: &mut BTreeMap<String, String>,
+    ) -> Result<()> {
         if is_csharp_symbol_node(node) && node.parent().is_some() {
             return Ok(());
         }
         if node.kind() == "implicit_parameter" {
-            insert_name(node, source, bindings)?;
+            let name = crate::language::node_text(node, source)?.trim();
+            csharp_insert_binding(bindings, name, None);
         }
         if matches!(
             node.kind(),
-            "parameter"
-                | "variable_declarator"
-                | "catch_declaration"
-                | "declaration_expression"
-                | "declaration_pattern"
-                | "local_function_statement"
-        ) && let Some(name) = node.child_by_field_name("name")
+            "parameter" | "catch_declaration" | "declaration_expression" | "declaration_pattern"
+        ) && let Some(name) = declarator_name(node, source)?
         {
-            insert_name(name, source, bindings)?;
+            csharp_insert_binding(bindings, &name, csharp_declared_type_name(node, source)?);
+        }
+        if node.kind() == "local_function_statement"
+            && let Some(name) = declarator_name(node, source)?
+        {
+            csharp_insert_binding(bindings, &name, None);
+        }
+        if node.kind() == "variable_declarator"
+            && let Some(name) = node.child_by_field_name("name")
+        {
+            let name = crate::language::node_text(name, source)?.trim();
+            let type_name = match node.parent() {
+                Some(parent) if parent.kind() == "variable_declaration" => {
+                    csharp_declared_type_name(parent, source)?
+                }
+                _ => None,
+            };
+            csharp_insert_binding(bindings, name, type_name);
         }
         if node.kind() == "foreach_statement"
             && let Some(left) = node.child_by_field_name("left")
             && left.kind() == "identifier"
         {
-            insert_name(left, source, bindings)?;
+            let name = crate::language::node_text(left, source)?.trim();
+            csharp_insert_binding(bindings, name, None);
         }
 
         let mut cursor = node.walk();
@@ -345,8 +434,8 @@ fn collect_local_bindings(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
         Ok(())
     }
 
-    let mut bindings = BTreeSet::new();
-    collect_enclosing_type_bindings(symbol_node, source, &mut bindings)?;
+    let mut bindings = BTreeMap::new();
+    collect_enclosing_type_typed_bindings(symbol_node, source, &mut bindings)?;
     let mut cursor = symbol_node.walk();
     for child in symbol_node.named_children(&mut cursor) {
         collect(child, source, &mut bindings)?;
@@ -354,39 +443,51 @@ fn collect_local_bindings(symbol_node: Node<'_>, source: &str) -> Result<BTreeSe
     Ok(bindings)
 }
 
-fn collect_enclosing_type_bindings(
+fn collect_enclosing_type_typed_bindings(
     symbol_node: Node<'_>,
     source: &str,
-    bindings: &mut BTreeSet<String>,
+    bindings: &mut BTreeMap<String, String>,
 ) -> Result<()> {
-    fn insert_name(node: Node<'_>, source: &str, bindings: &mut BTreeSet<String>) -> Result<()> {
-        let name = crate::language::node_text(node, source)?.trim();
-        if !name.is_empty() {
-            bindings.insert(name.to_string());
-        }
-        Ok(())
-    }
-
     fn collect(
         node: Node<'_>,
         root: Node<'_>,
         source: &str,
-        bindings: &mut BTreeSet<String>,
+        bindings: &mut BTreeMap<String, String>,
     ) -> Result<()> {
         if node != root && is_csharp_symbol_node(node) {
             return Ok(());
         }
-        if node.kind() == "variable_declarator"
+        if node.kind() == "field_declaration" {
+            let mut declaration_cursor = node.walk();
+            for declaration in node
+                .named_children(&mut declaration_cursor)
+                .filter(|child| child.kind() == "variable_declaration")
+            {
+                let type_name = csharp_declared_type_name(declaration, source)?;
+                let mut declarator_cursor = declaration.walk();
+                for declarator in declaration
+                    .named_children(&mut declarator_cursor)
+                    .filter(|child| child.kind() == "variable_declarator")
+                {
+                    let Some(name) = declarator.child_by_field_name("name") else {
+                        continue;
+                    };
+                    let name = crate::language::node_text(name, source)?.trim();
+                    csharp_insert_binding(bindings, name, type_name.clone());
+                }
+            }
+        }
+        if matches!(node.kind(), "property_declaration" | "event_declaration")
             && let Some(name) = node.child_by_field_name("name")
         {
-            insert_name(name, source, bindings)?;
+            let name = crate::language::node_text(name, source)?.trim();
+            csharp_insert_binding(bindings, name, csharp_declared_type_name(node, source)?);
         }
-        if matches!(
-            node.kind(),
-            "property_declaration" | "event_declaration" | "type_parameter"
-        ) && let Some(name) = node.child_by_field_name("name")
+        if node.kind() == "type_parameter"
+            && let Some(name) = node.child_by_field_name("name")
         {
-            insert_name(name, source, bindings)?;
+            let name = crate::language::node_text(name, source)?.trim();
+            csharp_insert_binding(bindings, name, None);
         }
 
         let mut cursor = node.walk();
@@ -502,6 +603,7 @@ class Base {
 
 class Counter<T> : Base {
     GlobalHelper GlobalHelper { get; } = new GlobalHelper();
+    Counter field = new Counter();
     Counter() {}
     Counter(int value) : this() {}
     Counter(string value) : base() {}
@@ -513,6 +615,9 @@ class Counter<T> : Base {
     int ExplicitThisParameterShadow(Func<int> Helper) => this.Helper();
     int BaseCaller() => base.BaseHelper();
     int Other(Counter counter) => counter.Helper();
+    int Inherited(Counter counter) => counter.BaseHelper();
+    int LocalTyped() { Counter local = new Counter(); return local.Helper(); }
+    int FieldReceiver() => field.Helper();
     int GlobalStaticCaller() => global::GlobalHelper.Utility();
     int GlobalGenericStaticCaller() => global::GlobalHelper.GenericUtility<int>();
     int GlobalInstanceCaller() => global::GlobalHelper.Instance();
@@ -587,7 +692,22 @@ class SimpleCaller {
             references("Counter::BaseCaller"),
             ["base.BaseHelper".to_string()].into()
         );
-        assert!(references("Counter::Other").is_empty());
+        assert_eq!(
+            references("Counter::Other"),
+            ["counter.Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::Inherited"),
+            ["counter.BaseHelper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::LocalTyped"),
+            ["local.Helper".to_string()].into()
+        );
+        assert_eq!(
+            references("Counter::FieldReceiver"),
+            ["field.Helper".to_string()].into()
+        );
         assert_eq!(
             references("Counter::GlobalStaticCaller"),
             ["global::GlobalHelper.Utility".to_string()].into()
@@ -605,7 +725,10 @@ class SimpleCaller {
             ["GlobalHelper.Utility".to_string()].into()
         );
         assert!(references("Counter::TypeParameterShadow").is_empty());
-        assert!(references("Counter::MemberShadow").is_empty());
+        assert_eq!(
+            references("Counter::MemberShadow"),
+            ["GlobalHelper.Instance".to_string()].into()
+        );
         assert!(references("Counter::LocalShadow").is_empty());
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());

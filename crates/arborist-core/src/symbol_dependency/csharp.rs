@@ -5,11 +5,13 @@ use anyhow::Result;
 
 use crate::language::{
     csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
-    csharp_file_type_alias_imports, csharp_global_namespace_imports,
-    csharp_global_static_type_imports, csharp_global_type_alias_imports, detect_language,
-    normalize_path, parse_document, parse_document_with_timeout, read_source,
+    csharp_file_type_alias_imports, csharp_generic_type_semantic_path,
+    csharp_global_namespace_imports, csharp_global_static_type_imports,
+    csharp_global_type_alias_imports, detect_language, node_text, normalize_path, parse_document,
+    parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
+use crate::semantic::csharp::is_csharp_symbol_node;
 use crate::workspace_scan::WorkspaceScanDeadline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,10 +32,36 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 }
 
 #[derive(Debug, Clone, Default)]
+pub(in crate::symbol_dependency) struct CSharpReceiverTypeBindings {
+    types_by_name: BTreeMap<String, String>,
+}
+
+impl CSharpReceiverTypeBindings {
+    /// Returns whether `name` is bound as a local receiver. Callers use this
+    /// to distinguish "not bound" (a receiver may be a same-named type
+    /// instead) from "bound but unusable" (fail closed).
+    pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
+        self.types_by_name.contains_key(name)
+    }
+
+    /// Returns the declared type spelling for a uniquely bound name. Names
+    /// bound without a usable declared type (`var` locals, lambda parameters,
+    /// `foreach` variables, local functions, and type parameters) return
+    /// `None`.
+    pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
+        self.types_by_name
+            .get(name)
+            .filter(|type_name| !type_name.is_empty())
+            .cloned()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpImportContext {
     type_alias_bindings: BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
     ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
     base_type_bindings_by_range: BTreeMap<(usize, usize), CSharpBaseTypeBinding>,
+    receiver_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -328,13 +356,245 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             semantic_namespace_path: import.semantic_namespace_path,
         });
     }
+    let mut receiver_type_bindings_by_range = BTreeMap::new();
+    collect_csharp_receiver_type_bindings(root, &source, &mut receiver_type_bindings_by_range)?;
     Ok(CSharpImportContext {
         type_alias_bindings,
         ambiguous_type_alias_names: ambiguous_alias_names,
         base_type_bindings_by_range,
+        receiver_type_bindings_by_range,
         static_type_import_bindings,
         namespace_import_bindings,
     })
+}
+
+fn collect_csharp_receiver_type_bindings(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+    bindings_by_range: &mut BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
+) -> Result<()> {
+    if matches!(
+        node.kind(),
+        "method_declaration" | "constructor_declaration"
+    ) && is_csharp_symbol_node(node)
+    {
+        bindings_by_range.insert(
+            (node.start_byte(), node.end_byte()),
+            csharp_receiver_type_bindings_for_node(node, source)?,
+        );
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_csharp_receiver_type_bindings(child, source, bindings_by_range)?;
+    }
+    Ok(())
+}
+
+/// Collects locally bound receiver names with their declared type spellings
+/// for a function. Parameters, typed locals, and enclosing-type fields and
+/// properties carry their declared type; `var` locals, lambda parameters,
+/// `foreach` variables, local functions, and type parameters are bound with an
+/// empty type so they still suppress static type interpretation while failing
+/// closed for instance dispatch. This mirrors the extractor's binding rules so
+/// the resolver classifies `receiver.method(...)` facts the same way the
+/// extractor recorded them.
+fn csharp_receiver_type_bindings_for_node(
+    function: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<CSharpReceiverTypeBindings> {
+    let mut bindings = CSharpReceiverTypeBindings::default();
+    collect_csharp_enclosing_type_bindings(function, source, &mut bindings)?;
+    collect_csharp_function_bindings(function, source, &mut bindings)?;
+    Ok(bindings)
+}
+
+fn collect_csharp_enclosing_type_bindings(
+    function: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &mut CSharpReceiverTypeBindings,
+) -> Result<()> {
+    fn collect(
+        node: tree_sitter::Node<'_>,
+        root: tree_sitter::Node<'_>,
+        source: &str,
+        bindings: &mut CSharpReceiverTypeBindings,
+    ) -> Result<()> {
+        if node != root && is_csharp_symbol_node(node) {
+            return Ok(());
+        }
+        if node.kind() == "field_declaration" {
+            let mut declaration_cursor = node.walk();
+            for declaration in node
+                .named_children(&mut declaration_cursor)
+                .filter(|child| child.kind() == "variable_declaration")
+            {
+                let type_name = csharp_declared_type_name(declaration, source)?;
+                let mut declarator_cursor = declaration.walk();
+                for declarator in declaration
+                    .named_children(&mut declarator_cursor)
+                    .filter(|child| child.kind() == "variable_declarator")
+                {
+                    let Some(name) = declarator.child_by_field_name("name") else {
+                        continue;
+                    };
+                    let name = node_text(name, source)?.trim();
+                    csharp_insert_receiver_binding(bindings, name, type_name.clone());
+                }
+            }
+        }
+        if matches!(node.kind(), "property_declaration" | "event_declaration")
+            && let Some(name) = node.child_by_field_name("name")
+        {
+            let name = node_text(name, source)?.trim();
+            csharp_insert_receiver_binding(
+                bindings,
+                name,
+                csharp_declared_type_name(node, source)?,
+            );
+        }
+        if node.kind() == "type_parameter"
+            && let Some(name) = node.child_by_field_name("name")
+        {
+            let name = node_text(name, source)?.trim();
+            csharp_insert_receiver_binding(bindings, name, None);
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect(child, root, source, bindings)?;
+        }
+        Ok(())
+    }
+
+    let mut current = function.parent();
+    while let Some(node) = current {
+        if is_csharp_type_declaration(node) {
+            return collect(node, node, source, bindings);
+        }
+        current = node.parent();
+    }
+    Ok(())
+}
+
+fn collect_csharp_function_bindings(
+    function: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &mut CSharpReceiverTypeBindings,
+) -> Result<()> {
+    fn declarator_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
+        let name = if let Some(name) = node.child_by_field_name("name") {
+            name
+        } else {
+            let mut cursor = node.walk();
+            let Some(declarator) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "variable_declarator")
+            else {
+                return Ok(None);
+            };
+            let Some(name) = declarator.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            name
+        };
+        let name = node_text(name, source)?.trim();
+        Ok((!name.is_empty()).then(|| name.to_string()))
+    }
+
+    fn collect(
+        node: tree_sitter::Node<'_>,
+        source: &str,
+        bindings: &mut CSharpReceiverTypeBindings,
+    ) -> Result<()> {
+        if is_csharp_symbol_node(node) && node.parent().is_some() {
+            return Ok(());
+        }
+        if node.kind() == "implicit_parameter" {
+            let name = node_text(node, source)?.trim();
+            csharp_insert_receiver_binding(bindings, name, None);
+        }
+        if matches!(
+            node.kind(),
+            "parameter" | "catch_declaration" | "declaration_expression" | "declaration_pattern"
+        ) && let Some(name) = declarator_name(node, source)?
+        {
+            csharp_insert_receiver_binding(
+                bindings,
+                &name,
+                csharp_declared_type_name(node, source)?,
+            );
+        }
+        if node.kind() == "local_function_statement"
+            && let Some(name) = declarator_name(node, source)?
+        {
+            csharp_insert_receiver_binding(bindings, &name, None);
+        }
+        if node.kind() == "variable_declarator"
+            && let Some(name) = node.child_by_field_name("name")
+        {
+            let name = node_text(name, source)?.trim();
+            let type_name = match node.parent() {
+                Some(parent) if parent.kind() == "variable_declaration" => {
+                    csharp_declared_type_name(parent, source)?
+                }
+                _ => None,
+            };
+            csharp_insert_receiver_binding(bindings, name, type_name);
+        }
+        if node.kind() == "foreach_statement"
+            && let Some(left) = node.child_by_field_name("left")
+            && left.kind() == "identifier"
+        {
+            let name = node_text(left, source)?.trim();
+            csharp_insert_receiver_binding(bindings, name, None);
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect(child, source, bindings)?;
+        }
+        Ok(())
+    }
+
+    let mut cursor = function.walk();
+    for child in function.named_children(&mut cursor) {
+        collect(child, source, bindings)?;
+    }
+    Ok(())
+}
+
+fn csharp_insert_receiver_binding(
+    bindings: &mut CSharpReceiverTypeBindings,
+    name: &str,
+    type_name: Option<String>,
+) {
+    if !name.is_empty() {
+        bindings
+            .types_by_name
+            .insert(name.to_string(), type_name.unwrap_or_default());
+    }
+}
+
+fn csharp_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let type_name = node_text(type_node, source)?.trim();
+    if type_name.is_empty() || type_name == "var" {
+        return Ok(None);
+    }
+    Ok(Some(type_name.to_string()))
+}
+
+fn is_csharp_type_declaration(node: tree_sitter::Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "class_declaration"
+            | "struct_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+    )
 }
 
 fn insert_unique_csharp_type_alias_binding(
@@ -369,23 +629,95 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
         contexts_by_file,
         deadline,
     )?;
-    let Some(mut binding) = context
+    let Some(binding) = context
         .base_type_bindings_by_range
         .get(&source_type_range)
         .cloned()
     else {
         return Ok(None);
     };
+    Ok(resolve_csharp_base_type_binding_parts(
+        &context,
+        global_import_context,
+        binding,
+        source_namespace_path,
+    ))
+}
+
+/// Resolves a declared type spelling written in a caller (such as a receiver
+/// parameter or field type) to a base-type binding. Simple names resolve
+/// through the caller's namespace and import scopes, aliases expand to their
+/// targets, and `global::`-qualified names bind directly. Malformed or
+/// alias-colliding spellings return `None`.
+pub(in crate::symbol_dependency) fn resolve_csharp_declared_type_binding_for_reference(
+    source_file_path: &str,
+    type_name: &str,
+    source_namespace_path: Option<&str>,
+    global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let type_name = type_name.trim();
+    if type_name.is_empty() {
+        return Ok(None);
+    }
+    let is_global_qualified = type_name.starts_with("global::");
+    let Some(semantic_type_path) = csharp_generic_type_semantic_path(type_name) else {
+        return Ok(None);
+    };
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(resolve_csharp_base_type_binding_parts(
+        &context,
+        global_import_context,
+        CSharpBaseTypeBinding {
+            semantic_type_path,
+            is_global_qualified,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        },
+        source_namespace_path,
+    ))
+}
+
+pub(in crate::symbol_dependency) fn csharp_receiver_type_bindings_for_function(
+    source_file_path: &str,
+    function_range: (usize, usize),
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpReceiverTypeBindings>> {
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context
+        .receiver_type_bindings_by_range
+        .get(&function_range)
+        .cloned())
+}
+
+fn resolve_csharp_base_type_binding_parts(
+    context: &CSharpImportContext,
+    global_import_context: Option<&CSharpGlobalImportContext>,
+    mut binding: CSharpBaseTypeBinding,
+    source_namespace_path: Option<&str>,
+) -> Option<CSharpBaseTypeBinding> {
     if !binding.is_global_qualified && binding.semantic_type_path.contains("::") {
-        let Some(first_segment) = binding.semantic_type_path.split("::").next() else {
-            return Ok(None);
-        };
+        let first_segment = binding.semantic_type_path.split("::").next()?;
         for scope_path in csharp_import_scope_paths(source_namespace_path) {
             let key = (scope_path, first_segment.to_string());
             if context.ambiguous_type_alias_names.contains(&key)
                 || context.type_alias_bindings.contains_key(&key)
             {
-                return Ok(None);
+                return None;
             }
         }
         if let Some(global_import_context) = global_import_context
@@ -393,7 +725,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
                 || resolve_csharp_global_base_type_alias(first_segment, global_import_context)
                     .is_some())
         {
-            return Ok(None);
+            return None;
         }
     } else if !binding.is_global_qualified {
         let local_name = binding.semantic_type_path.clone();
@@ -401,7 +733,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
         for scope_path in &scope_paths {
             let key = (scope_path.clone(), local_name.clone());
             if context.ambiguous_type_alias_names.contains(&key) {
-                return Ok(None);
+                return None;
             }
             if let Some(alias) = context.type_alias_bindings.get(&key) {
                 binding.semantic_type_path = alias.semantic_type_path.clone();
@@ -423,7 +755,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
                 .collect();
             if let Some(global_import_context) = global_import_context {
                 if csharp_global_base_type_alias_is_ambiguous(&local_name, global_import_context) {
-                    return Ok(None);
+                    return None;
                 }
                 if let Some(alias) =
                     resolve_csharp_global_base_type_alias(&local_name, global_import_context)
@@ -440,7 +772,7 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
             }
         }
     }
-    Ok(Some(binding))
+    Some(binding)
 }
 
 pub(in crate::symbol_dependency) fn resolve_csharp_type_alias_binding_for_reference(
