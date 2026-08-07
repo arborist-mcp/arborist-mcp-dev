@@ -173,12 +173,12 @@ fn java_has_anonymous_body(node: Node<'_>) -> bool {
         .any(|child| child.kind() == "class_body")
 }
 
-/// Returns the names of methods declared directly in an anonymous-class body
-/// on `node`. Non-anonymous nodes return an empty set. Anonymous receiver
-/// slices resolve on the constructed class type only when the body does not
-/// declare a member that the call would dispatch through; a same-name body
-/// declaration would change the actual dispatch target, so it fails closed
-/// conservatively.
+/// Returns the names of methods and fields declared directly in an
+/// anonymous-class body on `node`. Non-anonymous nodes return an empty set.
+/// Anonymous receiver slices resolve on the constructed class type only when
+/// the body does not declare a member that the call would dispatch through; a
+/// same-name body declaration (method or field) would change the actual
+/// dispatch target, so it fails closed conservatively.
 fn java_anonymous_constructor_declared_members(
     node: Node<'_>,
     source: &str,
@@ -196,13 +196,28 @@ fn java_anonymous_constructor_declared_members(
     };
     let mut body_cursor = body.walk();
     for child in body.named_children(&mut body_cursor) {
-        if child.kind() == "method_declaration"
-            && let Some(name_node) = child.child_by_field_name("name")
-        {
-            let name = crate::language::node_text(name_node, source)?.trim();
-            if !name.is_empty() {
-                declared.insert(name.to_string());
+        match child.kind() {
+            "method_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = crate::language::node_text(name_node, source)?.trim();
+                    if !name.is_empty() {
+                        declared.insert(name.to_string());
+                    }
+                }
             }
+            "field_declaration" => {
+                let mut declarator_cursor = child.walk();
+                for declarator in child.children_by_field_name("declarator", &mut declarator_cursor)
+                {
+                    if let Some(name_node) = declarator.child_by_field_name("name") {
+                        let name = crate::language::node_text(name_node, source)?.trim();
+                        if !name.is_empty() {
+                            declared.insert(name.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(declared)
@@ -586,6 +601,7 @@ enum Kind { BASIC }
         let source = r#"
 package com.example;
 class Helper { int helper(int value) { return value; } }
+class Other { int helper(int value) { return value + 10; } }
 class Outer { static class Inner { int helper(int value) { return value; } } }
 class Group {
     Helper inner = new Helper();
@@ -607,6 +623,9 @@ class Caller {
     }
     int anonymousOverrideArgHop() {
         return new Group() { Group inner2(int value) { return this; } }.inner2(1).inner.helper(9);
+    }
+    int anonymousFieldShadow() {
+        return new Group() { Other inner = new Other(); }.inner.helper(10);
     }
 }
 "#;
@@ -709,6 +728,19 @@ class Caller {
                 .iter()
                 .any(|reference| reference == "Group().inner2(1).inner.helper"),
             "anonymous-rooted chains whose body declares an arity-matched hop must not canonicalize"
+        );
+        // A body field declaration shadows a same-named field hop in an
+        // anonymous-rooted chain, so the chain must not canonicalize.
+        let field_shadow = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::anonymousFieldShadow")
+            .unwrap();
+        assert!(
+            !field_shadow
+                .references_by_name
+                .iter()
+                .any(|reference| reference == "Group().inner.helper"),
+            "anonymous-rooted chains whose body declares a field hop must not canonicalize"
         );
     }
 }

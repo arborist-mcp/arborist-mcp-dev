@@ -10668,6 +10668,7 @@ fn java_anonymous_constructor_chain_receiver_calls_fail_closed_for_unsupported_r
         &source_path,
         "package com.example;
 class Helper { int helper(int value) { return value; } }
+class Other { int helper(int value) { return value + 10; } }
 class Group {
     Helper inner = new Helper();
     Group inner2() { return this; }
@@ -10685,6 +10686,9 @@ class Caller {
     int arityMismatch() {
         return new Group() { }.inner2(1).inner.helper(2);
     }
+    int fieldShadow() {
+        return new Group() { Other inner = new Other(); }.inner.helper(2);
+    }
     int missingType() {
         return new Missing() { }.inner.helper(1);
     }
@@ -10700,7 +10704,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "anonymous-rooted chains with overriding bodies, arity-mismatched hops, unknown constructed types, and unknown hops must fail closed"
+        "anonymous-rooted chains with overriding or field-shadowing bodies, arity-mismatched hops, unknown constructed types, and unknown hops must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
