@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::language::{
-    csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
-    csharp_file_type_alias_imports, csharp_generic_type_semantic_path,
-    csharp_global_namespace_imports, csharp_global_static_type_imports,
-    csharp_global_type_alias_imports, detect_language, node_text, normalize_path, parse_document,
-    parse_document_with_timeout, read_source,
+    csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
+    csharp_file_static_type_imports, csharp_file_type_alias_imports,
+    csharp_generic_type_semantic_path, csharp_global_namespace_imports,
+    csharp_global_static_type_imports, csharp_global_type_alias_imports, detect_language,
+    node_text, normalize_path, parse_document, parse_document_with_timeout, read_source,
 };
 use crate::model::LanguageId;
 use crate::semantic::csharp::is_csharp_symbol_node;
@@ -61,6 +61,7 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
     type_alias_bindings: BTreeMap<(Option<String>, String), CSharpTypeAliasBinding>,
     ambiguous_type_alias_names: BTreeSet<(Option<String>, String)>,
     base_type_bindings_by_range: BTreeMap<(usize, usize), CSharpBaseTypeBinding>,
+    interface_parent_bindings_by_range: BTreeMap<(usize, usize), Vec<CSharpInterfaceParentBinding>>,
     receiver_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
@@ -72,6 +73,23 @@ pub(in crate::symbol_dependency) struct CSharpBaseTypeBinding {
     pub(crate) is_global_qualified: bool,
     pub(crate) alias_name: Option<String>,
     pub(crate) namespace_import_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::symbol_dependency) struct CSharpInterfaceParentBinding {
+    pub(crate) semantic_type_path: String,
+    pub(crate) is_global_qualified: bool,
+}
+
+/// Outcome of resolving an interface declaration's parent list. `None` means
+/// the interface has no `base_list`; `Blocked` means a parent spelling failed
+/// to normalize or resolve in the interface's file scope; `Parents` carries
+/// the resolved parent bindings.
+#[derive(Debug, Clone)]
+pub(in crate::symbol_dependency) enum CSharpInterfaceParents {
+    None,
+    Blocked,
+    Parents(Vec<CSharpBaseTypeBinding>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -303,6 +321,10 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
     let mut type_alias_bindings = BTreeMap::new();
     let mut ambiguous_alias_names = BTreeSet::new();
     let mut base_type_bindings_by_range = BTreeMap::new();
+    let mut interface_parent_bindings_by_range: BTreeMap<
+        (usize, usize),
+        Vec<CSharpInterfaceParentBinding>,
+    > = BTreeMap::new();
     for import in csharp_file_type_alias_imports(root, &source)? {
         if let Some(deadline) = deadline {
             deadline.check("extracting C# type alias bindings")?;
@@ -336,6 +358,18 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
             return Ok(CSharpImportContext::default());
         }
     }
+    for interface_parent in csharp_file_interface_parents(root, &source)? {
+        if let Some(deadline) = deadline {
+            deadline.check("extracting C# interface parent bindings")?;
+        }
+        interface_parent_bindings_by_range
+            .entry(interface_parent.declaration_range)
+            .or_default()
+            .push(CSharpInterfaceParentBinding {
+                semantic_type_path: interface_parent.semantic_type_path,
+                is_global_qualified: interface_parent.is_global_qualified,
+            });
+    }
     let mut static_type_import_bindings = Vec::new();
     for import in csharp_file_static_type_imports(root, &source)? {
         if let Some(deadline) = deadline {
@@ -362,6 +396,7 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
         type_alias_bindings,
         ambiguous_type_alias_names: ambiguous_alias_names,
         base_type_bindings_by_range,
+        interface_parent_bindings_by_range,
         receiver_type_bindings_by_range,
         static_type_import_bindings,
         namespace_import_bindings,
@@ -695,6 +730,55 @@ pub(in crate::symbol_dependency) fn resolve_csharp_base_type_binding_for_referen
         binding,
         source_namespace_path,
     ))
+}
+
+/// Resolves the direct parent interfaces of an interface declaration as
+/// base-type bindings in the interface's file scope (namespace imports and
+/// aliases applied). A missing `base_list` yields `None`; a parent spelling
+/// that fails to normalize or resolve in file scope yields `Blocked` so the
+/// resolver fails closed instead of guessing.
+pub(in crate::symbol_dependency) fn csharp_interface_parent_bindings_for_interface(
+    source_file_path: &str,
+    interface_range: (usize, usize),
+    source_namespace_path: Option<&str>,
+    global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<CSharpInterfaceParents> {
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    let Some(parents) = context
+        .interface_parent_bindings_by_range
+        .get(&interface_range)
+    else {
+        return Ok(CSharpInterfaceParents::None);
+    };
+    if parents.is_empty() {
+        return Ok(CSharpInterfaceParents::Blocked);
+    }
+    let mut resolved_parents = Vec::with_capacity(parents.len());
+    for parent in parents {
+        let Some(binding) = resolve_csharp_base_type_binding_parts(
+            &context,
+            global_import_context,
+            CSharpBaseTypeBinding {
+                semantic_type_path: parent.semantic_type_path.clone(),
+                is_global_qualified: parent.is_global_qualified,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            source_namespace_path,
+        ) else {
+            return Ok(CSharpInterfaceParents::Blocked);
+        };
+        resolved_parents.push(binding);
+    }
+    Ok(CSharpInterfaceParents::Parents(resolved_parents))
 }
 
 /// Resolves a declared type spelling written in a caller (such as a receiver

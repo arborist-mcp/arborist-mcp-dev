@@ -2834,6 +2834,258 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_interface_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+interface IBase {
+    int BaseRun(int value);
+    static int BaseUtility(int value) => value;
+}
+interface IMiddle : IBase {
+    int MiddleRun(int value);
+}
+interface IWorker : IMiddle, IBase {
+    int Run(int value);
+}
+class Worker : IWorker {
+    public int Run(int value) => value;
+    public int MiddleRun(int value) => value;
+    public int BaseRun(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int DirectRun(IWorker worker) => worker.Run(1);
+    int InheritedRun(IWorker worker) => worker.MiddleRun(1);
+    int DiamondRun(IWorker worker) => worker.BaseRun(1);
+    int MiddleTypedRun(IMiddle middle) => middle.BaseRun(1);
+    int BaseTypedRun(IBase baseWorker) => baseWorker.BaseRun(1);
+    int StaticThroughChain(IMiddle middle) => middle.BaseUtility(1);
+}
+",
+    )
+    .unwrap();
+
+    let run_live = trace_symbol_graph(&dir, "Demo::IWorker::Run", TraceDirection::Callers).unwrap();
+    assert_eq!(
+        run_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::DirectRun"]
+    );
+    let middle_live =
+        trace_symbol_graph(&dir, "Demo::IMiddle::MiddleRun", TraceDirection::Callers).unwrap();
+    assert_eq!(
+        middle_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::InheritedRun"]
+    );
+    let base_live =
+        trace_symbol_graph(&dir, "Demo::IBase::BaseRun", TraceDirection::Callers).unwrap();
+    assert_eq!(
+        base_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::Caller::BaseTypedRun",
+            "Demo::Caller::DiamondRun",
+            "Demo::Caller::MiddleTypedRun",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let run_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::IWorker::Run", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(
+        run_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::DirectRun"]
+    );
+    let middle_persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "Demo::IMiddle::MiddleRun",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(
+        middle_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::InheritedRun"]
+    );
+    let base_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::IBase::BaseRun", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(
+        base_persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::Caller::BaseTypedRun",
+            "Demo::Caller::DiamondRun",
+            "Demo::Caller::MiddleTypedRun",
+        ]
+    );
+
+    // Interface chain dispatch targets the interface declaration, not the
+    // concrete implementing class, and a static interface member reached
+    // through an inherited interface fails closed.
+    let impl_live =
+        trace_symbol_graph(&dir, "Demo::Worker::BaseRun", TraceDirection::Callers).unwrap();
+    assert!(impl_live.callers.is_empty());
+    let utility_live =
+        trace_symbol_graph(&dir, "Demo::IBase::BaseUtility", TraceDirection::Callers).unwrap();
+    assert!(utility_live.callers.is_empty());
+}
+
+#[test]
+fn traces_csharp_interface_chain_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let base_path = dir.join("Base.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &base_path,
+        "namespace Demo;
+public interface IBase {
+    int BaseRun(int value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("More.cs"),
+        "namespace App;
+public interface IMiddle : Demo.IBase {
+    int MiddleRun(int value);
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace App; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace App;
+class Caller {
+    int Call(IMiddle middle) => middle.BaseRun(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::IBase::BaseRun",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "App::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::IBase::BaseRun",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "App::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_interface_chain_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+interface ILeft {
+    int Conflict(int value);
+}
+interface IRight {
+    int Conflict(int value);
+}
+interface IBase {
+    int BaseRun(int value);
+    static int BaseUtility(int value) => value;
+}
+interface IMiddle : IBase {
+    int BaseRun();
+}
+interface IBroken : NotIndexed {
+}
+interface ICyclicA : ICyclicB {
+}
+interface ICyclicB : ICyclicA {
+}
+interface IWorker : ILeft, IRight {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int MissingMethod(IWorker worker) => worker.Nope(1);
+    int CompetingMethods(IWorker worker) => worker.Conflict(1);
+    int ArityShadowed(IMiddle middle) => middle.BaseRun(1);
+    int StaticThroughChain(IBase baseWorker) => baseWorker.BaseUtility(1);
+    int CyclicChain(ICyclicA cyclic) => cyclic.Nope(1);
+    int UnresolvableParent(IBroken broken) => broken.Run(1);
+    int UnknownInterface(NotIndexed worker) => worker.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Caller::MissingMethod",
+        "Demo::Caller::CompetingMethods",
+        "Demo::Caller::ArityShadowed",
+        "Demo::Caller::StaticThroughChain",
+        "Demo::Caller::CyclicChain",
+        "Demo::Caller::UnresolvableParent",
+        "Demo::Caller::UnknownInterface",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn traces_csharp_nested_declared_type_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

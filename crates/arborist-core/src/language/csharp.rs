@@ -73,6 +73,65 @@ pub(crate) fn csharp_file_base_types(
     Ok(base_types)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CSharpFileInterfaceParent {
+    pub(crate) declaration_range: (usize, usize),
+    pub(crate) semantic_type_path: String,
+    pub(crate) is_global_qualified: bool,
+}
+
+/// Collects the direct parent interfaces of every interface declaration in a
+/// C# source file. An `interface_declaration` may extend several interfaces
+/// through its `base_list`; every `type` entry is recorded against the
+/// declaring interface's byte range so the resolver can walk extends chains.
+pub(crate) fn csharp_file_interface_parents(
+    root: Node<'_>,
+    source: &str,
+) -> Result<Vec<CSharpFileInterfaceParent>> {
+    fn collect(
+        node: Node<'_>,
+        source: &str,
+        parents: &mut Vec<CSharpFileInterfaceParent>,
+    ) -> Result<()> {
+        if node.kind() == "interface_declaration" {
+            let mut cursor = node.walk();
+            if let Some(base_list) = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "base_list")
+            {
+                let mut base_list_cursor = base_list.walk();
+                for base_type in base_list.named_children(&mut base_list_cursor) {
+                    // Concrete base type nodes (`identifier`, `generic_name`,
+                    // `qualified_name`, `alias_qualified_name`, ...) normalize
+                    // to a semantic path; argument lists and primary-constructor
+                    // base types are rejected by the normalization.
+                    let base_type_text = node_text(base_type, source)?.trim();
+                    let is_global_qualified = base_type_text.starts_with("global::");
+                    if let Some(semantic_type_path) =
+                        csharp_generic_type_semantic_path(base_type_text)
+                    {
+                        parents.push(CSharpFileInterfaceParent {
+                            declaration_range: (node.start_byte(), node.end_byte()),
+                            semantic_type_path,
+                            is_global_qualified,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            collect(child, source, parents)?;
+        }
+        Ok(())
+    }
+
+    let mut parents = Vec::new();
+    collect(root, source, &mut parents)?;
+    Ok(parents)
+}
+
 pub(crate) fn csharp_file_type_alias_imports(
     root: Node<'_>,
     source: &str,
@@ -459,9 +518,10 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        csharp_file_base_types, csharp_file_namespace_imports, csharp_file_static_type_imports,
-        csharp_file_type_alias_imports, csharp_global_namespace_imports,
-        csharp_global_static_type_imports, csharp_global_type_alias_imports,
+        csharp_file_base_types, csharp_file_interface_parents, csharp_file_namespace_imports,
+        csharp_file_static_type_imports, csharp_file_type_alias_imports,
+        csharp_global_namespace_imports, csharp_global_static_type_imports,
+        csharp_global_type_alias_imports,
     };
     use crate::language::parse_document;
 
@@ -516,6 +576,44 @@ class GenericDerived : Base<int> {}
                 ("Base", false),
             ]
         );
+    }
+
+    #[test]
+    fn collects_interface_parent_types() {
+        let source = r#"
+interface IBase {}
+interface ISecond : IBase {}
+interface IGeneric : IBase<int> {}
+interface IQualified : Demo.IBase {}
+interface IGlobal : global::Demo.IBase {}
+interface IMultiple : IBase, ISecond {}
+class NotAnInterface : IBase {}
+"#;
+        let document = parse_document(Path::new("Interfaces.cs"), source).unwrap();
+        let parents = csharp_file_interface_parents(document.tree.root_node(), source).unwrap();
+
+        assert_eq!(
+            parents
+                .iter()
+                .map(|parent| {
+                    (
+                        parent.semantic_type_path.as_str(),
+                        parent.is_global_qualified,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("IBase", false),
+                ("IBase", false),
+                ("Demo::IBase", false),
+                ("Demo::IBase", true),
+                ("IBase", false),
+                ("ISecond", false),
+            ]
+        );
+        // `class NotAnInterface : IBase {}` contributes no interface parents,
+        // and `interface IBase {}` has no base list.
+        assert_eq!(parents.len(), 6);
     }
 
     #[test]

@@ -5,10 +5,10 @@ use anyhow::Result;
 
 use super::super::c::{CIncludeContext, c_include_context_for_file_with_overrides_and_deadline};
 use super::super::csharp::{
-    CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext,
+    CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
-    csharp_global_type_alias_name_is_ambiguous, csharp_receiver_type_bindings_for_function,
-    csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
+    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -1570,14 +1570,19 @@ fn resolve_csharp_instance_receiver_call(
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
     // An interface-typed receiver dispatches on the interface's own method
-    // declaration; class/record ancestor walking below does not apply.
+    // declaration or its unique extends chain; class/record ancestor walking
+    // below does not apply.
     if let Some(symbol_id) = resolve_csharp_interface_receiver_call(
         source_symbol,
         &binding,
         member_name,
         raw_symbols,
         semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
         call_arity,
+        deadline,
     )? {
         return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
     }
@@ -1761,36 +1766,197 @@ fn resolve_csharp_receiver_type_binding(
 }
 
 /// Dispatches an instance call on an interface-typed receiver to a unique
-/// non-static, non-`params`, exact-arity method declared on the interface.
-/// Non-interface declared types and unresolved, ambiguous, or method-less
-/// interfaces return `None` and fail closed.
+/// non-static, non-`params`, exact-arity method declared on the interface or
+/// on one branch of its unique interface-extends chain. Non-interface
+/// declared types return `None` so class/record ancestor resolution can
+/// proceed; unresolved, ambiguous, cyclic, method-less, or statically
+/// declared interface targets also return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# interface receiver resolution inputs explicit"
+)]
 fn resolve_csharp_interface_receiver_call(
     source_symbol: &IndexedSymbol,
     binding: &CSharpBaseTypeBinding,
     member_name: &str,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
     let Some(interface_path) =
         csharp_interface_type_path(source_symbol, raw_symbols, semantic_path_index, binding)
     else {
         return Ok(None);
     };
-    let target_path = format!("{interface_path}::{member_name}");
-    Ok(resolve_csharp_candidate(
-        raw_symbols,
-        semantic_path_index,
-        &target_path,
-        Some(source_symbol),
-        call_arity,
-        CSharpCandidateRequirements {
-            node_kind: "method_declaration",
-            require_static: false,
-            require_instance: true,
-            require_same_file: false,
+    let mut visited_interface_paths = BTreeSet::new();
+    Ok(
+        match resolve_csharp_interface_chain_method(
+            &interface_path,
+            member_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+            &mut visited_interface_paths,
+        )? {
+            CSharpInterfaceChainMethodResolution::Resolved(symbol_id) => Some(symbol_id),
+            CSharpInterfaceChainMethodResolution::NoMethod
+            | CSharpInterfaceChainMethodResolution::Blocked => None,
         },
-    ))
+    )
+}
+
+enum CSharpInterfaceChainMethodResolution {
+    Resolved(String),
+    NoMethod,
+    Blocked,
+}
+
+/// Walks an interface's direct parent-interface branches recursively to
+/// resolve `method_name`. A declaration on an interface shadows inheritance:
+/// a non-matching (static, `params`, or arity-mismatched) declaration blocks
+/// parent lookup rather than falling through. Exactly one branch must provide
+/// a uniquely arity-matched non-static method, every other branch must prove
+/// it has no declaration, and a declaration reached identically through
+/// multiple branches still resolves once. Competing, ambiguous, cyclic,
+/// unresolvable, and statically-declared targets fail closed as `Blocked`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# interface inheritance resolution inputs explicit"
+)]
+fn resolve_csharp_interface_chain_method(
+    interface_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_interface_paths: &mut BTreeSet<String>,
+) -> Result<CSharpInterfaceChainMethodResolution> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C# interface chain method")?;
+    }
+    if !visited_interface_paths.insert(interface_path.to_string()) {
+        return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+    }
+    let target_path = format!("{interface_path}::{method_name}");
+    let declared_candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+        .collect::<Vec<_>>();
+    if !declared_candidates.is_empty() {
+        let candidates = declared_candidates
+            .into_iter()
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                !csharp_method_is_static(candidate)
+                    && candidate.parameters.len() == call_arity
+                    && !candidate
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.split_whitespace().any(|part| part == "params"))
+            })
+            .collect::<Vec<_>>();
+        let resolution = match candidates.as_slice() {
+            [candidate_index] => CSharpInterfaceChainMethodResolution::Resolved(
+                raw_symbols[*candidate_index].symbol_id.clone(),
+            ),
+            _ => CSharpInterfaceChainMethodResolution::Blocked,
+        };
+        visited_interface_paths.remove(interface_path);
+        return Ok(resolution);
+    }
+
+    let interface_candidates = semantic_path_index
+        .get(interface_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
+        .collect::<Vec<_>>();
+    let [interface_index] = interface_candidates.as_slice() else {
+        visited_interface_paths.remove(interface_path);
+        return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+    };
+    let source_interface = &raw_symbols[*interface_index];
+    let source_namespace_path =
+        csharp_source_namespace_path(source_interface, raw_symbols).flatten();
+    let parent_bindings = match csharp_interface_parent_bindings_for_interface(
+        &source_interface.file_path,
+        source_interface.byte_range,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        CSharpInterfaceParents::None => {
+            visited_interface_paths.remove(interface_path);
+            return Ok(CSharpInterfaceChainMethodResolution::NoMethod);
+        }
+        CSharpInterfaceParents::Blocked => {
+            visited_interface_paths.remove(interface_path);
+            return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+        }
+        CSharpInterfaceParents::Parents(parent_bindings) => parent_bindings,
+    };
+    let mut resolved_symbol_id = None;
+    for parent_binding in parent_bindings {
+        let Some(parent_interface_path) = csharp_interface_type_path(
+            source_interface,
+            raw_symbols,
+            semantic_path_index,
+            &parent_binding,
+        ) else {
+            visited_interface_paths.remove(interface_path);
+            return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+        };
+        match resolve_csharp_interface_chain_method(
+            &parent_interface_path,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+            visited_interface_paths,
+        )? {
+            CSharpInterfaceChainMethodResolution::Resolved(symbol_id) => {
+                if resolved_symbol_id
+                    .as_deref()
+                    .is_some_and(|resolved| resolved != symbol_id)
+                {
+                    visited_interface_paths.remove(interface_path);
+                    return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+                }
+                resolved_symbol_id.get_or_insert(symbol_id);
+            }
+            CSharpInterfaceChainMethodResolution::Blocked => {
+                visited_interface_paths.remove(interface_path);
+                return Ok(CSharpInterfaceChainMethodResolution::Blocked);
+            }
+            CSharpInterfaceChainMethodResolution::NoMethod => {}
+        }
+    }
+    visited_interface_paths.remove(interface_path);
+    Ok(resolved_symbol_id
+        .map(CSharpInterfaceChainMethodResolution::Resolved)
+        .unwrap_or(CSharpInterfaceChainMethodResolution::NoMethod))
 }
 
 /// Resolves a declared interface type name to a unique indexed interface
