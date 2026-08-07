@@ -159,11 +159,16 @@ fn java_constructor_receiver_spelling(node: Node<'_>, source: &str) -> Result<Op
     Ok(java_dotted_type_name(type_name).map(|name| format!("{name}()")))
 }
 
-/// Canonicalizes a field-access chain whose leading object is a constructor
-/// call, such as `new Group().inner.helper`, to `Group().inner.helper` so the
-/// resolver can dispatch the constructed type through the member chain. Chains
-/// rooted at any other expression keep their raw spelling and fail closed.
-fn java_constructor_field_chain_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
+/// Canonicalizes a receiver chain whose leading expression is a constructor
+/// call, such as `new Group().inner.helper` or `new Group().inner().helper`,
+/// to `Group().inner.helper` or `Group().inner().helper` so the resolver can
+/// dispatch the constructed type through field and zero-argument method-call
+/// hops. Method-call hops with non-empty argument lists and chains rooted at
+/// any other expression keep their raw spelling and fail closed.
+fn java_constructor_receiver_chain_spelling(
+    node: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
     let mut segments = Vec::new();
     let mut current = node;
     loop {
@@ -176,6 +181,23 @@ fn java_constructor_field_chain_spelling(node: Node<'_>, source: &str) -> Result
                 return Ok(None);
             }
             segments.push(field_name.to_string());
+            let Some(object) = current.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            current = object;
+        } else if current.kind() == "method_invocation" {
+            let Some(name_node) = current.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            let method_name = crate::language::node_text(name_node, source)?.trim();
+            let Some(arguments) = current.child_by_field_name("arguments") else {
+                return Ok(None);
+            };
+            let mut cursor = arguments.walk();
+            if method_name.is_empty() || arguments.named_children(&mut cursor).count() != 0 {
+                return Ok(None);
+            }
+            segments.push(format!("{method_name}()"));
             let Some(object) = current.child_by_field_name("object") else {
                 return Ok(None);
             };
@@ -263,12 +285,15 @@ fn collect_direct_local_calls_from_node(
                 (!object_name.is_empty() && !qualified_call_exclusions.contains(object_name))
                     .then(|| format!("{object_name}.{name}"))
             }
-            Some(object) if object.kind() == "field_access" && !name.is_empty() => {
-                if let Some(spelling) = java_constructor_field_chain_spelling(object, source)? {
+            Some(object)
+                if matches!(object.kind(), "field_access" | "method_invocation")
+                    && !name.is_empty() =>
+            {
+                if let Some(spelling) = java_constructor_receiver_chain_spelling(object, source)? {
                     Some(format!("{spelling}.{name}"))
                 } else {
                     let object_name = crate::language::node_text(object, source)?.trim();
-                    let receiver_name = object_name.split('.').next().unwrap_or_default();
+                    let receiver_name = object_name.split(['.', '(']).next().unwrap_or_default();
                     (!object_name.is_empty()
                         && !receiver_name.is_empty()
                         && !qualified_call_exclusions.contains(receiver_name))

@@ -11847,3 +11847,289 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_java_method_hop_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Inner { int helper(int value) { return value; } }
+class Group { Inner inner() { return new Inner(); } }
+class Caller {
+    int run(Group group) { return group.inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_method_hop_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Inner { int helper(int value) { return value; } }
+class Group { Inner inner() { return new Inner(); } }
+class Caller {
+    int run(Group group) { return group.inner().helper(1); }
+}
+";
+    let helper_symbol = "com::example::Inner::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_method_hop_receiver_calls_through_shared_paths() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Deep { int helper(int value) { return value; } }
+class Inner { Deep deeper() { return new Deep(); } }
+class Group { Inner inner() { return new Inner(); } }
+class Holder { Group group; }
+class Caller {
+    int newCall() { return new Group().inner().deeper().helper(1); }
+    int varCall() { var group = new Group(); return group.inner().deeper().helper(1); }
+    int paramCall(Group group) { return group.inner().deeper().helper(1); }
+    int fieldHopCall(Holder holder) { return holder.group.inner().deeper().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Deep::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 4);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::fieldHopCall",
+            "com::example::Caller::newCall",
+            "com::example::Caller::paramCall",
+            "com::example::Caller::varCall"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 4);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::fieldHopCall",
+            "com::example::Caller::newCall",
+            "com::example::Caller::paramCall",
+            "com::example::Caller::varCall"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_method_hop_receiver_calls_across_files_with_imports() {
+    let dir = temporary_dir();
+    let inner_dir = dir.join("src").join("pkg").join("inner");
+    let group_dir = dir.join("src").join("pkg").join("group");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let inner_path = inner_dir.join("Foo.java");
+    let group_path = group_dir.join("Group.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&inner_dir).unwrap();
+    fs::create_dir_all(&group_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &inner_path,
+        "package pkg.inner;
+public class Foo { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &group_path,
+        "package pkg.group;
+import pkg.inner.Foo;
+public class Group { public Foo inner() { return new Foo(); } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.group.Group;
+public class Bar {
+    public int run(Group group) { return group.inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::inner::Foo::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn traces_java_method_hop_receiver_calls_through_interface_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Inner { int helper(int value) { return value; } }
+interface IGroup { Inner inner(); }
+class Caller {
+    int run(IGroup group) { return group.inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_method_hop_receiver_calls_through_generic_return_types() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Box<T> { int helper(int value) { return value; } }
+class Group { Box<String> inner() { return new Box<String>(); } }
+class Caller {
+    int run(Group group) { return group.inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Box::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_method_hop_receiver_calls_fail_closed_for_unsupported_hops() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Inner { int helper(int value) { return value; } }
+class Group {
+    Inner inner() { return new Inner(); }
+    Inner inner(int value) { return new Inner(); }
+    int tag() { return 1; }
+    void reset() {}
+    static Inner make() { return new Inner(); }
+}
+class Caller {
+    int argHop(Group group) { return group.inner(1).helper(1); }
+    int unknownHop(Group group) { return group.unknown().helper(1); }
+    int primitiveHop(Group group) { return group.tag().helper(1); }
+    int voidHop(Group group) { return group.reset().helper(1); }
+    int staticHop(Group group) { return group.make().helper(1); }
+    int unboundHop() { return unknown.inner().helper(1); }
+    int thisHop() { return this.inner().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Inner::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "argument-taking, unknown, primitive/void-return, static, unbound, and `this`-rooted method-call hops must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}

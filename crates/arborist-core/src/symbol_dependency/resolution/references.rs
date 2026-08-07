@@ -2777,12 +2777,13 @@ fn java_field_type_path(
     )
 }
 
-/// Dispatches a member chain such as `group.member.helper(...)` or
-/// `Group().member.helper(...)` on an already-resolved receiver type path:
-/// each intermediate hop must resolve to a uniquely declared field whose
-/// declared type continues the chain, and the final member must be a unique
-/// non-static, non-varargs method with a matching arity. Unknown, ambiguous,
-/// or unresolvable hops and missing final members fail closed.
+/// Dispatches a member chain such as `group.member.helper(...)`,
+/// `group.inner().helper(...)`, or `Group().inner().helper(...)` on an
+/// already-resolved receiver type path: each intermediate hop must resolve to
+/// a uniquely declared field or zero-argument method call whose declared type
+/// continues the chain, and the final member must be a unique non-static,
+/// non-varargs method with a matching arity. Unknown, ambiguous, or
+/// unresolvable hops and missing final members fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java member-chain dispatch inputs explicit"
@@ -2807,16 +2808,29 @@ fn resolve_java_member_chain_from_type_path(
             return Ok(None);
         };
         for hop in hops {
-            let Some(next_path) = java_field_type_path(
-                &current_type_path,
-                hop,
-                raw_symbols,
-                semantic_path_index,
-                file_overrides,
-                java_import_contexts_by_file,
-                deadline,
-            )?
-            else {
+            let next_path = if let Some(method_name) = hop.strip_suffix("()") {
+                java_method_return_type_path(
+                    &current_type_path,
+                    method_name,
+                    0,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                java_field_type_path(
+                    &current_type_path,
+                    hop,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+            };
+            let Some(next_path) = next_path else {
                 return Ok(None);
             };
             current_type_path = next_path;
@@ -2840,6 +2854,64 @@ fn resolve_java_member_chain_from_type_path(
         file_overrides,
         java_import_contexts_by_file,
         call_arity,
+        deadline,
+    )
+}
+
+/// Resolves the declared return type of a zero-argument non-static method-call
+/// hop such as `inner()` in `group.inner().helper(...)`. The hop method
+/// dispatches like any other instance-receiver member (class, superclass,
+/// interface, or class-receiver interface-default), and its declared return
+/// type resolves in the method's own file and enclosing scope. Static hops,
+/// arity-mismatched hops, and unknown, ambiguous, primitive, or void return
+/// types fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java method-call hop type resolution inputs explicit"
+)]
+fn java_method_return_type_path(
+    owner_type_path: &str,
+    method_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(method_path) = resolve_java_instance_receiver_member(
+        owner_type_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(method) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == method_path)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method
+        .return_type
+        .as_deref()
+        .and_then(java_dotted_type_name)
+    else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        method,
+        &return_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
         deadline,
     )
 }
