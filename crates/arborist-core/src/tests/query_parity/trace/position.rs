@@ -12980,3 +12980,187 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_java_receiver_calls_with_nested_type_imports_across_files() {
+    let dir = temporary_dir();
+    let outer_dir = dir.join("src").join("pkg").join("outer");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let outer_path = outer_dir.join("Outer.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&outer_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &outer_path,
+        "package pkg.outer;
+public class Outer {
+    public static class Inner { public int helper(int value) { return value; } }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.outer.Outer.Inner;
+public class Bar {
+    public int run(Inner inner) { return inner.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::outer::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn traces_java_bare_calls_with_nested_static_member_imports_across_files() {
+    let dir = temporary_dir();
+    let outer_dir = dir.join("src").join("pkg").join("outer");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let outer_path = outer_dir.join("Outer.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&outer_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &outer_path,
+        "package pkg.outer;
+public class Outer {
+    public static class Inner {
+        public static int helper(int value) { return value; }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import static pkg.outer.Outer.Inner.helper;
+public class Bar {
+    public int run() { return helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::outer::Outer::Inner::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn traces_java_receiver_calls_with_nested_type_imports_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let outer_dir = dir.join("src").join("pkg").join("outer");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let outer_path = outer_dir.join("Outer.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&outer_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &outer_path,
+        "package pkg.outer;
+public class Outer {
+    public static class Inner { public int helper(int value) { return value; } }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package pkg.caller;
+import pkg.outer.Outer.Inner;
+public class Bar {
+    public int run(Inner inner) { return inner.helper(1); }
+}
+";
+    let helper_symbol = "pkg::outer::Outer::Inner::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn java_nested_type_imports_fail_closed_for_missing_nested_targets() {
+    let dir = temporary_dir();
+    let outer_dir = dir.join("src").join("pkg").join("outer");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let outer_path = outer_dir.join("Outer.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&outer_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &outer_path,
+        "package pkg.outer;
+public class Outer { public static class Other { public int helper(int value) { return value; } } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.outer.Outer.Missing;
+public class Bar {
+    public int run(Missing inner) { return inner.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let target = "pkg::outer::Outer::Other::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "nested type imports naming a missing nested target must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}

@@ -428,13 +428,23 @@ fn resolve_unique_java_source_path(path: &Path, import_path: &str) -> Option<Pat
     let mut candidates = BTreeSet::new();
     let mut source_root = path.parent()?.to_path_buf();
     loop {
-        let mut candidate = source_root.clone();
-        for segment in &segments {
-            candidate.push(segment);
-        }
-        candidate.set_extension("java");
-        if candidate.is_file() && candidate_declares_import_package(&candidate, import_path) {
-            candidates.insert(normalize_absolute_path(&candidate).ok()?);
+        // Nested type and static-member imports such as `pkg.outer.Outer.Inner`
+        // or `pkg.outer.Outer.Inner.method` name a member declared inside the
+        // outermost remaining prefix's source file, so progressively strip
+        // trailing segments until a prefix maps to a `.java` file.
+        let mut prefix_len = segments.len();
+        while prefix_len > 0 {
+            let mut candidate = source_root.clone();
+            for segment in &segments[..prefix_len] {
+                candidate.push(segment);
+            }
+            candidate.set_extension("java");
+            let prefix_path = segments[..prefix_len].join(".");
+            if candidate.is_file() && candidate_declares_import_package(&candidate, &prefix_path) {
+                candidates.insert(normalize_absolute_path(&candidate).ok()?);
+                break;
+            }
+            prefix_len -= 1;
         }
 
         if !source_root.pop() {
@@ -566,6 +576,55 @@ mod tests {
                 local_name: "utility".to_string(),
                 semantic_type_path: "com::example::StaticHelper".to_string(),
                 source_path: static_helper_path,
+            }]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_unique_nested_type_and_static_member_imports_from_ancestor_source_roots() {
+        let root = temporary_dir();
+        let source_path = root.join("src/com/example/Main.java");
+        let outer_path = root.join("src/com/example/Outer.java");
+        fs::create_dir_all(source_path.parent().unwrap()).unwrap();
+        fs::write(
+            &outer_path,
+            "package com.example; class Outer { static class Inner { static int utility(int value) { return value; } } }
+",
+        )
+        .unwrap();
+        let source = "package com.example;
+import com.example.Outer.Inner;
+import static com.example.Outer.Inner.utility;
+";
+        fs::write(&source_path, source).unwrap();
+        let document = parse_document(&source_path, source).unwrap();
+
+        let dependencies =
+            java_local_file_dependency_paths(&source_path, document.tree.root_node(), source)
+                .unwrap();
+
+        assert_eq!(dependencies, [outer_path.clone()].into_iter().collect());
+        assert_eq!(
+            java_local_explicit_type_imports(&source_path, document.tree.root_node(), source)
+                .unwrap(),
+            vec![super::JavaLocalTypeImport {
+                local_name: "Inner".to_string(),
+                semantic_path: "com::example::Outer::Inner".to_string(),
+                source_path: outer_path.clone(),
+            }]
+        );
+        assert_eq!(
+            java_local_explicit_static_member_imports(
+                &source_path,
+                document.tree.root_node(),
+                source,
+            )
+            .unwrap(),
+            vec![super::JavaLocalStaticMemberImport {
+                local_name: "utility".to_string(),
+                semantic_type_path: "com::example::Outer::Inner".to_string(),
+                source_path: outer_path,
             }]
         );
         let _ = fs::remove_dir_all(root);
