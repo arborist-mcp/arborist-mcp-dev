@@ -154,20 +154,6 @@ fn indexed_symbol(
     }))
 }
 
-/// Records a constructor-call receiver such as `new Helper(...)` as
-/// `Helper()`, or `Outer.Inner()` for a nested constructed type, so resolution
-/// can dispatch the constructed type like any other instance receiver.
-/// Anonymous-class bodies and malformed type spellings produce no fact and fail
-/// closed for receiver chains; direct anonymous constructor receivers are
-/// handled separately so the invoked member can be checked against the
-/// anonymous body.
-fn java_constructor_receiver_spelling(node: Node<'_>, source: &str) -> Result<Option<String>> {
-    if java_has_anonymous_body(node) {
-        return Ok(None);
-    }
-    java_constructor_type_spelling(node, source)
-}
-
 /// Records the constructed type spelling of an `object_creation_expression`
 /// such as `Helper()` or `Outer.Inner()`, ignoring any anonymous-class body.
 /// Malformed and non-dotted type spellings produce no fact and fail closed.
@@ -187,47 +173,54 @@ fn java_has_anonymous_body(node: Node<'_>) -> bool {
         .any(|child| child.kind() == "class_body")
 }
 
-/// Returns whether an anonymous constructor receiver's body declares a method
-/// named `member_name`. The direct receiver slice resolves
-/// `new Helper() { }.helper(...)` on the constructed class type only when the
-/// anonymous body does not declare `helper`; a same-name body declaration
-/// would change the actual dispatch target, so it fails closed conservatively.
-fn java_anonymous_constructor_body_declares_member(
+/// Returns the names of methods declared directly in an anonymous-class body
+/// on `node`. Non-anonymous nodes return an empty set. Anonymous receiver
+/// slices resolve on the constructed class type only when the body does not
+/// declare a member that the call would dispatch through; a same-name body
+/// declaration would change the actual dispatch target, so it fails closed
+/// conservatively.
+fn java_anonymous_constructor_declared_members(
     node: Node<'_>,
     source: &str,
-    member_name: &str,
-) -> Result<bool> {
+) -> Result<BTreeSet<String>> {
+    let mut declared = BTreeSet::new();
     if !java_has_anonymous_body(node) {
-        return Ok(false);
+        return Ok(declared);
     }
     let mut cursor = node.walk();
     let Some(body) = node
         .named_children(&mut cursor)
         .find(|child| child.kind() == "class_body")
     else {
-        return Ok(false);
+        return Ok(declared);
     };
     let mut body_cursor = body.walk();
     for child in body.named_children(&mut body_cursor) {
         if child.kind() == "method_declaration"
             && let Some(name_node) = child.child_by_field_name("name")
-            && crate::language::node_text(name_node, source)?.trim() == member_name
         {
-            return Ok(true);
+            let name = crate::language::node_text(name_node, source)?.trim();
+            if !name.is_empty() {
+                declared.insert(name.to_string());
+            }
         }
     }
-    Ok(false)
+    Ok(declared)
 }
 
 /// Canonicalizes a receiver chain whose leading expression is a constructor
 /// call, such as `new Group().inner.helper` or `new Group().inner().helper`,
 /// to `Group().inner.helper` or `Group().inner().helper` so the resolver can
 /// dispatch the constructed type through field and zero-argument method-call
-/// hops. Method-call hops with non-empty argument lists and chains rooted at
-/// any other expression keep their raw spelling and fail closed.
+/// hops. Chains rooted at an anonymous constructor resolve on the constructed
+/// class type only when the anonymous body declares neither the final member
+/// nor any method-call hop in the chain. Method-call hops with non-empty
+/// argument lists and chains rooted at any other expression keep their raw
+/// spelling and fail closed.
 fn java_constructor_receiver_chain_spelling(
     node: Node<'_>,
     source: &str,
+    final_member: &str,
 ) -> Result<Option<String>> {
     let mut segments = Vec::new();
     let mut current = node;
@@ -263,7 +256,19 @@ fn java_constructor_receiver_chain_spelling(
             };
             current = object;
         } else if current.kind() == "object_creation_expression" {
-            let Some(spelling) = java_constructor_receiver_spelling(current, source)? else {
+            if java_has_anonymous_body(current)
+                && java_anonymous_constructor_declared_members(current, source)?
+                    .iter()
+                    .any(|declared| {
+                        declared == final_member
+                            || segments.iter().any(|segment| {
+                                segment.strip_suffix("()") == Some(declared.as_str())
+                            })
+                    })
+            {
+                return Ok(None);
+            }
+            let Some(spelling) = java_constructor_type_spelling(current, source)? else {
                 return Ok(None);
             };
             segments.push(spelling);
@@ -349,7 +354,9 @@ fn collect_direct_local_calls_from_node(
                 if matches!(object.kind(), "field_access" | "method_invocation")
                     && !name.is_empty() =>
             {
-                if let Some(spelling) = java_constructor_receiver_chain_spelling(object, source)? {
+                if let Some(spelling) =
+                    java_constructor_receiver_chain_spelling(object, source, name)?
+                {
                     Some(format!("{spelling}.{name}"))
                 } else {
                     let object_name = crate::language::node_text(object, source)?.trim();
@@ -369,7 +376,7 @@ fn collect_direct_local_calls_from_node(
                 // class type only when the anonymous body does not declare the
                 // invoked member; a same-name body declaration would change
                 // the actual dispatch target, so it produces no fact.
-                if java_anonymous_constructor_body_declares_member(object, source, name)? {
+                if java_anonymous_constructor_declared_members(object, source)?.contains(name) {
                     None
                 } else {
                     java_constructor_type_spelling(object, source)?
@@ -581,6 +588,13 @@ class Caller {
     int anonymous() { return new Helper() { }.helper(3); }
     int overridden() { return new Helper() { int helper(int value) { return value + 1; } }.helper(4); }
     int chained() { return new Group().inner.helper(4); }
+    int anonymousChain() { return new Group() { }.inner.helper(5); }
+    int anonymousOverrideFinal() {
+        return new Group() { int helper(int value) { return value + 1; } }.inner.helper(6);
+    }
+    int anonymousOverrideHop() {
+        return new Group() { int inner2() { return new Group(); } }.inner2().inner.helper(7);
+    }
 }
 "#;
         let path = Path::new("Caller.java");
@@ -613,6 +627,16 @@ class Caller {
             chained.references_by_name,
             ["Group().inner.helper".to_string()].into()
         );
+        // Anonymous-rooted chains canonicalize to the constructed type when
+        // the body declares neither the final member nor a method-call hop.
+        let anonymous_chain = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::anonymousChain")
+            .unwrap();
+        assert_eq!(
+            anonymous_chain.references_by_name,
+            ["Group().inner.helper".to_string()].into()
+        );
         // Direct anonymous-class receivers resolve on the constructed class
         // type when the body does not declare the invoked member.
         let anonymous = symbols
@@ -630,5 +654,21 @@ class Caller {
             .find(|symbol| symbol.semantic_path == "com::example::Caller::overridden")
             .unwrap();
         assert!(overridden.references_by_name.is_empty());
+        // A body declaration of the final member or of a method-call hop in an
+        // anonymous-rooted chain prevents canonicalization; the raw fallback
+        // spelling never resolves at trace time.
+        for method in ["anonymousOverrideFinal", "anonymousOverrideHop"] {
+            let symbol = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == format!("com::example::Caller::{method}"))
+                .unwrap();
+            assert!(
+                !symbol
+                    .references_by_name
+                    .iter()
+                    .any(|reference| reference == "Group().inner.helper"),
+                "anonymous-rooted chains whose body declares a dispatched member must not canonicalize"
+            );
+        }
     }
 }
