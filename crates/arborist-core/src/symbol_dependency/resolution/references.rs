@@ -2653,15 +2653,17 @@ fn resolve_csharp_initializer_chain_binding(
 
 /// Resolves the receiver type binding for a `var` local initialized from a
 /// static type-qualified member root such as `var helper = Util.STATIC_HELPER`,
-/// `var helper = Outer.Util.STATIC_HELPER`, or
-/// `var helper = global::Demo.Util.STATIC_HELPER`. The first member after the
-/// resolved type must be a static field or property; its declared type pins
-/// the `var` receiver and any remaining hops walk the same member-chain rules
-/// on that type. A longer type prefix is tried when the current prefix does
-/// not resolve to a unique type or does not declare the member, so nested and
+/// `var helper = Outer.Util.STATIC_HELPER`,
+/// `var helper = global::Demo.Util.STATIC_HELPER`, or
+/// `var helper = Util.MakeHelper().entry`. The first member after the
+/// resolved type must be a static field or property, or a unique
+/// arity-matched static factory method whose declared return type pins the
+/// `var` receiver; any remaining hops walk the same member-chain rules on
+/// that type. A longer type prefix is tried when the current prefix does not
+/// resolve to a unique type or does not declare the member, so nested and
 /// namespace-qualified type paths resolve like static method calls; a resolved
-/// type whose named member is not static, an ambiguous type, and unresolvable
-/// hops return `None` and fail closed.
+/// type whose named member is not static, an instance or missing method, an
+/// ambiguous type, and unresolvable hops return `None` and fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# static field initializer binding inputs explicit"
@@ -2684,7 +2686,10 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         let type_name = segments[..split].join(".");
         let member = segments[split];
         let hops = &segments[split + 1..];
-        if !is_safe_csharp_identifier(member) || matches!(member, "this" | "base") {
+        let method_call_hop = csharp_method_call_hop_spelling(member);
+        if matches!(member, "this" | "base")
+            || (!is_safe_csharp_identifier(member) && method_call_hop.is_none())
+        {
             return Ok(None);
         }
         let Some(type_path) = resolve_csharp_static_initializer_type_path(
@@ -2709,6 +2714,82 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             return Ok(None);
         }
         let type_symbol = &raw_symbols[type_indexes[0]];
+        if let Some((method_name, hop_arity)) = method_call_hop {
+            // A static factory method-call root such as
+            // `Util.MakeHelper().entry` dispatches the first member as a
+            // unique arity-matched static method on the resolved type; its
+            // declared return type pins the receiver and remaining hops walk
+            // the same member-chain rules. A type with no such method defers
+            // to a longer type prefix; a type with a same-named method that
+            // is not a matching static factory fails closed.
+            let method_path = format!("{type_path}::{method_name}");
+            let method_indexes = semantic_path_index
+                .get(&method_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+                .collect::<Vec<_>>();
+            if method_indexes.is_empty() {
+                continue;
+            }
+            let Some(method_id) = resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &method_path,
+                Some(source_symbol),
+                hop_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            ) else {
+                return Ok(None);
+            };
+            let Some(method_symbol) = raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == method_id)
+            else {
+                return Ok(None);
+            };
+            let Some(return_type) = method_symbol.return_type.as_deref() else {
+                return Ok(None);
+            };
+            let Some(factory_binding) = resolve_csharp_receiver_type_binding(
+                method_symbol,
+                return_type,
+                raw_symbols,
+                semantic_path_index,
+                csharp_source_namespace_path(method_symbol, raw_symbols).flatten(),
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            if hops.is_empty() {
+                return Ok(Some(factory_binding));
+            }
+            let Some((binding, _)) = resolve_csharp_member_chain_binding(
+                method_symbol,
+                factory_binding,
+                hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(binding));
+        }
         let Some(member_bindings) = csharp_member_type_bindings_for_type(
             &type_symbol.file_path,
             type_symbol.byte_range,
