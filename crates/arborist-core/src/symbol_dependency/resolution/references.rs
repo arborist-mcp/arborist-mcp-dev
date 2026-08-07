@@ -3014,6 +3014,68 @@ fn java_method_return_type_path(
     )
 }
 
+/// Resolves the declared return type of a zero-argument static method-call
+/// hop such as `factory()` in `Util.factory().entry`. The hop must be a
+/// unique, directly declared, non-varargs static method with the call arity,
+/// and its declared return type resolves in the method's own file and
+/// enclosing scope. Unknown, ambiguous, non-static, or arity-mismatched hops
+/// and return types without a usable class or interface spelling fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java static method-call hop type resolution inputs explicit"
+)]
+fn java_static_method_return_type_path(
+    owner_type_path: &str,
+    method_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let target_path = format!("{owner_type_path}::{method_name}");
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "method_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_method_signature_is_static)
+                && candidate.parameters.len() == call_arity
+                && !candidate
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.contains("..."))
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let method = &raw_symbols[candidates[0]];
+    let Some(return_type) = method
+        .return_type
+        .as_deref()
+        .and_then(java_dotted_type_name)
+    else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        method,
+        &return_type,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Dispatches the final member of an instance-receiver chain. The receiver's
 /// class type resolves through the superclass chain as usual; when the
 /// receiver is declared with an interface type and the interface itself does
@@ -3909,10 +3971,13 @@ fn resolve_java_initializer_field_type_path(
 /// Walks a field-access chain such as `holder.entry` on an already-resolved
 /// type path, resolving each hop's declared type in the declaring field's own
 /// file and enclosing scope; zero-argument method-call hops such as `inner()`
-/// resolve through the same method-return-type rules as member chains.
-/// `require_first_static` requires the first hop to be a static field for
-/// `Type.field` references; unknown, ambiguous, or unresolvable hops,
-/// non-static first hops, and static method-call first hops fail closed.
+/// resolve through the same method-return-type rules as member chains, while
+/// a static method-call first hop such as `factory()` in `Util.factory().entry`
+/// resolves through the directly declared static method's return type.
+/// `require_first_static` requires the first hop to be a static field or
+/// static method call for `Type.field` references; unknown, ambiguous, or
+/// unresolvable hops, non-static first hops, and non-static method-call first
+/// hops fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field chain resolution inputs explicit"
@@ -3936,18 +4001,28 @@ fn resolve_java_field_chain_type_path(
         let require_static = index == 0 && require_first_static;
         let next_path = if let Some(method_name) = hop.strip_suffix("()") {
             if require_static {
-                return Ok(None);
+                java_static_method_return_type_path(
+                    &current_type_path,
+                    method_name,
+                    0,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                java_method_return_type_path(
+                    &current_type_path,
+                    method_name,
+                    0,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
             }
-            java_method_return_type_path(
-                &current_type_path,
-                method_name,
-                0,
-                raw_symbols,
-                semantic_path_index,
-                file_overrides,
-                java_import_contexts_by_file,
-                deadline,
-            )?
         } else {
             java_inherited_field_type_path(
                 &current_type_path,

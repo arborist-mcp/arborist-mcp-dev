@@ -14473,3 +14473,278 @@ class ShadowingCaller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_java_var_static_factory_method_hop_field_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+}
+class Util {
+    static Group factory() { return new Group(); }
+    static class Nested {
+        static Group nestedFactory() { return new Group(); }
+    }
+}
+class Caller {
+    int staticFactoryHop() {
+        var v = Util.factory().entry;
+        return v.helper(1);
+    }
+    int nestedFactoryHop() {
+        var v = Util.Nested.nestedFactory().entry;
+        return v.helper(1);
+    }
+    int staticFactoryInstanceHop() {
+        var v = Util.factory().inner().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 3);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::nestedFactoryHop",
+            "com::example::Caller::staticFactoryHop",
+            "com::example::Caller::staticFactoryInstanceHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::nestedFactoryHop",
+            "com::example::Caller::staticFactoryHop",
+            "com::example::Caller::staticFactoryInstanceHop"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_static_factory_method_hop_field_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); }
+class Util { static Group factory() { return new Group(); } }
+class Caller {
+    int run() {
+        var v = Util.factory().entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_static_factory_method_hop_field_receiver_calls_across_files_with_imports() {
+    let dir = temporary_dir();
+    let factory_dir = dir.join("src").join("pkg").join("factory");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let factory_path = factory_dir.join("Util.java");
+    let caller_path = caller_dir.join("Caller.java");
+    let helper_path = helper_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&factory_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Helper { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package pkg.factory;
+import pkg.helper.Helper;
+public class Util {
+    public static Holder factory() { return new Holder(); }
+    public static class Holder {
+        public Helper entry = new Helper();
+        public static Holder nestedFactory() { return new Holder(); }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.factory.Util;
+public class Caller {
+    public int importedFactoryHop() {
+        var v = Util.factory().entry;
+        return v.helper(1);
+    }
+    public int importedNestedFactoryHop() {
+        var v = Util.Holder.nestedFactory().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::helper::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedFactoryHop",
+            "pkg::caller::Caller::importedNestedFactoryHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedFactoryHop",
+            "pkg::caller::Caller::importedNestedFactoryHop"
+        ]
+    );
+}
+
+#[test]
+fn java_var_static_factory_method_hop_field_receiver_calls_fail_closed_for_unsupported_references()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+}
+class Util {
+    static Group factory(int value) { return new Group(); }
+    static Group varargs(int... values) { return new Group(); }
+    Group instanceFactory() { return new Group(); }
+    static int primitive() { return 0; }
+    static Missing missingReturn() { return null; }
+}
+class Caller {
+    int instanceFactoryHop() {
+        var v = Util.instanceFactory().entry;
+        return v.helper(1);
+    }
+    int arityMismatch() {
+        var v = Util.factory().entry;
+        return v.helper(1);
+    }
+    int varargsFactory() {
+        var v = Util.varargs(1).entry;
+        return v.helper(1);
+    }
+    int unknownFactory() {
+        var v = Util.missing().entry;
+        return v.helper(1);
+    }
+    int primitiveReturn() {
+        var v = Util.primitive().entry;
+        return v.helper(1);
+    }
+    int unknownReturnType() {
+        var v = Util.missingReturn().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "non-static factories, arity-mismatched factories, varargs factories, unknown factories, and primitive or unknown factory return types must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
