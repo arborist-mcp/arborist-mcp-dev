@@ -1555,9 +1555,11 @@ fn resolve_csharp_instance_receiver_call(
     let Some(type_name) = bindings.type_for(receiver_name) else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
-    let Some(binding) = resolve_csharp_declared_type_binding_for_reference(
-        &source_symbol.file_path,
+    let Some(binding) = resolve_csharp_receiver_type_binding(
+        source_symbol,
         &type_name,
+        raw_symbols,
+        semantic_path_index,
         source_namespace_path,
         csharp_global_import_context,
         file_overrides,
@@ -1647,35 +1649,18 @@ fn resolve_csharp_constructor_receiver_call(
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     }
     let type_name = type_segments.join(".");
-    let binding = if type_name.contains('.') {
-        // Dotted constructed types resolve relative to the caller's namespace
-        // ancestors first and then globally, matching C# type-name resolution;
-        // the resolved path binds directly as a global-qualified type.
-        let semantic_path = type_name.replace('.', "::");
-        csharp_constructor_receiver_type_path(
-            source_symbol,
-            raw_symbols,
-            semantic_path_index,
-            &semantic_path,
-        )
-        .map(|type_path| CSharpBaseTypeBinding {
-            semantic_type_path: type_path,
-            is_global_qualified: true,
-            alias_name: None,
-            namespace_import_paths: Vec::new(),
-        })
-    } else {
-        resolve_csharp_declared_type_binding_for_reference(
-            &source_symbol.file_path,
-            &type_name,
-            source_namespace_path,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-    };
-    let Some(binding) = binding else {
+    let Some(binding) = resolve_csharp_receiver_type_binding(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     };
     // The constructed type resolves in the caller's namespace/import scope; the
@@ -1712,6 +1697,54 @@ fn resolve_csharp_constructor_receiver_call(
         Some(symbol_id) => Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id)),
         None => Ok(CSharpConstructorReceiverResolution::Blocked),
     }
+}
+
+/// Resolves a declared receiver type name to a base-type binding. Dotted
+/// spellings such as `NestedContainer.Inner` resolve through the caller's
+/// namespace ancestors and then the global scope; simple, generic, and
+/// `global::`-qualified spellings reuse the namespace/import/alias resolution
+/// for declared types.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# receiver type binding inputs explicit"
+)]
+fn resolve_csharp_receiver_type_binding(
+    source_symbol: &IndexedSymbol,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    if !type_name.starts_with("global::")
+        && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
+        && semantic_path.contains("::")
+    {
+        return Ok(csharp_constructor_receiver_type_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &semantic_path,
+        )
+        .map(|type_path| CSharpBaseTypeBinding {
+            semantic_type_path: type_path,
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        }));
+    }
+    resolve_csharp_declared_type_binding_for_reference(
+        &source_symbol.file_path,
+        type_name,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
 }
 
 /// Resolves a dotted constructed type spelling such as `NestedContainer.Inner`

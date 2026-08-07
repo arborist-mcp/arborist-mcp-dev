@@ -2671,6 +2671,169 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_nested_declared_type_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class NestedContainer {
+    public class Inner {
+        public int Help(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int ParameterReceiver(NestedContainer.Inner inner) => inner.Help(1);
+    int VarConstructorReceiver() { var inner = new NestedContainer.Inner(); return inner.Help(1); }
+    NestedContainer.Inner field = new NestedContainer.Inner();
+    int FieldReceiver() => field.Help(1);
+    int ConstructorReceiver() => new NestedContainer.Inner().Help(1);
+}
+",
+    )
+    .unwrap();
+
+    let target = "Demo::NestedContainer::Inner::Help";
+    let callers = [
+        "Demo::Caller::ConstructorReceiver",
+        "Demo::Caller::FieldReceiver",
+        "Demo::Caller::ParameterReceiver",
+        "Demo::Caller::VarConstructorReceiver",
+    ];
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        callers
+    );
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        callers
+    );
+}
+
+#[test]
+fn traces_csharp_nested_declared_type_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class NestedContainer {
+    public class Inner {
+        public int Help(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call(NestedContainer.Inner inner) => inner.Help(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::NestedContainer::Inner::Help",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::NestedContainer::Inner::Help",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_nested_declared_type_receivers() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("OuterA.cs"),
+        "namespace Demo;
+class Outer {
+    public class Inner {
+        public int Help(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("OuterB.cs"),
+        "namespace Demo;
+class Outer {
+    public class Inner {
+        public int Other(int value) => value;
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int UnknownReceiver(NotIndexed.Thing thing) => thing.Help(1);
+    int MissingNestedReceiver(Outer.Missing thing) => thing.Help(1);
+    int AmbiguousNestedReceiver(Outer.Inner thing) => thing.Help(1);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Caller::UnknownReceiver",
+        "Demo::Caller::MissingNestedReceiver",
+        "Demo::Caller::AmbiguousNestedReceiver",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
