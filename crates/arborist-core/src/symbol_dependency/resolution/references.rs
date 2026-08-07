@@ -2085,14 +2085,15 @@ fn csharp_var_initializer_chain_spelling(binding: &str) -> Option<&str> {
 
 /// Resolves the receiver type binding for a `var` local initialized from a
 /// field/property-access chain such as `var helper = helper`,
-/// `var helper = this.holder.helper`, `var helper = holder.helper`, or
-/// `var helper = new Holder().helper`. A bare chain pins the receiver to the
-/// bound value's declared type; a `this.`-rooted chain walks hops on the
-/// unique enclosing type; a `Type()`-rooted chain walks hops on the
-/// constructed type; and a bound receiver walks hops on its declared type,
-/// with method-call hops resolving through the same member-chain rules.
-/// Unknown, ambiguous, untyped, `void`, and primitive chains return `None` and
-/// fail closed.
+/// `var helper = this.holder.helper`, `var helper = holder.helper`,
+/// `var helper = base.helper`, or `var helper = new Holder().helper`. A bare
+/// chain pins the receiver to the bound value's declared type; a
+/// `this.`-rooted chain walks hops on the unique enclosing type; a
+/// `base.`-rooted chain walks hops on the unique base type; a `Type()`-rooted
+/// chain walks hops on the constructed type; and a bound receiver walks hops
+/// on its declared type, with method-call hops resolving through the same
+/// member-chain rules. Unknown, ambiguous, untyped, `void`, and primitive
+/// chains return `None` and fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# initializer chain binding inputs explicit"
@@ -2158,6 +2159,71 @@ fn resolve_csharp_initializer_chain_binding(
             type_symbol,
             CSharpBaseTypeBinding {
                 semantic_type_path: scope_path.to_string(),
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(binding));
+    }
+    // A `base.`-rooted chain walks hops on the unique base type of the
+    // enclosing type, mirroring the `base.`-rooted member-chain call rules.
+    if receiver_name == "base" {
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if type_candidates.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = type_candidates[0];
+        let Some(base_binding) = csharp_base_type_binding_for_type(
+            type_symbol,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(base_type_path) = csharp_base_type_path(type_symbol, raw_symbols, &base_binding)
+        else {
+            return Ok(None);
+        };
+        let base_indexes = semantic_path_index
+            .get(&base_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if base_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let base_symbol = &raw_symbols[base_indexes[0]];
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            base_symbol,
+            CSharpBaseTypeBinding {
+                semantic_type_path: base_type_path,
                 is_global_qualified: true,
                 alias_name: None,
                 namespace_import_paths: Vec::new(),
