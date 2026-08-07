@@ -4820,6 +4820,186 @@ class NoBaseCaller {
 }
 
 #[test]
+fn traces_csharp_var_bound_receiver_factory_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Helper MakeHelper() => new Helper();
+}
+class Caller {
+    Holder holder = new Holder();
+    int FieldFactory() { var v = holder.MakeHelper(); return v.Run(1); }
+    int ParamFactory(Holder h) { var v = h.MakeHelper(); return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec!["Demo::Caller::FieldFactory", "Demo::Caller::ParamFactory"],
+        ),
+        (
+            "Demo::Holder::MakeHelper",
+            vec!["Demo::Caller::FieldFactory", "Demo::Caller::ParamFactory"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{target} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{target} persisted"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_bound_receiver_factory_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let holder_path = dir.join("Holder.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &holder_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    Holder holder = new Holder();
+    int Call() { var v = holder.MakeHelper(); return v.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_bound_receiver_factory_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Helper MakeHelper() => new Helper();
+    public static Helper StaticMake() => new Helper();
+    public int Tag() => 1;
+}
+class Caller {
+    Holder holder = new Holder();
+    int count = 1;
+    int UnknownReceiver() { var v = missing.MakeHelper(); return v.Run(1); }
+    int PrimitiveReceiver() { var v = count.MakeHelper(); return v.Run(1); }
+    int UnknownFactoryMethod() { var v = holder.Missing(); return v.Run(1); }
+    int StaticFactoryMethod() { var v = holder.StaticMake(); return v.Run(1); }
+    int PrimitiveReturnFactory() { var v = holder.Tag(); return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bound-receiver factory call pins its
+    // receiver only when the receiver resolves to a usable declared type and
+    // the factory method dispatches as a unique non-static instance call with
+    // a non-primitive declared return type; unknown or primitive receivers,
+    // missing or static factory methods, and primitive return types fail
+    // closed, while the standalone factory invocation still traces as a
+    // direct callee when it resolves.
+    for (caller, expected) in [
+        ("Demo::Caller::UnknownReceiver", Vec::<&str>::new()),
+        ("Demo::Caller::PrimitiveReceiver", Vec::<&str>::new()),
+        ("Demo::Caller::UnknownFactoryMethod", Vec::<&str>::new()),
+        ("Demo::Caller::StaticFactoryMethod", Vec::<&str>::new()),
+        (
+            "Demo::Caller::PrimitiveReturnFactory",
+            vec!["Demo::Holder::Tag"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

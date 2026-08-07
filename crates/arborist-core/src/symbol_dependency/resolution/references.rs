@@ -1607,6 +1607,7 @@ fn resolve_csharp_instance_receiver_call(
                 source_symbol,
                 &factory_name,
                 factory_arity,
+                &bindings,
                 raw_symbols,
                 semantic_path_index,
                 source_namespace_path,
@@ -1698,12 +1699,14 @@ fn csharp_var_factory_spelling(binding: &str) -> Option<(String, usize)> {
 }
 
 /// Resolves the receiver type binding for a `var` local initialized from a
-/// factory call such as `var helper = MakeHelper()`. The factory call resolves
-/// as an instance call on the enclosing type, a base-type method, a
-/// static-imported method, or a type-qualified static method; the factory's
-/// declared return type then resolves to a unique type binding in the
-/// factory's own scope. Unknown, ambiguous, arity-mismatched, `void`, and
-/// primitive factories return `None` and fail closed.
+/// factory call such as `var helper = MakeHelper()` or
+/// `var helper = holder.MakeHelper()`. The factory call resolves as an
+/// instance call on the enclosing type, on a bound receiver's declared type,
+/// as a base-type method, a static-imported method, or a type-qualified
+/// static method; the factory's declared return type then resolves to a
+/// unique type binding in the factory's own scope. Unknown, ambiguous,
+/// arity-mismatched, `void`, and primitive factories return `None` and fail
+/// closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# factory receiver binding inputs explicit"
@@ -1712,6 +1715,7 @@ fn resolve_csharp_factory_receiver_binding(
     source_symbol: &IndexedSymbol,
     factory_name: &str,
     factory_arity: usize,
+    bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     source_namespace_path: Option<&str>,
@@ -1724,6 +1728,7 @@ fn resolve_csharp_factory_receiver_binding(
         source_symbol,
         factory_name,
         factory_arity,
+        bindings,
         raw_symbols,
         semantic_path_index,
         source_namespace_path,
@@ -1757,8 +1762,10 @@ fn resolve_csharp_factory_receiver_binding(
 /// Resolves the factory call of a `var` initializer to a unique method
 /// symbol. Bare names resolve as enclosing-type instance calls first, then
 /// base-type and static-imported methods; `this.`-rooted names never fall
-/// through to static imports; dotted names resolve as type-qualified static
-/// calls. Unresolved or ambiguous factories return `None`.
+/// through to static imports; a dotted name whose leading segment is a bound
+/// receiver resolves as an instance method call on the receiver's declared
+/// type; remaining dotted names resolve as type-qualified static calls.
+/// Unresolved or ambiguous factories return `None`.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# factory method resolution inputs explicit"
@@ -1767,6 +1774,7 @@ fn resolve_csharp_var_factory_method<'a>(
     source_symbol: &'a IndexedSymbol,
     factory_name: &str,
     factory_arity: usize,
+    bindings: &CSharpReceiverTypeBindings,
     raw_symbols: &'a [IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     source_namespace_path: Option<&str>,
@@ -1790,6 +1798,71 @@ fn resolve_csharp_var_factory_method<'a>(
             csharp_import_contexts_by_file,
             deadline,
         );
+    }
+    // A dotted factory whose leading segment is a bound receiver resolves as
+    // an instance method call on the receiver's declared type, such as
+    // `var helper = holder.MakeHelper()`; unknown, untyped, `void`, or
+    // primitive receivers and missing, static, or arity-mismatched factory
+    // methods fail closed.
+    if let Some((receiver_name, method_name)) = factory_name.split_once('.')
+        && !receiver_name.is_empty()
+        && !method_name.is_empty()
+        && !method_name.contains('.')
+        && bindings.contains(receiver_name)
+    {
+        let Some(type_name) = bindings.type_for(receiver_name) else {
+            return Ok(None);
+        };
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(type_path) = csharp_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        ) else {
+            return Ok(None);
+        };
+        let type_indexes = semantic_path_index
+            .get(&type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let symbol_id = resolve_csharp_instance_method_on_binding(
+            type_symbol,
+            &binding,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            factory_arity,
+            deadline,
+        )?;
+        return Ok(symbol_id.and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
     }
     if factory_name.contains('.') {
         return resolve_csharp_factory_static_method(
