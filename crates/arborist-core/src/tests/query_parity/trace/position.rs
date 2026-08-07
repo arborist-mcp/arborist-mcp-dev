@@ -2437,6 +2437,11 @@ class ShadowCaller {
     }
     int StaticThroughInstance(Counter counter) => counter.Utility(1);
     int MissingMethod(Counter counter) => counter.Nope(1);
+    int FactoryShadow() {
+        var Counter = MakeCounter();
+        return Counter.Helper(1);
+    }
+    int MakeCounter() => 1;
 }
 ",
     )
@@ -2444,7 +2449,6 @@ class ShadowCaller {
 
     for caller in [
         "Demo::ShadowCaller::PrimitiveShadow",
-        "Demo::ShadowCaller::VarShadow",
         "Demo::ShadowCaller::LambdaShadow",
         "Demo::ShadowCaller::StaticThroughInstance",
         "Demo::ShadowCaller::MissingMethod",
@@ -2452,17 +2456,167 @@ class ShadowCaller {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert!(live.callees.is_empty(), "{caller}");
     }
-    for target in ["Demo::Counter::Helper", "Demo::Counter::Utility"] {
-        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
-        assert!(live.callers.is_empty(), "{target}");
-    }
+    // `var Counter = new Counter()` now infers the constructed type, so
+    // `VarShadow` resolves the instance call; every other shadow scenario
+    // stays bound without a usable type and fails closed.
+    let helper_live =
+        trace_symbol_graph(&dir, "Demo::Counter::Helper", TraceDirection::Callers).unwrap();
+    assert_eq!(helper_live.callers.len(), 1);
+    assert_eq!(
+        helper_live.callers[0].symbol_id,
+        "Demo::ShadowCaller::VarShadow"
+    );
+    let utility_live =
+        trace_symbol_graph(&dir, "Demo::Counter::Utility", TraceDirection::Callers).unwrap();
+    assert!(utility_live.callers.is_empty());
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
-    for target in ["Demo::Counter::Helper", "Demo::Counter::Utility"] {
-        let persisted =
-            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
-        assert!(persisted.callers.is_empty(), "{target}");
-    }
+    let helper_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Counter::Helper", TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(helper_persisted.callers.len(), 1);
+    assert_eq!(
+        helper_persisted.callers[0].symbol_id,
+        "Demo::ShadowCaller::VarShadow"
+    );
+    let utility_persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Counter::Utility", TraceDirection::Callers)
+            .unwrap();
+    assert!(utility_persisted.callers.is_empty());
+}
+
+#[test]
+fn traces_csharp_var_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+    public static int Utility(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int ConstructorReceiver() { var helper = new Helper(); return helper.Run(1); }
+    int DottedConstructorReceiver() { var helper = new Demo.Helper(); return helper.Run(1); }
+    int FactoryReceiver() { var helper = MakeHelper(); return helper.Run(1); }
+    int StaticThroughConstructor() { var helper = new Helper(); return helper.Utility(1); }
+    int UnknownConstructorReceiver() { var helper = new NotIndexed(); return helper.Run(1); }
+    Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+
+    let run_target = "Demo::Helper::Run";
+    let live = trace_symbol_graph(&dir, run_target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::Caller::ConstructorReceiver",
+            "Demo::Caller::DottedConstructorReceiver"
+        ]
+    );
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, run_target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Demo::Caller::ConstructorReceiver",
+            "Demo::Caller::DottedConstructorReceiver"
+        ]
+    );
+
+    // A `var` local from a non-constructor initializer stays bound without a
+    // usable type, so `FactoryReceiver` calls only the same-type factory and
+    // never the receiver method; the static method and an unknown constructed
+    // type also fail closed.
+    let utility_live =
+        trace_symbol_graph(&dir, "Demo::Helper::Utility", TraceDirection::Callers).unwrap();
+    assert!(utility_live.callers.is_empty());
+    let factory_live = trace_symbol_graph(
+        &dir,
+        "Demo::Caller::FactoryReceiver",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert_eq!(factory_live.callees.len(), 1);
+    assert_eq!(
+        factory_live.callees[0].symbol_id,
+        "Demo::Caller::MakeHelper"
+    );
+    let unknown_live = trace_symbol_graph(
+        &dir,
+        "Demo::Caller::UnknownConstructorReceiver",
+        TraceDirection::Callees,
+    )
+    .unwrap();
+    assert!(unknown_live.callees.is_empty());
+}
+
+#[test]
+fn traces_csharp_var_constructor_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let helper_path = dir.join("Helper.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &helper_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call() { var helper = new Helper(); return helper.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
 }
 
 #[test]

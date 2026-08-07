@@ -413,7 +413,14 @@ fn collect_typed_local_bindings(
             let name = crate::language::node_text(name, source)?.trim();
             let type_name = match node.parent() {
                 Some(parent) if parent.kind() == "variable_declaration" => {
-                    csharp_declared_type_name(parent, source)?
+                    match csharp_declared_type_name(parent, source)? {
+                        Some(type_name) => Some(type_name),
+                        // A `var` local infers its receiver type from a
+                        // constructor initializer such as
+                        // `var helper = new Helper()`; other initializers bind
+                        // an empty type and fail closed.
+                        None => csharp_constructor_type_from_declarator(node, source)?,
+                    }
                 }
                 _ => None,
             };
@@ -441,6 +448,48 @@ fn collect_typed_local_bindings(
         collect(child, source, &mut bindings)?;
     }
     Ok(bindings)
+}
+
+/// Infers a receiver type for `var` locals whose initializer is a constructor
+/// call such as `var helper = new Helper()` or `var helper = new Outer.Inner()`.
+/// Non-constructor initializers, target-typed creations, array creations, and
+/// malformed type spellings return `None` and fail closed.
+fn csharp_constructor_type_from_declarator(
+    declarator: Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = csharp_declarator_initializer(declarator) else {
+        return Ok(None);
+    };
+    if initializer.kind() != "object_creation_expression" {
+        return Ok(None);
+    }
+    let Some(type_node) = initializer.child_by_field_name("type") else {
+        return Ok(None);
+    };
+    let type_name = crate::language::node_text(type_node, source)?.trim();
+    if type_name.is_empty() || type_name == "var" {
+        return Ok(None);
+    }
+    Ok(Some(type_name.to_string()))
+}
+
+/// Returns the initializer expression of a `variable_declarator` such as
+/// `helper = new Helper()`. The grammar does not name the `= expression` child,
+/// so the last named child that is not the declared name or a tuple/indexer
+/// suffix is the initializer.
+fn csharp_declarator_initializer<'a>(declarator: Node<'a>) -> Option<Node<'a>> {
+    let mut cursor = declarator.walk();
+    let mut initializer = None;
+    for child in declarator.named_children(&mut cursor) {
+        if !matches!(
+            child.kind(),
+            "identifier" | "tuple_pattern" | "bracketed_argument_list"
+        ) {
+            initializer = Some(child);
+        }
+    }
+    initializer
 }
 
 fn collect_enclosing_type_typed_bindings(
@@ -729,7 +778,10 @@ class SimpleCaller {
             references("Counter::MemberShadow"),
             ["GlobalHelper.Instance".to_string()].into()
         );
-        assert!(references("Counter::LocalShadow").is_empty());
+        assert_eq!(
+            references("Counter::LocalShadow"),
+            ["GlobalHelper.Instance".to_string()].into()
+        );
         assert!(references("Counter::ParameterShadow").is_empty());
         assert!(references("Counter::LocalFunctionShadow").is_empty());
         assert!(references("Counter::LambdaShadow").is_empty());
