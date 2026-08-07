@@ -8,7 +8,8 @@ use super::super::csharp::{
     CSharpBaseTypeBinding, CSharpGlobalImportContext, CSharpImportContext, CSharpInterfaceParents,
     CSharpNamespaceImportBinding, CSharpStaticTypeImportBinding, CSharpTypeAliasBinding,
     csharp_global_type_alias_name_is_ambiguous, csharp_interface_parent_bindings_for_interface,
-    csharp_receiver_type_bindings_for_function, csharp_type_alias_name_is_ambiguous_for_reference,
+    csharp_member_type_bindings_for_type, csharp_receiver_type_bindings_for_function,
+    csharp_type_alias_name_is_ambiguous_for_reference,
     csharp_type_alias_name_is_declared_for_reference,
     resolve_csharp_base_type_binding_for_reference,
     resolve_csharp_declared_type_binding_for_reference,
@@ -1529,10 +1530,10 @@ fn resolve_csharp_instance_receiver_call(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<CSharpInstanceReceiverResolution> {
-    let Some((receiver_name, member_name)) = reference_name.split_once('.') else {
+    let Some((receiver_name, member_chain)) = reference_name.split_once('.') else {
         return Ok(CSharpInstanceReceiverResolution::NoBinding);
     };
-    if receiver_name.is_empty() || member_name.is_empty() || member_name.contains('.') {
+    if receiver_name.is_empty() || member_chain.is_empty() {
         return Ok(CSharpInstanceReceiverResolution::NoBinding);
     }
     let Some(bindings) = csharp_receiver_type_bindings_for_function(
@@ -1569,13 +1570,38 @@ fn resolve_csharp_instance_receiver_call(
     else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
+    // A member chain such as `group.member.helper(...)` walks each
+    // intermediate hop as a uniquely declared field, property, or event on
+    // the current type; unknown, ambiguous, or unresolvable hops fail closed
+    // instead of falling through to a same-named static type call.
+    let mut hops = member_chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    }
+    let Some(final_member) = hops.pop() else {
+        return Ok(CSharpInstanceReceiverResolution::NoBinding);
+    };
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        source_symbol,
+        binding,
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(CSharpInstanceReceiverResolution::Blocked);
+    };
     // An interface-typed receiver dispatches on the interface's own method
     // declaration or its unique extends chain; class/record ancestor walking
     // below does not apply.
     if let Some(symbol_id) = resolve_csharp_interface_receiver_call(
-        source_symbol,
+        dispatch_source_symbol,
         &binding,
-        member_name,
+        final_member,
         raw_symbols,
         semantic_path_index,
         csharp_global_import_context,
@@ -1589,9 +1615,9 @@ fn resolve_csharp_instance_receiver_call(
     // A struct-typed receiver dispatches on the struct's own method
     // declaration; structs have no ancestor chain.
     if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
-        source_symbol,
+        dispatch_source_symbol,
         &binding,
-        member_name,
+        final_member,
         raw_symbols,
         semantic_path_index,
         call_arity,
@@ -1602,11 +1628,11 @@ fn resolve_csharp_instance_receiver_call(
     // instance method dispatches on that type and its unique class/record
     // ancestor chain.
     let Some(target_path) = csharp_base_method_target_path(
-        source_symbol,
+        dispatch_source_symbol,
         raw_symbols,
         semantic_path_index,
         &binding,
-        member_name,
+        final_member,
         call_arity,
         csharp_global_import_context,
         file_overrides,
@@ -1632,6 +1658,86 @@ fn resolve_csharp_instance_receiver_call(
         Some(symbol_id) => Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id)),
         None => Ok(CSharpInstanceReceiverResolution::Blocked),
     }
+}
+
+/// Walks the intermediate hops of a receiver chain such as
+/// `group.member.helper(...)` (everything after the leading bound receiver
+/// except the final method). Each hop must be a uniquely declared field,
+/// property, or event on the current type whose declared type resolves to a
+/// unique type declaration in the declaring file's scope; the returned source
+/// symbol is the type that declared the final hop so the final member
+/// dispatches in that scope. Unknown, ambiguous, or unresolvable hops fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# member-chain hop resolution inputs explicit"
+)]
+fn resolve_csharp_member_chain_binding<'a>(
+    source_symbol: &'a IndexedSymbol,
+    mut binding: CSharpBaseTypeBinding,
+    hops: &[&str],
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
+    let mut scope_source_symbol = source_symbol;
+    for hop in hops {
+        let Some(type_path) = csharp_dispatchable_type_path(
+            scope_source_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        ) else {
+            return Ok(None);
+        };
+        let type_indexes = semantic_path_index
+            .get(&type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !member_bindings.contains(hop) {
+            return Ok(None);
+        }
+        let Some(hop_type_name) = member_bindings.type_for(hop) else {
+            return Ok(None);
+        };
+        let Some(next_binding) = resolve_csharp_receiver_type_binding(
+            type_symbol,
+            &hop_type_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        binding = next_binding;
+        scope_source_symbol = type_symbol;
+    }
+    Ok(Some((binding, scope_source_symbol)))
 }
 
 enum CSharpConstructorReceiverResolution {

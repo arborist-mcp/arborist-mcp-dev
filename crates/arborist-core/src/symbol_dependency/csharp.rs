@@ -63,6 +63,7 @@ pub(in crate::symbol_dependency) struct CSharpImportContext {
     base_type_bindings_by_range: BTreeMap<(usize, usize), CSharpBaseTypeBinding>,
     interface_parent_bindings_by_range: BTreeMap<(usize, usize), Vec<CSharpInterfaceParentBinding>>,
     receiver_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
+    member_type_bindings_by_range: BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
     static_type_import_bindings: Vec<CSharpStaticTypeImportBinding>,
     namespace_import_bindings: Vec<CSharpNamespaceImportBinding>,
 }
@@ -392,12 +393,19 @@ fn csharp_import_context_for_file_with_overrides_and_deadline(
     }
     let mut receiver_type_bindings_by_range = BTreeMap::new();
     collect_csharp_receiver_type_bindings(root, &source, &mut receiver_type_bindings_by_range)?;
+    let mut member_type_bindings_by_range = BTreeMap::new();
+    collect_csharp_member_type_bindings_by_range(
+        root,
+        &source,
+        &mut member_type_bindings_by_range,
+    )?;
     Ok(CSharpImportContext {
         type_alias_bindings,
         ambiguous_type_alias_names: ambiguous_alias_names,
         base_type_bindings_by_range,
         interface_parent_bindings_by_range,
         receiver_type_bindings_by_range,
+        member_type_bindings_by_range,
         static_type_import_bindings,
         namespace_import_bindings,
     })
@@ -425,6 +433,23 @@ fn collect_csharp_receiver_type_bindings(
     Ok(())
 }
 
+fn collect_csharp_member_type_bindings_by_range(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+    bindings_by_range: &mut BTreeMap<(usize, usize), CSharpReceiverTypeBindings>,
+) -> Result<()> {
+    if is_csharp_type_declaration(node) {
+        let mut bindings = CSharpReceiverTypeBindings::default();
+        collect_csharp_type_member_bindings(node, node, source, &mut bindings)?;
+        bindings_by_range.insert((node.start_byte(), node.end_byte()), bindings);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_csharp_member_type_bindings_by_range(child, source, bindings_by_range)?;
+    }
+    Ok(())
+}
+
 /// Collects locally bound receiver names with their declared type spellings
 /// for a function. Parameters, typed locals, and enclosing-type fields and
 /// properties carry their declared type; `var` locals, lambda parameters,
@@ -448,65 +473,64 @@ fn collect_csharp_enclosing_type_bindings(
     source: &str,
     bindings: &mut CSharpReceiverTypeBindings,
 ) -> Result<()> {
-    fn collect(
-        node: tree_sitter::Node<'_>,
-        root: tree_sitter::Node<'_>,
-        source: &str,
-        bindings: &mut CSharpReceiverTypeBindings,
-    ) -> Result<()> {
-        if node != root && is_csharp_symbol_node(node) {
-            return Ok(());
-        }
-        if node.kind() == "field_declaration" {
-            let mut declaration_cursor = node.walk();
-            for declaration in node
-                .named_children(&mut declaration_cursor)
-                .filter(|child| child.kind() == "variable_declaration")
-            {
-                let type_name = csharp_declared_type_name(declaration, source)?;
-                let mut declarator_cursor = declaration.walk();
-                for declarator in declaration
-                    .named_children(&mut declarator_cursor)
-                    .filter(|child| child.kind() == "variable_declarator")
-                {
-                    let Some(name) = declarator.child_by_field_name("name") else {
-                        continue;
-                    };
-                    let name = node_text(name, source)?.trim();
-                    csharp_insert_receiver_binding(bindings, name, type_name.clone());
-                }
-            }
-        }
-        if matches!(node.kind(), "property_declaration" | "event_declaration")
-            && let Some(name) = node.child_by_field_name("name")
-        {
-            let name = node_text(name, source)?.trim();
-            csharp_insert_receiver_binding(
-                bindings,
-                name,
-                csharp_declared_type_name(node, source)?,
-            );
-        }
-        if node.kind() == "type_parameter"
-            && let Some(name) = node.child_by_field_name("name")
-        {
-            let name = node_text(name, source)?.trim();
-            csharp_insert_receiver_binding(bindings, name, None);
-        }
-
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            collect(child, root, source, bindings)?;
-        }
-        Ok(())
-    }
-
     let mut current = function.parent();
     while let Some(node) = current {
         if is_csharp_type_declaration(node) {
-            return collect(node, node, source, bindings);
+            return collect_csharp_type_member_bindings(node, node, source, bindings);
         }
         current = node.parent();
+    }
+    Ok(())
+}
+
+/// Collects the direct member bindings (fields, properties, and events) of a
+/// type declaration. Nested type declarations, methods, and constructors stop
+/// the walk so only the type's own members are bound.
+fn collect_csharp_type_member_bindings(
+    node: tree_sitter::Node<'_>,
+    root: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &mut CSharpReceiverTypeBindings,
+) -> Result<()> {
+    if node != root && is_csharp_symbol_node(node) {
+        return Ok(());
+    }
+    if node.kind() == "field_declaration" {
+        let mut declaration_cursor = node.walk();
+        for declaration in node
+            .named_children(&mut declaration_cursor)
+            .filter(|child| child.kind() == "variable_declaration")
+        {
+            let type_name = csharp_declared_type_name(declaration, source)?;
+            let mut declarator_cursor = declaration.walk();
+            for declarator in declaration
+                .named_children(&mut declarator_cursor)
+                .filter(|child| child.kind() == "variable_declarator")
+            {
+                let Some(name) = declarator.child_by_field_name("name") else {
+                    continue;
+                };
+                let name = node_text(name, source)?.trim();
+                csharp_insert_receiver_binding(bindings, name, type_name.clone());
+            }
+        }
+    }
+    if matches!(node.kind(), "property_declaration" | "event_declaration")
+        && let Some(name) = node.child_by_field_name("name")
+    {
+        let name = node_text(name, source)?.trim();
+        csharp_insert_receiver_binding(bindings, name, csharp_declared_type_name(node, source)?);
+    }
+    if node.kind() == "type_parameter"
+        && let Some(name) = node.child_by_field_name("name")
+    {
+        let name = node_text(name, source)?.trim();
+        csharp_insert_receiver_binding(bindings, name, None);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_csharp_type_member_bindings(child, root, source, bindings)?;
     }
     Ok(())
 }
@@ -838,6 +862,28 @@ pub(in crate::symbol_dependency) fn csharp_receiver_type_bindings_for_function(
     Ok(context
         .receiver_type_bindings_by_range
         .get(&function_range)
+        .cloned())
+}
+
+/// Returns the direct member bindings (fields, properties, and events) of a
+/// type declaration in the given source file. `None` means no type declaration
+/// occupies the range, so member-chain hops fail closed.
+pub(in crate::symbol_dependency) fn csharp_member_type_bindings_for_type(
+    source_file_path: &str,
+    type_range: (usize, usize),
+    file_overrides: Option<&BTreeMap<String, String>>,
+    contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpReceiverTypeBindings>> {
+    let context = csharp_import_context_from_cache(
+        source_file_path,
+        file_overrides,
+        contexts_by_file,
+        deadline,
+    )?;
+    Ok(context
+        .member_type_bindings_by_range
+        .get(&type_range)
         .cloned())
 }
 
