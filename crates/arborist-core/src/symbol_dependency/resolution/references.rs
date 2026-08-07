@@ -1595,22 +1595,42 @@ fn resolve_csharp_instance_receiver_call(
     // A bound receiver is always an instance expression: receivers without a
     // resolvable declared type (`var` locals, lambda parameters, type
     // parameters) fail closed instead of falling through to a same-named
-    // static type call.
-    let Some(type_name) = bindings.type_for(receiver_name) else {
-        return Ok(CSharpInstanceReceiverResolution::Blocked);
-    };
-    let Some(binding) = resolve_csharp_receiver_type_binding(
-        source_symbol,
-        &type_name,
-        raw_symbols,
-        semantic_path_index,
-        source_namespace_path,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    // static type call. A `var` local initialized from a factory call
+    // (`var helper = MakeHelper()`) infers its receiver type from the
+    // factory's declared return type when the factory resolves uniquely;
+    // unknown, ambiguous, arity-mismatched, `void`, and primitive factories
+    // fail closed too.
+    let raw_binding = bindings.raw_for(receiver_name).unwrap_or_default();
+    let initial_binding =
+        if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding) {
+            resolve_csharp_factory_receiver_binding(
+                source_symbol,
+                &factory_name,
+                factory_arity,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if raw_binding.is_empty() {
+            None
+        } else {
+            resolve_csharp_receiver_type_binding(
+                source_symbol,
+                raw_binding,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        };
+    let Some(binding) = initial_binding else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
     // A member chain such as `group.member.helper(...)` walks each
@@ -1653,6 +1673,393 @@ fn resolve_csharp_instance_receiver_call(
         Some(symbol_id) => Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id)),
         None => Ok(CSharpInstanceReceiverResolution::Blocked),
     }
+}
+
+/// Parses a factory marker binding such as `@factory:MakeHelper(0)`,
+/// `@factory:this.MakeHelper(0)`, or `@factory:Factories.MakeHelper(1)` into
+/// the factory call spelling and its call arity. Non-marker bindings return
+/// `None`.
+fn csharp_var_factory_spelling(binding: &str) -> Option<(String, usize)> {
+    let call = binding.strip_prefix("@factory:")?;
+    csharp_method_call_hop_spelling(call)
+}
+
+/// Resolves the receiver type binding for a `var` local initialized from a
+/// factory call such as `var helper = MakeHelper()`. The factory call resolves
+/// as an instance call on the enclosing type, a base-type method, a
+/// static-imported method, or a type-qualified static method; the factory's
+/// declared return type then resolves to a unique type binding in the
+/// factory's own scope. Unknown, ambiguous, arity-mismatched, `void`, and
+/// primitive factories return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# factory receiver binding inputs explicit"
+)]
+fn resolve_csharp_factory_receiver_binding(
+    source_symbol: &IndexedSymbol,
+    factory_name: &str,
+    factory_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let Some(method) = resolve_csharp_var_factory_method(
+        source_symbol,
+        factory_name,
+        factory_arity,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method.return_type.as_deref() else {
+        return Ok(None);
+    };
+    if return_type.is_empty() {
+        return Ok(None);
+    }
+    resolve_csharp_receiver_type_binding(
+        method,
+        return_type,
+        raw_symbols,
+        semantic_path_index,
+        csharp_source_namespace_path(method, raw_symbols).flatten(),
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the factory call of a `var` initializer to a unique method
+/// symbol. Bare names resolve as enclosing-type instance calls first, then
+/// base-type and static-imported methods; `this.`-rooted names never fall
+/// through to static imports; dotted names resolve as type-qualified static
+/// calls. Unresolved or ambiguous factories return `None`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# factory method resolution inputs explicit"
+)]
+fn resolve_csharp_var_factory_method<'a>(
+    source_symbol: &'a IndexedSymbol,
+    factory_name: &str,
+    factory_arity: usize,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<&'a IndexedSymbol>> {
+    if let Some(method_name) = factory_name.strip_prefix("this.") {
+        if method_name.is_empty() || method_name.contains('.') {
+            return Ok(None);
+        }
+        return resolve_csharp_factory_instance_method(
+            source_symbol,
+            method_name,
+            factory_arity,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if factory_name.contains('.') {
+        return resolve_csharp_factory_static_method(
+            source_symbol,
+            factory_name,
+            factory_arity,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let target_path = format!("{scope_path}::{factory_name}");
+    let has_same_type_method = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .any(|index| {
+            let candidate = &raw_symbols[index];
+            candidate.file_path == source_symbol.file_path
+                && candidate.node_kind == "method_declaration"
+        });
+    if has_same_type_method {
+        return Ok(resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: false,
+                require_instance: false,
+                require_same_file: true,
+            },
+        )
+        .and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
+    }
+    if !csharp_method_is_static(source_symbol)
+        && let Some(base_type_binding) = csharp_source_base_type_binding(
+            source_symbol,
+            raw_symbols,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(target_path) = csharp_base_method_target_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &base_type_binding,
+            factory_name,
+            factory_arity,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        return Ok(resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: false,
+                require_instance: true,
+                require_same_file: false,
+            },
+        )
+        .and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
+    }
+    let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
+        &source_symbol.file_path,
+        factory_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    if let Some(csharp_global_import_context) = csharp_global_import_context {
+        static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
+            factory_name,
+            csharp_global_import_context,
+        ));
+    }
+    Ok(resolve_csharp_static_type_imported_method(
+        raw_symbols,
+        semantic_path_index,
+        &static_type_imports,
+        factory_name,
+        factory_arity,
+    )
+    .and_then(|symbol_id| {
+        raw_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == symbol_id)
+    }))
+}
+
+/// Resolves a `this.`-rooted factory call such as `this.MakeHelper()` on the
+/// enclosing type using the interface, struct, and class/record instance
+/// dispatch rules. Unknown, ambiguous, or static factories return `None` and
+/// fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# this-rooted factory resolution inputs explicit"
+)]
+fn resolve_csharp_factory_instance_method<'a>(
+    source_symbol: &'a IndexedSymbol,
+    method_name: &str,
+    factory_arity: usize,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<&'a IndexedSymbol>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == scope_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .collect::<Vec<_>>();
+    if type_candidates.len() != 1 {
+        return Ok(None);
+    }
+    let type_symbol = type_candidates[0];
+    let symbol_id = resolve_csharp_instance_method_on_binding(
+        type_symbol,
+        &CSharpBaseTypeBinding {
+            semantic_type_path: scope_path.to_string(),
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        },
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        factory_arity,
+        deadline,
+    )?;
+    Ok(symbol_id.and_then(|symbol_id| {
+        raw_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == symbol_id)
+    }))
+}
+
+/// Resolves a type-qualified factory call such as `Factories.MakeHelper()` as
+/// a static method on the qualified type, mirroring the reference-resolution
+/// order for qualified static calls: `global::`-qualified, nested-type,
+/// same-namespace, then namespace-imported type roots. Unknown, ambiguous, or
+/// non-static factories return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# type-qualified factory resolution inputs explicit"
+)]
+fn resolve_csharp_factory_static_method<'a>(
+    source_symbol: &'a IndexedSymbol,
+    factory_name: &str,
+    factory_arity: usize,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<&'a IndexedSymbol>> {
+    let symbol_id =
+        if let Some(target_path) = csharp_global_qualified_static_target_path(factory_name) {
+            resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                factory_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            )
+        } else if let Some(target_path) =
+            csharp_nested_type_static_target_path(factory_name, source_symbol, raw_symbols)
+        {
+            resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                factory_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            )
+        } else if let Some(target_path) =
+            csharp_simple_type_static_target_path(factory_name, source_symbol, raw_symbols)
+        {
+            resolve_csharp_candidate(
+                raw_symbols,
+                semantic_path_index,
+                &target_path,
+                Some(source_symbol),
+                factory_arity,
+                CSharpCandidateRequirements {
+                    node_kind: "method_declaration",
+                    require_static: true,
+                    require_instance: false,
+                    require_same_file: false,
+                },
+            )
+        } else if let Some((type_name, method_name)) = factory_name.split_once('.')
+            && !type_name.is_empty()
+            && type_name != "this"
+            && !type_name.starts_with("global::")
+            && !method_name.is_empty()
+            && !method_name.contains('.')
+            && csharp_namespace_import_type_is_unshadowed(type_name, source_symbol, raw_symbols)
+        {
+            let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
+                &source_symbol.file_path,
+                type_name,
+                source_namespace_path,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?;
+            if let Some(csharp_global_import_context) = csharp_global_import_context {
+                namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+                    type_name,
+                    csharp_global_import_context,
+                ));
+            }
+            resolve_csharp_namespace_imported_static_method(
+                raw_symbols,
+                semantic_path_index,
+                &namespace_imports,
+                type_name,
+                method_name,
+                factory_arity,
+            )
+        } else {
+            None
+        };
+    Ok(symbol_id.and_then(|symbol_id| {
+        raw_symbols
+            .iter()
+            .find(|candidate| candidate.symbol_id == symbol_id)
+    }))
 }
 
 /// Walks the intermediate hops of a receiver chain such as

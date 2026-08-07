@@ -2523,7 +2523,8 @@ class Caller {
             .collect::<Vec<_>>(),
         [
             "Demo::Caller::ConstructorReceiver",
-            "Demo::Caller::DottedConstructorReceiver"
+            "Demo::Caller::DottedConstructorReceiver",
+            "Demo::Caller::FactoryReceiver"
         ]
     );
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -2537,14 +2538,15 @@ class Caller {
             .collect::<Vec<_>>(),
         [
             "Demo::Caller::ConstructorReceiver",
-            "Demo::Caller::DottedConstructorReceiver"
+            "Demo::Caller::DottedConstructorReceiver",
+            "Demo::Caller::FactoryReceiver"
         ]
     );
 
-    // A `var` local from a non-constructor initializer stays bound without a
-    // usable type, so `FactoryReceiver` calls only the same-type factory and
-    // never the receiver method; the static method and an unknown constructed
-    // type also fail closed.
+    // A `var` local from a factory initializer infers its receiver type from
+    // the factory's declared return type, so `FactoryReceiver` calls both the
+    // same-type factory and the receiver method; the static method and an
+    // unknown constructed type still fail closed.
     let utility_live =
         trace_symbol_graph(&dir, "Demo::Helper::Utility", TraceDirection::Callers).unwrap();
     assert!(utility_live.callers.is_empty());
@@ -2554,11 +2556,12 @@ class Caller {
         TraceDirection::Callees,
     )
     .unwrap();
-    assert_eq!(factory_live.callees.len(), 1);
+    assert_eq!(factory_live.callees.len(), 2);
     assert_eq!(
         factory_live.callees[0].symbol_id,
         "Demo::Caller::MakeHelper"
     );
+    assert_eq!(factory_live.callees[1].symbol_id, "Demo::Helper::Run");
     let unknown_live = trace_symbol_graph(
         &dir,
         "Demo::Caller::UnknownConstructorReceiver",
@@ -4211,6 +4214,227 @@ class Caller {
             vec!["Demo::Group::Make"],
         ),
         ("Demo::Caller::StaticFinalMember", vec!["Demo::Group::Make"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_factory_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Helper helper = new Helper();
+}
+class Factories {
+    public static Helper MakeHelper() => new Helper();
+}
+class Group {
+    public Helper Make() => new Helper();
+    public Holder holder = new Holder();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using static Demo.Factories;
+namespace Demo;
+class Caller {
+    Helper MakeHelper() => new Helper();
+    Helper MakeHelper(int value) => new Helper();
+    Group MakeGroup() => new Group();
+    int SameTypeFactory() { var helper = MakeHelper(); return helper.Run(1); }
+    int ArityOneFactory() { var helper = MakeHelper(1); return helper.Run(1); }
+    int ThisFactory() { var helper = this.MakeHelper(); return helper.Run(1); }
+    int QualifiedFactory() { var helper = Factories.MakeHelper(); return helper.Run(1); }
+    int FactoryThenMethodHop() { var group = MakeGroup(); return group.Make().Run(1); }
+    int FactoryThenFieldHop() { var group = MakeGroup(); return group.holder.helper.Run(1); }
+}
+class StaticImportCaller {
+    int StaticImportFactory() { var helper = MakeHelper(); return helper.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    for (target, callers) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::ArityOneFactory",
+                "Demo::Caller::FactoryThenFieldHop",
+                "Demo::Caller::FactoryThenMethodHop",
+                "Demo::Caller::QualifiedFactory",
+                "Demo::Caller::SameTypeFactory",
+                "Demo::Caller::ThisFactory",
+                "Demo::StaticImportCaller::StaticImportFactory",
+            ],
+        ),
+        (
+            "Demo::Caller::MakeGroup",
+            vec![
+                "Demo::Caller::FactoryThenFieldHop",
+                "Demo::Caller::FactoryThenMethodHop",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_factory_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    Helper MakeHelper() => new Helper();
+    int Call() { var helper = MakeHelper(); return helper.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_factory_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Factories {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeAmbiguous() => new Helper();
+}
+class OtherFactories {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeAmbiguous() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "using static Demo.Factories;
+using static Demo.OtherFactories;
+namespace Demo;
+class Caller {
+    Helper MakeHelper() => new Helper();
+    void MakeVoid() {}
+    int MakeInt() => 1;
+    int UnknownFactory() { var helper = Missing(); return helper.Run(1); }
+    int ArityMismatchFactory() { var helper = MakeHelper(1, 2); return helper.Run(1); }
+    int VoidFactory() { var helper = MakeVoid(); return helper.Run(1); }
+    int PrimitiveFactory() { var helper = MakeInt(); return helper.Run(1); }
+    int AmbiguousFactory() { var helper = MakeAmbiguous(); return helper.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // The factory-inferred receiver itself must fail closed: no callee is
+    // traced for `.Run` when the factory is unknown, arity-mismatched,
+    // ambiguous, or has no usable (void/primitive) declared return type.
+    // Legitimate bare factory calls still trace as direct callees when they
+    // resolve independently of the receiver binding.
+    for (caller, expected) in [
+        ("Demo::Caller::UnknownFactory", Vec::<&str>::new()),
+        ("Demo::Caller::ArityMismatchFactory", Vec::<&str>::new()),
+        ("Demo::Caller::VoidFactory", vec!["Demo::Caller::MakeVoid"]),
+        (
+            "Demo::Caller::PrimitiveFactory",
+            vec!["Demo::Caller::MakeInt"],
+        ),
+        ("Demo::Caller::AmbiguousFactory", Vec::<&str>::new()),
     ] {
         let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
         assert_eq!(

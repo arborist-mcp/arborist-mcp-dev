@@ -44,14 +44,20 @@ impl CSharpReceiverTypeBindings {
         self.types_by_name.contains_key(name)
     }
 
+    /// Returns the raw binding value for a bound name, including empty values
+    /// (untyped `var` locals, lambda parameters) and factory markers.
+    pub(in crate::symbol_dependency) fn raw_for(&self, name: &str) -> Option<&str> {
+        self.types_by_name.get(name).map(String::as_str)
+    }
+
     /// Returns the declared type spelling for a uniquely bound name. Names
     /// bound without a usable declared type (`var` locals, lambda parameters,
-    /// `foreach` variables, local functions, and type parameters) return
-    /// `None`.
+    /// `foreach` variables, local functions, and type parameters) and names
+    /// bound to a factory initializer return `None`.
     pub(in crate::symbol_dependency) fn type_for(&self, name: &str) -> Option<String> {
         self.types_by_name
             .get(name)
-            .filter(|type_name| !type_name.is_empty())
+            .filter(|type_name| !type_name.is_empty() && !type_name.starts_with("@factory:"))
             .cloned()
     }
 }
@@ -598,9 +604,11 @@ fn collect_csharp_function_bindings(
                         Some(type_name) => Some(type_name),
                         // A `var` local infers its receiver type from a
                         // constructor initializer such as
-                        // `var helper = new Helper()`; other initializers bind
-                        // an empty type and fail closed.
-                        None => csharp_constructor_type_from_declarator(node, source)?,
+                        // `var helper = new Helper()` or from a factory call
+                        // initializer such as `var helper = MakeHelper()`;
+                        // other initializers bind an empty type and fail
+                        // closed.
+                        None => csharp_var_initializer_type_binding(node, source)?,
                     }
                 }
                 _ => None,
@@ -629,30 +637,77 @@ fn collect_csharp_function_bindings(
     Ok(())
 }
 
-/// Infers a receiver type for `var` locals whose initializer is a constructor
-/// call such as `var helper = new Helper()` or `var helper = new Outer.Inner()`.
-/// Non-constructor initializers, target-typed creations, array creations, and
-/// malformed type spellings return `None` and fail closed. Mirrors the
-/// extractor's `var` binding rules so the resolver classifies constructor
-/// initializers the same way the extractor recorded them.
-fn csharp_constructor_type_from_declarator(
+/// Infers a receiver type binding for `var` locals. Constructor initializers
+/// such as `var helper = new Helper()` or `var helper = new Outer.Inner()`
+/// bind the constructed type; invocation initializers such as
+/// `var helper = MakeHelper()` bind a factory marker the resolver expands to
+/// the factory method's declared return type. Other initializers,
+/// target-typed creations, array creations, and malformed spellings return
+/// `None` and fail closed. Mirrors the extractor's `var` binding rules so the
+/// resolver classifies initializers the same way the extractor recorded them.
+fn csharp_var_initializer_type_binding(
     declarator: tree_sitter::Node<'_>,
     source: &str,
 ) -> Result<Option<String>> {
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
     };
-    if initializer.kind() != "object_creation_expression" {
-        return Ok(None);
+    match initializer.kind() {
+        "object_creation_expression" => {
+            let Some(type_node) = initializer.child_by_field_name("type") else {
+                return Ok(None);
+            };
+            let type_name = node_text(type_node, source)?.trim();
+            if type_name.is_empty() || type_name == "var" {
+                return Ok(None);
+            }
+            Ok(Some(type_name.to_string()))
+        }
+        "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
+        _ => Ok(None),
     }
-    let Some(type_node) = initializer.child_by_field_name("type") else {
+}
+
+/// Builds a factory marker such as `@factory:MakeHelper(0)`,
+/// `@factory:this.MakeHelper(0)`, or `@factory:Factories.MakeHelper(1)` for a
+/// `var` local initialized from an invocation. The spelling mirrors the
+/// extractor's reference spellings so the resolver can expand the marker to
+/// the factory method's declared return type. Unsupported initializer shapes
+/// return `None` and fail closed. Mirrors the extractor's factory marker rules.
+fn csharp_factory_marker_from_initializer(
+    initializer: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(function) = initializer.child_by_field_name("function") else {
         return Ok(None);
     };
-    let type_name = node_text(type_node, source)?.trim();
-    if type_name.is_empty() || type_name == "var" {
+    let spelling = match function.kind() {
+        "identifier" => node_text(function, source)?.trim().to_string(),
+        "member_access_expression" => {
+            let Some(expression) = function.child_by_field_name("expression") else {
+                return Ok(None);
+            };
+            let Some(name) = function.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            let expression_text = node_text(expression, source)?.trim();
+            let name_text = node_text(name, source)?.trim();
+            if expression_text.is_empty() || name_text.is_empty() {
+                return Ok(None);
+            }
+            format!("{expression_text}.{name_text}")
+        }
+        _ => return Ok(None),
+    };
+    if spelling.is_empty() {
         return Ok(None);
     }
-    Ok(Some(type_name.to_string()))
+    let Some(arguments) = initializer.child_by_field_name("arguments") else {
+        return Ok(None);
+    };
+    let mut cursor = arguments.walk();
+    let arity = arguments.named_children(&mut cursor).count();
+    Ok(Some(format!("@factory:{spelling}({arity})")))
 }
 
 /// Returns the initializer expression of a `variable_declarator` such as
