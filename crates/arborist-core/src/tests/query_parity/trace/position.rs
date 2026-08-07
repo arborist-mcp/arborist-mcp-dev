@@ -13493,6 +13493,14 @@ class Child extends Base {
         var v = super.holder.entry;
         return v.helper(1);
     }
+    int bareChain() {
+        var v = holder.entry;
+        return v.helper(1);
+    }
+    int bareField() {
+        var v = holder;
+        return v.entry.helper(1);
+    }
 }
 class Util {
     static Holder REGISTRY = new Holder();
@@ -13519,7 +13527,7 @@ class Caller {
 
     let helper_symbol = "com::example::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 5);
+    assert_eq!(live.callers.len(), 7);
     let mut callers = live
         .callers
         .iter()
@@ -13532,6 +13540,8 @@ class Caller {
             "com::example::Caller::nestedStatic",
             "com::example::Caller::staticChain",
             "com::example::Caller::typedLocal",
+            "com::example::Child::bareChain",
+            "com::example::Child::bareField",
             "com::example::Child::superField",
             "com::example::Child::thisChain"
         ]
@@ -13540,7 +13550,7 @@ class Caller {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 5);
+    assert_eq!(persisted.callers.len(), 7);
     let mut callers = persisted
         .callers
         .iter()
@@ -13553,6 +13563,8 @@ class Caller {
             "com::example::Caller::nestedStatic",
             "com::example::Caller::staticChain",
             "com::example::Caller::typedLocal",
+            "com::example::Child::bareChain",
+            "com::example::Child::bareField",
             "com::example::Child::superField",
             "com::example::Child::thisChain"
         ]

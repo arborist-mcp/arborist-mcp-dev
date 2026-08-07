@@ -3466,8 +3466,10 @@ fn resolve_java_qualified_initializer_function_path(
 /// references resolve the field chain on the enclosing or direct-superclass
 /// type path, bare names resolve through the enclosing class field bindings or
 /// a unique explicit static field import, and qualified names such as
-/// `Util.STATIC_FIELD` resolve a static field on the named type. Receivers
-/// that are bound locals or parameters, unknown or ambiguous fields, fields
+/// `Util.STATIC_FIELD` resolve a static field on the named type, bare names
+/// and bare field chains also resolve fields inherited from a unique
+/// direct-superclass chain. Receivers that are bound locals or parameters,
+/// unknown or ambiguous fields, fields
 /// without a usable declared type, and bound-name shadowing of qualified type
 /// receivers fail closed so field-initializer inference stays conservative and
 /// acyclic.
@@ -3557,6 +3559,24 @@ fn resolve_java_initializer_field_type_path(
         if bindings.contains(reference_name) {
             return Ok(None);
         }
+        // Enclosing-type fields are visible to member functions even when
+        // declared on a direct-superclass chain; the binding collector only
+        // records directly declared fields, so resolve the bare name on the
+        // enclosing type path before falling back to static imports.
+        if let Some(scope_path) = source_symbol.scope_path.as_deref()
+            && let Some(type_path) = java_inherited_field_type_path(
+                scope_path,
+                reference_name,
+                false,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            return Ok(Some(type_path));
+        }
         let Some(binding) = resolve_java_static_method_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
@@ -3586,6 +3606,34 @@ fn resolve_java_initializer_field_type_path(
         return Ok(None);
     }
     let mut resolved = BTreeSet::new();
+    // A dotted reference whose leading segment names an enclosing-class or
+    // inherited field is a bare field chain such as `holder.entry` and
+    // resolves on the enclosing type path through the same field-chain rules;
+    // it competes with qualified `Type.field` interpretations below.
+    if let Some(scope_path) = source_symbol.scope_path.as_deref()
+        && let Some(field_type_path) = java_inherited_field_type_path(
+            scope_path,
+            segments[0],
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(chain_type_path) = resolve_java_field_chain_type_path(
+            &field_type_path,
+            &segments[1..].join("."),
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    {
+        resolved.insert(chain_type_path);
+    }
     for split in 1..segments.len() {
         let type_name = segments[..split].join(".");
         let field_chain = segments[split..].join(".");
