@@ -3676,9 +3676,11 @@ fn resolve_java_initializer_field_type_path(
 
 /// Walks a field-access chain such as `holder.entry` on an already-resolved
 /// type path, resolving each hop's declared type in the declaring field's own
-/// file and enclosing scope. `require_first_static` requires the first hop to
-/// be a static field for `Type.field` references; unknown, ambiguous, or
-/// unresolvable hops and non-static first hops fail closed.
+/// file and enclosing scope; zero-argument method-call hops such as `inner()`
+/// resolve through the same method-return-type rules as member chains.
+/// `require_first_static` requires the first hop to be a static field for
+/// `Type.field` references; unknown, ambiguous, or unresolvable hops,
+/// non-static first hops, and static method-call first hops fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field chain resolution inputs explicit"
@@ -3699,17 +3701,34 @@ fn resolve_java_field_chain_type_path(
     }
     let mut current_type_path = initial_type_path.to_string();
     for (index, hop) in hops.iter().enumerate() {
-        let Some(next_path) = java_inherited_field_type_path(
-            &current_type_path,
-            hop,
-            index == 0 && require_first_static,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            java_import_contexts_by_file,
-            deadline,
-        )?
-        else {
+        let require_static = index == 0 && require_first_static;
+        let next_path = if let Some(method_name) = hop.strip_suffix("()") {
+            if require_static {
+                return Ok(None);
+            }
+            java_method_return_type_path(
+                &current_type_path,
+                method_name,
+                0,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            java_inherited_field_type_path(
+                &current_type_path,
+                hop,
+                require_static,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        };
+        let Some(next_path) = next_path else {
             return Ok(None);
         };
         current_type_path = next_path;

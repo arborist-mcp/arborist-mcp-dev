@@ -13677,3 +13677,169 @@ class Caller {
         trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
     assert!(persisted.callers.is_empty());
 }
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_method_hops() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+}
+class Holder {
+    Group group = new Group();
+    Group inner() { return group; }
+}
+class Base { Holder holder = new Holder(); }
+class Child extends Base {
+    Group inner() { return holder.group; }
+    int thisHop() {
+        var v = this.holder.inner().entry;
+        return v.helper(1);
+    }
+    int thisDirectHop() {
+        var v = this.inner().entry;
+        return v.helper(1);
+    }
+    int superHop() {
+        var v = super.holder.inner().entry;
+        return v.helper(1);
+    }
+    int bareHop() {
+        var v = holder.inner().entry;
+        return v.helper(1);
+    }
+    int bareFieldHop() {
+        var v = holder.group.inner().entry;
+        return v.helper(1);
+    }
+}
+class Util { static Holder REGISTRY = new Holder(); }
+class Caller {
+    int staticHop() {
+        var v = Util.REGISTRY.inner().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::staticHop",
+            "com::example::Child::bareFieldHop",
+            "com::example::Child::bareHop",
+            "com::example::Child::superHop",
+            "com::example::Child::thisDirectHop",
+            "com::example::Child::thisHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::staticHop",
+            "com::example::Child::bareFieldHop",
+            "com::example::Child::bareHop",
+            "com::example::Child::superHop",
+            "com::example::Child::thisDirectHop",
+            "com::example::Child::thisHop"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_method_hops_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); Group inner() { return this; } }
+class Base { Group group = new Group(); }
+class Caller extends Base {
+    int run() {
+        var v = this.group.inner().entry;
+        return v.helper(1);
+    }
+    int runBare() {
+        var v = group.inner().entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        ["com::example::Caller::run", "com::example::Caller::runBare"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        ["com::example::Caller::run", "com::example::Caller::runBare"]
+    );
+}
