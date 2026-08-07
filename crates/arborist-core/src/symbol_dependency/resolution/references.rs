@@ -3657,13 +3657,15 @@ fn java_constructor_rooted_field_chain(reference_name: &str) -> Option<(String, 
 /// `Util.STATIC_FIELD` resolve a static field on the named type, bare names
 /// and bare field chains also resolve fields inherited from a unique
 /// direct-superclass chain, constructor-rooted chains such as
-/// `new Holder().group.entry` resolve on the constructed class type, and
-/// bound receivers (parameters, declared locals, or enclosing-class fields)
-/// with a usable declared type resolve field chains such as `local.entry` on
-/// that type. Unknown or ambiguous fields,
-/// fields without a usable declared type, bound receivers without a usable
-/// declared type, and bound-name shadowing of qualified type receivers fail
-/// closed so field-initializer inference stays conservative and acyclic.
+/// `new Holder().group.entry` resolve on the constructed class type, bound
+/// receivers (parameters, declared locals, or enclosing-class fields) with a
+/// usable declared type resolve field chains such as `local.entry` on that
+/// type, and zero-argument method-call hops such as `makeFoo().entry` resolve
+/// the hop's declared return type through the same factory rules as a `var`
+/// initializer before walking the remaining chain. Unknown or ambiguous
+/// fields, fields without a usable declared type, bound receivers without a
+/// usable declared type, and bound-name shadowing of qualified type receivers
+/// fail closed so field-initializer inference stays conservative and acyclic.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field initializer resolution inputs explicit"
@@ -3926,6 +3928,39 @@ fn resolve_java_initializer_field_type_path(
         java_import_contexts_by_file,
         deadline,
     )? {
+        resolved.insert(chain_type_path);
+    }
+    // A dotted reference whose leading segment is a zero-argument method-call
+    // hop such as `makeFoo()` in `makeFoo().entry` resolves the hop's declared
+    // return type through the same factory rules as a `var` initializer (a
+    // unique same-type method, unique explicit static-method import, static
+    // type factory, or bound-receiver factory with matching non-varargs
+    // arity) and walks the remaining chain through the same field-chain
+    // rules. Unknown or ambiguous callees and hops whose return type is not a
+    // usable class or interface spelling fail closed.
+    if let Some(method_name) = segments[0].strip_suffix("()")
+        && !method_name.is_empty()
+        && let Some(method_type_path) = resolve_java_initializer_type_path(
+            source_symbol,
+            method_name,
+            0,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(chain_type_path) = resolve_java_field_chain_type_path(
+            &method_type_path,
+            &segments[1..].join("."),
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    {
         resolved.insert(chain_type_path);
     }
     for split in 1..segments.len() {
