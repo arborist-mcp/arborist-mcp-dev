@@ -2877,7 +2877,7 @@ fn java_field_type_candidates<'a>(
 /// Dispatches a member chain such as `group.member.helper(...)`,
 /// `group.inner().helper(...)`, or `Group().inner().helper(...)` on an
 /// already-resolved receiver type path: each intermediate hop must resolve to
-/// a uniquely declared field or zero-argument method call whose declared type
+/// a uniquely declared field or arity-matched method call whose declared type
 /// continues the chain, and the final member must be a unique non-static,
 /// non-varargs method with a matching arity. Unknown, ambiguous, or
 /// unresolvable hops and missing final members fail closed.
@@ -2905,29 +2905,30 @@ fn resolve_java_member_chain_from_type_path(
             return Ok(None);
         };
         for hop in hops {
-            let next_path = if let Some(method_name) = hop.strip_suffix("()") {
-                java_method_return_type_path(
-                    &current_type_path,
-                    method_name,
-                    0,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                    java_import_contexts_by_file,
-                    deadline,
-                )?
-            } else {
-                java_field_type_path(
-                    &current_type_path,
-                    hop,
-                    false,
-                    raw_symbols,
-                    semantic_path_index,
-                    file_overrides,
-                    java_import_contexts_by_file,
-                    deadline,
-                )?
-            };
+            let next_path =
+                if let Some((method_name, hop_arity)) = java_method_call_hop_spelling(hop) {
+                    java_method_return_type_path(
+                        &current_type_path,
+                        &method_name,
+                        hop_arity,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        java_import_contexts_by_file,
+                        deadline,
+                    )?
+                } else {
+                    java_field_type_path(
+                        &current_type_path,
+                        hop,
+                        false,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        java_import_contexts_by_file,
+                        deadline,
+                    )?
+                };
             let Some(next_path) = next_path else {
                 return Ok(None);
             };
@@ -2956,10 +2957,31 @@ fn resolve_java_member_chain_from_type_path(
     )
 }
 
-/// Resolves the declared return type of a zero-argument non-static method-call
-/// hop such as `inner()` in `group.inner().helper(...)`. The hop method
-/// dispatches like any other instance-receiver member (class, superclass,
-/// interface, or class-receiver interface-default), and its declared return
+/// Parses a method-call hop spelling such as `inner()`, `inner(0)`, or
+/// `inner(2)` into the method name and the call arity recorded by the
+/// extractor. Field hops, malformed spellings, and non-numeric argument
+/// lists return `None` so they fall through to field resolution and fail
+/// closed when no such field exists.
+fn java_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
+    let open = hop.find('(')?;
+    let (method_name, arguments) = hop.split_at(open);
+    if method_name.is_empty() {
+        return None;
+    }
+    let arguments = arguments.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    Some((method_name.to_string(), arity))
+}
+
+/// Resolves the declared return type of an arity-matched non-static
+/// method-call hop such as `inner()` or `inner(1)` in
+/// `group.inner().helper(...)`. The hop method dispatches like any other
+/// instance-receiver member (class, superclass, interface, or class-receiver
+/// interface-default), and its declared return
 /// type resolves in the method's own file and enclosing scope. Static hops,
 /// arity-mismatched hops, and unknown, ambiguous, primitive, or void return
 /// types fail closed.
@@ -3014,9 +3036,9 @@ fn java_method_return_type_path(
     )
 }
 
-/// Resolves the declared return type of a zero-argument static method-call
-/// hop such as `factory()` in `Util.factory().entry`. The hop must be a
-/// unique, directly declared, non-varargs static method with the call arity,
+/// Resolves the declared return type of a static method-call hop such as
+/// `factory()` or `factory(1)` in `Util.factory().entry`. The hop must be a
+/// unique, directly declared, non-varargs static method with the hop arity,
 /// and its declared return type resolves in the method's own file and
 /// enclosing scope. Unknown, ambiguous, non-static, or arity-mismatched hops
 /// and return types without a usable class or interface spelling fail closed.
@@ -3660,12 +3682,13 @@ fn java_constructor_rooted_field_chain(reference_name: &str) -> Option<(String, 
 /// `new Holder().group.entry` resolve on the constructed class type, bound
 /// receivers (parameters, declared locals, or enclosing-class fields) with a
 /// usable declared type resolve field chains such as `local.entry` on that
-/// type, and zero-argument method-call hops such as `makeFoo().entry` resolve
-/// the hop's declared return type through the same factory rules as a `var`
-/// initializer before walking the remaining chain. Unknown or ambiguous
-/// fields, fields without a usable declared type, bound receivers without a
-/// usable declared type, and bound-name shadowing of qualified type receivers
-/// fail closed so field-initializer inference stays conservative and acyclic.
+/// type, and arity-matched method-call hops such as `makeFoo().entry` or
+/// `makeFoo(1).entry` resolve the hop's declared return type through the same
+/// factory rules as a `var` initializer before walking the remaining chain.
+/// Unknown or ambiguous fields, fields without a usable declared type, bound
+/// receivers without a usable declared type, and bound-name shadowing of
+/// qualified type receivers fail closed so field-initializer inference stays
+/// conservative and acyclic.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field initializer resolution inputs explicit"
@@ -3930,20 +3953,21 @@ fn resolve_java_initializer_field_type_path(
     )? {
         resolved.insert(chain_type_path);
     }
-    // A dotted reference whose leading segment is a zero-argument method-call
-    // hop such as `makeFoo()` in `makeFoo().entry` resolves the hop's declared
-    // return type through the same factory rules as a `var` initializer (a
-    // unique same-type method, unique explicit static-method import, static
-    // type factory, or bound-receiver factory with matching non-varargs
-    // arity) and walks the remaining chain through the same field-chain
-    // rules. Unknown or ambiguous callees and hops whose return type is not a
-    // usable class or interface spelling fail closed.
-    if let Some(method_name) = segments[0].strip_suffix("()")
+    // A dotted reference whose leading segment is a method-call hop such as
+    // `makeFoo()` or `makeFoo(1)` in `makeFoo().entry` resolves the hop's
+    // declared return type through the same factory rules as a `var`
+    // initializer (a unique same-type method, unique explicit static-method
+    // import, static type factory, or bound-receiver factory with matching
+    // non-varargs arity) and walks the remaining chain through the same
+    // field-chain rules. Unknown or ambiguous callees, arity mismatches, and
+    // hops whose return type is not a usable class or interface spelling fail
+    // closed.
+    if let Some((method_name, hop_arity)) = java_method_call_hop_spelling(segments[0])
         && !method_name.is_empty()
         && let Some(method_type_path) = resolve_java_initializer_type_path(
             source_symbol,
-            method_name,
-            0,
+            &method_name,
+            hop_arity,
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -4005,14 +4029,14 @@ fn resolve_java_initializer_field_type_path(
 
 /// Walks a field-access chain such as `holder.entry` on an already-resolved
 /// type path, resolving each hop's declared type in the declaring field's own
-/// file and enclosing scope; zero-argument method-call hops such as `inner()`
-/// resolve through the same method-return-type rules as member chains, while
-/// a static method-call first hop such as `factory()` in `Util.factory().entry`
-/// resolves through the directly declared static method's return type.
-/// `require_first_static` requires the first hop to be a static field or
-/// static method call for `Type.field` references; unknown, ambiguous, or
-/// unresolvable hops, non-static first hops, and non-static method-call first
-/// hops fail closed.
+/// file and enclosing scope; arity-matched method-call hops such as `inner()`
+/// or `inner(1)` resolve through the same method-return-type rules as member
+/// chains, while a static method-call first hop such as `factory()` in
+/// `Util.factory().entry` resolves through the directly declared static
+/// method's return type. `require_first_static` requires the first hop to be
+/// a static field or static method call for `Type.field` references; unknown,
+/// ambiguous, or unresolvable hops, arity-mismatched hops, non-static first
+/// hops, and non-static method-call first hops fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field chain resolution inputs explicit"
@@ -4034,12 +4058,12 @@ fn resolve_java_field_chain_type_path(
     let mut current_type_path = initial_type_path.to_string();
     for (index, hop) in hops.iter().enumerate() {
         let require_static = index == 0 && require_first_static;
-        let next_path = if let Some(method_name) = hop.strip_suffix("()") {
+        let next_path = if let Some((method_name, hop_arity)) = java_method_call_hop_spelling(hop) {
             if require_static {
                 java_static_method_return_type_path(
                     &current_type_path,
-                    method_name,
-                    0,
+                    &method_name,
+                    hop_arity,
                     raw_symbols,
                     semantic_path_index,
                     file_overrides,
@@ -4049,8 +4073,8 @@ fn resolve_java_field_chain_type_path(
             } else {
                 java_method_return_type_path(
                     &current_type_path,
-                    method_name,
-                    0,
+                    &method_name,
+                    hop_arity,
                     raw_symbols,
                     semantic_path_index,
                     file_overrides,

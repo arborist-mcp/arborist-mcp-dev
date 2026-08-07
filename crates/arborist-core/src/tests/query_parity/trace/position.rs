@@ -3733,6 +3733,299 @@ fn does_not_trace_csharp_nested_type_static_calls_past_a_nearer_type() {
 }
 
 #[test]
+fn traces_java_var_arity_method_hop_field_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+    Group inner(int value) { return this; }
+    Group makeFoo(int value) { return new Group(); }
+}
+class Util {
+    static Group make(int value) { return new Group(); }
+}
+class Caller {
+    Group group = new Group();
+    Group makeFoo(int value) { return new Group(); }
+    int bareArityFactoryHop() {
+        var v = makeFoo(1).entry;
+        return v.helper(1);
+    }
+    int boundArityFactoryHop() {
+        var v = group.makeFoo(1).entry;
+        return v.helper(1);
+    }
+    int staticArityFactoryHop() {
+        var v = Util.make(1).entry;
+        return v.helper(1);
+    }
+    int arityChainHop() {
+        var v = group.makeFoo(1).inner(0).entry;
+        return v.helper(1);
+    }
+    int directArityHop() {
+        return group.makeFoo(1).entry.helper(1);
+    }
+    int arityMemberHop() {
+        return group.inner(1).entry.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 6);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::arityChainHop",
+            "com::example::Caller::arityMemberHop",
+            "com::example::Caller::bareArityFactoryHop",
+            "com::example::Caller::boundArityFactoryHop",
+            "com::example::Caller::directArityHop",
+            "com::example::Caller::staticArityFactoryHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 6);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::arityChainHop",
+            "com::example::Caller::arityMemberHop",
+            "com::example::Caller::bareArityFactoryHop",
+            "com::example::Caller::boundArityFactoryHop",
+            "com::example::Caller::directArityHop",
+            "com::example::Caller::staticArityFactoryHop"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_arity_method_hop_field_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); }
+class Caller {
+    Group makeFoo(int value) { return new Group(); }
+    int run() {
+        var v = makeFoo(1).entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_arity_method_hop_field_receiver_calls_across_files_with_static_import() {
+    let dir = temporary_dir();
+    let factory_dir = dir.join("src").join("pkg").join("factory");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let factory_path = factory_dir.join("Util.java");
+    let caller_path = caller_dir.join("Caller.java");
+    let helper_path = helper_dir.join("Helper.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&factory_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Helper { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &factory_path,
+        "package pkg.factory;
+import pkg.helper.Helper;
+public class Util {
+    public static Holder make(int value) { return new Holder(); }
+    public static class Holder {
+        public Helper entry = new Helper();
+        public static Holder nestedMake(int value) { return new Holder(); }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import static pkg.factory.Util.make;
+import static pkg.factory.Util.Holder.nestedMake;
+public class Caller {
+    public int importedArityFactoryHop() {
+        var v = make(1).entry;
+        return v.helper(1);
+    }
+    public int importedNestedArityFactoryHop() {
+        var v = nestedMake(1).entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::helper::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedArityFactoryHop",
+            "pkg::caller::Caller::importedNestedArityFactoryHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "pkg::caller::Caller::importedArityFactoryHop",
+            "pkg::caller::Caller::importedNestedArityFactoryHop"
+        ]
+    );
+}
+
+#[test]
+fn java_var_arity_method_hop_field_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); }
+class Util {
+    static Group make(int value) { return new Group(); }
+}
+class Caller {
+    Group make(int value) { return new Group(); }
+    Group makeTwo(int a, int b) { return new Group(); }
+    void makeVoid() { }
+    int primitive() { return 0; }
+    int arityMismatchLow() {
+        var v = make().entry;
+        return v.helper(1);
+    }
+    int arityMismatchHigh() {
+        var v = make(1, 2).entry;
+        return v.helper(1);
+    }
+    int multiParameterMismatch() {
+        var v = makeTwo(1).entry;
+        return v.helper(1);
+    }
+    int staticArityMismatch() {
+        var v = Util.make(1, 2).entry;
+        return v.helper(1);
+    }
+    int unknownFactory() {
+        var v = missing(1).entry;
+        return v.helper(1);
+    }
+    int voidFactory() {
+        var v = makeVoid().entry;
+        return v.helper(1);
+    }
+    int primitiveFactory() {
+        var v = primitive().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "arity-mismatched, unknown, void-returning, and primitive-returning method-call hops must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_csharp_enclosing_namespace_static_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let helper_path = dir.join("Helper.cs");
@@ -12109,7 +12402,7 @@ class Group {
     static Inner make() { return new Inner(); }
 }
 class Caller {
-    int argHop(Group group) { return group.inner(1).helper(1); }
+    int argMismatchHop(Group group) { return group.inner(1, 2).helper(1); }
     int unknownHop(Group group) { return group.unknown().helper(1); }
     int primitiveHop(Group group) { return group.tag().helper(1); }
     int voidHop(Group group) { return group.reset().helper(1); }
@@ -12125,7 +12418,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "argument-taking, unknown, primitive/void-return, static, unbound, and unknown `this`-rooted method-call hops must fail closed"
+        "arity-mismatched, unknown, primitive/void-return, static, unbound, and unknown `this`-rooted method-call hops must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
