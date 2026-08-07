@@ -3467,63 +3467,110 @@ fn resolve_java_interface_chain_method_from_type_path(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<JavaInterfaceChainMethodResolution> {
     let mut visited_interface_paths = BTreeSet::new();
-    let mut current_interface_path = initial_interface_path.to_string();
-    loop {
-        if let Some(deadline) = deadline {
-            deadline.check("resolving Java interface chain method")?;
-        }
-        if !visited_interface_paths.insert(current_interface_path.clone()) {
-            return Ok(JavaInterfaceChainMethodResolution::Blocked);
-        }
-        let target_path = format!("{current_interface_path}::{method_name}");
-        let declared_candidates = semantic_path_index
-            .get(&target_path)
+    resolve_java_interface_chain_method_from_interface(
+        initial_interface_path,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        require_default,
+        deadline,
+        &mut visited_interface_paths,
+    )
+}
+
+/// Walks an interface's direct super-interface branches recursively to resolve
+/// `method_name`. Exactly one branch must provide a uniquely arity-matched
+/// non-static method meeting `require_default`, and every other branch must
+/// prove it has no declaration; a declaration reached identically through
+/// multiple branches still resolves once. Competing, ambiguous, cyclic, and
+/// unresolvable branches fail closed as `Blocked`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java interface inheritance resolution inputs explicit"
+)]
+fn resolve_java_interface_chain_method_from_interface(
+    interface_path: &str,
+    method_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    require_default: bool,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_interface_paths: &mut BTreeSet<String>,
+) -> Result<JavaInterfaceChainMethodResolution> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving Java interface chain method")?;
+    }
+    if !visited_interface_paths.insert(interface_path.to_string()) {
+        return Ok(JavaInterfaceChainMethodResolution::Blocked);
+    }
+    let target_path = format!("{interface_path}::{method_name}");
+    let declared_candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+        .collect::<Vec<_>>();
+    if !declared_candidates.is_empty() {
+        let candidates = declared_candidates
             .into_iter()
-            .flatten()
-            .copied()
-            .filter(|index| raw_symbols[*index].node_kind == "method_declaration")
+            .filter(|index| {
+                let candidate = &raw_symbols[*index];
+                (!require_default
+                    || candidate
+                        .signature
+                        .as_deref()
+                        .is_some_and(java_method_signature_is_default))
+                    && !candidate
+                        .signature
+                        .as_deref()
+                        .is_some_and(java_method_signature_is_static)
+                    && candidate.parameters.len() == call_arity
+                    && !candidate
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.contains("..."))
+            })
             .collect::<Vec<_>>();
-        if !declared_candidates.is_empty() {
-            let candidates = declared_candidates
-                .into_iter()
-                .filter(|index| {
-                    let candidate = &raw_symbols[*index];
-                    (!require_default
-                        || candidate
-                            .signature
-                            .as_deref()
-                            .is_some_and(java_method_signature_is_default))
-                        && !candidate
-                            .signature
-                            .as_deref()
-                            .is_some_and(java_method_signature_is_static)
-                        && candidate.parameters.len() == call_arity
-                        && !candidate
-                            .parameters
-                            .iter()
-                            .any(|parameter| parameter.contains("..."))
-                })
-                .collect::<Vec<_>>();
-            return Ok(match candidates.as_slice() {
-                [candidate_index] => JavaInterfaceChainMethodResolution::Resolved(
-                    raw_symbols[*candidate_index].symbol_id.clone(),
-                ),
-                _ => JavaInterfaceChainMethodResolution::Blocked,
-            });
-        }
-        let interface_candidates = semantic_path_index
-            .get(&current_interface_path)
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
-            .collect::<Vec<_>>();
-        let [interface_index] = interface_candidates.as_slice() else {
-            return Ok(JavaInterfaceChainMethodResolution::Blocked);
+        let resolution = match candidates.as_slice() {
+            [candidate_index] => JavaInterfaceChainMethodResolution::Resolved(
+                raw_symbols[*candidate_index].symbol_id.clone(),
+            ),
+            _ => JavaInterfaceChainMethodResolution::Blocked,
         };
-        let source_interface = &raw_symbols[*interface_index];
-        let Some(parent_interface_path) = java_unique_direct_parent_interface_path(
-            source_interface,
+        visited_interface_paths.remove(interface_path);
+        return Ok(resolution);
+    }
+    let interface_candidates = semantic_path_index
+        .get(interface_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
+        .collect::<Vec<_>>();
+    let [interface_index] = interface_candidates.as_slice() else {
+        visited_interface_paths.remove(interface_path);
+        return Ok(JavaInterfaceChainMethodResolution::Blocked);
+    };
+    let source_interface = &raw_symbols[*interface_index];
+    let Some(parent_references) =
+        java_direct_interface_parent_references(source_interface, file_overrides, deadline)?
+    else {
+        visited_interface_paths.remove(interface_path);
+        return Ok(JavaInterfaceChainMethodResolution::NoMethod);
+    };
+    let mut resolved_symbol_id = None;
+    for parent_reference in parent_references {
+        let Some(parent_interface_path) = resolve_java_direct_interface_target_path(
+            &source_interface.file_path,
+            source_interface.scope_path.as_deref(),
+            &parent_reference,
             raw_symbols,
             semantic_path_index,
             file_overrides,
@@ -3531,81 +3578,51 @@ fn resolve_java_interface_chain_method_from_type_path(
             deadline,
         )?
         else {
-            return Ok(
-                if java_interface_has_no_direct_parents(source_interface, file_overrides, deadline)?
-                    == Some(true)
-                {
-                    JavaInterfaceChainMethodResolution::NoMethod
-                } else {
-                    JavaInterfaceChainMethodResolution::Blocked
-                },
-            );
+            visited_interface_paths.remove(interface_path);
+            return Ok(JavaInterfaceChainMethodResolution::Blocked);
         };
-        current_interface_path = parent_interface_path;
+        match resolve_java_interface_chain_method_from_interface(
+            &parent_interface_path,
+            method_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            require_default,
+            deadline,
+            visited_interface_paths,
+        )? {
+            JavaInterfaceChainMethodResolution::Resolved(symbol_id) => {
+                if resolved_symbol_id
+                    .as_deref()
+                    .is_some_and(|resolved| resolved != symbol_id)
+                {
+                    visited_interface_paths.remove(interface_path);
+                    return Ok(JavaInterfaceChainMethodResolution::Blocked);
+                }
+                resolved_symbol_id.get_or_insert(symbol_id);
+            }
+            JavaInterfaceChainMethodResolution::Blocked => {
+                visited_interface_paths.remove(interface_path);
+                return Ok(JavaInterfaceChainMethodResolution::Blocked);
+            }
+            JavaInterfaceChainMethodResolution::NoMethod => {}
+        }
     }
+    visited_interface_paths.remove(interface_path);
+    Ok(resolved_symbol_id
+        .map(JavaInterfaceChainMethodResolution::Resolved)
+        .unwrap_or(JavaInterfaceChainMethodResolution::NoMethod))
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "keeps Java interface inheritance resolution inputs explicit"
-)]
-fn java_unique_direct_parent_interface_path(
-    source_interface: &IndexedSymbol,
-    raw_symbols: &[IndexedSymbol],
-    semantic_path_index: &BTreeMap<String, Vec<usize>>,
-    file_overrides: Option<&BTreeMap<String, String>>,
-    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
-    deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<String>> {
-    if source_interface.node_kind != "interface_declaration" {
-        return Ok(None);
-    }
-    let path = Path::new(&source_interface.file_path);
-    let normalized_path = normalize_path(path);
-    let source = file_overrides
-        .and_then(|overrides| overrides.get(&normalized_path))
-        .cloned()
-        .map(Ok)
-        .unwrap_or_else(|| read_source(path))?;
-    let document = parse_document(path, &source)?;
-    let mut stack = vec![document.tree.root_node()];
-    let mut interface_references = None;
-    while let Some(node) = stack.pop() {
-        if let Some(deadline) = deadline {
-            deadline.check("locating Java parent interface")?;
-        }
-        if node.kind() == "interface_declaration"
-            && (node.start_byte(), node.end_byte()) == source_interface.byte_range
-        {
-            interface_references = java_direct_interface_references_for_declaration(node, &source)?;
-            break;
-        }
-        let mut cursor = node.walk();
-        stack.extend(node.named_children(&mut cursor));
-    }
-    let Some(interface_references) = interface_references else {
-        return Ok(None);
-    };
-    let [interface_reference] = interface_references.as_slice() else {
-        return Ok(None);
-    };
-    resolve_java_direct_interface_target_path(
-        &source_interface.file_path,
-        source_interface.scope_path.as_deref(),
-        interface_reference,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )
-}
-
-fn java_interface_has_no_direct_parents(
+/// Returns the directly extended interface references of an interface
+/// declaration, or `None` when the declaration has no `extends` clause.
+fn java_direct_interface_parent_references(
     source_interface: &IndexedSymbol,
     file_overrides: Option<&BTreeMap<String, String>>,
     deadline: Option<&WorkspaceScanDeadline>,
-) -> Result<Option<bool>> {
+) -> Result<Option<Vec<JavaDirectSuperclassReference>>> {
     if source_interface.node_kind != "interface_declaration" {
         return Ok(None);
     }
@@ -3625,12 +3642,7 @@ fn java_interface_has_no_direct_parents(
         if node.kind() == "interface_declaration"
             && (node.start_byte(), node.end_byte()) == source_interface.byte_range
         {
-            let mut cursor = node.walk();
-            return Ok(Some(
-                !node
-                    .named_children(&mut cursor)
-                    .any(|child| child.kind() == "extends_interfaces"),
-            ));
+            return java_direct_interface_references_for_declaration(node, &source);
         }
         let mut cursor = node.walk();
         stack.extend(node.named_children(&mut cursor));

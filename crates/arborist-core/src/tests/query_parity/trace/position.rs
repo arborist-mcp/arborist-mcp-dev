@@ -10727,6 +10727,282 @@ class Caller {
 }
 
 #[test]
+fn traces_java_interface_inherited_receiver_calls_through_branching_chains_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+interface Base { int helper(int value); }
+interface Marker {}
+interface Mid extends Base, Marker {}
+class Caller {
+    int run(Mid mid) { return mid.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_interface_inherited_receiver_default_methods_through_branching_chains() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+interface Base { default int helper(int value) { return value; } }
+interface Marker {}
+interface Mid extends Base, Marker {}
+class Caller {
+    int run(Mid mid) { return mid.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_interface_inherited_receiver_calls_through_branching_chains_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+interface Base { default int helper(int value) { return value; } }
+interface Marker {}
+interface Mid extends Base, Marker {}
+class Caller {
+    int run(Mid mid) { return mid.helper(1); }
+}
+";
+    let helper_symbol = "com::example::Base::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_interface_inherited_receiver_calls_through_branching_chains_across_files_with_imports()
+ {
+    let dir = temporary_dir();
+    let base_dir = dir.join("src").join("pkg").join("base");
+    let marker_dir = dir.join("src").join("pkg").join("marker");
+    let mid_dir = dir.join("src").join("pkg").join("mid");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let base_path = base_dir.join("Base.java");
+    let marker_path = marker_dir.join("Marker.java");
+    let mid_path = mid_dir.join("Mid.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&base_dir).unwrap();
+    fs::create_dir_all(&marker_dir).unwrap();
+    fs::create_dir_all(&mid_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &base_path,
+        "package pkg.base;
+public interface Base { int helper(int value); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &marker_path,
+        "package pkg.marker;
+public interface Marker {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &mid_path,
+        "package pkg.mid;
+import pkg.base.Base;
+import pkg.marker.Marker;
+public interface Mid extends Base, Marker {}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.mid.Mid;
+public class Bar {
+    public int run(Mid mid) { return mid.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "pkg::base::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn traces_java_interface_inherited_receiver_calls_through_diamond_chains_resolve_once() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+interface Root { int helper(int value); }
+interface Left extends Root {}
+interface Right extends Root {}
+interface Mid extends Left, Right {}
+class Caller {
+    int run(Mid mid) { return mid.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Root::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_class_receiver_interface_default_methods_through_branching_chains() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+interface Base { default int helper(int value) { return value; } }
+interface Marker {}
+interface Helper extends Base, Marker {}
+class Impl implements Helper {}
+class Caller {
+    int run(Impl impl) { return impl.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_interface_inherited_receiver_calls_fail_closed_for_competing_or_unresolvable_branches() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+interface Base { int helper(int value); }
+interface Other { int helper(int value); }
+interface Competing extends Base, Other {}
+interface DefaultOther { default int helper(int value) { return value; } }
+interface CompetingDefaults extends Base, DefaultOther {}
+interface Missing extends Base, Unknown {}
+interface StaticBranch { static int helper(int value) { return value; } }
+interface StaticOnly extends Base, StaticBranch {}
+interface Root { int helper(int value); }
+interface CycleA extends CycleB {}
+interface CycleB extends CycleA {}
+interface Cyclic extends Root, CycleA {}
+class Caller {
+    int competing(Competing value) { return value.helper(1); }
+    int competingDefaults(CompetingDefaults value) { return value.helper(1); }
+    int missing(Missing value) { return value.helper(1); }
+    int staticOnly(StaticOnly value) { return value.helper(1); }
+    int cyclic(Cyclic value) { return value.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "competing, unresolved, static-only, and cyclic branches must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_java_member_chain_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
