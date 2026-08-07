@@ -1026,10 +1026,33 @@ fn resolve_reference_path_with_deadline<'a>(
             return Ok(Some(symbol_id));
         }
 
-        let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
-            if method_name.is_empty() || method_name.contains('.') {
+        // A `this.`-rooted receiver chain such as `this.member.helper(...)` or
+        // `this.inner().helper(...)` dispatches on the enclosing type path
+        // through the same member-chain rules as bound receivers; unknown or
+        // unresolvable hops fail closed instead of falling through to static
+        // type calls. Plain `this.method()` calls keep the same-type contract
+        // below.
+        if let Some(chain) = reference_name.strip_prefix("this.") {
+            if chain.is_empty() {
                 return Ok(None);
             }
+            if chain.contains('.') {
+                let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+                    return Ok(None);
+                };
+                return resolve_java_member_chain_from_type_path(
+                    scope_path,
+                    chain,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    call_arity,
+                    deadline,
+                );
+            }
+        }
+        let method_name = if let Some(method_name) = reference_name.strip_prefix("this.") {
             method_name
         } else {
             reference_name
