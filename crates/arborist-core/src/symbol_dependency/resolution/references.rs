@@ -3461,6 +3461,44 @@ fn resolve_java_qualified_initializer_function_path(
     )
 }
 
+/// Splits a constructor-rooted field chain such as `new Holder().group.entry`
+/// into the constructed type name (generic arguments stripped) and the
+/// remaining member chain after the constructor call. Non-constructor roots,
+/// malformed spellings, and unbalanced argument lists return `None`.
+fn java_constructor_rooted_field_chain(reference_name: &str) -> Option<(String, String)> {
+    let rest = reference_name.strip_prefix("new")?.trim_start();
+    if rest.is_empty() || rest.starts_with('.') {
+        return None;
+    }
+    let open = rest.find('(')?;
+    let type_name = rest[..open].split('<').next().unwrap_or_default().trim();
+    if type_name.is_empty() || type_name.contains(['>', '[', ']', '(', ')', '?', ' ']) {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, byte) in rest.bytes().enumerate().skip(open) {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let remainder = rest[close + 1..].trim_start();
+    let remaining = remainder.strip_prefix('.').unwrap_or(remainder).trim();
+    if remaining.is_empty() {
+        return None;
+    }
+    Some((type_name.to_string(), remaining.to_string()))
+}
+
 /// Resolves a `var` local's field-access initializer reference to the
 /// referenced field's declared type path. `this.`-rooted and `super.`-rooted
 /// references resolve the field chain on the enclosing or direct-superclass
@@ -3468,9 +3506,11 @@ fn resolve_java_qualified_initializer_function_path(
 /// a unique explicit static field import, qualified names such as
 /// `Util.STATIC_FIELD` resolve a static field on the named type, bare names
 /// and bare field chains also resolve fields inherited from a unique
-/// direct-superclass chain, and bound receivers (parameters, declared locals,
-/// or enclosing-class fields) with a usable declared type resolve field
-/// chains such as `local.entry` on that type. Unknown or ambiguous fields,
+/// direct-superclass chain, constructor-rooted chains such as
+/// `new Holder().group.entry` resolve on the constructed class type, and
+/// bound receivers (parameters, declared locals, or enclosing-class fields)
+/// with a usable declared type resolve field chains such as `local.entry` on
+/// that type. Unknown or ambiguous fields,
 /// fields without a usable declared type, bound receivers without a usable
 /// declared type, and bound-name shadowing of qualified type receivers fail
 /// closed so field-initializer inference stays conservative and acyclic.
@@ -3523,6 +3563,41 @@ fn resolve_java_initializer_field_type_path(
         return resolve_java_field_chain_type_path(
             &superclass_path,
             chain,
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        );
+    }
+    // A constructor-rooted field chain such as `new Holder().group.entry`
+    // resolves the constructed class type (generic arguments stripped) and
+    // walks the remaining chain through the same field-chain rules; missing,
+    // unknown, or non-class constructed types fail closed.
+    if let Some((type_name, chain)) = java_constructor_rooted_field_chain(reference_name) {
+        let type_reference = if type_name.contains('.') {
+            JavaDirectSuperclassReference::Qualified(type_name)
+        } else {
+            JavaDirectSuperclassReference::Simple(type_name)
+        };
+        let Some(type_path) = resolve_java_direct_type_target_path(
+            &source_symbol.file_path,
+            source_symbol.scope_path.as_deref(),
+            &type_reference,
+            "class_declaration",
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_java_field_chain_type_path(
+            &type_path,
+            &chain,
             false,
             raw_symbols,
             semantic_path_index,

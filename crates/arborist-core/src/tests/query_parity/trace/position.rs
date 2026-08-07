@@ -14062,3 +14062,152 @@ public class Bar {
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
 }
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_constructor_roots() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+}
+class Holder {
+    Group group = new Group();
+    Group inner() { return group; }
+}
+class Caller {
+    int constructorChain() {
+        var v = new Holder().group.entry;
+        return v.helper(1);
+    }
+    int constructorHop() {
+        var v = new Holder().inner().entry;
+        return v.helper(1);
+    }
+    int constructorDirect() {
+        var v = new Group().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 3);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::constructorChain",
+            "com::example::Caller::constructorDirect",
+            "com::example::Caller::constructorHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::constructorChain",
+            "com::example::Caller::constructorDirect",
+            "com::example::Caller::constructorHop"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_constructor_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); Group inner() { return this; } }
+class Holder { Group group = new Group(); }
+class Caller {
+    int run() {
+        var v = new Holder().group.entry;
+        return v.helper(1);
+    }
+    int runDirect() {
+        var v = new Group().entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::run",
+            "com::example::Caller::runDirect"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::run",
+            "com::example::Caller::runDirect"
+        ]
+    );
+}
