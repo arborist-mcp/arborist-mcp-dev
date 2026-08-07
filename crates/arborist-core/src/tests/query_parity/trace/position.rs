@@ -10542,11 +10542,13 @@ class Helper { int helper(int value) { return value; } }
 class Group {
     Helper inner = new Helper();
     Group inner2() { return this; }
+    Group inner2(int value) { return this; }
 }
 class Outer { static class Inner { int helper(int value) { return value; } } }
 class Caller {
     int fieldChain() { return new Group() { }.inner.helper(1); }
     int methodHopChain() { return new Group() { }.inner2().inner.helper(2); }
+    int methodHopArgChain() { return new Group() { }.inner2(1).inner.helper(5); }
     int bodyUnrelated() {
         return new Group() { int other() { return 0; } }.inner.helper(3);
     }
@@ -10558,7 +10560,7 @@ class Caller {
 
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 3);
+    assert_eq!(live.callers.len(), 4);
     let mut callers = live
         .callers
         .iter()
@@ -10570,6 +10572,7 @@ class Caller {
         [
             "com::example::Caller::bodyUnrelated",
             "com::example::Caller::fieldChain",
+            "com::example::Caller::methodHopArgChain",
             "com::example::Caller::methodHopChain"
         ]
     );
@@ -10585,7 +10588,7 @@ class Caller {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 3);
+    assert_eq!(persisted.callers.len(), 4);
     let mut callers = persisted
         .callers
         .iter()
@@ -10597,6 +10600,7 @@ class Caller {
         [
             "com::example::Caller::bodyUnrelated",
             "com::example::Caller::fieldChain",
+            "com::example::Caller::methodHopArgChain",
             "com::example::Caller::methodHopChain"
         ]
     );
@@ -10675,6 +10679,12 @@ class Caller {
     int overrideHop() {
         return new Group() { int inner2() { return this; } }.inner2().inner.helper(2);
     }
+    int overrideArgHop() {
+        return new Group() { Group inner2(int value) { return this; } }.inner2(1).inner.helper(2);
+    }
+    int arityMismatch() {
+        return new Group() { }.inner2(1).inner.helper(2);
+    }
     int missingType() {
         return new Missing() { }.inner.helper(1);
     }
@@ -10690,7 +10700,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "anonymous-rooted chains with overriding bodies, unknown constructed types, and unknown hops must fail closed"
+        "anonymous-rooted chains with overriding bodies, arity-mismatched hops, unknown constructed types, and unknown hops must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -10711,6 +10721,7 @@ class Helper { int helper(int value) { return value; } }
 class Group {
     Helper entry = new Helper();
     Group entry2() { return this; }
+    Group entry2(int value) { return this; }
     Holder holder = new Holder();
 }
 class Holder { Helper entry = new Helper(); }
@@ -10728,6 +10739,10 @@ class Caller {
         var v = new Outer.Inner() { }.entry;
         return v.helper(3);
     }
+    int varFieldWithArgHop() {
+        var v = new Group() { }.entry2(1).entry;
+        return v.helper(6);
+    }
     int varFieldWithHop() {
         var v = new Group() { }.entry2().entry;
         return v.helper(4);
@@ -10743,7 +10758,7 @@ class Caller {
 
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 5);
+    assert_eq!(live.callers.len(), 6);
     let mut callers = live
         .callers
         .iter()
@@ -10755,6 +10770,7 @@ class Caller {
         [
             "com::example::Caller::varField",
             "com::example::Caller::varFieldNested",
+            "com::example::Caller::varFieldWithArgHop",
             "com::example::Caller::varFieldWithBody",
             "com::example::Caller::varFieldWithFieldHop",
             "com::example::Caller::varFieldWithHop"
@@ -10764,7 +10780,7 @@ class Caller {
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 5);
+    assert_eq!(persisted.callers.len(), 6);
     let mut callers = persisted
         .callers
         .iter()
@@ -10776,6 +10792,7 @@ class Caller {
         [
             "com::example::Caller::varField",
             "com::example::Caller::varFieldNested",
+            "com::example::Caller::varFieldWithArgHop",
             "com::example::Caller::varFieldWithBody",
             "com::example::Caller::varFieldWithFieldHop",
             "com::example::Caller::varFieldWithHop"
@@ -10796,7 +10813,11 @@ fn traces_java_var_anonymous_field_receiver_calls_from_dirty_vfs_overrides() {
     .unwrap();
     let overlay = "package com.example;
 class Helper { int helper(int value) { return value; } }
-class Group { Helper entry = new Helper(); Group entry2() { return this; } }
+class Group {
+    Helper entry = new Helper();
+    Group entry2() { return this; }
+    Group entry2(int value) { return this; }
+}
 class Caller {
     int run() {
         var v = new Group() { }.entry;
@@ -10805,6 +10826,10 @@ class Caller {
     int runHop() {
         var v = new Group() { }.entry2().entry;
         return v.helper(2);
+    }
+    int runArgHop() {
+        var v = new Group() { }.entry2(1).entry;
+        return v.helper(3);
     }
 }
 ";
@@ -10818,7 +10843,7 @@ class Caller {
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(live.callers.len(), 2);
+    assert_eq!(live.callers.len(), 3);
     let mut callers = live
         .callers
         .iter()
@@ -10827,7 +10852,11 @@ class Caller {
     callers.sort();
     assert_eq!(
         callers,
-        ["com::example::Caller::run", "com::example::Caller::runHop"]
+        [
+            "com::example::Caller::run",
+            "com::example::Caller::runArgHop",
+            "com::example::Caller::runHop"
+        ]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -10839,7 +10868,7 @@ class Caller {
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(persisted.callers.len(), 2);
+    assert_eq!(persisted.callers.len(), 3);
     let mut callers = persisted
         .callers
         .iter()
@@ -10848,7 +10877,11 @@ class Caller {
     callers.sort();
     assert_eq!(
         callers,
-        ["com::example::Caller::run", "com::example::Caller::runHop"]
+        [
+            "com::example::Caller::run",
+            "com::example::Caller::runArgHop",
+            "com::example::Caller::runHop"
+        ]
     );
 }
 
@@ -10874,6 +10907,10 @@ class Caller {
         var v = new Group() { Group entry2() { return this; } }.entry2().entry;
         return v.helper(1);
     }
+    int shadowedArgHop() {
+        var v = new Group() { Group entry2(int value) { return this; } }.entry2(1).entry;
+        return v.helper(1);
+    }
     int missingType() {
         var v = new Missing() { }.entry;
         return v.helper(1);
@@ -10895,7 +10932,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "anonymous var field-initializer chains with shadowing bodies, unknown constructed types, unknown chains, and argument-carrying hops must fail closed"
+        "anonymous var field-initializer chains with shadowing bodies, unknown constructed types, unknown chains, and arity-mismatched or shadowed argument hops must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();

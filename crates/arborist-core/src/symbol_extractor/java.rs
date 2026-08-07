@@ -211,12 +211,13 @@ fn java_anonymous_constructor_declared_members(
 /// Canonicalizes a receiver chain whose leading expression is a constructor
 /// call, such as `new Group().inner.helper` or `new Group().inner().helper`,
 /// to `Group().inner.helper` or `Group().inner().helper` so the resolver can
-/// dispatch the constructed type through field and zero-argument method-call
-/// hops. Chains rooted at an anonymous constructor resolve on the constructed
-/// class type only when the anonymous body declares neither the final member
-/// nor any method-call hop in the chain. Method-call hops with non-empty
-/// argument lists and chains rooted at any other expression keep their raw
-/// spelling and fail closed.
+/// dispatch the constructed type through field and method-call hops.
+/// Method-call hops encode their argument count, such as `inner()` or
+/// `inner(1)`, so the resolver can require an arity match. Chains rooted at an
+/// anonymous constructor resolve on the constructed class type only when the
+/// anonymous body declares neither the final member nor any method-call hop in
+/// the chain. Chains rooted at any other expression keep their raw spelling
+/// and fail closed.
 fn java_constructor_receiver_chain_spelling(
     node: Node<'_>,
     source: &str,
@@ -247,10 +248,15 @@ fn java_constructor_receiver_chain_spelling(
                 return Ok(None);
             };
             let mut cursor = arguments.walk();
-            if method_name.is_empty() || arguments.named_children(&mut cursor).count() != 0 {
+            if method_name.is_empty() {
                 return Ok(None);
             }
-            segments.push(format!("{method_name}()"));
+            let hop_arity = arguments.named_children(&mut cursor).count();
+            if hop_arity == 0 {
+                segments.push(format!("{method_name}()"));
+            } else {
+                segments.push(format!("{method_name}({hop_arity})"));
+            }
             let Some(object) = current.child_by_field_name("object") else {
                 return Ok(None);
             };
@@ -261,9 +267,9 @@ fn java_constructor_receiver_chain_spelling(
                     .iter()
                     .any(|declared| {
                         declared == final_member
-                            || segments.iter().any(|segment| {
-                                segment.strip_suffix("()") == Some(declared.as_str())
-                            })
+                            || segments
+                                .iter()
+                                .any(|segment| segment.split('(').next() == Some(declared.as_str()))
                     })
             {
                 return Ok(None);
@@ -581,7 +587,10 @@ enum Kind { BASIC }
 package com.example;
 class Helper { int helper(int value) { return value; } }
 class Outer { static class Inner { int helper(int value) { return value; } } }
-class Group { Helper inner = new Helper(); }
+class Group {
+    Helper inner = new Helper();
+    Group inner2(int value) { return this; }
+}
 class Caller {
     int first() { return new Helper().helper(1); }
     int nested() { return new Outer.Inner().helper(2); }
@@ -589,11 +598,15 @@ class Caller {
     int overridden() { return new Helper() { int helper(int value) { return value + 1; } }.helper(4); }
     int chained() { return new Group().inner.helper(4); }
     int anonymousChain() { return new Group() { }.inner.helper(5); }
+    int anonymousChainHop() { return new Group() { }.inner2(1).inner.helper(8); }
     int anonymousOverrideFinal() {
         return new Group() { int helper(int value) { return value + 1; } }.inner.helper(6);
     }
     int anonymousOverrideHop() {
         return new Group() { int inner2() { return new Group(); } }.inner2().inner.helper(7);
+    }
+    int anonymousOverrideArgHop() {
+        return new Group() { Group inner2(int value) { return this; } }.inner2(1).inner.helper(9);
     }
 }
 "#;
@@ -637,6 +650,20 @@ class Caller {
             anonymous_chain.references_by_name,
             ["Group().inner.helper".to_string()].into()
         );
+        // Arity-matched method-call hops encode their argument count in the
+        // canonical spelling so the resolver can require a matching arity.
+        let anonymous_chain_hop = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::anonymousChainHop")
+            .unwrap();
+        assert_eq!(
+            anonymous_chain_hop.references_by_name,
+            [
+                "Group().inner2".to_string(),
+                "Group().inner2(1).inner.helper".to_string()
+            ]
+            .into()
+        );
         // Direct anonymous-class receivers resolve on the constructed class
         // type when the body does not declare the invoked member.
         let anonymous = symbols
@@ -670,5 +697,18 @@ class Caller {
                 "anonymous-rooted chains whose body declares a dispatched member must not canonicalize"
             );
         }
+        // A body declaration of an arity-matched method-call hop prevents
+        // canonicalization of the anonymous-rooted chain.
+        let override_arg_hop = symbols
+            .iter()
+            .find(|symbol| symbol.semantic_path == "com::example::Caller::anonymousOverrideArgHop")
+            .unwrap();
+        assert!(
+            !override_arg_hop
+                .references_by_name
+                .iter()
+                .any(|reference| reference == "Group().inner2(1).inner.helper"),
+            "anonymous-rooted chains whose body declares an arity-matched hop must not canonicalize"
+        );
     }
 }

@@ -648,13 +648,14 @@ fn java_expression_root_object(mut node: tree_sitter::Node<'_>) -> tree_sitter::
 
 /// Canonicalizes an anonymous constructor-rooted field-access chain such as
 /// `new Group() { }.entry`, `new Group() { }.holder.entry`, or
-/// `new Group() { }.inner2().entry` to `new Group().entry`,
-/// `new Group().holder.entry`, or `new Group().inner2().entry` so the resolver
-/// dispatches on the constructed class type. Chains rooted at an anonymous
+/// `new Group() { }.inner2().entry` or `new Group() { }.inner2(1).entry` to
+/// `new Group().entry`, `new Group().holder.entry`, `new Group().inner2().entry`,
+/// or `new Group().inner2(1).entry` so the resolver dispatches on the
+/// constructed class type. Method-call hops encode their argument count so the
+/// resolver can require an arity match. Chains rooted at an anonymous
 /// constructor resolve only when the anonymous body declares none of the
-/// accessed fields or method-call hops and every method-call hop takes no
-/// arguments; method-call hops with arguments, malformed intermediate
-/// expressions, and unusable constructed type spellings fail closed.
+/// accessed fields or method-call hops; malformed intermediate expressions and
+/// unusable constructed type spellings fail closed.
 fn java_anonymous_constructor_initializer_spelling(
     initializer: tree_sitter::Node<'_>,
     source: &str,
@@ -684,10 +685,15 @@ fn java_anonymous_constructor_initializer_spelling(
                 return Ok(None);
             };
             let mut cursor = arguments.walk();
-            if method_name.is_empty() || arguments.named_children(&mut cursor).count() != 0 {
+            if method_name.is_empty() {
                 return Ok(None);
             }
-            segments.push(format!("{method_name}()"));
+            let hop_arity = arguments.named_children(&mut cursor).count();
+            if hop_arity == 0 {
+                segments.push(format!("{method_name}()"));
+            } else {
+                segments.push(format!("{method_name}({hop_arity})"));
+            }
             let Some(object) = current.child_by_field_name("object") else {
                 return Ok(None);
             };
@@ -699,9 +705,9 @@ fn java_anonymous_constructor_initializer_spelling(
             if java_anonymous_constructor_declared_members(current, source)?
                 .iter()
                 .any(|declared| {
-                    segments.iter().any(|segment| {
-                        segment == declared || segment.strip_suffix("()") == Some(declared.as_str())
-                    })
+                    segments
+                        .iter()
+                        .any(|segment| segment.split('(').next() == Some(declared.as_str()))
                 })
             {
                 return Ok(None);
