@@ -52,9 +52,10 @@ impl JavaReceiverTypeBindings {
             .cloned()
     }
 
-    /// Returns the factory callee name and call arity for a `var` local bound
-    /// from a bare method-call initializer such as `var value = makeFoo(...)`.
-    /// Ambiguous bindings and names without a factory initializer return `None`.
+    /// Returns the method-call initializer reference and call arity for a `var`
+    /// local bound from a bare or qualified call such as `var value = makeFoo(...)`
+    /// or `var value = group.makeFoo(...)`. Ambiguous bindings and names without a
+    /// method-call initializer return `None`.
     pub(in crate::symbol_dependency) fn initializer_call_for(
         &self,
         name: &str,
@@ -505,10 +506,12 @@ fn java_constructor_type_from_declarator(
     Ok(java_dotted_type_name(type_name))
 }
 
-/// Records a `var` local whose initializer is a bare method call such as
-/// `var value = makeFoo(...)`. The callee name and call arity are stored for
-/// trace-time factory resolution; qualified initializers such as
-/// `Util.makeFoo(...)` fail closed like other non-constructor initializers.
+/// Records a `var` local's method-call initializer as a reference spelling:
+/// bare calls such as `var value = makeFoo(...)` record `makeFoo`, while
+/// qualified calls such as `var value = group.makeFoo(...)`,
+/// `var value = new Group().makeFoo(...)`, or `var value = group.inner().makeFoo(...)`
+/// record the receiver spelling plus the method name. The call arity is
+/// recorded so trace-time resolution can require a non-varargs arity match.
 fn java_initializer_call_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
@@ -516,9 +519,7 @@ fn java_initializer_call_from_declarator(
     let Some(initializer) = declarator.child_by_field_name("value") else {
         return Ok(None);
     };
-    if initializer.kind() != "method_invocation"
-        || initializer.child_by_field_name("object").is_some()
-    {
+    if initializer.kind() != "method_invocation" {
         return Ok(None);
     }
     let Some(name_node) = initializer.child_by_field_name("name") else {
@@ -533,7 +534,17 @@ fn java_initializer_call_from_declarator(
     };
     let mut cursor = arguments.walk();
     let arity = arguments.named_children(&mut cursor).count();
-    Ok(Some((name.to_string(), arity)))
+    let reference = match initializer.child_by_field_name("object") {
+        None => name.to_string(),
+        Some(object) => {
+            let object_text = node_text(object, source)?.trim();
+            if object_text.is_empty() {
+                return Ok(None);
+            }
+            format!("{object_text}.{name}")
+        }
+    };
+    Ok(Some((reference, arity)))
 }
 
 fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
@@ -792,7 +803,7 @@ class Caller {
     }
 
     #[test]
-    fn var_locals_record_factory_initializer_calls_and_reject_qualified_or_conflicting_ones() {
+    fn var_locals_record_factory_initializer_calls_and_reject_array_or_conflicting_ones() {
         let file = write_test_file(
             "package com.example;
 class Helper { int helper(int value) { return value; } }
@@ -831,9 +842,13 @@ class Caller {
             run_bindings.initializer_call_for("bare"),
             Some(("makeHelper".to_string(), 1))
         );
-        // Qualified and array initializers record no factory binding.
+        // Qualified method-call initializers record the receiver spelling
+        // plus callee name; array initializers record no factory binding.
         assert!(run_bindings.contains("qualified"));
-        assert_eq!(run_bindings.initializer_call_for("qualified"), None);
+        assert_eq!(
+            run_bindings.initializer_call_for("qualified"),
+            Some(("Util.qualifiedFactory".to_string(), 0))
+        );
         assert!(run_bindings.contains("array"));
         assert_eq!(run_bindings.initializer_call_for("array"), None);
         // Conflicting factory declarations make the name ambiguous.

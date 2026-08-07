@@ -3167,17 +3167,30 @@ fn resolve_java_initializer_type_path(
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(factory_path) = resolve_java_initializer_function_path(
-        source_symbol,
-        function_name,
-        call_arity,
-        raw_symbols,
-        semantic_path_index,
-        file_overrides,
-        java_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    let factory_path = if function_name.contains('.') {
+        resolve_java_qualified_initializer_function_path(
+            source_symbol,
+            function_name,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        resolve_java_initializer_function_path(
+            source_symbol,
+            function_name,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(factory_path) = factory_path else {
         return Ok(None);
     };
     let Some(factory) = raw_symbols
@@ -3271,6 +3284,134 @@ fn resolve_java_initializer_function_path(
         function_name,
         call_arity,
     ))
+}
+
+/// Resolves a `var` local's qualified method-call initializer callee such as
+/// `group.makeFoo` in `var value = group.makeFoo()` to a unique method symbol
+/// path. `this.`-rooted and `super.`-rooted callees resolve on the enclosing
+/// or direct-superclass type path, constructor-rooted chains such as
+/// `new Group().makeFoo` dispatch through the constructed type path, and
+/// bound-receiver chains resolve each hop through the member-chain rules.
+/// Receivers that are themselves factory-inferred `var` bindings, unbound or
+/// static type receivers, and unknown or ambiguous callees fail closed so
+/// initializer resolution stays acyclic and conservative.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java qualified initializer resolution inputs explicit"
+)]
+fn resolve_java_qualified_initializer_function_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    call_arity: usize,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let normalized = reference_name
+        .strip_prefix("new ")
+        .unwrap_or(reference_name);
+    if let Some(chain) = normalized.strip_prefix("this.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        return resolve_java_member_chain_from_type_path(
+            scope_path,
+            chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        );
+    }
+    if let Some(chain) = normalized.strip_prefix("super.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(superclass_path) = java_simple_superclass_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_java_member_chain_from_type_path(
+            &superclass_path,
+            chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        );
+    }
+    if let Some(symbol_id) = resolve_java_constructor_receiver_call(
+        source_symbol,
+        normalized,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )? {
+        return Ok(Some(symbol_id));
+    }
+    let Some((receiver_name, member_chain)) = normalized.split_once('.') else {
+        return Ok(None);
+    };
+    if receiver_name.is_empty() || member_chain.is_empty() {
+        return Ok(None);
+    }
+    let Some(bindings) = java_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    // Only receivers with an explicit or constructor-inferred type are
+    // eligible; factory-inferred `var` receivers would require recursive
+    // initializer resolution and fail closed instead.
+    let Some(type_name) = bindings.type_for(receiver_name) else {
+        return Ok(None);
+    };
+    let Some(type_path) = resolve_java_receiver_type_path(
+        source_symbol,
+        &type_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_java_member_chain_from_type_path(
+        &type_path,
+        member_chain,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
 }
 
 #[allow(
