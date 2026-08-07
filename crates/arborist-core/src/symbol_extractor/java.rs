@@ -90,7 +90,7 @@ fn collect_field_symbols(
             file_path: normalize_path(path),
             node_kind: "field_declaration".to_string(),
             byte_range: (declarator.start_byte(), declarator.end_byte()),
-            signature: None,
+            signature: java_field_modifiers(node, source),
             is_overload: false,
             parameters: Vec::new(),
             return_type: Some(field_type.clone()),
@@ -101,6 +101,21 @@ fn collect_field_symbols(
         });
     }
     Ok(())
+}
+
+/// Returns the modifier text of a `field_declaration` such as `static`,
+/// `public static final`, or an empty marker for fields without modifiers.
+/// Trace-time static-field resolution uses the `static` token to require a
+/// static field for `Type.field` references.
+fn java_field_modifiers(node: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    let first_declarator = node
+        .children_by_field_name("declarator", &mut cursor)
+        .next()?;
+    let modifiers = source
+        .get(node.start_byte()..first_declarator.start_byte())?
+        .trim();
+    (!modifiers.is_empty()).then(|| modifiers.to_string())
 }
 
 fn indexed_symbol(

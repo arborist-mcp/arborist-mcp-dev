@@ -29,6 +29,7 @@ pub(in crate::symbol_dependency) struct JavaReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
     initializer_calls_by_name: BTreeMap<String, (String, usize)>,
+    field_initializers_by_name: BTreeMap<String, String>,
 }
 
 impl JavaReceiverTypeBindings {
@@ -64,6 +65,18 @@ impl JavaReceiverTypeBindings {
             return None;
         }
         self.initializer_calls_by_name.get(name).cloned()
+    }
+
+    /// Returns the field-access initializer reference for a `var` local bound
+    /// from a value reference such as `var value = this.helper;`,
+    /// `var value = helper;`, `var value = Util.STATIC_HELPER;`, or a
+    /// statically imported field name. Ambiguous bindings and names without a
+    /// field-access initializer return `None`.
+    pub(in crate::symbol_dependency) fn initializer_field_for(&self, name: &str) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.field_initializers_by_name.get(name).cloned()
     }
 }
 
@@ -402,6 +415,11 @@ fn collect_java_body_bindings(
                             {
                                 insert_java_initializer_call(bindings, &name, function_name, arity);
                                 String::new()
+                            } else if let Some(reference) =
+                                java_initializer_field_access_from_declarator(declarator, source)?
+                            {
+                                insert_java_initializer_field(bindings, &name, reference);
+                                String::new()
                             } else {
                                 String::new()
                             }
@@ -547,6 +565,46 @@ fn java_initializer_call_from_declarator(
     Ok(Some((reference, arity)))
 }
 
+/// Records a `var` local whose initializer is a field-access value reference
+/// such as `var value = this.helper;`, `var value = helper;`,
+/// `var value = Util.STATIC_HELPER;`, or a bare statically imported field
+/// name. Bare identifiers and `field_access` expressions record the reference
+/// spelling for trace-time field resolution; all other initializers record
+/// nothing and fail closed.
+fn java_initializer_field_access_from_declarator(
+    declarator: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    let reference = match initializer.kind() {
+        "field_access" => {
+            let Some(object) = initializer.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            let Some(field) = initializer.child_by_field_name("field") else {
+                return Ok(None);
+            };
+            let object_text = node_text(object, source)?.trim();
+            let field_text = node_text(field, source)?.trim();
+            if object_text.is_empty() || field_text.is_empty() {
+                return Ok(None);
+            }
+            format!("{object_text}.{field_text}")
+        }
+        "identifier" => {
+            let text = node_text(initializer, source)?.trim();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.to_string()
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(reference))
+}
+
 fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(name_node) = node.child_by_field_name("name") else {
         return Ok(None);
@@ -661,6 +719,28 @@ fn insert_java_initializer_call(
             bindings
                 .initializer_calls_by_name
                 .insert(name.to_string(), (function_name, arity));
+        }
+    }
+}
+
+fn insert_java_initializer_field(
+    bindings: &mut JavaReceiverTypeBindings,
+    name: &str,
+    reference: String,
+) {
+    if name.is_empty() || bindings.ambiguous_names.contains(name) {
+        return;
+    }
+    match bindings.field_initializers_by_name.get(name) {
+        Some(existing) if *existing != reference => {
+            bindings.field_initializers_by_name.remove(name);
+            bindings.ambiguous_names.insert(name.to_string());
+        }
+        Some(_) => {}
+        None => {
+            bindings
+                .field_initializers_by_name
+                .insert(name.to_string(), reference);
         }
     }
 }

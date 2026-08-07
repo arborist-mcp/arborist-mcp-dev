@@ -2754,6 +2754,25 @@ fn resolve_java_instance_receiver_call(
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
         type_path
+    } else if let Some(field_reference) = bindings.initializer_field_for(receiver_name) {
+        // A `var` local whose initializer is a field-access value reference
+        // such as `var value = this.helper;`, `var value = helper;`,
+        // `var value = Util.STATIC_HELPER;`, or a statically imported field
+        // name infers its receiver type from the referenced field's declared
+        // type.
+        let Some(type_path) = resolve_java_initializer_field_type_path(
+            source_symbol,
+            &field_reference,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        type_path
     } else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
@@ -2787,30 +2806,24 @@ fn resolve_java_instance_receiver_call(
 fn java_field_type_path(
     owner_type_path: &str,
     field_name: &str,
+    require_static: bool,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
     java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    if field_name.is_empty() {
-        return Ok(None);
-    }
-    let candidates = semantic_path_index
-        .get(&format!("{owner_type_path}::{field_name}"))
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|index| {
-            let candidate = &raw_symbols[*index];
-            candidate.node_kind == "field_declaration"
-                && candidate.scope_path.as_deref() == Some(owner_type_path)
-        })
-        .collect::<Vec<_>>();
+    let candidates = java_field_type_candidates(
+        owner_type_path,
+        field_name,
+        require_static,
+        raw_symbols,
+        semantic_path_index,
+    );
     if candidates.len() != 1 {
         return Ok(None);
     }
-    let field = &raw_symbols[candidates[0]];
+    let field = candidates[0];
     let Some(field_type) = field.return_type.as_deref() else {
         return Ok(None);
     };
@@ -2826,6 +2839,39 @@ fn java_field_type_path(
         java_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Returns the field declarations for `field_name` declared directly on
+/// `owner_type_path`, optionally requiring the `static` modifier. Zero
+/// entries mean the type does not declare the field; more than one means the
+/// field is ambiguous across the indexed workspace.
+fn java_field_type_candidates<'a>(
+    owner_type_path: &str,
+    field_name: &str,
+    require_static: bool,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Vec<&'a IndexedSymbol> {
+    if owner_type_path.is_empty() || field_name.is_empty() {
+        return Vec::new();
+    }
+    semantic_path_index
+        .get(&format!("{owner_type_path}::{field_name}"))
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.node_kind == "field_declaration"
+                && candidate.scope_path.as_deref() == Some(owner_type_path)
+                && (!require_static
+                    || candidate
+                        .signature
+                        .as_deref()
+                        .is_some_and(java_field_signature_is_static))
+        })
+        .map(|index| &raw_symbols[index])
+        .collect()
 }
 
 /// Dispatches a member chain such as `group.member.helper(...)`,
@@ -2874,6 +2920,7 @@ fn resolve_java_member_chain_from_type_path(
                 java_field_type_path(
                     &current_type_path,
                     hop,
+                    false,
                     raw_symbols,
                     semantic_path_index,
                     file_overrides,
@@ -3412,6 +3459,379 @@ fn resolve_java_qualified_initializer_function_path(
         call_arity,
         deadline,
     )
+}
+
+/// Resolves a `var` local's field-access initializer reference to the
+/// referenced field's declared type path. `this.`-rooted and `super.`-rooted
+/// references resolve the field chain on the enclosing or direct-superclass
+/// type path, bare names resolve through the enclosing class field bindings or
+/// a unique explicit static field import, and qualified names such as
+/// `Util.STATIC_FIELD` resolve a static field on the named type. Receivers
+/// that are bound locals or parameters, unknown or ambiguous fields, fields
+/// without a usable declared type, and bound-name shadowing of qualified type
+/// receivers fail closed so field-initializer inference stays conservative and
+/// acyclic.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java field initializer resolution inputs explicit"
+)]
+fn resolve_java_initializer_field_type_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if let Some(chain) = reference_name.strip_prefix("this.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        return resolve_java_field_chain_type_path(
+            scope_path,
+            chain,
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        );
+    }
+    if let Some(chain) = reference_name.strip_prefix("super.") {
+        if chain.is_empty() {
+            return Ok(None);
+        }
+        let Some(superclass_path) = java_simple_superclass_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_java_field_chain_type_path(
+            &superclass_path,
+            chain,
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        );
+    }
+    let Some(bindings) = java_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    if !reference_name.contains('.') {
+        // A bound name is an enclosing-class field or a declared local or
+        // parameter; either way its declared type pins the `var` receiver.
+        // Factory-inferred `var` receivers and ambiguous bindings have no
+        // declared type and fail closed instead of recursing.
+        if let Some(type_name) = bindings.type_for(reference_name) {
+            return resolve_java_receiver_type_path(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if bindings.contains(reference_name) {
+            return Ok(None);
+        }
+        let Some(binding) = resolve_java_static_method_import_binding_for_reference(
+            &source_symbol.file_path,
+            reference_name,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return resolve_java_imported_static_field_type_path(
+            &binding,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        );
+    }
+    // Qualified `Type.field` references resolve the type from progressively
+    // longer prefixes so nested types such as `Outer.Inner.STATIC` work, and
+    // require the first field hop to be static on that type. Competing
+    // resolutions across prefixes fail closed.
+    let segments = reference_name.split('.').collect::<Vec<_>>();
+    if segments[0].is_empty() || bindings.contains(segments[0]) {
+        return Ok(None);
+    }
+    let mut resolved = BTreeSet::new();
+    for split in 1..segments.len() {
+        let type_name = segments[..split].join(".");
+        let field_chain = segments[split..].join(".");
+        if type_name.is_empty() || field_chain.is_empty() {
+            continue;
+        }
+        let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        let Some(field_type_path) = resolve_java_field_chain_type_path(
+            &type_path,
+            &field_chain,
+            true,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        resolved.insert(field_type_path);
+    }
+    if resolved.len() == 1 {
+        Ok(resolved.into_iter().next())
+    } else {
+        Ok(None)
+    }
+}
+
+/// Walks a field-access chain such as `holder.entry` on an already-resolved
+/// type path, resolving each hop's declared type in the declaring field's own
+/// file and enclosing scope. `require_first_static` requires the first hop to
+/// be a static field for `Type.field` references; unknown, ambiguous, or
+/// unresolvable hops and non-static first hops fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java field chain resolution inputs explicit"
+)]
+fn resolve_java_field_chain_type_path(
+    initial_type_path: &str,
+    chain: &str,
+    require_first_static: bool,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let hops = chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let mut current_type_path = initial_type_path.to_string();
+    for (index, hop) in hops.iter().enumerate() {
+        let Some(next_path) = java_inherited_field_type_path(
+            &current_type_path,
+            hop,
+            index == 0 && require_first_static,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        current_type_path = next_path;
+    }
+    Ok(Some(current_type_path))
+}
+
+/// Resolves a field hop's declared type path on a type, walking the
+/// direct-superclass chain when the field is not declared on the type itself,
+/// mirroring Java field inheritance (`Child.holder` and `this.holder` see
+/// fields declared on ancestors). The hop must resolve to exactly one field
+/// declaration on the first type in the chain that declares it; a field that
+/// is ambiguous on any visited type, a type without a resolvable unique class
+/// declaration, or an unresolvable superclass chain fails closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java inherited field resolution inputs explicit"
+)]
+fn java_inherited_field_type_path(
+    owner_type_path: &str,
+    field_name: &str,
+    require_static: bool,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let mut current_type_path = owner_type_path.to_string();
+    let mut visited = BTreeSet::new();
+    loop {
+        let candidates = java_field_type_candidates(
+            &current_type_path,
+            field_name,
+            require_static,
+            raw_symbols,
+            semantic_path_index,
+        );
+        if !candidates.is_empty() {
+            if candidates.len() != 1 {
+                return Ok(None);
+            }
+            let field = candidates[0];
+            let Some(field_type) = field.return_type.as_deref() else {
+                return Ok(None);
+            };
+            let Some(type_name) = java_dotted_type_name(field_type) else {
+                return Ok(None);
+            };
+            return resolve_java_receiver_type_path(
+                field,
+                &type_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if !visited.insert(current_type_path.clone()) {
+            return Ok(None);
+        }
+        let Some(superclass_path) = java_superclass_path_for_type_path(
+            &current_type_path,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        current_type_path = superclass_path;
+    }
+}
+
+/// Resolves the direct-superclass type path of the unique class declaration
+/// for `type_path`, or `None` when the type has no class declaration, multiple
+/// class declarations share the path, or the class has no resolvable
+/// superclass.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java superclass lookup inputs explicit"
+)]
+fn java_superclass_path_for_type_path(
+    type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let class_indices = semantic_path_index
+        .get(type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| raw_symbols[*index].node_kind == "class_declaration")
+        .collect::<Vec<_>>();
+    if class_indices.len() != 1 {
+        return Ok(None);
+    }
+    java_simple_superclass_path_for_class(
+        &raw_symbols[class_indices[0]],
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves a statically imported field's declared type path from an import
+/// binding such as `import static com.example.Util.STATIC_HELPER;`. The field
+/// must be a unique static field declaration in the binding's source file, and
+/// its declared type resolves in that file's scope. Missing or ambiguous
+/// fields fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java imported static field resolution inputs explicit"
+)]
+fn resolve_java_imported_static_field_type_path(
+    binding: &JavaImportBinding,
+    field_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let target_path = format!("{}::{field_name}", binding.semantic_path);
+    let candidates = semantic_path_index
+        .get(&target_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| {
+            let candidate = &raw_symbols[*index];
+            candidate.file_path == binding.source_path
+                && candidate.node_kind == "field_declaration"
+                && candidate
+                    .signature
+                    .as_deref()
+                    .is_some_and(java_field_signature_is_static)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let field = &raw_symbols[candidates[0]];
+    let Some(field_type) = field.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(type_name) = java_dotted_type_name(field_type) else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        field,
+        &type_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
+fn java_field_signature_is_static(signature: &str) -> bool {
+    signature.split_whitespace().any(|token| token == "static")
 }
 
 #[allow(
