@@ -553,16 +553,26 @@ fn java_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<
 }
 
 /// Extracts a named receiver type, allowing dotted qualified names such as
-/// `Outer.Inner`. Generic, array, varargs, and otherwise complex spellings
-/// still fail closed; empty or malformed dotted segments are rejected by the
-/// receiver path resolver.
+/// `Outer.Inner` and generic spellings such as `Box<String>` or
+/// `java.util.List<? extends Number>` normalized to their raw base name
+/// without type-argument selection, mirroring generic superclass
+/// normalization. Arrays, varargs, primitives, malformed or empty generic
+/// arguments, and otherwise complex spellings still fail closed; empty or
+/// malformed dotted segments are rejected by the receiver path resolver.
 pub(crate) fn java_dotted_type_name(text: &str) -> Option<String> {
     let name = text.trim();
+    if name.contains('<') {
+        return java_generic_type_base_name(name);
+    }
+    java_dotted_type_name_base(name)
+}
+
+fn java_dotted_type_name_base(name: &str) -> Option<String> {
     if name.is_empty()
         || name.starts_with('.')
         || name.ends_with('.')
         || name.contains("..")
-        || name.contains(['<', '(', '[', ':', ',', ' ', '?', '|', '&'])
+        || name.contains(['(', '[', ':', ',', ' ', '?', '|', '&'])
         || matches!(
             name,
             "boolean"
@@ -580,6 +590,42 @@ pub(crate) fn java_dotted_type_name(text: &str) -> Option<String> {
         return None;
     }
     Some(name.to_string())
+}
+
+/// Strips a well-formed top-level type-argument list from a generic type
+/// spelling, returning the raw dotted base name. The argument list must be
+/// balanced and non-empty, and nothing may follow its closing bracket;
+/// malformed, array, and otherwise complex spellings fail closed.
+fn java_generic_type_base_name(name: &str) -> Option<String> {
+    let open = name.find('<')?;
+    let prefix = name[..open].trim();
+    java_dotted_type_name_base(prefix)?;
+    let suffix_len = name.len() - open;
+    let mut depth = 0usize;
+    let mut has_argument = false;
+    for (offset, byte) in name[open..].bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 && offset != suffix_len - 1 {
+                    return None;
+                }
+            }
+            _ => {
+                if depth == 0 {
+                    return None;
+                }
+                if !byte.is_ascii_whitespace() {
+                    has_argument = true;
+                }
+            }
+        }
+    }
+    (depth == 0 && has_argument).then(|| prefix.to_string())
 }
 
 /// Records the factory initializer for a bound `var` local. Repeated
@@ -638,7 +684,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        JavaReceiverTypeBindings, java_import_context_for_file_with_overrides_and_deadline,
+        JavaReceiverTypeBindings, java_dotted_type_name,
+        java_import_context_for_file_with_overrides_and_deadline,
         java_receiver_type_bindings_for_function,
     };
     use crate::language::normalize_path;
@@ -877,5 +924,53 @@ class Caller {
         let bindings = JavaReceiverTypeBindings::default();
         assert_eq!(bindings.type_for("missing"), None);
         assert!(!bindings.contains("missing"));
+    }
+
+    #[test]
+    fn java_dotted_type_name_normalizes_generic_receiver_types() {
+        assert_eq!(
+            java_dotted_type_name("Box<String>"),
+            Some("Box".to_string())
+        );
+        assert_eq!(
+            java_dotted_type_name("java.util.Map<String, List<Integer>>"),
+            Some("java.util.Map".to_string())
+        );
+        assert_eq!(
+            java_dotted_type_name("Outer.Inner<? extends Number>"),
+            Some("Outer.Inner".to_string())
+        );
+        assert_eq!(
+            java_dotted_type_name("Box< String >"),
+            Some("Box".to_string())
+        );
+        // Plain and dotted non-generic spellings stay unchanged.
+        assert_eq!(java_dotted_type_name("Helper"), Some("Helper".to_string()));
+        assert_eq!(
+            java_dotted_type_name("com.example.Outer.Inner"),
+            Some("com.example.Outer.Inner".to_string())
+        );
+    }
+
+    #[test]
+    fn java_dotted_type_name_rejects_malformed_generic_spellings() {
+        for spelling in [
+            "Box<>",
+            "Box<",
+            "Box<String",
+            "Box<String>[]",
+            "Box< >",
+            "Box<String>>",
+            "Box<<String>",
+            "<String>",
+            "int<String>",
+            "Box<String> extra",
+        ] {
+            assert_eq!(
+                java_dotted_type_name(spelling),
+                None,
+                "spelling {spelling:?} must fail closed"
+            );
+        }
     }
 }
