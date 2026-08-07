@@ -34,6 +34,11 @@ pub(in crate::symbol_dependency) struct CSharpNamespaceImportBinding {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct CSharpReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
+    /// Names of members declared `static` on a type. Only member bindings
+    /// (per-type fields, properties, and events) populate this set; local
+    /// receiver bindings leave it empty so instance dispatch never consults
+    /// static-ness.
+    static_member_names: BTreeSet<String>,
 }
 
 impl CSharpReceiverTypeBindings {
@@ -60,6 +65,21 @@ impl CSharpReceiverTypeBindings {
             .get(name)
             .filter(|type_name| !type_name.is_empty() && !type_name.starts_with('@'))
             .cloned()
+    }
+
+    /// Records `name` as a member declared `static`. Used by the per-type
+    /// member-binding collector so static type-qualified member roots can
+    /// require a static member and fail closed for instance members reached
+    /// through a type name.
+    pub(in crate::symbol_dependency) fn insert_static_member(&mut self, name: &str) {
+        self.static_member_names.insert(name.to_string());
+    }
+
+    /// Returns whether `name` is a member declared `static`. Names absent
+    /// from a type's member bindings and names never recorded as static
+    /// (instance members and events) return `false`.
+    pub(in crate::symbol_dependency) fn is_static_member(&self, name: &str) -> bool {
+        self.static_member_names.contains(name)
     }
 }
 
@@ -503,6 +523,7 @@ fn collect_csharp_type_member_bindings(
         return Ok(());
     }
     if node.kind() == "field_declaration" {
+        let is_static = csharp_member_declaration_is_static(node, source);
         let mut declaration_cursor = node.walk();
         for declaration in node
             .named_children(&mut declaration_cursor)
@@ -518,6 +539,9 @@ fn collect_csharp_type_member_bindings(
                     continue;
                 };
                 let name = node_text(name, source)?.trim();
+                if is_static {
+                    bindings.insert_static_member(name);
+                }
                 csharp_insert_receiver_binding(bindings, name, type_name.clone());
             }
         }
@@ -526,6 +550,15 @@ fn collect_csharp_type_member_bindings(
         && let Some(name) = node.child_by_field_name("name")
     {
         let name = node_text(name, source)?.trim();
+        // Static type-qualified roots require a static field or property;
+        // static events are not value members and stay untracked so they fail
+        // closed for `var` initializers while still serving as instance
+        // member-chain hops.
+        if node.kind() == "property_declaration"
+            && csharp_member_declaration_is_static(node, source)
+        {
+            bindings.insert_static_member(name);
+        }
         csharp_insert_receiver_binding(bindings, name, csharp_declared_type_name(node, source)?);
     }
     if node.kind() == "type_parameter"
@@ -540,6 +573,16 @@ fn collect_csharp_type_member_bindings(
         collect_csharp_type_member_bindings(child, root, source, bindings)?;
     }
     Ok(())
+}
+
+/// Returns whether a field or property declaration is declared `static`.
+/// The modifier appears in the declaration's source text before the member
+/// type, so a whitespace token scan is sufficient and matches how indexed
+/// symbols record static-ness in their signature.
+fn csharp_member_declaration_is_static(node: tree_sitter::Node<'_>, source: &str) -> bool {
+    source
+        .get(node.start_byte()..node.end_byte())
+        .is_some_and(|text| text.split_whitespace().any(|part| part == "static"))
 }
 
 fn collect_csharp_function_bindings(
@@ -682,11 +725,13 @@ fn csharp_var_initializer_type_binding(
 }
 
 /// Builds a field/property-access chain spelling such as `helper`,
-/// `this.holder.helper`, `holder.helper`, or `Holder().helper` for a `var`
-/// local initialized from an identifier or member-access expression. The
-/// spelling mirrors the extractor's instance member-chain spelling so the
-/// resolver can walk the chain to the final member's declared type. Unbound
-/// roots and unsupported initializer shapes return `None` and fail closed.
+/// `this.holder.helper`, `holder.helper`, `Holder().helper`, or
+/// `Util.STATIC_HELPER` for a `var` local initialized from an identifier or
+/// member-access expression. The spelling mirrors the extractor's member-chain
+/// spelling so the resolver can walk the chain to the final member's declared
+/// type. A chain whose leading receiver is an unbound identifier is kept as a
+/// static type-qualified candidate; untyped bound receivers and unsupported
+/// initializer shapes return `None` and fail closed.
 fn csharp_initializer_chain_spelling(
     initializer: tree_sitter::Node<'_>,
     source: &str,
@@ -741,7 +786,12 @@ fn csharp_initializer_chain_spelling(
             }
             "identifier" => {
                 let base = node_text(current, source)?.trim();
-                if base.is_empty() || bindings.type_for(base).is_none() {
+                // A locally bound receiver keeps an instance chain only when
+                // its declared type is usable; untyped bindings (`var`
+                // locals, lambda parameters) fail closed. An unbound
+                // identifier is kept as a static type-qualified candidate so
+                // the resolver can look the member up on the resolved type.
+                if base.is_empty() || bindings.raw_for(base).is_some_and(|raw| raw.is_empty()) {
                     return Ok(None);
                 }
                 segments.push(base.to_string());
@@ -753,6 +803,19 @@ fn csharp_initializer_chain_spelling(
             }
             "base" => {
                 segments.push("base".to_string());
+                break;
+            }
+            "alias_qualified_name" => {
+                // A `global::`-qualified root such as
+                // `global::Demo.Util.STATIC_HELPER` records the alias-qualified
+                // spelling (`global::Demo`) as the leading segment; the
+                // resolver re-joins the dotted type path when resolving the
+                // static member.
+                let spelling = node_text(current, source)?.trim();
+                if spelling.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(spelling.to_string());
                 break;
             }
             "object_creation_expression" => {

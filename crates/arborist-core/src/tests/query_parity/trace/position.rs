@@ -5303,6 +5303,195 @@ class NoBaseCaller {
 }
 
 #[test]
+fn traces_csharp_var_static_field_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public Helper INSTANCE_HELPER = new Helper();
+    public static int STATIC_COUNT = 1;
+}
+class Outer {
+    public class Util {
+        public static Helper NESTED_HELPER = new Helper();
+    }
+}
+class Caller {
+    int SimpleStatic() { var v = Util.STATIC_HELPER; return v.Run(1); }
+    int GlobalStatic() { var v = global::Demo.Util.STATIC_HELPER; return v.Run(1); }
+    int NestedStatic() { var v = Outer.Util.NESTED_HELPER; return v.Run(1); }
+    int StaticThenHop() { var v = Util.STATIC_HELPER.entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    for (target, callers) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::GlobalStatic",
+                "Demo::Caller::NestedStatic",
+                "Demo::Caller::SimpleStatic",
+            ],
+        ),
+        ("Demo::Entry::Run", vec!["Demo::Caller::StaticThenHop"]),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target} persisted"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_static_field_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call() { var v = Util.STATIC_HELPER; return v.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_static_field_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public Helper INSTANCE_HELPER = new Helper();
+    public static int STATIC_COUNT = 1;
+}
+class Caller {
+    int InstanceViaType() { var v = Util.INSTANCE_HELPER; return v.Run(1); }
+    int MissingMember() { var v = Util.Missing; return v.Run(1); }
+    int UnknownType() { var v = Missing.STATIC_HELPER; return v.Run(1); }
+    int PrimitiveStatic() { var v = Util.STATIC_COUNT; return v.Run(1); }
+    int MissingHop() { var v = Util.STATIC_HELPER.missing; return v.Run(1); }
+    int Control() { var v = Util.STATIC_HELPER; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static type-qualified member root pins
+    // its receiver only when the leading type resolves to one unique type
+    // declaration and the first member is a static field or property with a
+    // usable declared type; instance members reached through a type name,
+    // missing members, unknown or ambiguous types, primitive static members,
+    // and unresolvable trailing hops fail closed, while the standalone static
+    // field root still traces when it resolves.
+    for (caller, expected) in [
+        ("Demo::Caller::InstanceViaType", Vec::<&str>::new()),
+        ("Demo::Caller::MissingMember", Vec::<&str>::new()),
+        ("Demo::Caller::UnknownType", Vec::<&str>::new()),
+        ("Demo::Caller::PrimitiveStatic", Vec::<&str>::new()),
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

@@ -184,17 +184,23 @@ fn collect_direct_same_type_calls_from_node(
     Ok(())
 }
 
-/// Builds the spelling of an instance member chain whose leading receiver
-/// is a locally bound value or `this`, such as `group.inner().helper` or
+/// Builds the spelling of a member chain whose leading receiver is a locally
+/// bound value, `this`, or `base`, such as `group.inner().helper` or
 /// `this.holder.inner().helper`. Field, property, and event hops keep their
 /// plain names; method-call hops encode their argument count (`inner()` or
-/// `inner(1)`) so the resolver can require an arity match. Unbound leading
-/// receivers and non-instance bases (object creations, namespaces, static
-/// types) produce no spelling and fail closed.
+/// `inner(1)`) so the resolver can require an arity match. When
+/// `keep_static_type_roots` is set, a chain whose leading receiver is an
+/// unbound identifier or `global::`-qualified root is kept as a static
+/// type-qualified candidate such as `Util.STATIC_HELPER` so the resolver can
+/// look the member up on the resolved type; otherwise those roots fail closed
+/// and the caller falls through to the static type-call handling. Non-instance
+/// bases (object creations, namespaces) and untyped bound receivers produce
+/// no spelling and fail closed.
 fn csharp_instance_member_chain_spelling(
     node: Node<'_>,
     source: &str,
     bindings: &BTreeMap<String, String>,
+    keep_static_type_roots: bool,
 ) -> Result<Option<String>> {
     let mut segments = Vec::new();
     let mut current = node;
@@ -250,10 +256,16 @@ fn csharp_instance_member_chain_spelling(
                 }
                 // A locally bound receiver records an instance chain only
                 // when its declared type is usable; untyped bindings (`var`
-                // locals, lambda parameters) fail closed.
+                // locals, lambda parameters) fail closed. When static
+                // type-qualified roots are allowed, an unbound identifier is
+                // kept as a candidate such as `Util.STATIC_HELPER` so the
+                // resolver can look the member up on the resolved type;
+                // otherwise it fails closed and the caller falls through to
+                // the static type-call handling.
                 if bindings
                     .get(base)
-                    .is_none_or(|type_name| type_name.is_empty())
+                    .is_some_and(|type_name| type_name.is_empty())
+                    || (!keep_static_type_roots && !bindings.contains_key(base))
                 {
                     return Ok(None);
                 }
@@ -269,6 +281,24 @@ fn csharp_instance_member_chain_spelling(
                 // the `base` keyword as the leading segment; the resolver
                 // dispatches the remaining hops on the unique base type.
                 segments.push("base".to_string());
+                break;
+            }
+            "alias_qualified_name" => {
+                // A `global::`-qualified root such as
+                // `global::Demo.Util.STATIC_HELPER` records the alias-qualified
+                // spelling (`global::Demo`) as the leading segment; the
+                // resolver re-joins the dotted type path when resolving the
+                // static member. Only kept when static type-qualified roots
+                // are allowed; otherwise the caller falls through to the
+                // static type-call handling.
+                if !keep_static_type_roots {
+                    return Ok(None);
+                }
+                let spelling = crate::language::node_text(current, source)?.trim();
+                if spelling.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(spelling.to_string());
                 break;
             }
             "object_creation_expression" => {
@@ -310,7 +340,8 @@ fn csharp_direct_invocation_name(
         if matches!(
             receiver.kind(),
             "invocation_expression" | "member_access_expression"
-        ) && let Some(spelling) = csharp_instance_member_chain_spelling(node, source, bindings)?
+        ) && let Some(spelling) =
+            csharp_instance_member_chain_spelling(node, source, bindings, false)?
         {
             return Ok(Some(spelling));
         }
@@ -668,7 +699,8 @@ fn csharp_var_initializer_type_binding(
         }
         "invocation_expression" => csharp_factory_marker_from_initializer(initializer, source),
         "member_access_expression" | "identifier" => {
-            let Some(chain) = csharp_instance_member_chain_spelling(initializer, source, bindings)?
+            let Some(chain) =
+                csharp_instance_member_chain_spelling(initializer, source, bindings, true)?
             else {
                 return Ok(None);
             };

@@ -2268,14 +2268,16 @@ fn csharp_var_initializer_chain_spelling(binding: &str) -> Option<&str> {
 /// Resolves the receiver type binding for a `var` local initialized from a
 /// field/property-access chain such as `var helper = helper`,
 /// `var helper = this.holder.helper`, `var helper = holder.helper`,
-/// `var helper = base.helper`, or `var helper = new Holder().helper`. A bare
-/// chain pins the receiver to the bound value's declared type; a
-/// `this.`-rooted chain walks hops on the unique enclosing type; a
-/// `base.`-rooted chain walks hops on the unique base type; a `Type()`-rooted
-/// chain walks hops on the constructed type; and a bound receiver walks hops
-/// on its declared type, with method-call hops resolving through the same
-/// member-chain rules. Unknown, ambiguous, untyped, `void`, and primitive
-/// chains return `None` and fail closed.
+/// `var helper = base.helper`, `var helper = new Holder().helper`, or
+/// `var helper = Util.STATIC_HELPER`. A bare chain pins the receiver to the
+/// bound value's declared type; a `this.`-rooted chain walks hops on the
+/// unique enclosing type; a `base.`-rooted chain walks hops on the unique
+/// base type; a `Type()`-rooted chain walks hops on the constructed type; a
+/// bound receiver walks hops on its declared type; and a chain whose leading
+/// segment is not bound resolves a static type-qualified field or property
+/// root, with method-call hops resolving through the same member-chain rules.
+/// Unknown, ambiguous, untyped, `void`, primitive, instance-member, and
+/// missing-member chains return `None` and fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# initializer chain binding inputs explicit"
@@ -2498,7 +2500,174 @@ fn resolve_csharp_initializer_chain_binding(
         };
         return Ok(Some(binding));
     }
+    // A chain whose leading segment is neither a local binding nor
+    // `this`/`base`/constructed-type rooted may be a static type-qualified
+    // member root such as `Util.STATIC_HELPER`, `Outer.Util.STATIC_HELPER`,
+    // or `global::Demo.Util.STATIC_HELPER`; the first member after the
+    // resolved type must be a static field or property and any remaining
+    // hops walk the same member-chain rules.
+    resolve_csharp_static_field_initializer_binding(
+        source_symbol,
+        chain,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Resolves the receiver type binding for a `var` local initialized from a
+/// static type-qualified member root such as `var helper = Util.STATIC_HELPER`,
+/// `var helper = Outer.Util.STATIC_HELPER`, or
+/// `var helper = global::Demo.Util.STATIC_HELPER`. The first member after the
+/// resolved type must be a static field or property; its declared type pins
+/// the `var` receiver and any remaining hops walk the same member-chain rules
+/// on that type. A longer type prefix is tried when the current prefix does
+/// not resolve to a unique type or does not declare the member, so nested and
+/// namespace-qualified type paths resolve like static method calls; a resolved
+/// type whose named member is not static, an ambiguous type, and unresolvable
+/// hops return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# static field initializer binding inputs explicit"
+)]
+fn resolve_csharp_static_field_initializer_binding<'a>(
+    source_symbol: &'a IndexedSymbol,
+    chain: &str,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let segments = chain.split('.').collect::<Vec<_>>();
+    if segments.len() < 2 || segments.iter().any(|segment| segment.is_empty()) {
+        return Ok(None);
+    }
+    for split in 1..segments.len() {
+        let type_name = segments[..split].join(".");
+        let member = segments[split];
+        let hops = &segments[split + 1..];
+        if !is_safe_csharp_identifier(member) || matches!(member, "this" | "base") {
+            return Ok(None);
+        }
+        let Some(type_path) = resolve_csharp_static_initializer_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+        ) else {
+            // The type prefix did not resolve to one unique type; a longer
+            // prefix may name a nested or namespace-qualified type such as
+            // `Outer.Util` or `Demo.Util`.
+            continue;
+        };
+        let type_indexes = semantic_path_index
+            .get(&type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !member_bindings.contains(member) {
+            // The member is not declared on this type; a longer type prefix
+            // may name a nested type that hosts the member.
+            continue;
+        }
+        if !member_bindings.is_static_member(member) {
+            // An instance member reached through a type name is invalid C#
+            // and fails closed.
+            return Ok(None);
+        }
+        let Some(member_type_name) = member_bindings.type_for(member) else {
+            return Ok(None);
+        };
+        let Some(member_binding) = resolve_csharp_receiver_type_binding(
+            type_symbol,
+            &member_type_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if hops.is_empty() {
+            return Ok(Some(member_binding));
+        }
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            type_symbol,
+            member_binding,
+            hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(binding));
+    }
     Ok(None)
+}
+
+/// Resolves a static initializer type spelling such as `Util`,
+/// `Outer.Util`, or `global::Demo.Util` to the unique semantic type path of
+/// its type declaration. A `global::`-qualified spelling resolves exactly at
+/// global scope; other spellings resolve through the caller's namespace
+/// ancestors and then the global scope, mirroring declared-type and static
+/// method resolution. Missing and ambiguous type declarations return `None`.
+fn resolve_csharp_static_initializer_type_path(
+    source_symbol: &IndexedSymbol,
+    type_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+) -> Option<String> {
+    if let Some(global_name) = type_name.strip_prefix("global::") {
+        let semantic_path = crate::language::csharp_generic_type_semantic_path(global_name)?;
+        let candidates = csharp_receiver_type_candidates(
+            raw_symbols,
+            semantic_path_index,
+            &semantic_path,
+            csharp_is_type_declaration,
+        );
+        return match candidates.as_slice() {
+            [_] => Some(semantic_path),
+            _ => None,
+        };
+    }
+    let semantic_path = crate::language::csharp_generic_type_semantic_path(type_name)?;
+    csharp_scoped_receiver_type_path(
+        source_symbol,
+        raw_symbols,
+        semantic_path_index,
+        &semantic_path,
+        csharp_is_type_declaration,
+    )
 }
 
 /// Walks the intermediate hops of a receiver chain such as
