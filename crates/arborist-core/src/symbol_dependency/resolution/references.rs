@@ -2295,14 +2295,31 @@ fn resolve_csharp_initializer_chain_binding(
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
     // A bare chain names a bound field, property, local, or parameter whose
-    // declared type pins the `var` receiver.
+    // declared type pins the `var` receiver. An unbound bare name may be a
+    // static-imported member root such as `STATIC_HELPER` from
+    // `using static Demo.Util;`; a bound-but-unusable name shadows any
+    // static-imported member and fails closed.
     if !chain.contains('.') {
-        let Some(type_name) = bindings.type_for(chain) else {
+        if let Some(type_name) = bindings.type_for(chain) {
+            return resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &type_name,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            );
+        }
+        if bindings.contains(chain) {
             return Ok(None);
-        };
-        return resolve_csharp_receiver_type_binding(
+        }
+        return resolve_csharp_static_imported_field_initializer_binding(
             source_symbol,
-            &type_name,
+            chain,
+            &[],
             raw_symbols,
             semantic_path_index,
             source_namespace_path,
@@ -2505,8 +2522,10 @@ fn resolve_csharp_initializer_chain_binding(
     // member root such as `Util.STATIC_HELPER`, `Outer.Util.STATIC_HELPER`,
     // or `global::Demo.Util.STATIC_HELPER`; the first member after the
     // resolved type must be a static field or property and any remaining
-    // hops walk the same member-chain rules.
-    resolve_csharp_static_field_initializer_binding(
+    // hops walk the same member-chain rules. When the leading segment is not
+    // a resolvable type path either, an unbound name may be a static-imported
+    // member root such as `STATIC_HELPER.entry` from `using static Demo.Util;`.
+    if let Some(binding) = resolve_csharp_static_field_initializer_binding(
         source_symbol,
         chain,
         raw_symbols,
@@ -2515,7 +2534,24 @@ fn resolve_csharp_initializer_chain_binding(
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
-    )
+    )? {
+        return Ok(Some(binding));
+    }
+    if !bindings.contains(receiver_name) {
+        return resolve_csharp_static_imported_field_initializer_binding(
+            source_symbol,
+            receiver_name,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        );
+    }
+    Ok(None)
 }
 
 /// Resolves the receiver type binding for a `var` local initialized from a
@@ -2668,6 +2704,129 @@ fn resolve_csharp_static_initializer_type_path(
         &semantic_path,
         csharp_is_type_declaration,
     )
+}
+
+/// Resolves the receiver type binding for a `var` local initialized from a
+/// static-imported member root such as `var helper = STATIC_HELPER` or
+/// `var helper = STATIC_HELPER.entry` with `using static Demo.Util;`. The
+/// imported type must declare the member as a static field or property with a
+/// usable declared type; remaining hops walk the same member-chain rules on
+/// that type. A name bound to an unusable local receiver shadows any
+/// static-imported member and is handled by the caller. Unknown, ambiguous,
+/// instance-member, missing-member, and primitive imports return `None` and
+/// fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# static-imported field initializer binding inputs explicit"
+)]
+fn resolve_csharp_static_imported_field_initializer_binding<'a>(
+    source_symbol: &'a IndexedSymbol,
+    member_name: &str,
+    hops: &[&str],
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    if member_name.is_empty()
+        || member_name.contains('.')
+        || !is_safe_csharp_identifier(member_name)
+        || hops.iter().any(|hop| hop.is_empty())
+    {
+        return Ok(None);
+    }
+    let mut static_type_imports = resolve_csharp_static_type_imports_for_reference(
+        &source_symbol.file_path,
+        member_name,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    if let Some(csharp_global_import_context) = csharp_global_import_context {
+        static_type_imports.extend(resolve_csharp_global_static_type_imports_for_reference(
+            member_name,
+            csharp_global_import_context,
+        ));
+    }
+    if static_type_imports.is_empty() {
+        return Ok(None);
+    }
+    // A member is a candidate only when the imported type resolves to one
+    // unique declaration and declares the member as a static field or
+    // property with a usable declared type; instance and missing members are
+    // not candidates, mirroring static-method imports.
+    let mut candidates = Vec::new();
+    for import in &static_type_imports {
+        let type_indexes = semantic_path_index
+            .get(&import.semantic_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            continue;
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        if !member_bindings.contains(member_name) || !member_bindings.is_static_member(member_name)
+        {
+            continue;
+        }
+        let Some(member_type_name) = member_bindings.type_for(member_name) else {
+            continue;
+        };
+        let Some(member_binding) = resolve_csharp_receiver_type_binding(
+            type_symbol,
+            &member_type_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        candidates.push((type_symbol, member_binding));
+    }
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let (type_symbol, member_binding) = &candidates[0];
+    if hops.is_empty() {
+        return Ok(Some(member_binding.clone()));
+    }
+    let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        type_symbol,
+        member_binding.clone(),
+        hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(binding))
 }
 
 /// Walks the intermediate hops of a receiver chain such as

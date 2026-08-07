@@ -5492,6 +5492,201 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_var_static_imported_field_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "using static Demo.Util;
+namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+class Util2 {
+    public static Helper GLOBAL_HELPER = new Helper();
+}
+class Caller {
+    int Simple() { var v = STATIC_HELPER; return v.Run(1); }
+    int Chained() { var v = STATIC_HELPER.entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Global.cs"),
+        "global using static Demo.Util2;
+namespace Demo;
+class GlobalCaller {
+    int GlobalSimple() { var v = GLOBAL_HELPER; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    for (target, callers) in [
+        (
+            "Demo::Helper::Run",
+            vec!["Demo::Caller::Simple", "Demo::GlobalCaller::GlobalSimple"],
+        ),
+        ("Demo::Entry::Run", vec!["Demo::Caller::Chained"]),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target} persisted"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_var_static_imported_field_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "using static Demo.Util;
+namespace Demo;
+class Caller {
+    int Call() { var v = STATIC_HELPER; return v.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_static_imported_field_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "using static Demo.Util;
+using static Demo.Util2;
+namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public Helper INSTANCE_HELPER = new Helper();
+    public static int STATIC_COUNT = 1;
+    public static Helper AMBIGUOUS_HELPER = new Helper();
+}
+class Util2 {
+    public static Helper AMBIGUOUS_HELPER = new Helper();
+}
+class Caller {
+    int InstanceViaImport() { var v = INSTANCE_HELPER; return v.Run(1); }
+    int MissingMember() { var v = MISSING; return v.Run(1); }
+    int PrimitiveStatic() { var v = STATIC_COUNT; return v.Run(1); }
+    int AmbiguousStatic() { var v = AMBIGUOUS_HELPER; return v.Run(1); }
+    int Control() { var v = STATIC_HELPER; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a static-imported member root pins its
+    // receiver only when exactly one imported type declares the member as a
+    // static field or property with a usable declared type; instance members,
+    // missing members, primitive statics, and members declared on more than
+    // one imported type fail closed, while a uniquely imported static field
+    // root still traces when it resolves.
+    for (caller, expected) in [
+        ("Demo::Caller::InstanceViaImport", Vec::<&str>::new()),
+        ("Demo::Caller::MissingMember", Vec::<&str>::new()),
+        ("Demo::Caller::PrimitiveStatic", Vec::<&str>::new()),
+        ("Demo::Caller::AmbiguousStatic", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
