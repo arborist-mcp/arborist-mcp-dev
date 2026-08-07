@@ -14006,3 +14006,59 @@ class Caller {
         ]
     );
 }
+
+#[test]
+fn traces_java_var_static_imported_field_chain_receiver_calls_across_files() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+class Holder { public Foo foo = new Foo(); }
+public class Util { public static Holder HOLDER = new Holder(); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import static pkg.util.Util.HOLDER;
+public class Bar {
+    public int run() {
+        var v = HOLDER.foo;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let foo_helper_symbol = "pkg::helper::Foo::helper";
+    let live = trace_symbol_graph(&dir, foo_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, foo_helper_symbol, TraceDirection::Callers)
+            .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}

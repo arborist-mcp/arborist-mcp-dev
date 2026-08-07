@@ -3672,6 +3672,37 @@ fn resolve_java_initializer_field_type_path(
     {
         resolved.insert(chain_type_path);
     }
+    // A dotted reference whose leading segment names a uniquely explicit
+    // static field import such as `import static com.example.Util.STATIC_HELPER`
+    // is a field chain such as `STATIC_HELPER.entry` on the imported field's
+    // declared type; it competes with the bare-field and qualified-type
+    // interpretations below.
+    if let Some(binding) = resolve_java_static_method_import_binding_for_reference(
+        &source_symbol.file_path,
+        segments[0],
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )? && let Some(field_type_path) = resolve_java_imported_static_field_type_path(
+        &binding,
+        segments[0],
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )? && let Some(chain_type_path) = resolve_java_field_chain_type_path(
+        &field_type_path,
+        &segments[1..].join("."),
+        false,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )? {
+        resolved.insert(chain_type_path);
+    }
     for split in 1..segments.len() {
         let type_name = segments[..split].join(".");
         let field_chain = segments[split..].join(".");
