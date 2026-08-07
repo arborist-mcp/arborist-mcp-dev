@@ -1569,6 +1569,18 @@ fn resolve_csharp_instance_receiver_call(
     else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
+    // An interface-typed receiver dispatches on the interface's own method
+    // declaration; class/record ancestor walking below does not apply.
+    if let Some(symbol_id) = resolve_csharp_interface_receiver_call(
+        source_symbol,
+        &binding,
+        member_name,
+        raw_symbols,
+        semantic_path_index,
+        call_arity,
+    )? {
+        return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
+    }
     // The declared type resolves in the caller's namespace/import scope; the
     // instance method dispatches on that type and its unique class/record
     // ancestor chain.
@@ -1723,11 +1735,12 @@ fn resolve_csharp_receiver_type_binding(
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
     {
-        return Ok(csharp_constructor_receiver_type_path(
+        return Ok(csharp_scoped_receiver_type_path(
             source_symbol,
             raw_symbols,
             semantic_path_index,
             &semantic_path,
+            csharp_is_type_declaration,
         )
         .map(|type_path| CSharpBaseTypeBinding {
             semantic_type_path: type_path,
@@ -1747,21 +1760,117 @@ fn resolve_csharp_receiver_type_binding(
     )
 }
 
-/// Resolves a dotted constructed type spelling such as `NestedContainer.Inner`
-/// to a unique constructible type path. The caller's namespace ancestors are
-/// searched innermost-first, then the global scope; the first scope with
-/// candidates must be unambiguous or resolution fails closed.
-fn csharp_constructor_receiver_type_path(
+/// Dispatches an instance call on an interface-typed receiver to a unique
+/// non-static, non-`params`, exact-arity method declared on the interface.
+/// Non-interface declared types and unresolved, ambiguous, or method-less
+/// interfaces return `None` and fail closed.
+fn resolve_csharp_interface_receiver_call(
+    source_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    member_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    call_arity: usize,
+) -> Result<Option<String>> {
+    let Some(interface_path) =
+        csharp_interface_type_path(source_symbol, raw_symbols, semantic_path_index, binding)
+    else {
+        return Ok(None);
+    };
+    let target_path = format!("{interface_path}::{member_name}");
+    Ok(resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: false,
+            require_instance: true,
+            require_same_file: false,
+        },
+    ))
+}
+
+/// Resolves a declared interface type name to a unique indexed interface
+/// path. Simple names resolve through the caller's namespace, enclosing
+/// namespaces, namespace imports, and then the global scope; dotted names
+/// walk the same scope chain with the full path. Ambiguous or missing
+/// interfaces return `None` and fail closed.
+fn csharp_interface_type_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    binding: &CSharpBaseTypeBinding,
+) -> Option<String> {
+    if binding.is_global_qualified {
+        return csharp_unique_interface_type_path(raw_symbols, &binding.semantic_type_path);
+    }
+    if binding.semantic_type_path.contains("::") {
+        return csharp_scoped_receiver_type_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &binding.semantic_type_path,
+            csharp_is_interface_declaration,
+        );
+    }
+    let local_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
+        .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
+        .unwrap_or_else(|| binding.semantic_type_path.clone());
+    if let Some(path) = csharp_unique_interface_type_path(raw_symbols, &local_path) {
+        return Some(path);
+    }
+    for import_path in &binding.namespace_import_paths {
+        let candidate_path = format!("{import_path}::{}", binding.semantic_type_path);
+        if let Some(path) = csharp_unique_interface_type_path(raw_symbols, &candidate_path) {
+            return Some(path);
+        }
+    }
+    csharp_unique_interface_type_path(raw_symbols, &binding.semantic_type_path)
+}
+
+fn csharp_unique_interface_type_path(
+    raw_symbols: &[IndexedSymbol],
+    type_path: &str,
+) -> Option<String> {
+    (csharp_interface_type_candidates(raw_symbols, type_path).len() == 1)
+        .then(|| type_path.to_string())
+}
+
+fn csharp_interface_type_candidates<'a>(
+    raw_symbols: &'a [IndexedSymbol],
+    type_path: &str,
+) -> Vec<&'a IndexedSymbol> {
+    raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.semantic_path == type_path && candidate.node_kind == "interface_declaration"
+        })
+        .collect()
+}
+
+/// Resolves a type spelling such as `NestedContainer.Inner` to a unique type
+/// path of the requested kind. The caller's namespace ancestors are searched
+/// innermost-first, then the global scope; the first scope with candidates
+/// must be unambiguous or resolution fails closed.
+fn csharp_scoped_receiver_type_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     semantic_path: &str,
+    is_target_type: fn(&IndexedSymbol) -> bool,
 ) -> Option<String> {
     let mut namespace_path = csharp_source_namespace_path(source_symbol, raw_symbols).flatten();
     while let Some(current_namespace) = namespace_path {
         let candidate_path = format!("{current_namespace}::{semantic_path}");
-        let candidates =
-            csharp_constructible_type_candidates(raw_symbols, semantic_path_index, &candidate_path);
+        let candidates = csharp_receiver_type_candidates(
+            raw_symbols,
+            semantic_path_index,
+            &candidate_path,
+            is_target_type,
+        );
         match candidates.as_slice() {
             [_] => return Some(candidate_path),
             [] => {}
@@ -1771,8 +1880,12 @@ fn csharp_constructor_receiver_type_path(
             .rsplit_once("::")
             .map(|(parent, _)| parent);
     }
-    let candidates =
-        csharp_constructible_type_candidates(raw_symbols, semantic_path_index, semantic_path);
+    let candidates = csharp_receiver_type_candidates(
+        raw_symbols,
+        semantic_path_index,
+        semantic_path,
+        is_target_type,
+    );
     match candidates.as_slice() {
         [_] => Some(semantic_path.to_string()),
         [] => None,
@@ -1780,17 +1893,18 @@ fn csharp_constructor_receiver_type_path(
     }
 }
 
-fn csharp_constructible_type_candidates(
+fn csharp_receiver_type_candidates(
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     type_path: &str,
+    is_target_type: fn(&IndexedSymbol) -> bool,
 ) -> Vec<usize> {
     semantic_path_index
         .get(type_path)
         .into_iter()
         .flatten()
         .copied()
-        .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+        .filter(|index| is_target_type(&raw_symbols[*index]))
         .collect()
 }
 
@@ -2720,6 +2834,10 @@ fn csharp_is_type_declaration(symbol: &IndexedSymbol) -> bool {
             | "enum_declaration"
             | "record_declaration"
     )
+}
+
+fn csharp_is_interface_declaration(symbol: &IndexedSymbol) -> bool {
+    symbol.node_kind == "interface_declaration"
 }
 
 fn csharp_method_is_static(symbol: &IndexedSymbol) -> bool {
