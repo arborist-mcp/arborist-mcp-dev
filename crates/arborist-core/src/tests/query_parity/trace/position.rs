@@ -10708,7 +10708,12 @@ fn traces_java_var_anonymous_field_receiver_calls_in_live_workspace_and_persiste
         &source_path,
         "package com.example;
 class Helper { int helper(int value) { return value; } }
-class Group { Helper entry = new Helper(); }
+class Group {
+    Helper entry = new Helper();
+    Group entry2() { return this; }
+    Holder holder = new Holder();
+}
+class Holder { Helper entry = new Helper(); }
 class Outer { static class Inner { Helper entry = new Helper(); } }
 class Caller {
     int varField() {
@@ -10723,6 +10728,14 @@ class Caller {
         var v = new Outer.Inner() { }.entry;
         return v.helper(3);
     }
+    int varFieldWithHop() {
+        var v = new Group() { }.entry2().entry;
+        return v.helper(4);
+    }
+    int varFieldWithFieldHop() {
+        var v = new Group() { }.holder.entry;
+        return v.helper(5);
+    }
 }
 ",
     )
@@ -10730,7 +10743,7 @@ class Caller {
 
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(live.callers.len(), 3);
+    assert_eq!(live.callers.len(), 5);
     let mut callers = live
         .callers
         .iter()
@@ -10742,14 +10755,16 @@ class Caller {
         [
             "com::example::Caller::varField",
             "com::example::Caller::varFieldNested",
-            "com::example::Caller::varFieldWithBody"
+            "com::example::Caller::varFieldWithBody",
+            "com::example::Caller::varFieldWithFieldHop",
+            "com::example::Caller::varFieldWithHop"
         ]
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted =
         trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
-    assert_eq!(persisted.callers.len(), 3);
+    assert_eq!(persisted.callers.len(), 5);
     let mut callers = persisted
         .callers
         .iter()
@@ -10761,7 +10776,9 @@ class Caller {
         [
             "com::example::Caller::varField",
             "com::example::Caller::varFieldNested",
-            "com::example::Caller::varFieldWithBody"
+            "com::example::Caller::varFieldWithBody",
+            "com::example::Caller::varFieldWithFieldHop",
+            "com::example::Caller::varFieldWithHop"
         ]
     );
 }
@@ -10779,11 +10796,15 @@ fn traces_java_var_anonymous_field_receiver_calls_from_dirty_vfs_overrides() {
     .unwrap();
     let overlay = "package com.example;
 class Helper { int helper(int value) { return value; } }
-class Group { Helper entry = new Helper(); }
+class Group { Helper entry = new Helper(); Group entry2() { return this; } }
 class Caller {
     int run() {
         var v = new Group() { }.entry;
         return v.helper(1);
+    }
+    int runHop() {
+        var v = new Group() { }.entry2().entry;
+        return v.helper(2);
     }
 }
 ";
@@ -10797,8 +10818,17 @@ class Caller {
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(live.callers.len(), 1);
-    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        ["com::example::Caller::run", "com::example::Caller::runHop"]
+    );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
     let persisted = trace_symbol_graph_from_index_with_source(
@@ -10809,8 +10839,17 @@ class Caller {
         TraceDirection::Callers,
     )
     .unwrap();
-    assert_eq!(persisted.callers.len(), 1);
-    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        ["com::example::Caller::run", "com::example::Caller::runHop"]
+    );
 }
 
 #[test]
@@ -10831,6 +10870,10 @@ class Caller {
         var v = new Group() { Helper entry = new Helper(); }.entry;
         return v.helper(1);
     }
+    int shadowedHop() {
+        var v = new Group() { Group entry2() { return this; } }.entry2().entry;
+        return v.helper(1);
+    }
     int missingType() {
         var v = new Missing() { }.entry;
         return v.helper(1);
@@ -10839,8 +10882,8 @@ class Caller {
         var v = new Group() { }.missing.entry;
         return v.helper(1);
     }
-    int methodHopChain() {
-        var v = new Group() { }.entry2().entry;
+    int argHop() {
+        var v = new Group() { }.entry2(1).entry;
         return v.helper(1);
     }
 }
@@ -10852,7 +10895,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "anonymous var field-initializer chains with shadowing bodies, unknown constructed types, unknown chains, and method-hop chains must fail closed"
+        "anonymous var field-initializer chains with shadowing bodies, unknown constructed types, unknown chains, and argument-carrying hops must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();

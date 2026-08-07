@@ -569,12 +569,14 @@ fn java_initializer_call_from_declarator(
 /// such as `var value = this.helper;`, `var value = helper;`,
 /// `var value = Util.STATIC_HELPER;`, a bare statically imported field name,
 /// or an anonymous constructor-rooted chain such as
-/// `var value = new Group() { }.entry`. Bare identifiers and `field_access`
-/// expressions record the reference spelling for trace-time field resolution;
-/// anonymous constructor roots canonicalize to `new Group().entry` so the
-/// resolver dispatches on the constructed class type, unless the anonymous
-/// body declares a same-named field that would shadow the constructed type's
-/// field. All other initializers record nothing and fail closed.
+/// `var value = new Group() { }.entry` or
+/// `var value = new Group() { }.inner2().entry`. Bare identifiers and
+/// `field_access` expressions record the reference spelling for trace-time
+/// field resolution; anonymous constructor roots canonicalize to
+/// `new Group().entry` (or the equivalent chain) so the resolver dispatches on
+/// the constructed class type, unless the anonymous body declares any accessed
+/// field or method-call hop that would shadow the constructed type's member.
+/// All other initializers record nothing and fail closed.
 fn java_initializer_field_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
@@ -595,20 +597,17 @@ fn java_initializer_field_access_from_declarator(
             if object_text.is_empty() || field_text.is_empty() {
                 return Ok(None);
             }
-            if object.kind() == "object_creation_expression" && java_has_anonymous_body(object) {
-                if java_anonymous_constructor_declared_field_names(object, source)?
-                    .contains(field_text)
-                {
-                    return Ok(None);
+            let root = java_expression_root_object(initializer);
+            if root.kind() == "object_creation_expression" && java_has_anonymous_body(root) {
+                // Anonymous constructor-rooted chains canonicalize so the
+                // resolver dispatches on the constructed class type; a body
+                // declaration of any accessed field or hop, a non-zero-argument
+                // hop, or an unusable constructed type fails closed instead of
+                // recording a non-resolving raw spelling.
+                match java_anonymous_constructor_initializer_spelling(initializer, source)? {
+                    Some(spelling) => spelling,
+                    None => return Ok(None),
                 }
-                let Some(type_node) = object.child_by_field_name("type") else {
-                    return Ok(None);
-                };
-                let type_name = node_text(type_node, source)?.trim();
-                let Some(type_name) = java_dotted_type_name(type_name) else {
-                    return Ok(None);
-                };
-                format!("new {type_name}().{field_text}")
             } else {
                 format!("{object_text}.{field_text}")
             }
@@ -625,6 +624,105 @@ fn java_initializer_field_access_from_declarator(
     Ok(Some(reference))
 }
 
+/// Walks a field-access or method-invocation chain down to its root object
+/// expression, mirroring the receiver hops the resolver walks at trace time.
+fn java_expression_root_object(mut node: tree_sitter::Node<'_>) -> tree_sitter::Node<'_> {
+    loop {
+        match node.kind() {
+            "field_access" => {
+                let Some(object) = node.child_by_field_name("object") else {
+                    return node;
+                };
+                node = object;
+            }
+            "method_invocation" => {
+                let Some(object) = node.child_by_field_name("object") else {
+                    return node;
+                };
+                node = object;
+            }
+            _ => return node,
+        }
+    }
+}
+
+/// Canonicalizes an anonymous constructor-rooted field-access chain such as
+/// `new Group() { }.entry`, `new Group() { }.holder.entry`, or
+/// `new Group() { }.inner2().entry` to `new Group().entry`,
+/// `new Group().holder.entry`, or `new Group().inner2().entry` so the resolver
+/// dispatches on the constructed class type. Chains rooted at an anonymous
+/// constructor resolve only when the anonymous body declares none of the
+/// accessed fields or method-call hops and every method-call hop takes no
+/// arguments; method-call hops with arguments, malformed intermediate
+/// expressions, and unusable constructed type spellings fail closed.
+fn java_anonymous_constructor_initializer_spelling(
+    initializer: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    let mut segments = Vec::new();
+    let mut current = initializer;
+    loop {
+        if current.kind() == "field_access" {
+            let Some(field) = current.child_by_field_name("field") else {
+                return Ok(None);
+            };
+            let field_name = node_text(field, source)?.trim();
+            if field_name.is_empty() {
+                return Ok(None);
+            }
+            segments.push(field_name.to_string());
+            let Some(object) = current.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            current = object;
+        } else if current.kind() == "method_invocation" {
+            let Some(name_node) = current.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            let method_name = node_text(name_node, source)?.trim();
+            let Some(arguments) = current.child_by_field_name("arguments") else {
+                return Ok(None);
+            };
+            let mut cursor = arguments.walk();
+            if method_name.is_empty() || arguments.named_children(&mut cursor).count() != 0 {
+                return Ok(None);
+            }
+            segments.push(format!("{method_name}()"));
+            let Some(object) = current.child_by_field_name("object") else {
+                return Ok(None);
+            };
+            current = object;
+        } else if current.kind() == "object_creation_expression" {
+            if !java_has_anonymous_body(current) {
+                return Ok(None);
+            }
+            if java_anonymous_constructor_declared_members(current, source)?
+                .iter()
+                .any(|declared| {
+                    segments.iter().any(|segment| {
+                        segment == declared || segment.strip_suffix("()") == Some(declared.as_str())
+                    })
+                })
+            {
+                return Ok(None);
+            }
+            let Some(type_node) = current.child_by_field_name("type") else {
+                return Ok(None);
+            };
+            let type_name = node_text(type_node, source)?.trim();
+            let Some(type_name) = java_dotted_type_name(type_name) else {
+                return Ok(None);
+            };
+            segments.push(format!("new {type_name}()"));
+            break;
+        } else {
+            return Ok(None);
+        }
+    }
+    segments.reverse();
+    Ok(Some(segments.join(".")))
+}
+
 /// Returns whether an `object_creation_expression` carries an anonymous-class
 /// body.
 fn java_has_anonymous_body(node: tree_sitter::Node<'_>) -> bool {
@@ -633,12 +731,13 @@ fn java_has_anonymous_body(node: tree_sitter::Node<'_>) -> bool {
         .any(|child| child.kind() == "class_body")
 }
 
-/// Returns the names of fields declared directly in an anonymous-class body on
-/// `node`. Anonymous `var` field-initializer chains resolve on the constructed
-/// class type only when the body does not declare a same-named field; a body
-/// field declaration would shadow the constructed type's field, so it fails
-/// closed conservatively.
-fn java_anonymous_constructor_declared_field_names(
+/// Returns the names of fields and methods declared directly in an
+/// anonymous-class body on `node`. Non-anonymous nodes return an empty set.
+/// Anonymous `var` field-initializer chains resolve on the constructed class
+/// type only when the body declares none of the accessed fields or method-call
+/// hops; a same-name body declaration would shadow the constructed type's
+/// member, so it fails closed conservatively.
+fn java_anonymous_constructor_declared_members(
     node: tree_sitter::Node<'_>,
     source: &str,
 ) -> Result<BTreeSet<String>> {
@@ -655,17 +754,28 @@ fn java_anonymous_constructor_declared_field_names(
     };
     let mut body_cursor = body.walk();
     for child in body.named_children(&mut body_cursor) {
-        if child.kind() != "field_declaration" {
-            continue;
-        }
-        let mut declarator_cursor = child.walk();
-        for declarator in child.children_by_field_name("declarator", &mut declarator_cursor) {
-            if let Some(name_node) = declarator.child_by_field_name("name") {
-                let name = node_text(name_node, source)?.trim();
-                if !name.is_empty() {
-                    declared.insert(name.to_string());
+        match child.kind() {
+            "field_declaration" => {
+                let mut declarator_cursor = child.walk();
+                for declarator in child.children_by_field_name("declarator", &mut declarator_cursor)
+                {
+                    if let Some(name_node) = declarator.child_by_field_name("name") {
+                        let name = node_text(name_node, source)?.trim();
+                        if !name.is_empty() {
+                            declared.insert(name.to_string());
+                        }
+                    }
                 }
             }
+            "method_declaration" => {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    let name = node_text(name_node, source)?.trim();
+                    if !name.is_empty() {
+                        declared.insert(name.to_string());
+                    }
+                }
+            }
+            _ => {}
         }
     }
     Ok(declared)
