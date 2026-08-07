@@ -931,13 +931,41 @@ fn resolve_reference_path_with_deadline<'a>(
                 (candidates.len() == 1).then(|| raw_symbols[candidates[0]].symbol_id.clone())
             );
         }
-        if let Some(method_name) = reference_name.strip_prefix("super.") {
-            if method_name.is_empty() || method_name.contains('.') {
+        if let Some(chain) = reference_name.strip_prefix("super.") {
+            if chain.is_empty() {
                 return Ok(None);
+            }
+            // A `super.`-rooted receiver chain such as `super.member.helper(...)`
+            // or `super.inner().helper(...)` dispatches on the unique local-source
+            // direct superclass type path through the same member-chain rules as
+            // bound receivers; unknown or unresolvable hops fail closed. Plain
+            // `super.method()` calls keep the direct-base-chain contract below.
+            if chain.contains('.') {
+                let Some(superclass_path) = java_simple_superclass_path(
+                    source_symbol,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                return resolve_java_member_chain_from_type_path(
+                    &superclass_path,
+                    chain,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    call_arity,
+                    deadline,
+                );
             }
             return resolve_java_simple_super_method_reference(
                 source_symbol,
-                method_name,
+                chain,
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
