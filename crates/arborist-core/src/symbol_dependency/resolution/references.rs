@@ -1775,7 +1775,8 @@ fn resolve_csharp_factory_receiver_binding(
 /// Resolves the factory call of a `var` initializer to a unique method
 /// symbol. Bare names resolve as enclosing-type instance calls first, then
 /// base-type and static-imported methods; `this.`-rooted names never fall
-/// through to static imports; a dotted name whose leading segment is a bound
+/// through to static imports; `base.`-rooted names resolve as instance calls
+/// on the unique base chain; a dotted name whose leading segment is a bound
 /// receiver resolves as an instance method call on the receiver's declared
 /// type after walking any field/property and method-call hops on the
 /// receiver; remaining dotted names resolve as type-qualified static calls.
@@ -1812,6 +1813,63 @@ fn resolve_csharp_var_factory_method<'a>(
             csharp_import_contexts_by_file,
             deadline,
         );
+    }
+    // An explicit `base.`-rooted factory resolves as an instance method call
+    // on the unique class/record base chain, such as
+    // `var helper = base.MakeHelper()`; missing bases and static,
+    // arity-mismatched, or missing base methods fail closed.
+    if let Some(method_name) = factory_name.strip_prefix("base.") {
+        if method_name.is_empty() || method_name.contains(['.', '(', ')']) {
+            return Ok(None);
+        }
+        if csharp_method_is_static(source_symbol) {
+            return Ok(None);
+        }
+        let Some(base_type_binding) = csharp_source_base_type_binding(
+            source_symbol,
+            raw_symbols,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(target_path) = csharp_base_method_target_path(
+            source_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &base_type_binding,
+            method_name,
+            factory_arity,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(resolve_csharp_candidate(
+            raw_symbols,
+            semantic_path_index,
+            &target_path,
+            Some(source_symbol),
+            factory_arity,
+            CSharpCandidateRequirements {
+                node_kind: "method_declaration",
+                require_static: false,
+                require_instance: true,
+                require_same_file: false,
+            },
+        )
+        .and_then(|symbol_id| {
+            raw_symbols
+                .iter()
+                .find(|candidate| candidate.symbol_id == symbol_id)
+        }));
     }
     // A dotted factory whose leading segment is a bound receiver resolves as
     // an instance method call on the receiver's declared type, such as
