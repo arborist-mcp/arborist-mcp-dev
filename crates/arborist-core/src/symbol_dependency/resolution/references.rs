@@ -1677,6 +1677,30 @@ fn resolve_csharp_member_chain_binding<'a>(
             return Ok(None);
         }
         let type_symbol = &raw_symbols[type_indexes[0]];
+        // A method-call hop such as `inner()` or `inner(1)` dispatches the
+        // hop method as an instance call and continues the chain on its
+        // declared return type; field, property, and event hops resolve the
+        // member's declared type directly.
+        if let Some((method_name, hop_arity)) = csharp_method_call_hop_spelling(hop) {
+            let Some((next_binding, method_symbol)) = resolve_csharp_method_call_hop_binding(
+                type_symbol,
+                &binding,
+                &method_name,
+                hop_arity,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            binding = next_binding;
+            scope_source_symbol = method_symbol;
+            continue;
+        }
         let Some(member_bindings) = csharp_member_type_bindings_for_type(
             &type_symbol.file_path,
             type_symbol.byte_range,
@@ -1711,6 +1735,91 @@ fn resolve_csharp_member_chain_binding<'a>(
         scope_source_symbol = type_symbol;
     }
     Ok(Some((binding, scope_source_symbol)))
+}
+
+/// Parses a method-call hop spelling such as `inner()`, `inner(0)`, or
+/// `inner(2)` into the method name and the call arity recorded by the
+/// extractor. Field, property, and event hops, malformed spellings, and
+/// non-numeric argument lists return `None` so they fall through to member
+/// resolution and fail closed when no such member exists.
+fn csharp_method_call_hop_spelling(hop: &str) -> Option<(String, usize)> {
+    let open = hop.find('(')?;
+    let (method_name, arguments) = hop.split_at(open);
+    if method_name.is_empty() {
+        return None;
+    }
+    let arguments = arguments.strip_prefix('(')?.strip_suffix(')')?;
+    let arity = if arguments.is_empty() {
+        0
+    } else {
+        arguments.parse::<usize>().ok()?
+    };
+    Some((method_name.to_string(), arity))
+}
+
+/// Resolves an arity-matched non-static method-call hop such as `inner()` or
+/// `inner(1)` in `group.inner().helper(...)` to the declared type of the
+/// dispatched method, resolving the return type in the method's own file and
+/// enclosing scope. Static hops, arity-mismatched hops, and unknown,
+/// ambiguous, primitive, or `void` return types fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# method-call hop type resolution inputs explicit"
+)]
+fn resolve_csharp_method_call_hop_binding<'a>(
+    dispatch_source_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    method_name: &str,
+    hop_arity: usize,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
+    let Some(symbol_id) = resolve_csharp_instance_method_on_binding(
+        dispatch_source_symbol,
+        binding,
+        method_name,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        hop_arity,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(method) = raw_symbols
+        .iter()
+        .find(|candidate| candidate.symbol_id == symbol_id)
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method.return_type.as_deref() else {
+        return Ok(None);
+    };
+    if return_type.is_empty() {
+        return Ok(None);
+    }
+    let Some(next_binding) = resolve_csharp_receiver_type_binding(
+        method,
+        return_type,
+        raw_symbols,
+        semantic_path_index,
+        csharp_source_namespace_path(method, raw_symbols).flatten(),
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some((next_binding, method)))
 }
 
 /// Dispatches a C# instance member call on an already-resolved receiver

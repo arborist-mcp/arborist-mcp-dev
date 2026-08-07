@@ -184,6 +184,93 @@ fn collect_direct_same_type_calls_from_node(
     Ok(())
 }
 
+/// Builds the spelling of an instance member chain whose leading receiver
+/// is a locally bound value or `this`, such as `group.inner().helper` or
+/// `this.holder.inner().helper`. Field, property, and event hops keep their
+/// plain names; method-call hops encode their argument count (`inner()` or
+/// `inner(1)`) so the resolver can require an arity match. Unbound leading
+/// receivers and non-instance bases (object creations, namespaces, static
+/// types) produce no spelling and fail closed.
+fn csharp_instance_member_chain_spelling(
+    node: Node<'_>,
+    source: &str,
+    bindings: &BTreeMap<String, String>,
+) -> Result<Option<String>> {
+    let mut segments = Vec::new();
+    let mut current = node;
+    loop {
+        match current.kind() {
+            "member_access_expression" => {
+                let Some(name) = current.child_by_field_name("name") else {
+                    return Ok(None);
+                };
+                let name = crate::language::node_text(name, source)?.trim();
+                if name.is_empty() {
+                    return Ok(None);
+                }
+                segments.push(name.to_string());
+                let Some(expression) = current.child_by_field_name("expression") else {
+                    return Ok(None);
+                };
+                current = expression;
+            }
+            "invocation_expression" => {
+                let Some(function) = current.child_by_field_name("function") else {
+                    return Ok(None);
+                };
+                if function.kind() != "member_access_expression" {
+                    return Ok(None);
+                }
+                let Some(name) = function.child_by_field_name("name") else {
+                    return Ok(None);
+                };
+                let name = crate::language::node_text(name, source)?.trim();
+                if name.is_empty() {
+                    return Ok(None);
+                }
+                let Some(arguments) = current.child_by_field_name("arguments") else {
+                    return Ok(None);
+                };
+                let mut cursor = arguments.walk();
+                let arity = arguments.named_children(&mut cursor).count();
+                if arity == 0 {
+                    segments.push(format!("{name}()"));
+                } else {
+                    segments.push(format!("{name}({arity})"));
+                }
+                let Some(expression) = function.child_by_field_name("expression") else {
+                    return Ok(None);
+                };
+                current = expression;
+            }
+            "identifier" => {
+                let base = crate::language::node_text(current, source)?.trim();
+                if base.is_empty() {
+                    return Ok(None);
+                }
+                // A locally bound receiver records an instance chain only
+                // when its declared type is usable; untyped bindings (`var`
+                // locals, lambda parameters) fail closed.
+                if bindings
+                    .get(base)
+                    .is_none_or(|type_name| type_name.is_empty())
+                {
+                    return Ok(None);
+                }
+                segments.push(base.to_string());
+                break;
+            }
+            "this" => {
+                segments.push("this".to_string());
+                break;
+            }
+            _ => return Ok(None),
+        }
+    }
+    segments.reverse();
+    Ok(Some(segments.join(".")))
+}
+
 fn csharp_direct_invocation_name(
     node: Node<'_>,
     source: &str,
@@ -196,6 +283,18 @@ fn csharp_direct_invocation_name(
         let Some(member) = node.child_by_field_name("name") else {
             return Ok(None);
         };
+        // An instance member chain whose leading receiver is a locally bound
+        // value or `this`, such as `group.inner().helper` or
+        // `this.holder.inner().helper`, records one chain fact with
+        // method-call hops encoded as `inner()` or `inner(1)`. Unbound
+        // receivers fall through to the static type-qualified handling below.
+        if matches!(
+            receiver.kind(),
+            "invocation_expression" | "member_access_expression"
+        ) && let Some(spelling) = csharp_instance_member_chain_spelling(node, source, bindings)?
+        {
+            return Ok(Some(spelling));
+        }
         if receiver.kind() == "this" {
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("this.{name}")));
