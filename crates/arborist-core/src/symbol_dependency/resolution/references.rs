@@ -3465,14 +3465,15 @@ fn resolve_java_qualified_initializer_function_path(
 /// referenced field's declared type path. `this.`-rooted and `super.`-rooted
 /// references resolve the field chain on the enclosing or direct-superclass
 /// type path, bare names resolve through the enclosing class field bindings or
-/// a unique explicit static field import, and qualified names such as
+/// a unique explicit static field import, qualified names such as
 /// `Util.STATIC_FIELD` resolve a static field on the named type, bare names
 /// and bare field chains also resolve fields inherited from a unique
-/// direct-superclass chain. Receivers that are bound locals or parameters,
-/// unknown or ambiguous fields, fields
-/// without a usable declared type, and bound-name shadowing of qualified type
-/// receivers fail closed so field-initializer inference stays conservative and
-/// acyclic.
+/// direct-superclass chain, and bound receivers (parameters, declared locals,
+/// or enclosing-class fields) with a usable declared type resolve field
+/// chains such as `local.entry` on that type. Unknown or ambiguous fields,
+/// fields without a usable declared type, bound receivers without a usable
+/// declared type, and bound-name shadowing of qualified type receivers fail
+/// closed so field-initializer inference stays conservative and acyclic.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field initializer resolution inputs explicit"
@@ -3597,15 +3598,52 @@ fn resolve_java_initializer_field_type_path(
             deadline,
         );
     }
+    let segments = reference_name.split('.').collect::<Vec<_>>();
+    if segments[0].is_empty() {
+        return Ok(None);
+    }
+    let mut resolved = BTreeSet::new();
+    // A dotted reference whose leading segment is a locally bound value
+    // (formal parameter, declared local, or enclosing-class field) is a field
+    // chain such as `local.entry` on that value's declared type; the bound
+    // value shadows any same-named type, so no qualified `Type.field`
+    // interpretation is attempted. Bound values without a usable declared
+    // type (factory-inferred or ambiguous `var` receivers) fail closed
+    // instead of recursing.
+    if bindings.contains(segments[0]) {
+        let Some(type_name) = bindings.type_for(segments[0]) else {
+            return Ok(None);
+        };
+        if let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )? && let Some(chain_type_path) = resolve_java_field_chain_type_path(
+            &type_path,
+            &segments[1..].join("."),
+            false,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )? {
+            resolved.insert(chain_type_path);
+        }
+        return if resolved.len() == 1 {
+            Ok(resolved.into_iter().next())
+        } else {
+            Ok(None)
+        };
+    }
     // Qualified `Type.field` references resolve the type from progressively
     // longer prefixes so nested types such as `Outer.Inner.STATIC` work, and
     // require the first field hop to be static on that type. Competing
     // resolutions across prefixes fail closed.
-    let segments = reference_name.split('.').collect::<Vec<_>>();
-    if segments[0].is_empty() || bindings.contains(segments[0]) {
-        return Ok(None);
-    }
-    let mut resolved = BTreeSet::new();
     // A dotted reference whose leading segment names an enclosing-class or
     // inherited field is a bare field chain such as `holder.entry` and
     // resolves on the enclosing type path through the same field-chain rules;

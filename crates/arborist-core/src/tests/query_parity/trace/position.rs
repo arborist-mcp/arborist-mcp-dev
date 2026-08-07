@@ -13669,7 +13669,7 @@ class Caller {
     let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
     assert!(
         live.callers.is_empty(),
-        "factory-inferred copies, non-static type fields, unknown fields, unknown types, unknown `this`/`super` fields, and bound-receiver field chains must fail closed"
+        "factory-inferred copies, non-static type fields, unknown fields, unknown types, unknown `this`/`super` fields, and bound-receiver field chains with unknown fields must fail closed"
     );
 
     rebuild_symbol_index(&dir, &db_path).unwrap();
@@ -13841,5 +13841,168 @@ class Caller extends Base {
     assert_eq!(
         callers,
         ["com::example::Caller::run", "com::example::Caller::runBare"]
+    );
+}
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_bound_receivers() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+}
+class Holder {
+    Group group = new Group();
+    Group inner() { return group; }
+}
+class Caller {
+    Holder holder = new Holder();
+    int fieldChain() {
+        var v = holder.group.entry;
+        return v.helper(1);
+    }
+    int fieldHop() {
+        var v = holder.inner().entry;
+        return v.helper(1);
+    }
+    int paramChain(Holder local) {
+        var v = local.group.entry;
+        return v.helper(1);
+    }
+    int paramHop(Holder local) {
+        var v = local.inner().entry;
+        return v.helper(1);
+    }
+    int declaredLocal() {
+        Holder local = new Holder();
+        var v = local.group.entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 5);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::declaredLocal",
+            "com::example::Caller::fieldChain",
+            "com::example::Caller::fieldHop",
+            "com::example::Caller::paramChain",
+            "com::example::Caller::paramHop"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 5);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::declaredLocal",
+            "com::example::Caller::fieldChain",
+            "com::example::Caller::fieldHop",
+            "com::example::Caller::paramChain",
+            "com::example::Caller::paramHop"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_field_receiver_calls_through_bound_receivers_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Group { Entry entry = new Entry(); Group inner() { return this; } }
+class Caller {
+    Group group = new Group();
+    int fieldChain() {
+        var v = group.entry;
+        return v.helper(1);
+    }
+    int paramChain(Group g) {
+        var v = g.entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::fieldChain",
+            "com::example::Caller::paramChain"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::fieldChain",
+            "com::example::Caller::paramChain"
+        ]
     );
 }
