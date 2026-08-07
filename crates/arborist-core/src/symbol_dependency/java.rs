@@ -567,10 +567,14 @@ fn java_initializer_call_from_declarator(
 
 /// Records a `var` local whose initializer is a field-access value reference
 /// such as `var value = this.helper;`, `var value = helper;`,
-/// `var value = Util.STATIC_HELPER;`, or a bare statically imported field
-/// name. Bare identifiers and `field_access` expressions record the reference
-/// spelling for trace-time field resolution; all other initializers record
-/// nothing and fail closed.
+/// `var value = Util.STATIC_HELPER;`, a bare statically imported field name,
+/// or an anonymous constructor-rooted chain such as
+/// `var value = new Group() { }.entry`. Bare identifiers and `field_access`
+/// expressions record the reference spelling for trace-time field resolution;
+/// anonymous constructor roots canonicalize to `new Group().entry` so the
+/// resolver dispatches on the constructed class type, unless the anonymous
+/// body declares a same-named field that would shadow the constructed type's
+/// field. All other initializers record nothing and fail closed.
 fn java_initializer_field_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
@@ -591,7 +595,23 @@ fn java_initializer_field_access_from_declarator(
             if object_text.is_empty() || field_text.is_empty() {
                 return Ok(None);
             }
-            format!("{object_text}.{field_text}")
+            if object.kind() == "object_creation_expression" && java_has_anonymous_body(object) {
+                if java_anonymous_constructor_declared_field_names(object, source)?
+                    .contains(field_text)
+                {
+                    return Ok(None);
+                }
+                let Some(type_node) = object.child_by_field_name("type") else {
+                    return Ok(None);
+                };
+                let type_name = node_text(type_node, source)?.trim();
+                let Some(type_name) = java_dotted_type_name(type_name) else {
+                    return Ok(None);
+                };
+                format!("new {type_name}().{field_text}")
+            } else {
+                format!("{object_text}.{field_text}")
+            }
         }
         "identifier" => {
             let text = node_text(initializer, source)?.trim();
@@ -603,6 +623,52 @@ fn java_initializer_field_access_from_declarator(
         _ => return Ok(None),
     };
     Ok(Some(reference))
+}
+
+/// Returns whether an `object_creation_expression` carries an anonymous-class
+/// body.
+fn java_has_anonymous_body(node: tree_sitter::Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(|child| child.kind() == "class_body")
+}
+
+/// Returns the names of fields declared directly in an anonymous-class body on
+/// `node`. Anonymous `var` field-initializer chains resolve on the constructed
+/// class type only when the body does not declare a same-named field; a body
+/// field declaration would shadow the constructed type's field, so it fails
+/// closed conservatively.
+fn java_anonymous_constructor_declared_field_names(
+    node: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<BTreeSet<String>> {
+    let mut declared = BTreeSet::new();
+    if !java_has_anonymous_body(node) {
+        return Ok(declared);
+    }
+    let mut cursor = node.walk();
+    let Some(body) = node
+        .named_children(&mut cursor)
+        .find(|child| child.kind() == "class_body")
+    else {
+        return Ok(declared);
+    };
+    let mut body_cursor = body.walk();
+    for child in body.named_children(&mut body_cursor) {
+        if child.kind() != "field_declaration" {
+            continue;
+        }
+        let mut declarator_cursor = child.walk();
+        for declarator in child.children_by_field_name("declarator", &mut declarator_cursor) {
+            if let Some(name_node) = declarator.child_by_field_name("name") {
+                let name = node_text(name_node, source)?.trim();
+                if !name.is_empty() {
+                    declared.insert(name.to_string());
+                }
+            }
+        }
+    }
+    Ok(declared)
 }
 
 fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {

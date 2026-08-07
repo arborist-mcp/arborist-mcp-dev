@@ -10700,6 +10700,168 @@ class Caller {
 }
 
 #[test]
+fn traces_java_var_anonymous_field_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Group { Helper entry = new Helper(); }
+class Outer { static class Inner { Helper entry = new Helper(); } }
+class Caller {
+    int varField() {
+        var v = new Group() { }.entry;
+        return v.helper(1);
+    }
+    int varFieldWithBody() {
+        var v = new Group() { int other() { return 0; } }.entry;
+        return v.helper(2);
+    }
+    int varFieldNested() {
+        var v = new Outer.Inner() { }.entry;
+        return v.helper(3);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 3);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::varField",
+            "com::example::Caller::varFieldNested",
+            "com::example::Caller::varFieldWithBody"
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 3);
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "com::example::Caller::varField",
+            "com::example::Caller::varFieldNested",
+            "com::example::Caller::varFieldWithBody"
+        ]
+    );
+}
+
+#[test]
+fn traces_java_var_anonymous_field_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Group { Helper entry = new Helper(); }
+class Caller {
+    int run() {
+        var v = new Group() { }.entry;
+        return v.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_var_anonymous_field_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Group {
+    Helper entry = new Helper();
+    Group entry2() { return this; }
+}
+class Caller {
+    int shadowedField() {
+        var v = new Group() { Helper entry = new Helper(); }.entry;
+        return v.helper(1);
+    }
+    int missingType() {
+        var v = new Missing() { }.entry;
+        return v.helper(1);
+    }
+    int unknownChain() {
+        var v = new Group() { }.missing.entry;
+        return v.helper(1);
+    }
+    int methodHopChain() {
+        var v = new Group() { }.entry2().entry;
+        return v.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    let target = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "anonymous var field-initializer chains with shadowing bodies, unknown constructed types, unknown chains, and method-hop chains must fail closed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert!(persisted.callers.is_empty());
+}
+
+#[test]
 fn traces_java_interface_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
