@@ -2316,13 +2316,26 @@ fn resolve_csharp_initializer_chain_binding(
         if bindings.contains(chain) {
             return Ok(None);
         }
-        return resolve_csharp_static_imported_field_initializer_binding(
+        if let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
             source_symbol,
             chain,
             &[],
             raw_symbols,
             semantic_path_index,
             source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(binding));
+        }
+        return resolve_csharp_inherited_field_initializer_binding(
+            source_symbol,
+            chain,
+            &[],
+            raw_symbols,
+            semantic_path_index,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -2538,13 +2551,26 @@ fn resolve_csharp_initializer_chain_binding(
         return Ok(Some(binding));
     }
     if !bindings.contains(receiver_name) {
-        return resolve_csharp_static_imported_field_initializer_binding(
+        if let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
             source_symbol,
             receiver_name,
             &hops,
             raw_symbols,
             semantic_path_index,
             source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )? {
+            return Ok(Some(binding));
+        }
+        return resolve_csharp_inherited_field_initializer_binding(
+            source_symbol,
+            receiver_name,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -2827,6 +2853,138 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
         return Ok(None);
     };
     Ok(Some(binding))
+}
+
+/// Resolves the receiver type binding for a `var` local initialized from a
+/// bare inherited member root such as `var helper = holder` or
+/// `var helper = holder.entry` where `holder` is a field or property declared
+/// on an ancestor of the enclosing type. The nearest ancestor that declares
+/// the member pins the receiver to the member's declared type; remaining hops
+/// walk the same member-chain rules on that type. Names bound to unusable
+/// local receivers, static type-qualified roots, and static-imported members
+/// are handled by the caller before this path. Missing, primitive, `void`,
+/// and unresolvable members return `None` and fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# inherited field initializer binding inputs explicit"
+)]
+fn resolve_csharp_inherited_field_initializer_binding<'a>(
+    source_symbol: &'a IndexedSymbol,
+    member_name: &str,
+    hops: &[&str],
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    if member_name.is_empty()
+        || member_name.contains('.')
+        || !is_safe_csharp_identifier(member_name)
+        || hops.iter().any(|hop| hop.is_empty())
+    {
+        return Ok(None);
+    }
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let enclosing_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == scope_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .collect::<Vec<_>>();
+    if enclosing_candidates.len() != 1 {
+        return Ok(None);
+    }
+    let mut ancestor_symbol = enclosing_candidates[0];
+    // Walk the base-type chain from the nearest ancestor outward; the first
+    // ancestor that declares the member pins the receiver. The bound keeps
+    // malformed cyclic inheritance from looping.
+    for _ in 0..64 {
+        let Some(base_binding) = csharp_base_type_binding_for_type(
+            ancestor_symbol,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(base_type_path) = csharp_dispatchable_type_path(
+            ancestor_symbol,
+            raw_symbols,
+            &base_binding,
+            csharp_is_type_declaration,
+        ) else {
+            return Ok(None);
+        };
+        let base_indexes = semantic_path_index
+            .get(&base_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if base_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let base_symbol = &raw_symbols[base_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &base_symbol.file_path,
+            base_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if member_bindings.contains(member_name) {
+            let Some(member_type_name) = member_bindings.type_for(member_name) else {
+                return Ok(None);
+            };
+            let Some(member_binding) = resolve_csharp_receiver_type_binding(
+                base_symbol,
+                &member_type_name,
+                raw_symbols,
+                semantic_path_index,
+                csharp_source_namespace_path(base_symbol, raw_symbols).flatten(),
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            if hops.is_empty() {
+                return Ok(Some(member_binding));
+            }
+            let Some((binding, _)) = resolve_csharp_member_chain_binding(
+                base_symbol,
+                member_binding,
+                hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(binding));
+        }
+        ancestor_symbol = base_symbol;
+    }
+    Ok(None)
 }
 
 /// Walks the intermediate hops of a receiver chain such as

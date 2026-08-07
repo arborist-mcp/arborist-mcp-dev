@@ -5687,6 +5687,192 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_var_inherited_field_receiver_instance_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Entry entry = new Entry();
+}
+class GrandBase {
+    public Entry direct = new Entry();
+}
+class Base : GrandBase {
+    public Holder holder = new Holder();
+    public static Holder STATIC_HOLDER = new Holder();
+}
+class Caller : Base {
+    int BareField() { var v = holder; return v.entry.Run(1); }
+    int BareStatic() { var v = STATIC_HOLDER; return v.entry.Run(1); }
+    int BareChain() { var v = holder.entry; return v.Run(1); }
+    int GrandBare() { var v = direct; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::BareChain",
+            "Demo::Caller::BareField",
+            "Demo::Caller::BareStatic",
+            "Demo::Caller::GrandBare",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::BareChain",
+            "Demo::Caller::BareField",
+            "Demo::Caller::BareStatic",
+            "Demo::Caller::GrandBare",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_inherited_field_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Entry entry = new Entry();
+}
+class Base {
+    public Holder holder = new Holder();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller : Base {
+    int Call() { var v = holder; return v.entry.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_inherited_field_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Entry entry = new Entry();
+}
+class Base {
+    public Holder holder = new Holder();
+    public static int COUNT = 1;
+}
+class Caller : Base {
+    int MissingInherited() { var v = missing; return v.Run(1); }
+    int PrimitiveInherited() { var v = COUNT; return v.Run(1); }
+    int Control() { var v = holder; return v.entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare inherited member root pins its
+    // receiver only when a unique ancestor type declares the member with a
+    // usable declared type; missing members and primitive inherited statics
+    // fail closed, while an inherited field root still traces when it
+    // resolves.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingInherited", Vec::<&str>::new()),
+        ("Demo::Caller::PrimitiveInherited", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Entry::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
