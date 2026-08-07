@@ -4237,6 +4237,201 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Helper.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+    public static int Utility(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace Demo;
+class Holder {
+    public Helper helper = new Helper();
+}
+class Base {
+    public Helper Make() => new Helper();
+    public Holder holder = new Holder();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller : Base {
+    int MethodHop() => base.Make().Run(1);
+    int FieldThenMethodHop() => base.holder.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    for (target, callers) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::FieldThenMethodHop",
+                "Demo::Caller::MethodHop",
+            ],
+        ),
+        ("Demo::Base::Make", vec!["Demo::Caller::MethodHop"]),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            callers,
+            "{target}"
+        );
+    }
+}
+
+#[test]
+fn traces_csharp_base_member_chain_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let base_path = dir.join("Base.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &base_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Base {
+    public Helper Make() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller : Base {
+    int Call() => base.Make().Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_base_member_chain_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+    public static int Utility(int value) => value;
+}
+class Base {
+    public Helper Make() => new Helper();
+    public static Helper StaticMake() => new Helper();
+    public int Tag() => 1;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller : Base {
+    int UnknownHop() => base.Missing().Run(1);
+    int StaticHop() => base.StaticMake().Run(1);
+    int PrimitiveReturnHop() => base.Tag().Run(1);
+    int MissingFinalMember() => base.Make().Nope(1);
+    int StaticFinalMember() => base.Make().Utility(1);
+}
+",
+    )
+    .unwrap();
+
+    // The base-rooted chain itself must fail closed: no callee is traced for
+    // the unresolved final member (`.Run` on a primitive, a missing/static
+    // final member, or a static/unknown hop). Legitimate intermediate
+    // base-rooted calls such as `base.Tag()` or `base.Make()` still trace as
+    // direct callees, as they did before base-rooted chain support.
+    for (caller, expected) in [
+        ("Demo::Caller::UnknownHop", Vec::<&str>::new()),
+        ("Demo::Caller::StaticHop", Vec::<&str>::new()),
+        ("Demo::Caller::PrimitiveReturnHop", vec!["Demo::Base::Tag"]),
+        ("Demo::Caller::MissingFinalMember", vec!["Demo::Base::Make"]),
+        ("Demo::Caller::StaticFinalMember", vec!["Demo::Base::Make"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

@@ -513,6 +513,28 @@ fn resolve_reference_path_with_deadline<'a>(
                 },
             ));
         }
+        // A `base.`-rooted member chain such as `base.member.helper(...)` or
+        // `base.inner().helper(...)` walks each intermediate hop on the unique
+        // class/record base type before dispatching the final member; unknown
+        // or unresolvable hops fail closed instead of falling through to
+        // static type calls. Plain `base.method()` calls keep the
+        // direct-base-chain contract below.
+        if let Some(chain) = reference_name.strip_prefix("base.")
+            && !chain.is_empty()
+            && chain.contains('.')
+        {
+            return resolve_csharp_base_member_chain_call(
+                source_symbol,
+                chain,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                call_arity,
+                deadline,
+            );
+        }
         if let Some(method_name) = reference_name.strip_prefix("base.") {
             if method_name.is_empty() || method_name.contains('.') {
                 return Ok(None);
@@ -1950,6 +1972,110 @@ fn resolve_csharp_this_member_chain_call(
         type_symbol,
         CSharpBaseTypeBinding {
             semantic_type_path: scope_path.to_string(),
+            is_global_qualified: true,
+            alias_name: None,
+            namespace_import_paths: Vec::new(),
+        },
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        dispatch_source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
+/// Resolves a `base.`-rooted member chain such as `base.member.helper(...)`
+/// or `base.inner().helper(...)`. The enclosing type must be uniquely declared
+/// in the source file and must have exactly one unique class/record base
+/// declaration; each intermediate hop walks the member-chain and method-call
+/// hop rules on the base type before the final member dispatches with the
+/// existing class/record, struct, and interface instance rules. Unknown,
+/// ambiguous, or unresolvable hops and missing or static final members fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# base-rooted member chain resolution inputs explicit"
+)]
+fn resolve_csharp_base_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    chain: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+        return Ok(None);
+    };
+    let type_candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.file_path == source_symbol.file_path
+                && candidate.semantic_path == scope_path
+                && csharp_is_type_declaration(candidate)
+        })
+        .collect::<Vec<_>>();
+    if type_candidates.len() != 1 {
+        return Ok(None);
+    }
+    let type_symbol = type_candidates[0];
+    let Some(base_binding) = csharp_base_type_binding_for_type(
+        type_symbol,
+        raw_symbols,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(base_type_path) = csharp_base_type_path(type_symbol, raw_symbols, &base_binding)
+    else {
+        return Ok(None);
+    };
+    let base_indexes = semantic_path_index
+        .get(&base_type_path)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+        .collect::<Vec<_>>();
+    if base_indexes.len() != 1 {
+        return Ok(None);
+    }
+    let base_symbol = &raw_symbols[base_indexes[0]];
+    let mut hops = chain.split('.').collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    let Some(final_member) = hops.pop() else {
+        return Ok(None);
+    };
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        base_symbol,
+        CSharpBaseTypeBinding {
+            semantic_type_path: base_type_path,
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),

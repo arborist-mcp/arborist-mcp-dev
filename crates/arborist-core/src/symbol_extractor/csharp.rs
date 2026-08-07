@@ -264,6 +264,13 @@ fn csharp_instance_member_chain_spelling(
                 segments.push("this".to_string());
                 break;
             }
+            "base" => {
+                // A base-rooted chain such as `base.inner().helper` records
+                // the `base` keyword as the leading segment; the resolver
+                // dispatches the remaining hops on the unique base type.
+                segments.push("base".to_string());
+                break;
+            }
             "object_creation_expression" => {
                 // A constructor-rooted chain such as
                 // `new Group().inner().helper` records the constructed type
