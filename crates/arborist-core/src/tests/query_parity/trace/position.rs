@@ -3086,6 +3086,183 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_struct_receiver_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+struct Point {
+    public int Norm(int value) => value;
+    public static int StaticNorm(int value) => value;
+}
+interface IPoint {
+    int ViaInterface(int value);
+}
+struct Worker : IPoint {
+    public int ViaInterface(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int ParameterReceiver(Point point) => point.Norm(1);
+    int LocalReceiver() { Point point = new Point(); return point.Norm(1); }
+    Point field = new Point();
+    int FieldReceiver() => field.Norm(1);
+    int VarConstructorReceiver() { var point = new Point(); return point.Norm(1); }
+    int ConstructorReceiver() => new Point().Norm(1);
+    int StaticThroughStruct(Point point) => point.StaticNorm(1);
+    int StructInterfaceMethod(Worker worker) => worker.ViaInterface(1);
+}
+",
+    )
+    .unwrap();
+
+    let target = "Demo::Point::Norm";
+    let callers = [
+        "Demo::Caller::ConstructorReceiver",
+        "Demo::Caller::FieldReceiver",
+        "Demo::Caller::LocalReceiver",
+        "Demo::Caller::ParameterReceiver",
+        "Demo::Caller::VarConstructorReceiver",
+    ];
+    let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        live.callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        callers
+    );
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+    assert_eq!(
+        persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        callers
+    );
+
+    // A struct implementing an interface dispatches to the struct's own
+    // method declaration, and a static struct member reached through an
+    // instance receiver fails closed.
+    let interface_live =
+        trace_symbol_graph(&dir, "Demo::Worker::ViaInterface", TraceDirection::Callers).unwrap();
+    assert_eq!(
+        interface_live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        ["Demo::Caller::StructInterfaceMethod"]
+    );
+    let static_live =
+        trace_symbol_graph(&dir, "Demo::Point::StaticNorm", TraceDirection::Callers).unwrap();
+    assert!(static_live.callers.is_empty());
+}
+
+#[test]
+fn traces_csharp_struct_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+struct Point {
+    public int Norm(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call(Point point) => point.Norm(1);
+    int Constructed() => new Point().Norm(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Point::Norm",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 2);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+    assert_eq!(live.callers[1].symbol_id, "Demo::Caller::Constructed");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Point::Norm",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 2);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+    assert_eq!(persisted.callers[1].symbol_id, "Demo::Caller::Constructed");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_struct_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+struct Point {
+    public int Norm(int value) => value;
+    public static int StaticNorm(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int MissingMethod(Point point) => point.Nope(1);
+    int StaticMethod(Point point) => point.StaticNorm(1);
+    int UnknownStruct(NotIndexed point) => point.Norm(1);
+}
+",
+    )
+    .unwrap();
+
+    for caller in [
+        "Demo::Caller::MissingMethod",
+        "Demo::Caller::StaticMethod",
+        "Demo::Caller::UnknownStruct",
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert!(live.callees.is_empty(), "{caller}");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert!(persisted.callees.is_empty(), "{caller}");
+    }
+}
+
+#[test]
 fn traces_csharp_nested_declared_type_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

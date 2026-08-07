@@ -1586,6 +1586,18 @@ fn resolve_csharp_instance_receiver_call(
     )? {
         return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
     }
+    // A struct-typed receiver dispatches on the struct's own method
+    // declaration; structs have no ancestor chain.
+    if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
+        source_symbol,
+        &binding,
+        member_name,
+        raw_symbols,
+        semantic_path_index,
+        call_arity,
+    ) {
+        return Ok(CSharpInstanceReceiverResolution::Resolved(symbol_id));
+    }
     // The declared type resolves in the caller's namespace/import scope; the
     // instance method dispatches on that type and its unique class/record
     // ancestor chain.
@@ -1680,6 +1692,18 @@ fn resolve_csharp_constructor_receiver_call(
     else {
         return Ok(CSharpConstructorReceiverResolution::Blocked);
     };
+    // A struct-typed receiver dispatches on the struct's own method
+    // declaration; structs have no ancestor chain.
+    if let Some(symbol_id) = resolve_csharp_struct_receiver_call(
+        source_symbol,
+        &binding,
+        &member_chain,
+        raw_symbols,
+        semantic_path_index,
+        call_arity,
+    ) {
+        return Ok(CSharpConstructorReceiverResolution::Resolved(symbol_id));
+    }
     // The constructed type resolves in the caller's namespace/import scope; the
     // instance method dispatches on that type and its unique class/record
     // ancestor chain.
@@ -1959,6 +1983,36 @@ fn resolve_csharp_interface_chain_method(
         .unwrap_or(CSharpInterfaceChainMethodResolution::NoMethod))
 }
 
+/// Dispatches an instance call on a struct-typed receiver to a unique
+/// non-static, non-`params`, exact-arity method declared directly on the
+/// struct. Structs cannot inherit, so there is no ancestor walk; unknown,
+/// ambiguous, static, missing, or non-struct declared types return `None` and
+/// fail closed.
+fn resolve_csharp_struct_receiver_call(
+    source_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    member_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    call_arity: usize,
+) -> Option<String> {
+    let struct_type_path = csharp_struct_type_path(source_symbol, raw_symbols, binding)?;
+    let target_path = format!("{struct_type_path}::{member_name}");
+    resolve_csharp_candidate(
+        raw_symbols,
+        semantic_path_index,
+        &target_path,
+        Some(source_symbol),
+        call_arity,
+        CSharpCandidateRequirements {
+            node_kind: "method_declaration",
+            require_static: false,
+            require_instance: true,
+            require_same_file: false,
+        },
+    )
+}
+
 /// Resolves a declared interface type name to a unique indexed interface
 /// path. Simple names resolve through the caller's namespace, enclosing
 /// namespaces, namespace imports, and then the global scope; dotted names
@@ -2138,32 +2192,67 @@ fn csharp_base_type_path(
     raw_symbols: &[IndexedSymbol],
     binding: &CSharpBaseTypeBinding,
 ) -> Option<String> {
+    csharp_dispatchable_type_path(
+        source_symbol,
+        raw_symbols,
+        binding,
+        csharp_is_base_constructible_type,
+    )
+}
+
+/// Resolves the receiver's declared type to a unique struct path using the
+/// same namespace/import/alias rules as base types but restricted to structs.
+fn csharp_struct_type_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+) -> Option<String> {
+    csharp_dispatchable_type_path(
+        source_symbol,
+        raw_symbols,
+        binding,
+        csharp_is_struct_declaration,
+    )
+}
+
+fn csharp_dispatchable_type_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    binding: &CSharpBaseTypeBinding,
+    is_target_type: fn(&IndexedSymbol) -> bool,
+) -> Option<String> {
     if binding.alias_name.as_deref().is_some_and(|alias_name| {
         !csharp_alias_name_is_unshadowed(alias_name, source_symbol, raw_symbols)
     }) {
         return None;
     }
     if binding.is_global_qualified {
-        return csharp_unique_base_constructible_type_path(
+        return csharp_unique_dispatchable_type_path(
             raw_symbols,
             &binding.semantic_type_path,
+            is_target_type,
         );
     }
     if binding.semantic_type_path.contains("::") {
-        return csharp_unshadowed_qualified_base_type_path(source_symbol, raw_symbols, binding);
+        return csharp_unshadowed_qualified_dispatchable_type_path(
+            source_symbol,
+            raw_symbols,
+            binding,
+            is_target_type,
+        );
     }
 
-    let base_type_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
+    let type_path = csharp_source_namespace_path(source_symbol, raw_symbols)?
         .map(|namespace_path| format!("{namespace_path}::{}", binding.semantic_type_path))
         .unwrap_or_else(|| binding.semantic_type_path.clone());
     let local_type_candidates = raw_symbols
         .iter()
         .filter(|candidate| {
-            candidate.semantic_path == base_type_path && csharp_is_type_declaration(candidate)
+            candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
         })
         .count();
     if local_type_candidates != 0 {
-        return csharp_unique_base_constructible_type_path(raw_symbols, &base_type_path);
+        return csharp_unique_dispatchable_type_path(raw_symbols, &type_path, is_target_type);
     }
 
     let mut imported_type_paths = BTreeSet::new();
@@ -2181,7 +2270,7 @@ fn csharp_base_type_path(
             .collect::<Vec<_>>();
         match candidates.as_slice() {
             [] => {}
-            [candidate] if csharp_is_base_constructible_type(candidate) => {
+            [candidate] if is_target_type(candidate) => {
                 imported_type_paths.insert(type_path);
             }
             _ => return None,
@@ -2190,10 +2279,11 @@ fn csharp_base_type_path(
     (imported_type_paths.len() == 1).then(|| imported_type_paths.into_iter().next().unwrap())
 }
 
-fn csharp_unshadowed_qualified_base_type_path(
+fn csharp_unshadowed_qualified_dispatchable_type_path(
     source_symbol: &IndexedSymbol,
     raw_symbols: &[IndexedSymbol],
     binding: &CSharpBaseTypeBinding,
+    is_target_type: fn(&IndexedSymbol) -> bool,
 ) -> Option<String> {
     let base_type_path = binding.semantic_type_path.as_str();
     if let Some(mut namespace_path) = csharp_source_namespace_path(source_symbol, raw_symbols)? {
@@ -2211,12 +2301,13 @@ fn csharp_unshadowed_qualified_base_type_path(
             namespace_path = parent_namespace_path;
         }
     }
-    csharp_unique_base_constructible_type_path(raw_symbols, base_type_path)
+    csharp_unique_dispatchable_type_path(raw_symbols, base_type_path, is_target_type)
 }
 
-fn csharp_unique_base_constructible_type_path(
+fn csharp_unique_dispatchable_type_path(
     raw_symbols: &[IndexedSymbol],
     type_path: &str,
+    is_target_type: fn(&IndexedSymbol) -> bool,
 ) -> Option<String> {
     let candidates = raw_symbols
         .iter()
@@ -2224,8 +2315,7 @@ fn csharp_unique_base_constructible_type_path(
             candidate.semantic_path == type_path && csharp_is_type_declaration(candidate)
         })
         .collect::<Vec<_>>();
-    (candidates.len() == 1 && csharp_is_base_constructible_type(candidates[0]))
-        .then(|| type_path.to_string())
+    (candidates.len() == 1 && is_target_type(candidates[0])).then(|| type_path.to_string())
 }
 
 fn csharp_base_constructor_target_path(
@@ -2322,6 +2412,10 @@ fn csharp_is_base_constructible_type(symbol: &IndexedSymbol) -> bool {
         symbol.node_kind.as_str(),
         "class_declaration" | "record_declaration"
     )
+}
+
+fn csharp_is_struct_declaration(symbol: &IndexedSymbol) -> bool {
+    symbol.node_kind == "struct_declaration"
 }
 
 #[allow(clippy::too_many_arguments)]
