@@ -4285,11 +4285,20 @@ fn resolve_csharp_receiver_type_binding(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<CSharpBaseTypeBinding>> {
-    if !type_name.starts_with("global::")
+    // A nullable reference-type spelling such as `Helper?` or `Outer.Inner?`
+    // dispatches on the underlying type; a nullable value type such as
+    // `Point?` does not expose the underlying struct's members directly, so
+    // it fails closed below.
+    let nullable = type_name.ends_with('?');
+    let type_name = type_name.strip_suffix('?').unwrap_or(type_name);
+    if type_name.is_empty() {
+        return Ok(None);
+    }
+    let binding = if !type_name.starts_with("global::")
         && let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_name)
         && semantic_path.contains("::")
     {
-        return Ok(csharp_scoped_receiver_type_path(
+        csharp_scoped_receiver_type_path(
             source_symbol,
             raw_symbols,
             semantic_path_index,
@@ -4301,17 +4310,28 @@ fn resolve_csharp_receiver_type_binding(
             is_global_qualified: true,
             alias_name: None,
             namespace_import_paths: Vec::new(),
-        }));
+        })
+    } else {
+        resolve_csharp_declared_type_binding_for_reference(
+            &source_symbol.file_path,
+            type_name,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(binding) = binding else {
+        return Ok(None);
+    };
+    if nullable && csharp_struct_type_path(source_symbol, raw_symbols, &binding).is_some() {
+        // A nullable value type such as `Point?` does not expose the
+        // underlying struct's members directly; the receiver must be
+        // accessed through `.Value`, so dispatch fails closed.
+        return Ok(None);
     }
-    resolve_csharp_declared_type_binding_for_reference(
-        &source_symbol.file_path,
-        type_name,
-        source_namespace_path,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )
+    Ok(Some(binding))
 }
 
 /// Dispatches an instance call on an interface-typed receiver to a unique

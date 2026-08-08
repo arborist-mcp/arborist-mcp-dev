@@ -8948,6 +8948,227 @@ class OtherUtil {
 }
 
 #[test]
+fn traces_csharp_nullable_reference_receiver_instance_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+    public Helper? Maybe() => this;
+}
+interface IWorker {
+    int Work(int value);
+}
+class Worker : IWorker {
+    public int Work(int value) => value;
+    public Helper? helper = new Helper();
+}
+class Box<T> {
+    public int Get(int value) => value;
+}
+class Util {
+    public static Helper? MakeHelper() => new Helper();
+    public static Box<int>? MakeBox() => new Box<int>();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int NullableTyped() { Helper? h = new Helper(); return h.Run(1); }
+        int NullableDottedTyped() { Demo.Helper? h = new Helper(); return h.Run(1); }
+        int NullableGeneric() { Box<int>? b = new Box<int>(); return b.Get(1); }
+        int NullableInterface() { IWorker? w = new Worker(); return w.Work(1); }
+        int NullableFactory() { var h = MakeHelper(); return h.Run(1); }
+        int NullableTypeQualifiedFactory() { var h = Util.MakeHelper(); return h.Run(1); }
+        int NullableGenericFactory() { var b = MakeBox(); return b.Get(1); }
+        int NullableBoundMethodHop() { Helper h = new Helper(); var m = h.Maybe(); return m.Run(1); }
+        int NullableFieldHop() { var w = new Worker(); var h = w.helper; return h.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A nullable reference-type spelling such as `Helper?`, `Outer.Inner?`,
+    // `Box<int>?`, or `IWorker?` dispatches on the underlying class, record,
+    // or interface type, and a factory or member declared with a nullable
+    // return type (`Helper? MakeHelper()` or `Helper? helper`) pins the same
+    // underlying type, so same-namespace and cross-namespace callers resolve
+    // consistently; nullable value types (`Point?`) fail closed instead.
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Other::Caller::NullableBoundMethodHop",
+                "Other::Caller::NullableDottedTyped",
+                "Other::Caller::NullableFactory",
+                "Other::Caller::NullableFieldHop",
+                "Other::Caller::NullableTypeQualifiedFactory",
+                "Other::Caller::NullableTyped",
+            ],
+        ),
+        (
+            "Demo::Box::Get",
+            vec![
+                "Other::Caller::NullableGeneric",
+                "Other::Caller::NullableGenericFactory",
+            ],
+        ),
+        (
+            "Demo::IWorker::Work",
+            vec!["Other::Caller::NullableInterface"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_nullable_reference_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    class Caller {
+        int Call() { Helper? h = new Helper(); return h.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_nullable_value_and_unresolvable_receivers() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+struct Point {
+    public int Run(int value) => value;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int NullableStruct() { Point? p = new Point(); return p.Run(1); }
+        int NullablePrimitive() { int? n = 1; return n.Run(1); }
+        int NullableArray() { Helper?[] arr = new Helper?[1]; return arr.Run(1); }
+        int NullableUnknown() { Missing? m = null; return m.Run(1); }
+        int Control() { Helper? h = new Helper(); return h.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A nullable value type such as `Point?` or `int?` does not expose the
+    // underlying type's members directly, and array, unknown, or otherwise
+    // unusable nullable spellings still fail closed, while a resolvable
+    // nullable reference receiver still dispatches.
+    for (caller, expected) in [
+        ("Other::Caller::NullableStruct", Vec::<&str>::new()),
+        ("Other::Caller::NullablePrimitive", Vec::<&str>::new()),
+        ("Other::Caller::NullableArray", Vec::<&str>::new()),
+        ("Other::Caller::NullableUnknown", Vec::<&str>::new()),
+        ("Other::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
