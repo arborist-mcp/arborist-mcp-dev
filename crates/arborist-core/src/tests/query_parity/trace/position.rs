@@ -11087,6 +11087,220 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_factory_receiver_ancestor_field_hop_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+    public Helper MakeHelper() => new Helper();
+}
+class Base {
+    public Entry entry = new Entry();
+    public Helper? nullable = new Helper();
+}
+class Mid : Base {
+    public Entry midEntry = new Entry();
+}
+class Derived : Mid {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    Derived MakeDerived() => new Derived();
+    int DirectBareFactoryChain() => MakeDerived().entry.helper.Run(1);
+    int DirectBareFactoryNullable() { var h = MakeDerived().nullable; return h.Run(1); }
+    int DirectBareFactoryVarChain() { var x = MakeDerived().entry; return x.helper.Run(1); }
+    int BoundFactoryHop(Derived d) { var h = d.entry.MakeHelper(); return h.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A factory call pins its declared return type, and the hops after the
+    // root walk field/property/event hops through the unique class/record
+    // ancestor chain of that type (or of a bound receiver's declared type),
+    // so a hop inherited from a grandparent base (or an inherited nullable
+    // field) still pins the next hop and the final member; the intermediate
+    // `Entry` hop never becomes the dispatch target.
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::BoundFactoryHop",
+                "Demo::Caller::DirectBareFactoryChain",
+                "Demo::Caller::DirectBareFactoryNullable",
+                "Demo::Caller::DirectBareFactoryVarChain",
+            ],
+        ),
+        ("Demo::Entry::Run", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_factory_receiver_ancestor_field_hop_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public Helper helper = new Helper();
+}
+class Base {
+    public Entry entry = new Entry();
+}
+class Mid : Base {
+}
+class Derived : Mid {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    Derived MakeDerived() => new Derived();
+    int Call() => MakeDerived().entry.helper.Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_factory_receiver_ancestor_field_hops() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Base {
+    public Helper helper = new Helper();
+}
+class Mid : Base {
+}
+class Derived : Mid {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    Derived MakeDerived() => new Derived();
+    int MissingFactoryChain() => MakeDerived().missing.helper.Run(1);
+    int MissingVarFactoryChain() { var x = MakeDerived().missing; return x.Run(1); }
+    int Control() => MakeDerived().helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // Hops that no class/record ancestor of the factory's declared return
+    // type declares still fail closed, so the chain itself resolves to no
+    // final member; the intermediate factory call remains a legitimate
+    // callee, while a resolvable grandparent-inherited hop keeps tracing.
+    for (caller, expected) in [
+        (
+            "Demo::Caller::MissingFactoryChain",
+            vec!["Demo::Caller::MakeDerived"],
+        ),
+        (
+            "Demo::Caller::MissingVarFactoryChain",
+            vec!["Demo::Caller::MakeDerived"],
+        ),
+        (
+            "Demo::Caller::Control",
+            vec!["Demo::Caller::MakeDerived", "Demo::Helper::Run"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

@@ -2027,11 +2027,12 @@ fn resolve_csharp_var_factory_method<'a>(
     // A dotted factory whose leading segment is a bound receiver resolves as
     // an instance method call on the receiver's declared type, such as
     // `var helper = holder.MakeHelper()`, `var helper = holder.GetInner().MakeHelper()`,
-    // or `var helper = holder.helper.MakeHelper()`; intermediate hops walk
-    // the same field/property and arity-matched method-call member-chain
-    // rules. Unknown, untyped, `void`, or primitive receivers, unknown or
-    // primitive hops, and missing, static, or arity-mismatched factory
-    // methods fail closed.
+    // or `var helper = holder.helper.MakeHelper()`; intermediate field,
+    // property, and event hops walk the declared type or its unique
+    // class/record ancestor chain (nearest declaring ancestor pins the hop)
+    // through the same member-chain rules. Unknown, untyped, `void`, or
+    // primitive receivers, unknown or primitive hops, and missing, static, or
+    // arity-mismatched factory methods fail closed.
     if let Some((receiver_name, remainder)) = factory_name.split_once('.')
         && !receiver_name.is_empty()
         && !remainder.is_empty()
@@ -2092,17 +2093,18 @@ fn resolve_csharp_var_factory_method<'a>(
             }
             (binding, &raw_symbols[type_indexes[0]])
         } else {
-            let Some((binding, dispatch)) = resolve_csharp_member_chain_binding(
-                source_symbol,
-                binding,
-                &hops,
-                raw_symbols,
-                semantic_path_index,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
+            let Some((binding, dispatch)) =
+                resolve_csharp_member_chain_binding_with_ancestor_fields(
+                    source_symbol,
+                    binding,
+                    &hops,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
             else {
                 return Ok(None);
             };
@@ -2625,7 +2627,8 @@ fn resolve_csharp_initializer_chain_binding(
     // root (`MakeHelper().helper` spells `MakeHelper().helper`). The
     // constructed interpretation resolves the type and walks hops on it; the
     // factory interpretation resolves the method on the enclosing type, the
-    // unique base chain, or a static-imported type and walks hops on its
+    // unique base chain, or a static-imported type and walks field, property,
+    // and event hops through the unique class/record ancestor chain of its
     // declared return type. Exactly one resolving interpretation pins the
     // receiver; both or neither fail closed.
     if receiver_name.ends_with(')') {
@@ -2694,7 +2697,7 @@ fn resolve_csharp_initializer_chain_binding(
             let candidate = if hops.is_empty() {
                 canonicalize_csharp_type_binding(method, &factory_binding, raw_symbols)
             } else {
-                resolve_csharp_member_chain_binding(
+                resolve_csharp_member_chain_binding_with_ancestor_fields(
                     method,
                     factory_binding,
                     &hops,
@@ -3246,8 +3249,10 @@ fn resolve_csharp_static_imported_member_chain_call(
 /// `MakeHelper().entry.Run(1)` or `MakeHelper().Run(1)` where the leading call
 /// is a unique arity-matched factory method on the enclosing type, the unique
 /// base chain, or a static-imported type. The leading call's declared return
-/// type pins the receiver; remaining hops walk the same member-chain rules,
-/// and the final member dispatches as an instance method on the canonical
+/// type pins the receiver; remaining field, property, and event hops walk the
+/// declared return type or its unique class/record ancestor chain (nearest
+/// declaring ancestor pins the hop) through the same member-chain rules, and
+/// the final member dispatches as an instance method on the canonical
 /// receiver type. Unknown, ambiguous, arity-mismatched, or non-factory roots,
 /// unresolvable hops, and missing or static final members fail closed instead
 /// of falling through to a same-named static type call.
@@ -3336,7 +3341,7 @@ fn resolve_csharp_direct_bare_factory_member_chain_call(
     let binding = if hops.is_empty() {
         canonicalize_csharp_type_binding(method, &factory_binding, raw_symbols)
     } else {
-        resolve_csharp_member_chain_binding(
+        resolve_csharp_member_chain_binding_with_ancestor_fields(
             method,
             factory_binding,
             &hops,
