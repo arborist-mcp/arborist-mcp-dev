@@ -1715,8 +1715,10 @@ fn resolve_csharp_instance_receiver_call(
     };
     // A member chain such as `group.member.helper(...)` walks each
     // intermediate hop as a uniquely declared field, property, or event on
-    // the current type; unknown, ambiguous, or unresolvable hops fail closed
-    // instead of falling through to a same-named static type call.
+    // the current type or its unique class/record ancestor chain (nearest
+    // declaring ancestor pins the hop); unknown, ambiguous, or unresolvable
+    // hops fail closed instead of falling through to a same-named static
+    // type call.
     let mut hops = member_chain.split('.').collect::<Vec<_>>();
     if hops.iter().any(|hop| hop.is_empty()) {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
@@ -1724,17 +1726,18 @@ fn resolve_csharp_instance_receiver_call(
     let Some(final_member) = hops.pop() else {
         return Ok(CSharpInstanceReceiverResolution::NoBinding);
     };
-    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
-        source_symbol,
-        binding,
-        &hops,
-        raw_symbols,
-        semantic_path_index,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
+    let Some((binding, dispatch_source_symbol)) =
+        resolve_csharp_member_chain_binding_with_ancestor_fields(
+            source_symbol,
+            binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     else {
         return Ok(CSharpInstanceReceiverResolution::Blocked);
     };
@@ -2717,7 +2720,8 @@ fn resolve_csharp_initializer_chain_binding(
             Ok(None)
         };
     }
-    // A bound receiver pins its declared type before the hops walk.
+    // A bound receiver pins its declared type before the hops walk through
+    // the unique class/record ancestor chain.
     if bindings.contains(receiver_name) {
         let Some(type_name) = bindings.type_for(receiver_name) else {
             return Ok(None);
@@ -2736,17 +2740,18 @@ fn resolve_csharp_initializer_chain_binding(
         else {
             return Ok(None);
         };
-        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
-            source_symbol,
-            binding,
-            &hops,
-            raw_symbols,
-            semantic_path_index,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        let Some((binding, scope_source_symbol)) =
+            resolve_csharp_member_chain_binding_with_ancestor_fields(
+                source_symbol,
+                binding,
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
         else {
             return Ok(None);
         };
