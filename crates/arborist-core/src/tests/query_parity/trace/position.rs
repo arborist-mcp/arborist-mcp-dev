@@ -7933,6 +7933,290 @@ namespace Other {
 }
 
 #[test]
+fn traces_csharp_direct_bare_factory_member_chain_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        Helper MakeFactory() => new Helper();
+        int StaticImportedNoHops() { return MakeHelper().Run(1); }
+        int StaticImportedWithHop() { return MakeHelper().entry.Run(1); }
+        int EnclosingNoHops() { return MakeFactory().Run(1); }
+        int EnclosingWithHop() { return MakeFactory().entry.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A direct call chain rooted at a bare factory method call such as
+    // `MakeHelper().Run(1)` or `MakeHelper().entry.Run(1)` dispatches the
+    // leading arity-matched factory method on the enclosing type or a
+    // static-imported type, pins the receiver to its declared return type,
+    // walks any remaining hops in the declaring scope, and then dispatches
+    // the final member on the canonical declared type, so cross-namespace
+    // callers resolve consistently and the factory methods themselves trace.
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Other::Caller::EnclosingNoHops",
+                "Other::Caller::StaticImportedNoHops",
+            ],
+        ),
+        (
+            "Demo::Entry::Run",
+            vec![
+                "Other::Caller::EnclosingWithHop",
+                "Other::Caller::StaticImportedWithHop",
+            ],
+        ),
+        (
+            "Demo::Util::MakeHelper",
+            vec![
+                "Other::Caller::StaticImportedNoHops",
+                "Other::Caller::StaticImportedWithHop",
+            ],
+        ),
+        (
+            "Other::Caller::MakeFactory",
+            vec![
+                "Other::Caller::EnclosingNoHops",
+                "Other::Caller::EnclosingWithHop",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_direct_bare_factory_member_chain_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int Call() { return MakeHelper().entry.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_direct_bare_factory_member_chain_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+    public static int StaticRun(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public static int StaticRun(int value) => value;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static int STATIC_COUNT = 1;
+}
+class Caller {
+    Helper MakeFactory() => new Helper();
+    int MakeCount() => 1;
+    int MissingRoot() { return MissingRootMethod().entry.Run(1); }
+    int ArityMismatch() { return MakeFactory(1).entry.Run(1); }
+    int MissingHop() { return MakeFactory().missing.Run(1); }
+    int StaticFinal() { return MakeFactory().StaticRun(1); }
+    int PrimitiveRoot() { return MakeCount().entry.Run(1); }
+    int Control() { return MakeFactory().entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imports.cs"),
+        "namespace Demo;
+using static Demo.Util;
+class CallerImports {
+    int MissingFactory() { return MissingHelper().entry.Run(1); }
+    int FieldAsFactory() { return STATIC_COUNT().entry.Run(1); }
+    int Control() { return MakeHelper().entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct chain rooted at a bare factory method call traces only when
+    // the leading call resolves as a unique arity-matched factory method on
+    // the enclosing type or a static-imported type with a usable declared
+    // return type, every hop resolves, and the final member is a matching
+    // instance method; missing or arity-mismatched factories, primitive
+    // return types, missing hops, and static final members fail closed on
+    // the final member while the genuine inner factory call still traces,
+    // and the resolvable chain still traces.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingRoot", Vec::<&str>::new()),
+        ("Demo::Caller::ArityMismatch", Vec::<&str>::new()),
+        (
+            "Demo::Caller::MissingHop",
+            vec!["Demo::Caller::MakeFactory"],
+        ),
+        (
+            "Demo::Caller::StaticFinal",
+            vec!["Demo::Caller::MakeFactory"],
+        ),
+        (
+            "Demo::Caller::PrimitiveRoot",
+            vec!["Demo::Caller::MakeCount"],
+        ),
+        (
+            "Demo::Caller::Control",
+            vec!["Demo::Caller::MakeFactory", "Demo::Entry::Run"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+    for (caller, expected) in [
+        ("Demo::CallerImports::MissingFactory", Vec::<&str>::new()),
+        ("Demo::CallerImports::FieldAsFactory", Vec::<&str>::new()),
+        (
+            "Demo::CallerImports::Control",
+            vec!["Demo::Entry::Run", "Demo::Util::MakeHelper"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

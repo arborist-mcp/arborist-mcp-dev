@@ -666,6 +666,29 @@ fn resolve_reference_path_with_deadline<'a>(
         )? {
             return Ok(Some(symbol_id));
         }
+        // A dotted call rooted at a bare factory method call such as
+        // `MakeHelper().entry.Run(1)` or `MakeHelper().Run(1)` dispatches the
+        // leading arity-matched factory method on the enclosing type, the
+        // unique base chain, or a static-imported type before walking any
+        // instance hops and dispatching the final member as an instance call.
+        // It runs before the constructed-receiver path so a bare factory call
+        // is not mistaken for a constructor marker; a reference that is not a
+        // resolvable bare-factory chain falls through to the
+        // constructed-receiver and static type-call paths below.
+        if let Some(symbol_id) = resolve_csharp_direct_bare_factory_member_chain_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         // A receiver spelling such as `Helper().Run` names a fresh constructor
         // call on a constructed type; it dispatches as an instance call and
         // never falls through to the static type-call paths. Malformed or
@@ -3181,6 +3204,132 @@ fn resolve_csharp_static_imported_member_chain_call(
         deadline,
     )?
     else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
+/// Resolves a direct call chain rooted at a bare factory method call such as
+/// `MakeHelper().entry.Run(1)` or `MakeHelper().Run(1)` where the leading call
+/// is a unique arity-matched factory method on the enclosing type, the unique
+/// base chain, or a static-imported type. The leading call's declared return
+/// type pins the receiver; remaining hops walk the same member-chain rules,
+/// and the final member dispatches as an instance method on the canonical
+/// receiver type. Unknown, ambiguous, arity-mismatched, or non-factory roots,
+/// unresolvable hops, and missing or static final members fail closed instead
+/// of falling through to a same-named static type call.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# direct bare-factory member-chain call inputs explicit"
+)]
+fn resolve_csharp_direct_bare_factory_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((chain_prefix, final_member)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if chain_prefix.is_empty()
+        || final_member.is_empty()
+        || !is_safe_csharp_identifier(final_member)
+    {
+        return Ok(None);
+    }
+    let (root_member, root_arity, hops) = match chain_prefix.split_once('.') {
+        Some((root, rest)) => {
+            let Some((method_name, arity)) = csharp_method_call_hop_spelling(root) else {
+                return Ok(None);
+            };
+            let hops = rest.split('.').collect::<Vec<_>>();
+            if hops.iter().any(|hop| hop.is_empty()) {
+                return Ok(None);
+            }
+            (method_name, arity, hops)
+        }
+        None => {
+            let Some((method_name, arity)) = csharp_method_call_hop_spelling(chain_prefix) else {
+                return Ok(None);
+            };
+            (method_name, arity, Vec::new())
+        }
+    };
+    // A bare root dispatches as a unique arity-matched factory method on the
+    // enclosing type, the unique base chain, or a static-imported type; the
+    // declared return type pins the receiver.
+    let Some(method) = resolve_csharp_var_factory_method(
+        source_symbol,
+        &root_member,
+        root_arity,
+        &CSharpReceiverTypeBindings::default(),
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let Some(return_type) = method.return_type.as_deref() else {
+        return Ok(None);
+    };
+    if return_type.is_empty() {
+        return Ok(None);
+    }
+    let Some(factory_binding) = resolve_csharp_receiver_type_binding(
+        method,
+        return_type,
+        raw_symbols,
+        semantic_path_index,
+        csharp_source_namespace_path(method, raw_symbols).flatten(),
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    let binding = if hops.is_empty() {
+        canonicalize_csharp_type_binding(method, &factory_binding, raw_symbols)
+    } else {
+        resolve_csharp_member_chain_binding(
+            method,
+            factory_binding,
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        .and_then(|(binding, scope_source_symbol)| {
+            canonicalize_csharp_type_binding(scope_source_symbol, &binding, raw_symbols)
+        })
+    };
+    let Some(binding) = binding else {
         return Ok(None);
     };
     resolve_csharp_instance_method_on_binding(

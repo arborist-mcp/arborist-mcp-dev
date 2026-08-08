@@ -368,6 +368,19 @@ fn csharp_direct_invocation_name(
         {
             return Ok(Some(spelling));
         }
+        // A bare factory-call root such as `MakeHelper().Run(1)` or
+        // `MakeHelper().entry.Run(1)` spells the full chain with the call as
+        // the leading segment so the resolver can dispatch the leading
+        // arity-matched factory method on the enclosing type or a
+        // static-imported type; bare-call roots are only kept when static
+        // type-qualified roots are allowed.
+        if receiver.kind() == "invocation_expression"
+            && let Some(spelling) =
+                csharp_instance_member_chain_spelling(node, source, bindings, true)?
+            && spelling.contains('(')
+        {
+            return Ok(Some(spelling));
+        }
         if receiver.kind() == "this" {
             return csharp_invocation_member_name(member, source)
                 .map(|name| name.map(|name| format!("this.{name}")));
