@@ -27,6 +27,7 @@ pub(in crate::symbol_dependency) struct JavaImportContext {
 #[derive(Debug, Clone, Default)]
 pub(in crate::symbol_dependency) struct JavaReceiverTypeBindings {
     types_by_name: BTreeMap<String, String>,
+    array_component_types: BTreeMap<String, String>,
     ambiguous_names: BTreeSet<String>,
     initializer_calls_by_name: BTreeMap<String, (String, usize)>,
     field_initializers_by_name: BTreeMap<String, String>,
@@ -37,7 +38,9 @@ impl JavaReceiverTypeBindings {
     /// binding. Callers use this to distinguish "not bound" (a receiver may be
     /// a same-named type instead) from "bound but unusable" (fail closed).
     pub(in crate::symbol_dependency) fn contains(&self, name: &str) -> bool {
-        self.types_by_name.contains_key(name) || self.ambiguous_names.contains(name)
+        self.types_by_name.contains_key(name)
+            || self.array_component_types.contains_key(name)
+            || self.ambiguous_names.contains(name)
     }
 
     /// Returns the declared type for a uniquely bound name. Names bound without
@@ -48,6 +51,20 @@ impl JavaReceiverTypeBindings {
             return None;
         }
         self.types_by_name
+            .get(name)
+            .filter(|type_name| !type_name.is_empty())
+            .cloned()
+    }
+
+    /// Returns the declared component type for a uniquely bound array-typed
+    /// name such as Helper[] items, which resolves to the element type
+    /// Helper when the chain accesses an element. Ambiguous bindings and
+    /// names without a resolvable array component return None.
+    pub(in crate::symbol_dependency) fn array_component_for(&self, name: &str) -> Option<String> {
+        if self.ambiguous_names.contains(name) {
+            return None;
+        }
+        self.array_component_types
             .get(name)
             .filter(|type_name| !type_name.is_empty())
             .cloned()
@@ -820,12 +837,22 @@ fn java_declared_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Optio
     Ok((!name.is_empty()).then(|| name.to_string()))
 }
 
+/// Returns the declared type name for a binding node. Named and generic types
+/// normalize through java_dotted_type_name; single-level array spellings
+/// such as Helper[] or Box<String>[] are kept as their raw spelling so
+/// receiver bindings can record the array component type. Primitives,
+/// multi-dimensional arrays, and malformed spellings return None and fail
+/// closed.
 fn java_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<Option<String>> {
     let Some(type_node) = node.child_by_field_name("type") else {
         return Ok(None);
     };
     let type_name = node_text(type_node, source)?;
-    Ok(java_dotted_type_name(type_name))
+    let trimmed = type_name.trim();
+    if let Some(normalized) = java_dotted_type_name(trimmed) {
+        return Ok(Some(normalized));
+    }
+    Ok(java_array_type_component_name(trimmed).map(|_| trimmed.to_string()))
 }
 
 /// Extracts a named receiver type, allowing dotted qualified names such as
@@ -835,6 +862,23 @@ fn java_declared_type_name(node: tree_sitter::Node<'_>, source: &str) -> Result<
 /// normalization. Arrays, varargs, primitives, malformed or empty generic
 /// arguments, and otherwise complex spellings still fail closed; empty or
 /// malformed dotted segments are rejected by the receiver path resolver.
+/// Extracts the component type name from a single-level array spelling such
+/// as Helper[], Helper [], or Box<String>[], normalizing the component
+/// through java_dotted_type_name. Multi-dimensional arrays, primitives,
+/// malformed brackets, and other complex spellings return None and fail
+/// closed; the caller treats those bindings as unusable.
+pub(crate) fn java_array_type_component_name(text: &str) -> Option<String> {
+    let name = text.trim();
+    let open = name.find('[')?;
+    if open == 0 || !name[open..].trim_end().ends_with(']') {
+        return None;
+    }
+    let bracket = name[open..].trim();
+    if bracket != "[]" {
+        return None;
+    }
+    java_dotted_type_name(name[..open].trim())
+}
 pub(crate) fn java_dotted_type_name(text: &str) -> Option<String> {
     let name = text.trim();
     if name.contains('<') {
@@ -961,6 +1005,29 @@ fn insert_java_receiver_binding(
         return;
     }
     if bindings.ambiguous_names.contains(&name) {
+        return;
+    }
+    // Single-level array spellings bind the element component type so an
+    // element-access receiver such as items[0] can dispatch on the element
+    // type; primitive, multi-dimensional, and malformed array spellings have
+    // no usable component and bind as an empty (unusable) type instead of
+    // falling through to a same-named type call.
+    if type_name.contains('[') {
+        match java_array_type_component_name(&type_name) {
+            Some(component) => match bindings.array_component_types.get(&name) {
+                Some(existing) if *existing != component => {
+                    bindings.array_component_types.remove(&name);
+                    bindings.ambiguous_names.insert(name);
+                }
+                Some(_) => {}
+                None => {
+                    bindings.array_component_types.insert(name, component);
+                }
+            },
+            None => {
+                bindings.types_by_name.insert(name, String::new());
+            }
+        }
         return;
     }
     match bindings.types_by_name.get(&name) {
@@ -1203,6 +1270,102 @@ class Caller {
         assert!(run_bindings.contains("array"));
         assert_eq!(run_bindings.type_for("array"), None);
         assert_eq!(run_bindings.initializer_call_for("array"), None);
+    }
+
+    #[test]
+    fn array_typed_receivers_bind_element_component_types() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Other { int helper(int value) { return value; } }
+class Caller {
+    private Helper[] fieldItems;
+    int run(Helper[] param, Helper[][] matrix, int[] counts) {
+        Helper[] local = new Helper[3];
+        Helper[] created = new Helper[2];
+        return param.helper(1) + local.helper(2) + fieldItems.helper(3);
+    }
+    int primitive(Helper[] plain, int[] numbers) { return numbers.length; }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.array_component_for("param") == Some("Helper".to_string()))
+            .unwrap();
+        // Parameters, locals, and enclosing fields bind the array element
+        // component type instead of a plain receiver type.
+        for name in ["param", "local", "created", "fieldItems"] {
+            assert_eq!(
+                run_bindings.array_component_for(name),
+                Some("Helper".to_string()),
+                "{name} must bind the array element component type"
+            );
+            assert!(run_bindings.contains(name), "{name} must be bound");
+            assert_eq!(
+                run_bindings.type_for(name),
+                None,
+                "{name} has no plain type"
+            );
+        }
+        // Multi-dimensional arrays and primitive arrays have no usable
+        // component type, so array parameters are not bound at all and fail
+        // closed at trace time.
+        assert_eq!(run_bindings.array_component_for("matrix"), None);
+        assert!(!run_bindings.contains("matrix"));
+        assert_eq!(run_bindings.type_for("matrix"), None);
+        assert_eq!(run_bindings.array_component_for("counts"), None);
+        assert!(!run_bindings.contains("counts"));
+        assert_eq!(run_bindings.type_for("counts"), None);
+    }
+
+    #[test]
+    fn array_receiver_bindings_reject_conflicting_components() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Other { int helper(int value) { return value; } }
+class Caller {
+    int run() {
+        Helper[] first = new Helper[1];
+        Other[] second = new Other[1];
+        Helper[] shadowed = new Helper[1];
+        Other[] shadowed = new Other[1];
+        return first.helper(1) + second.helper(2) + shadowed.helper(3);
+    }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.array_component_for("first") == Some("Helper".to_string()))
+            .unwrap();
+        assert_eq!(
+            run_bindings.array_component_for("first"),
+            Some("Helper".to_string())
+        );
+        assert_eq!(
+            run_bindings.array_component_for("second"),
+            Some("Other".to_string())
+        );
+        // Conflicting array declarations make the name ambiguous.
+        assert!(run_bindings.contains("shadowed"));
+        assert_eq!(run_bindings.array_component_for("shadowed"), None);
+        assert_eq!(run_bindings.type_for("shadowed"), None);
     }
 
     #[test]

@@ -26,7 +26,7 @@ use super::super::go::{
     GoImportContext, go_package_name_for_source_file, resolve_go_import_binding_for_reference,
 };
 use super::super::java::{
-    JavaImportBinding, JavaImportContext, java_dotted_type_name,
+    JavaImportBinding, JavaImportContext, java_array_type_component_name, java_dotted_type_name,
     java_receiver_type_bindings_for_function, resolve_java_import_binding_for_reference,
     resolve_java_static_method_import_binding_for_reference,
     resolve_java_type_import_binding_for_name,
@@ -6364,12 +6364,26 @@ fn resolve_java_instance_receiver_call(
     call_arity: usize,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<JavaInstanceReceiverResolution> {
-    let Some((receiver_name, member_chain)) = reference_name.split_once('.') else {
+    let Some((raw_receiver_name, member_chain)) = reference_name.split_once('.') else {
         return Ok(JavaInstanceReceiverResolution::NoBinding);
     };
-    if receiver_name.is_empty() || member_chain.is_empty() {
+    if raw_receiver_name.is_empty() || member_chain.is_empty() {
         return Ok(JavaInstanceReceiverResolution::NoBinding);
     }
+    // A bound receiver may carry an element-access suffix such as `items[0]`
+    // in `items[0].helper(...)`; the element access dispatches on the array's
+    // element component type, while indexing a non-array receiver is
+    // malformed and fails closed.
+    let (receiver_name, array_access) = match raw_receiver_name.find('[') {
+        Some(open) if raw_receiver_name.ends_with(']') => {
+            let base = &raw_receiver_name[..open];
+            if base.is_empty() {
+                return Ok(JavaInstanceReceiverResolution::Blocked);
+            }
+            (base, true)
+        }
+        _ => (raw_receiver_name, false),
+    };
     let Some(bindings) = java_receiver_type_bindings_for_function(
         &source_symbol.file_path,
         source_symbol.byte_range,
@@ -6387,8 +6401,31 @@ fn resolve_java_instance_receiver_call(
     // resolvable declared type fail closed instead of falling through to a
     // same-named static type call. A `var` local whose initializer is a bare
     // factory call such as `var value = makeFoo()` infers its receiver type
-    // from the unique factory's declared return type.
-    let type_path = if let Some(type_name) = bindings.type_for(receiver_name) {
+    // from the unique factory's declared return type. An array-typed receiver
+    // such as `Helper[] items` dispatches only through an element access
+    // (`items[0].helper(...)`) on the element component type; a direct member
+    // call on the array itself fails closed.
+    let array_component = bindings.array_component_for(receiver_name);
+    let (type_path, member_chain) = if array_access {
+        let Some(component_type) = array_component else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        let Some(component_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(JavaInstanceReceiverResolution::Blocked);
+        };
+        (component_path, member_chain)
+    } else if array_component.is_some() {
+        return Ok(JavaInstanceReceiverResolution::Blocked);
+    } else if let Some(type_name) = bindings.type_for(receiver_name) {
         let Some(type_path) = resolve_java_receiver_type_path(
             source_symbol,
             &type_name,
@@ -6401,7 +6438,7 @@ fn resolve_java_instance_receiver_call(
         else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
-        type_path
+        (type_path, member_chain)
     } else if let Some((function_name, initializer_arity)) =
         bindings.initializer_call_for(receiver_name)
     {
@@ -6418,7 +6455,7 @@ fn resolve_java_instance_receiver_call(
         else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
-        type_path
+        (type_path, member_chain)
     } else if let Some(field_reference) = bindings.initializer_field_for(receiver_name) {
         // A `var` local whose initializer is a field-access value reference
         // such as `var value = this.helper;`, `var value = helper;`,
@@ -6437,7 +6474,7 @@ fn resolve_java_instance_receiver_call(
         else {
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
-        type_path
+        (type_path, member_chain)
     } else {
         return Ok(JavaInstanceReceiverResolution::Blocked);
     };
@@ -6539,6 +6576,65 @@ fn java_field_type_candidates<'a>(
         .collect()
 }
 
+/// Extracts the field name from an element-access hop such as `items[0]` or
+/// `items[]`; hops without a trailing bracket return `None` so they fall
+/// through to ordinary field resolution and fail closed when no such field
+/// exists.
+fn java_array_access_field_name(hop: &str) -> Option<&str> {
+    let open = hop.find('[')?;
+    let (base, bracket) = hop.split_at(open);
+    if base.is_empty() || !bracket.ends_with(']') {
+        return None;
+    }
+    Some(base)
+}
+
+/// Resolves the element component type of an array-typed field hop such as
+/// `items[0]` on an owning type path: the field must be uniquely declared and
+/// its declared type must be a single-level array whose component resolves in
+/// the field's own file and enclosing scope. Unknown, ambiguous, non-array,
+/// primitive, or multi-dimensional field types fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java field type resolution inputs explicit"
+)]
+fn java_array_field_component_type_path(
+    owner_type_path: &str,
+    field_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let candidates = java_field_type_candidates(
+        owner_type_path,
+        field_name,
+        false,
+        raw_symbols,
+        semantic_path_index,
+    );
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let field = candidates[0];
+    let Some(field_type) = field.return_type.as_deref() else {
+        return Ok(None);
+    };
+    let Some(component_name) = java_array_type_component_name(field_type) else {
+        return Ok(None);
+    };
+    resolve_java_receiver_type_path(
+        field,
+        &component_name,
+        raw_symbols,
+        semantic_path_index,
+        file_overrides,
+        java_import_contexts_by_file,
+        deadline,
+    )
+}
+
 /// Dispatches a member chain such as `group.member.helper(...)`,
 /// `group.inner().helper(...)`, or `Group().inner().helper(...)` on an
 /// already-resolved receiver type path: each intermediate hop must resolve to
@@ -6576,6 +6672,16 @@ fn resolve_java_member_chain_from_type_path(
                         &current_type_path,
                         &method_name,
                         hop_arity,
+                        raw_symbols,
+                        semantic_path_index,
+                        file_overrides,
+                        java_import_contexts_by_file,
+                        deadline,
+                    )?
+                } else if let Some(array_field) = java_array_access_field_name(hop) {
+                    java_array_field_component_type_path(
+                        &current_type_path,
+                        array_field,
                         raw_symbols,
                         semantic_path_index,
                         file_overrides,

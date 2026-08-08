@@ -315,6 +315,23 @@ fn java_constructor_receiver_chain_spelling(
             };
             segments.push(spelling);
             break;
+        } else if current.kind() == "array_access" {
+            // An element-access hop such as `items[0]` or `this.items[0]`
+            // records the bracket on the accessed element's segment so the
+            // trailing member dispatches on the element component type;
+            // malformed or nested element accesses fail closed.
+            let Some(array) = current.child_by_field_name("array") else {
+                return Ok(None);
+            };
+            let index = current.child_by_field_name("index");
+            let index_text = match index {
+                Some(index) => crate::language::node_text(index, source)?
+                    .trim()
+                    .to_string(),
+                None => String::new(),
+            };
+            segments.push(format!("[{index_text}]"));
+            current = array;
         } else if current.kind() == "identifier" {
             if !in_parentheses {
                 return Ok(None);
@@ -336,6 +353,20 @@ fn java_constructor_receiver_chain_spelling(
         }
     }
     segments.reverse();
+    if segments.iter().any(|segment| segment.starts_with('[')) {
+        let mut merged: Vec<String> = Vec::with_capacity(segments.len());
+        for segment in segments {
+            if segment.starts_with('[') {
+                let Some(previous) = merged.last_mut() else {
+                    return Ok(None);
+                };
+                previous.push_str(&segment);
+            } else {
+                merged.push(segment);
+            }
+        }
+        segments = merged;
+    }
     Ok(Some(segments.join(".")))
 }
 
@@ -426,8 +457,10 @@ fn collect_direct_local_calls_from_node(
                         .then(|| format!("{object_name}.{name}"))
                 }
                 Some(object)
-                    if matches!(object.kind(), "field_access" | "method_invocation")
-                        && !name.is_empty() =>
+                    if matches!(
+                        object.kind(),
+                        "field_access" | "method_invocation" | "array_access"
+                    ) && !name.is_empty() =>
                 {
                     if let Some(spelling) =
                         java_constructor_receiver_chain_spelling(object, source, name)?
@@ -859,5 +892,80 @@ class Caller {
                 "{paren} must record the same reference spellings as {plain}"
             );
         }
+    }
+
+    #[test]
+    fn array_access_receivers_canonicalize_to_element_access_spellings() {
+        let source = r#"
+package com.example;
+
+class Entry {
+    int helper(int value) { return value; }
+}
+class Group {
+    Entry entry = new Entry();
+    Entry[] entries = new Entry[2];
+    Group[] groups = new Group[1];
+    Group inner() { return this; }
+}
+class Caller {
+    Group makeGroup() { return new Group(); }
+    int plainBound(Group[] group) { return group[0].helper(1); }
+    int boundChain(Group[] group) { return group[0].inner().entry.helper(1); }
+    int thisField() { return this.groups[0].inner().helper(1); }
+    int bareField(Group[] group) { return group[0].helper(2); }
+    int indexedField(Group[] group) { return group[1].helper(3); }
+    int parenRoot(Group[] group) { return (group)[0].helper(4); }
+    int factoryRoot() { return makeGroup()[0].helper(5); }
+}
+"#;
+        let path = Path::new("Caller.java");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_java_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        let symbol = |name: &str| {
+            symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == format!("com::example::Caller::{name}"))
+                .unwrap()
+        };
+        // `group[0]` and `group[1]` keep their element-access spelling so the
+        // resolver can dispatch the trailing member on the element type while
+        // still distinguishing it from a direct call on the array itself.
+        assert!(
+            symbol("plainBound")
+                .references_by_name
+                .contains("group[0].helper")
+        );
+        assert!(
+            symbol("indexedField")
+                .references_by_name
+                .contains("group[1].helper")
+        );
+        assert!(
+            symbol("boundChain")
+                .references_by_name
+                .contains("group[0].inner().entry.helper")
+        );
+        assert!(
+            symbol("thisField")
+                .references_by_name
+                .contains("this.groups[0].inner().helper")
+        );
+        // A parenthesized array receiver canonicalizes to the same spelling.
+        assert!(
+            symbol("parenRoot")
+                .references_by_name
+                .contains("group[0].helper")
+        );
+        // A factory-rooted element access records the call plus bracket and
+        // fails closed at trace time until factory return arrays are traced.
+        assert!(
+            symbol("factoryRoot")
+                .references_by_name
+                .contains("makeGroup()[0].helper")
+        );
     }
 }
