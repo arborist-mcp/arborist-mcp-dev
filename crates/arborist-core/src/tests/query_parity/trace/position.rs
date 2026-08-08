@@ -10486,6 +10486,202 @@ class Caller : Mid {
 }
 
 #[test]
+fn traces_csharp_this_rooted_ancestor_field_hop_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+class Base {
+    public Entry entry = new Entry();
+    public Helper? nullable = new Helper();
+}
+class Mid : Base {
+    public Entry midEntry = new Entry();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller : Mid {
+    int GrandparentFieldChain() => this.entry.helper.Run(1);
+    int GrandparentNullableField() { var h = this.nullable; return h.Run(1); }
+    int DirectBaseFieldChain() => this.midEntry.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // A `this.`-rooted receiver chain walks field/property/event hops through
+    // the unique class/record ancestor chain, so a hop inherited from a
+    // grandparent base (or an inherited nullable field) still pins the next
+    // hop and the final member, matching how direct hops on the enclosing
+    // type already resolve; the intermediate `Entry` hop never becomes the
+    // dispatch target.
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::DirectBaseFieldChain",
+                "Demo::Caller::GrandparentFieldChain",
+                "Demo::Caller::GrandparentNullableField",
+            ],
+        ),
+        ("Demo::Entry::Run", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_this_rooted_ancestor_field_hop_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public Helper helper = new Helper();
+}
+class Base {
+    public Entry entry = new Entry();
+}
+class Mid : Base {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller : Mid {
+    int Call() => this.entry.helper.Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_this_rooted_ancestor_field_hops() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Base {
+    public Helper helper = new Helper();
+}
+class Mid : Base {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller : Mid {
+    int MissingHop() => this.missing.helper.Run(1);
+    int MissingGrandparentHop() => this.missing.Run(1);
+    int Control() => this.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // Hops that no class/record ancestor declares still fail closed, so no
+    // callee is traced for the unresolved chain, while a resolvable
+    // grandparent-inherited hop keeps tracing.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::MissingGrandparentHop", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

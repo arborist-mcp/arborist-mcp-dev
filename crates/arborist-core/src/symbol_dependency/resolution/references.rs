@@ -1983,22 +1983,23 @@ fn resolve_csharp_var_factory_method<'a>(
             return Ok(None);
         }
         let base_symbol = &raw_symbols[base_indexes[0]];
-        let Some((binding, dispatch_source_symbol)) = resolve_csharp_base_member_chain_binding(
-            base_symbol,
-            CSharpBaseTypeBinding {
-                semantic_type_path: base_type_path,
-                is_global_qualified: true,
-                alias_name: None,
-                namespace_import_paths: Vec::new(),
-            },
-            &hops,
-            raw_symbols,
-            semantic_path_index,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        let Some((binding, dispatch_source_symbol)) =
+            resolve_csharp_member_chain_binding_with_ancestor_fields(
+                base_symbol,
+                CSharpBaseTypeBinding {
+                    semantic_type_path: base_type_path,
+                    is_global_qualified: true,
+                    alias_name: None,
+                    namespace_import_paths: Vec::new(),
+                },
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
         else {
             return Ok(None);
         };
@@ -2505,7 +2506,9 @@ fn resolve_csharp_initializer_chain_binding(
     if hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
     }
-    // A `this.`-rooted chain walks hops on the unique enclosing type.
+    // A `this.`-rooted chain walks field/property/event hops through the
+    // unique class/record ancestor chain so an inherited hop still pins the
+    // next hop or final member.
     if receiver_name == "this" {
         let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
@@ -2522,7 +2525,7 @@ fn resolve_csharp_initializer_chain_binding(
             return Ok(None);
         }
         let type_symbol = type_candidates[0];
-        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        let Some((binding, _)) = resolve_csharp_member_chain_binding_with_ancestor_fields(
             type_symbol,
             CSharpBaseTypeBinding {
                 semantic_type_path: scope_path.to_string(),
@@ -2587,22 +2590,23 @@ fn resolve_csharp_initializer_chain_binding(
             return Ok(None);
         }
         let base_symbol = &raw_symbols[base_indexes[0]];
-        let Some((binding, scope_source_symbol)) = resolve_csharp_base_member_chain_binding(
-            base_symbol,
-            CSharpBaseTypeBinding {
-                semantic_type_path: base_type_path,
-                is_global_qualified: true,
-                alias_name: None,
-                namespace_import_paths: Vec::new(),
-            },
-            &hops,
-            raw_symbols,
-            semantic_path_index,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        let Some((binding, scope_source_symbol)) =
+            resolve_csharp_member_chain_binding_with_ancestor_fields(
+                base_symbol,
+                CSharpBaseTypeBinding {
+                    semantic_type_path: base_type_path,
+                    is_global_qualified: true,
+                    alias_name: None,
+                    namespace_import_paths: Vec::new(),
+                },
+                &hops,
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
         else {
             return Ok(None);
         };
@@ -3687,7 +3691,7 @@ fn resolve_csharp_member_chain_binding<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
-    resolve_csharp_member_chain_binding_with_ancestor_fields(
+    resolve_csharp_member_chain_binding_impl(
         source_symbol,
         binding,
         hops,
@@ -3701,17 +3705,17 @@ fn resolve_csharp_member_chain_binding<'a>(
     )
 }
 
-/// Walks the intermediate hops of a `base.`-rooted receiver chain such as
-/// `base.member.helper(...)` or `base.inner().helper(...)`. Field, property,
-/// and event hops are looked up through the unique class/record ancestor
-/// chain, mirroring how `base.Method()` and method-call hops already walk
-/// ancestors, so a member inherited from a grandparent base still pins the
-/// next hop or final member.
+/// Walks the intermediate hops of a `base.`- or `this.`-rooted receiver chain
+/// such as `base.member.helper(...)`, `base.inner().helper(...)`, or
+/// `this.member.helper(...)`. Field, property, and event hops are looked up
+/// through the unique class/record ancestor chain, mirroring how
+/// `base.Method()` and method-call hops already walk ancestors, so a member
+/// inherited from a grandparent base still pins the next hop or final member.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# base-rooted member-chain hop resolution inputs explicit"
 )]
-fn resolve_csharp_base_member_chain_binding<'a>(
+fn resolve_csharp_member_chain_binding_with_ancestor_fields<'a>(
     source_symbol: &'a IndexedSymbol,
     binding: CSharpBaseTypeBinding,
     hops: &[&str],
@@ -3722,7 +3726,7 @@ fn resolve_csharp_base_member_chain_binding<'a>(
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
-    resolve_csharp_member_chain_binding_with_ancestor_fields(
+    resolve_csharp_member_chain_binding_impl(
         source_symbol,
         binding,
         hops,
@@ -3740,7 +3744,7 @@ fn resolve_csharp_base_member_chain_binding<'a>(
     clippy::too_many_arguments,
     reason = "keeps C# member-chain hop resolution inputs explicit"
 )]
-fn resolve_csharp_member_chain_binding_with_ancestor_fields<'a>(
+fn resolve_csharp_member_chain_binding_impl<'a>(
     source_symbol: &'a IndexedSymbol,
     mut binding: CSharpBaseTypeBinding,
     hops: &[&str],
@@ -4045,10 +4049,11 @@ fn resolve_csharp_instance_method_on_binding(
 }
 
 /// Resolves a `this.`-rooted member chain such as `this.member.helper(...)`
-/// whose intermediate hops are fields, properties, or events on the enclosing
-/// type. The enclosing type must be uniquely declared in the source file;
-/// unknown or unresolvable hops and missing or static final members fail
-/// closed.
+/// whose intermediate hops are fields, properties, or events walked through
+/// the unique class/record ancestor chain, so a hop inherited from a
+/// grandparent base still pins the next hop or final member. The enclosing
+/// type must be uniquely declared in the source file; unknown or unresolvable
+/// hops and missing or static final members fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# this-chain member dispatch inputs explicit"
@@ -4086,22 +4091,23 @@ fn resolve_csharp_this_member_chain_call(
     let Some(final_member) = hops.pop() else {
         return Ok(None);
     };
-    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
-        type_symbol,
-        CSharpBaseTypeBinding {
-            semantic_type_path: scope_path.to_string(),
-            is_global_qualified: true,
-            alias_name: None,
-            namespace_import_paths: Vec::new(),
-        },
-        &hops,
-        raw_symbols,
-        semantic_path_index,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
+    let Some((binding, dispatch_source_symbol)) =
+        resolve_csharp_member_chain_binding_with_ancestor_fields(
+            type_symbol,
+            CSharpBaseTypeBinding {
+                semantic_type_path: scope_path.to_string(),
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     else {
         return Ok(None);
     };
@@ -4190,22 +4196,23 @@ fn resolve_csharp_base_member_chain_call(
     let Some(final_member) = hops.pop() else {
         return Ok(None);
     };
-    let Some((binding, dispatch_source_symbol)) = resolve_csharp_base_member_chain_binding(
-        base_symbol,
-        CSharpBaseTypeBinding {
-            semantic_type_path: base_type_path,
-            is_global_qualified: true,
-            alias_name: None,
-            namespace_import_paths: Vec::new(),
-        },
-        &hops,
-        raw_symbols,
-        semantic_path_index,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
+    let Some((binding, dispatch_source_symbol)) =
+        resolve_csharp_member_chain_binding_with_ancestor_fields(
+            base_symbol,
+            CSharpBaseTypeBinding {
+                semantic_type_path: base_type_path,
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            &hops,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
     else {
         return Ok(None);
     };
