@@ -1309,6 +1309,44 @@ fn resolve_reference_path_with_deadline<'a>(
         )? {
             return Ok(Some(symbol_id));
         }
+        // A dotted reference whose leading segment names a statically imported
+        // field is a member chain such as `STATIC_HELPER.entry.helper(...)` on
+        // the imported field's declared type; unknown, ambiguous, or
+        // unresolvable fields and hops fail closed instead of falling through
+        // to a same-named static type call. Bare static-imported method calls
+        // keep the static-method contract below.
+        if let Some((receiver_name, member_chain)) = reference_name.split_once('.')
+            && !receiver_name.is_empty()
+            && !member_chain.is_empty()
+            && let Some(binding) = resolve_java_static_method_import_binding_for_reference(
+                &source_symbol.file_path,
+                receiver_name,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            && let Some(field_type_path) = resolve_java_imported_static_field_type_path(
+                &binding,
+                receiver_name,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            && let Some(symbol_id) = resolve_java_member_chain_from_type_path(
+                &field_type_path,
+                member_chain,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                call_arity,
+                deadline,
+            )?
+        {
+            return Ok(Some(symbol_id));
+        }
         let Some(binding) = resolve_java_static_method_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,

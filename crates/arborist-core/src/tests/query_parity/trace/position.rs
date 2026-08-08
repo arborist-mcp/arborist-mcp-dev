@@ -25208,6 +25208,252 @@ class Caller {
 }
 
 #[test]
+fn traces_java_direct_static_imported_field_member_chain_calls_across_files() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let entry_path = helper_dir.join("Entry.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo {
+    public Entry entry = new Entry();
+    public int helper(int value) { return value; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &entry_path,
+        "package pkg.helper;
+public class Entry { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+public class Util { public static Foo STATIC_HELPER = new Foo(); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import static pkg.util.Util.STATIC_HELPER;
+public class Bar {
+    public int run() { return STATIC_HELPER.helper(1); }
+    public int chained() { return STATIC_HELPER.entry.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A statically imported field root pins the field's declared type and
+    // dispatches the trailing member chain (direct final call or intermediate
+    // field hops) on that canonical type, so a caller in another package
+    // dispatches the final member independently of its own package.
+    for (target, expected) in [
+        ("pkg::helper::Foo::helper", vec!["pkg::caller::Bar::run"]),
+        (
+            "pkg::helper::Entry::helper",
+            vec!["pkg::caller::Bar::chained"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            live.callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{target} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(
+            persisted
+                .callers
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{target} persisted"
+        );
+    }
+}
+
+#[test]
+fn traces_java_direct_static_imported_field_member_chain_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+public class Util { public static Foo STATIC_HELPER = new Foo(); }
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+public class Bar { public int run() { return 0; } }
+",
+    )
+    .unwrap();
+    let overlay = "package pkg.caller;
+import static pkg.util.Util.STATIC_HELPER;
+public class Bar {
+    public int run() { return STATIC_HELPER.helper(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "pkg::helper::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "pkg::caller::Bar::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "pkg::helper::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "pkg::caller::Bar::run");
+}
+
+#[test]
+fn java_direct_static_imported_field_member_chain_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Bar.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo {
+    public Entry entry = new Entry();
+    public int helper(int value) { return value; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        helper_dir.join("Entry.java"),
+        "package pkg.helper;
+public class Entry { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+public class Util {
+    public static Foo STATIC_HELPER = new Foo();
+    public static Foo MakeHelper() { return new Foo(); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import static pkg.util.Util.STATIC_HELPER;
+import static pkg.util.Util.MakeHelper;
+import static pkg.util.Util.MISSING;
+public class Bar {
+    public int missingField() { return MISSING.helper(1); }
+    public int importedMethodAsValue() { return MakeHelper.entry.helper(1); }
+    public int missingHop() { return STATIC_HELPER.missing.helper(1); }
+    public int control() { return STATIC_HELPER.entry.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A leading static-imported segment that is not a declared static field
+    // (a missing member or a method used as a value) and chains with missing
+    // hops still fail closed, while a resolvable static-imported field chain
+    // keeps tracing.
+    for (caller, expected) in [
+        ("pkg::caller::Bar::missingField", Vec::<&str>::new()),
+        (
+            "pkg::caller::Bar::importedMethodAsValue",
+            Vec::<&str>::new(),
+        ),
+        ("pkg::caller::Bar::missingHop", Vec::<&str>::new()),
+        (
+            "pkg::caller::Bar::control",
+            vec!["pkg::helper::Entry::helper"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_java_var_static_imported_field_receiver_calls_across_files() {
     let dir = temporary_dir();
     let helper_dir = dir.join("src").join("pkg").join("helper");
