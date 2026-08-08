@@ -726,12 +726,14 @@ fn csharp_var_initializer_type_binding(
 
 /// Builds a field/property-access chain spelling such as `helper`,
 /// `this.holder.helper`, `holder.helper`, `Holder().helper`, or
-/// `Util.STATIC_HELPER` for a `var` local initialized from an identifier or
-/// member-access expression. The spelling mirrors the extractor's member-chain
-/// spelling so the resolver can walk the chain to the final member's declared
-/// type. A chain whose leading receiver is an unbound identifier is kept as a
-/// static type-qualified candidate; untyped bound receivers and unsupported
-/// initializer shapes return `None` and fail closed.
+/// `Util.STATIC_HELPER`, or `MakeHelper().entry` for a `var` local initialized
+/// from an identifier or member-access expression. The spelling mirrors the
+/// extractor's member-chain spelling so the resolver can walk the chain to the
+/// final member's declared type. A chain whose leading receiver is an unbound
+/// identifier is kept as a static type-qualified candidate, and a leading bare
+/// method call (`MakeHelper()` in `MakeHelper().entry`) is kept so the resolver
+/// can dispatch it as a factory method; untyped bound receivers and
+/// unsupported initializer shapes return `None` and fail closed.
 fn csharp_initializer_chain_spelling(
     initializer: tree_sitter::Node<'_>,
     source: &str,
@@ -759,8 +761,29 @@ fn csharp_initializer_chain_spelling(
                 let Some(function) = current.child_by_field_name("function") else {
                     return Ok(None);
                 };
-                if function.kind() != "member_access_expression" {
+                let Some(arguments) = current.child_by_field_name("arguments") else {
                     return Ok(None);
+                };
+                let mut cursor = arguments.walk();
+                let arity = arguments.named_children(&mut cursor).count();
+                // A bare-call root such as `MakeHelper()` in
+                // `MakeHelper().entry` records the call as the leading chain
+                // segment; the resolver dispatches it as a factory method on
+                // the enclosing type or a static-imported type.
+                if function.kind() != "member_access_expression" {
+                    if function.kind() != "identifier" {
+                        return Ok(None);
+                    }
+                    let name = node_text(function, source)?.trim();
+                    if name.is_empty() {
+                        return Ok(None);
+                    }
+                    if arity == 0 {
+                        segments.push(format!("{name}()"));
+                    } else {
+                        segments.push(format!("{name}({arity})"));
+                    }
+                    break;
                 }
                 let Some(name) = function.child_by_field_name("name") else {
                     return Ok(None);
@@ -769,11 +792,6 @@ fn csharp_initializer_chain_spelling(
                 if name.is_empty() {
                     return Ok(None);
                 }
-                let Some(arguments) = current.child_by_field_name("arguments") else {
-                    return Ok(None);
-                };
-                let mut cursor = arguments.walk();
-                let arity = arguments.named_children(&mut cursor).count();
                 if arity == 0 {
                     segments.push(format!("{name}()"));
                 } else {

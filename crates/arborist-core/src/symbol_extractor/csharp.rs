@@ -193,9 +193,13 @@ fn collect_direct_same_type_calls_from_node(
 /// unbound identifier or `global::`-qualified root is kept as a static
 /// type-qualified candidate such as `Util.STATIC_HELPER` so the resolver can
 /// look the member up on the resolved type; otherwise those roots fail closed
-/// and the caller falls through to the static type-call handling. Non-instance
-/// bases (object creations, namespaces) and untyped bound receivers produce
-/// no spelling and fail closed.
+/// and the caller falls through to the static type-call handling. A leading
+/// bare method call (`MakeHelper()` in `MakeHelper().entry`) records the call
+/// as the first chain segment so the resolver can dispatch it as a factory
+/// method on the enclosing type or a static-imported type; bare-call roots are
+/// only kept when static type-qualified roots are allowed. Non-instance bases
+/// (object creations, namespaces) and untyped bound receivers produce no
+/// spelling and fail closed.
 fn csharp_instance_member_chain_spelling(
     node: Node<'_>,
     source: &str,
@@ -224,8 +228,32 @@ fn csharp_instance_member_chain_spelling(
                 let Some(function) = current.child_by_field_name("function") else {
                     return Ok(None);
                 };
-                if function.kind() != "member_access_expression" {
+                let Some(arguments) = current.child_by_field_name("arguments") else {
                     return Ok(None);
+                };
+                let mut cursor = arguments.walk();
+                let arity = arguments.named_children(&mut cursor).count();
+                // A bare-call root such as `MakeHelper()` in
+                // `MakeHelper().entry` records the call as the leading chain
+                // segment; the resolver dispatches it as a factory method on
+                // the enclosing type or a static-imported type. Bare-call
+                // roots are only kept when static type-qualified roots are
+                // allowed; otherwise the caller falls through to the direct
+                // invocation handling.
+                if function.kind() != "member_access_expression" {
+                    if !keep_static_type_roots || function.kind() != "identifier" {
+                        return Ok(None);
+                    }
+                    let name = crate::language::node_text(function, source)?.trim();
+                    if name.is_empty() {
+                        return Ok(None);
+                    }
+                    if arity == 0 {
+                        segments.push(format!("{name}()"));
+                    } else {
+                        segments.push(format!("{name}({arity})"));
+                    }
+                    break;
                 }
                 let Some(name) = function.child_by_field_name("name") else {
                     return Ok(None);
@@ -234,11 +262,6 @@ fn csharp_instance_member_chain_spelling(
                 if name.is_empty() {
                     return Ok(None);
                 }
-                let Some(arguments) = current.child_by_field_name("arguments") else {
-                    return Ok(None);
-                };
-                let mut cursor = arguments.walk();
-                let arity = arguments.named_children(&mut cursor).count();
                 if arity == 0 {
                     segments.push(format!("{name}()"));
                 } else {

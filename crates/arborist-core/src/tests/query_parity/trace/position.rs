@@ -6255,6 +6255,230 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_var_bare_factory_field_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "using static Demo.Util;
+
+namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public Helper inner() => this;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+}
+class Base {
+    protected Helper MakeHelper() => new Helper();
+    protected Helper MakeHelper(int value) => new Helper();
+}
+class Caller : Base {
+    int BareFactoryField() { var v = MakeHelper().entry; return v.Run(1); }
+    int BareFactoryFieldArity() { var v = MakeHelper(1).entry; return v.Run(1); }
+    int BareFactoryChain() { var v = MakeHelper().inner().entry; return v.Run(1); }
+}
+class ImportedCaller {
+    int StaticImportedFactoryField() { var v = MakeHelper().entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare factory-call field root such as
+    // `MakeHelper().entry` resolves the leading call as a unique arity-matched
+    // factory method on the enclosing type, the unique base chain, or a
+    // static-imported type, pins the receiver to its declared return type, and
+    // walks the remaining hops (including method-call hops) on that type.
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::BareFactoryChain",
+            "Demo::Caller::BareFactoryField",
+            "Demo::Caller::BareFactoryFieldArity",
+            "Demo::ImportedCaller::StaticImportedFactoryField",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::BareFactoryChain",
+            "Demo::Caller::BareFactoryField",
+            "Demo::Caller::BareFactoryFieldArity",
+            "Demo::ImportedCaller::StaticImportedFactoryField",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_bare_factory_field_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    Helper MakeHelper() => new Helper();
+    int Call() { var v = MakeHelper().entry; return v.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_bare_factory_field_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Other {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Holder {
+    public Other entry = new Other();
+}
+class Caller {
+    Helper MakeHelper() => new Helper();
+    int MakeCount() => 1;
+    Helper ArityOne(int value) => new Helper();
+    int MissingMethod() { var v = Missing().entry; return v.Run(1); }
+    int PrimitiveReturn() { var v = MakeCount().entry; return v.Run(1); }
+    int ArityMismatch() { var v = ArityOne().entry; return v.Run(1); }
+    int Control() { var v = MakeHelper().entry; return v.Run(1); }
+}
+class AmbiguousCaller {
+    Helper Holder() => new Helper();
+    int NewHolderAmbiguous() { var v = new Holder().entry; return v.Run(1); }
+    int CallHolderAmbiguous() { var v = Holder().entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare factory-call field root pins its
+    // receiver only when the leading call resolves as a unique arity-matched
+    // factory method on the enclosing type, the unique base chain, or a
+    // static-imported type and its declared return type resolves to a unique
+    // indexed type with usable remaining hops; missing, primitive-returning,
+    // and arity-mismatched factories fail closed, and a leading call-shaped
+    // segment that resolves both as a constructed type and as a factory
+    // method whose receivers end on different types fails closed as
+    // ambiguous, while a resolvable bare factory-call field root still traces.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingMethod", Vec::<&str>::new()),
+        (
+            "Demo::Caller::PrimitiveReturn",
+            vec!["Demo::Caller::MakeCount"],
+        ),
+        ("Demo::Caller::ArityMismatch", Vec::<&str>::new()),
+        (
+            "Demo::Caller::Control",
+            vec!["Demo::Caller::MakeHelper", "Demo::Entry::Run"],
+        ),
+        (
+            "Demo::AmbiguousCaller::NewHolderAmbiguous",
+            Vec::<&str>::new(),
+        ),
+        (
+            "Demo::AmbiguousCaller::CallHolderAmbiguous",
+            vec!["Demo::AmbiguousCaller::Holder"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
