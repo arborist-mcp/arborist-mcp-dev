@@ -12805,6 +12805,217 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_cross_namespace_generic_interface_member_hop_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+interface IBaseWorker {
+    Entry Entry { get; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "namespace Demo {
+    using Other;
+    interface IWorker : Other.IBaseWorker {
+    }
+    interface IBaseBox<T> {
+        Entry Entry { get; }
+    }
+    interface IBox<T> : IBaseBox<T> {
+    }
+    class Caller {
+        int CrossNamespaceChain(IWorker worker) => worker.Entry.helper.Run(1);
+        int GenericChain(IBox<int> box) => box.Entry.helper.Run(1);
+        int GenericCrossNamespaceChain(IWorker worker, IBox<int> box) => worker.Entry.helper.Run(1) + box.Entry.helper.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // The interface-extends walk resolves parent interface hops in each
+    // declaring interface's own namespace and import scope, and a generic
+    // interface receiver normalizes to the raw interface before the walk, so
+    // hops inherited from a parent interface in another namespace (or from a
+    // generic parent interface) still pin the next hop and the final member.
+    for (target, expected) in [
+        (
+            "Other::Helper::Run",
+            vec![
+                "Demo::Caller::CrossNamespaceChain",
+                "Demo::Caller::GenericChain",
+                "Demo::Caller::GenericCrossNamespaceChain",
+            ],
+        ),
+        ("Other::Entry::Run", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_cross_namespace_generic_interface_member_hop_instance_calls_from_dirty_vfs_overrides()
+ {
+    let dir = temporary_dir();
+    let other_path = dir.join("Other.cs");
+    let demo_path = dir.join("Demo.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &other_path,
+        "namespace Other;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public Helper helper = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &demo_path,
+        "namespace Demo {
+    using Other;
+    interface IBaseBox<T> {
+        Entry Entry { get; }
+    }
+    interface IBox<T> : IBaseBox<T> {
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call(IBox<int> box) => box.Entry.helper.Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Other::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Other::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_cross_namespace_generic_interface_member_hops() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Other.cs"),
+        "namespace Other;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Demo.cs"),
+        "namespace Demo {
+    using Other;
+    interface IBaseBox<T> {
+        Entry Entry { get; }
+    }
+    interface IBox<T> : IBaseBox<T> {
+    }
+    class Caller {
+        int MissingHop(IBox<int> box) => box.missing.helper.Run(1);
+        int Control(IBox<int> box) => box.Entry.helper.Run(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A hop that no parent interface branch declares still fails closed even
+    // across namespaces and generic interfaces, while a resolvable parent
+    // hop keeps tracing.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Other::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
