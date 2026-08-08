@@ -1347,6 +1347,28 @@ fn resolve_reference_path_with_deadline<'a>(
         {
             return Ok(Some(symbol_id));
         }
+        // A dotted reference whose leading segments name a type and whose next
+        // hop is a static field or static factory call is a member chain such
+        // as `Util.STATIC_HELPER.helper(...)`,
+        // `Util.STATIC_HELPER.entry.helper(...)`, or
+        // `Util.MakeHelper().helper(...)` rooted at that static member's
+        // declared type. The type prefix may be a same-package, explicitly
+        // imported, fully qualified, or nested type; competing prefix
+        // interpretations, non-static roots, and unknown or unresolvable hops
+        // fail closed instead of falling through to a same-named static type
+        // call.
+        if let Some(symbol_id) = resolve_java_direct_type_qualified_static_root_member_chain(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         let Some(binding) = resolve_java_static_method_import_binding_for_reference(
             &source_symbol.file_path,
             reference_name,
@@ -6701,6 +6723,105 @@ fn java_static_method_return_type_path(
         java_import_contexts_by_file,
         deadline,
     )
+}
+
+/// Resolves a dotted direct-call reference whose leading segments name a
+/// class or interface and whose first chain hop is a static field or static
+/// factory call, such as `Util.STATIC_HELPER.helper(...)`,
+/// `Util.STATIC_HELPER.entry.helper(...)`, or `Util.MakeHelper().helper(...)`.
+/// Each prefix split resolves as a class or interface through the same
+/// same-package, explicit-import, fully-qualified, and nested type rules as
+/// other Java receivers; the first chain hop must be a uniquely declared
+/// static field (walking the direct-superclass chain) or an arity-matched
+/// static method call whose declared type continues the chain, and the
+/// remaining hops dispatch through the same member-chain rules as bound
+/// receivers. Multiple or competing prefix interpretations, unknown or
+/// ambiguous types and roots, non-static roots, and unresolvable hops fail
+/// closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps Java direct type-qualified static-root resolution inputs explicit"
+)]
+fn resolve_java_direct_type_qualified_static_root_member_chain(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    java_import_contexts_by_file: &mut BTreeMap<String, JavaImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let segments = reference_name.split('.').collect::<Vec<_>>();
+    if segments.iter().any(|segment| segment.is_empty()) || segments.len() < 3 {
+        return Ok(None);
+    }
+    let mut resolved = BTreeSet::new();
+    for split in 1..segments.len() {
+        let type_name = segments[..split].join(".");
+        let chain = segments[split..].join(".");
+        let Some((first_hop, remaining_chain)) = chain.split_once('.') else {
+            continue;
+        };
+        if matches!(type_name.as_str(), "this" | "super") {
+            continue;
+        }
+        let Some(type_path) = resolve_java_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            continue;
+        };
+        let root_type_path =
+            if let Some((method_name, hop_arity)) = java_method_call_hop_spelling(first_hop) {
+                java_static_method_return_type_path(
+                    &type_path,
+                    &method_name,
+                    hop_arity,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+            } else {
+                java_inherited_field_type_path(
+                    &type_path,
+                    first_hop,
+                    true,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+            };
+        let Some(root_type_path) = root_type_path else {
+            continue;
+        };
+        if let Some(symbol_id) = resolve_java_member_chain_from_type_path(
+            &root_type_path,
+            remaining_chain,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            java_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            resolved.insert(symbol_id);
+        }
+    }
+    if resolved.len() != 1 {
+        return Ok(None);
+    }
+    Ok(resolved.into_iter().next())
 }
 
 /// Dispatches the final member of an instance-receiver chain. The receiver's
