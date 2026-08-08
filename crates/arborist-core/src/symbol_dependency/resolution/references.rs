@@ -2823,9 +2823,13 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 // A type prefix that does not resolve as a plain declared type
                 // may still resolve through the same alias and namespace-import
                 // rules as receiver type references (`using U = Demo.Util;` or
-                // `using Demo;`); the resolved binding must dispatch to exactly
-                // one type declaration.
-                let Some(binding) = resolve_csharp_receiver_type_binding(
+                // `using Demo;`); a dotted prefix whose first segment comes
+                // from a namespace import (`Outer.Util` with `using Demo;`
+                // when the nested type is `Demo.Outer.Util`) resolves through
+                // the imported namespace as a nested type. The resolved
+                // binding or type path must dispatch to exactly one type
+                // declaration.
+                match resolve_csharp_receiver_type_binding(
                     source_symbol,
                     &type_name,
                     raw_symbols,
@@ -2835,19 +2839,36 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                     file_overrides,
                     csharp_import_contexts_by_file,
                     deadline,
-                )?
-                else {
-                    continue;
-                };
-                let Some(type_path) = csharp_dispatchable_type_path(
-                    source_symbol,
-                    raw_symbols,
-                    &binding,
-                    csharp_is_type_declaration,
-                ) else {
-                    continue;
-                };
-                type_path
+                )? {
+                    Some(binding) => {
+                        let Some(type_path) = csharp_dispatchable_type_path(
+                            source_symbol,
+                            raw_symbols,
+                            &binding,
+                            csharp_is_type_declaration,
+                        ) else {
+                            continue;
+                        };
+                        type_path
+                    }
+                    None => {
+                        let Some(type_path) = resolve_csharp_namespace_imported_nested_type_path(
+                            source_symbol,
+                            &type_name,
+                            raw_symbols,
+                            semantic_path_index,
+                            csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                            csharp_global_import_context,
+                            file_overrides,
+                            csharp_import_contexts_by_file,
+                            deadline,
+                        )?
+                        else {
+                            continue;
+                        };
+                        type_path
+                    }
+                }
             }
         };
         let type_indexes = semantic_path_index
@@ -5575,6 +5596,95 @@ fn resolve_csharp_namespace_imported_nested_static_method(
             require_same_file: false,
         },
     )
+}
+
+/// Resolves a dotted static-initializer type prefix whose first segment comes
+/// from a namespace import, such as `Outer.Util` with `using Demo;` when the
+/// nested type is `Demo.Outer.Util`. Each imported namespace is walked segment
+/// by segment like nested static method resolution, and exactly one imported
+/// namespace must yield a unique type declaration at every prefix before the
+/// fully resolved type path is returned. A first segment that is shadowed by a
+/// type in the caller's own namespace chain, an ambiguous nested path, a
+/// `global::`-qualified prefix, and unresolvable prefixes return `None` and
+/// fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# namespace-imported nested type inputs explicit"
+)]
+fn resolve_csharp_namespace_imported_nested_type_path(
+    source_symbol: &IndexedSymbol,
+    type_path: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    if type_path.starts_with("global::") {
+        return Ok(None);
+    }
+    let Some(semantic_path) = crate::language::csharp_generic_type_semantic_path(type_path) else {
+        return Ok(None);
+    };
+    if !semantic_path.contains("::") {
+        return Ok(None);
+    }
+    let Some(first_segment) = semantic_path.split("::").next() else {
+        return Ok(None);
+    };
+    if !csharp_nested_type_root_is_unshadowed(first_segment, source_symbol, raw_symbols) {
+        return Ok(None);
+    }
+    let mut namespace_imports = resolve_csharp_namespace_imports_for_reference(
+        &source_symbol.file_path,
+        first_segment,
+        source_namespace_path,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?;
+    if let Some(csharp_global_import_context) = csharp_global_import_context {
+        namespace_imports.extend(resolve_csharp_global_namespace_imports_for_reference(
+            first_segment,
+            csharp_global_import_context,
+        ));
+    }
+    let mut target_type_paths = BTreeSet::new();
+    for binding in &namespace_imports {
+        let mut current_type_path = binding.semantic_namespace_path.clone();
+        let mut type_path_is_present = false;
+        for segment in semantic_path.split("::") {
+            current_type_path.push_str("::");
+            current_type_path.push_str(segment);
+            let type_candidates = semantic_path_index
+                .get(&current_type_path)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+                .count();
+            if type_candidates > 1 {
+                return Ok(None);
+            }
+            if type_candidates == 0 {
+                if type_path_is_present {
+                    return Ok(None);
+                }
+                break;
+            }
+            type_path_is_present = true;
+        }
+        if type_path_is_present {
+            target_type_paths.insert(current_type_path);
+        }
+    }
+    let target_type_paths = target_type_paths.into_iter().collect::<Vec<_>>();
+    let [target_type_path] = target_type_paths.as_slice() else {
+        return Ok(None);
+    };
+    Ok(Some(target_type_path.clone()))
 }
 
 fn resolve_csharp_namespace_imported_static_method(

@@ -7636,6 +7636,303 @@ class CallerImports {
 }
 
 #[test]
+fn traces_csharp_cross_namespace_nested_type_static_roots_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public static Helper MakeHelper() => new Helper();
+}
+class Outer {
+    public class Util {
+        public static Helper NESTED_HELPER = new Helper();
+        public static Helper MakeHelper() => new Helper();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int DirectField() { return Outer.Util.NESTED_HELPER.entry.Run(1); }
+        int GlobalDirectField() { return global::Demo.Outer.Util.NESTED_HELPER.entry.Run(1); }
+        int DirectFactory() { return Outer.Util.MakeHelper().entry.Run(1); }
+        int VarField() { var v = Outer.Util.NESTED_HELPER; return v.Run(1); }
+        int VarFactory() { var v = Outer.Util.MakeHelper().entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A dotted static root whose first segment comes from a namespace import
+    // (`Outer.Util.NESTED_HELPER` with `using Demo;` when the nested type is
+    // `Demo.Outer.Util`) resolves through the imported namespace as a nested
+    // type in the declaring type's own scope, so cross-namespace direct calls,
+    // `global::`-qualified spellings, and `var` initializers all dispatch the
+    // final member on the canonical declared type.
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::DirectFactory",
+            "Other::Caller::DirectField",
+            "Other::Caller::GlobalDirectField",
+            "Other::Caller::VarFactory",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::DirectFactory",
+            "Other::Caller::DirectField",
+            "Other::Caller::GlobalDirectField",
+            "Other::Caller::VarFactory",
+        ]
+    );
+
+    // The `var` field root dispatches on the nested static field's declared
+    // type, and the nested factory method traces to its own method too.
+    let live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(callers, ["Other::Caller::VarField"]);
+    let live = trace_symbol_graph(
+        &dir,
+        "Demo::Outer::Util::MakeHelper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        ["Other::Caller::DirectFactory", "Other::Caller::VarFactory"]
+    );
+}
+
+#[test]
+fn traces_csharp_cross_namespace_nested_type_static_roots_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public Entry entry = new Entry();
+}
+class Outer {
+    public class Util {
+        public static Helper NESTED_HELPER = new Helper();
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    class Caller {
+        int Call() { return Outer.Util.NESTED_HELPER.entry.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_cross_namespace_nested_type_static_roots() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+    public static int StaticRun(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public static int StaticRun(int value) => value;
+}
+class Outer {
+    public class Util {
+        public static Helper NESTED_HELPER = new Helper();
+        public Helper INSTANCE_HELPER = new Helper();
+    }
+}
+class Caller {
+    int UnknownRoot() { return MissingNs.Outer.Util.NESTED_HELPER.entry.Run(1); }
+    int MissingNested() { return Outer.Missing.NESTED_HELPER.entry.Run(1); }
+    int MissingMember() { return Outer.Util.MISSING.entry.Run(1); }
+    int InstanceViaNestedType() { return Outer.Util.INSTANCE_HELPER.Run(1); }
+    int StaticFinal() { return Outer.Util.NESTED_HELPER.StaticRun(1); }
+    int MissingHop() { return Outer.Util.NESTED_HELPER.missing.Run(1); }
+    int Control() { return Outer.Util.NESTED_HELPER.entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Ambiguous.cs"),
+        "namespace Demo2 {
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper2 {
+    public Entry entry = new Entry();
+}
+class Outer {
+    public class Util {
+        public static Helper2 NESTED_HELPER = new Helper2();
+    }
+}
+}
+namespace Other {
+    using Demo;
+    using Demo2;
+    class AmbiguousCaller {
+        int Ambiguous() { return Outer.Util.NESTED_HELPER.entry.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A dotted static root whose first segment comes from a namespace import
+    // traces only when exactly one imported namespace yields the nested type
+    // with a static member of a usable declared type, every hop resolves, and
+    // the final member is a matching instance method; unknown or ambiguous
+    // namespace roots, missing nested types or members, instance members
+    // reached through a nested type name, missing hops, and static final
+    // members fail closed, while the resolvable chain still traces.
+    for (caller, expected) in [
+        ("Demo::Caller::UnknownRoot", Vec::<&str>::new()),
+        ("Demo::Caller::MissingNested", Vec::<&str>::new()),
+        ("Demo::Caller::MissingMember", Vec::<&str>::new()),
+        ("Demo::Caller::InstanceViaNestedType", Vec::<&str>::new()),
+        ("Demo::Caller::StaticFinal", Vec::<&str>::new()),
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Entry::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+    let caller = "Other::AmbiguousCaller::Ambiguous";
+    let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+    assert_eq!(
+        live.callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new(),
+        "{caller} live"
+    );
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+    assert_eq!(
+        persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new(),
+        "{caller} persisted"
+    );
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
