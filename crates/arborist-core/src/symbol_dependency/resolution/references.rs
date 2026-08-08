@@ -2654,7 +2654,7 @@ fn resolve_csharp_initializer_chain_binding(
         else {
             return Ok(None);
         };
-        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
             source_symbol,
             binding,
             &hops,
@@ -2668,7 +2668,11 @@ fn resolve_csharp_initializer_chain_binding(
         else {
             return Ok(None);
         };
-        return Ok(Some(binding));
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
     }
     // A chain whose leading segment is neither a local binding nor
     // `this`/`base`/constructed-type rooted may be a static type-qualified

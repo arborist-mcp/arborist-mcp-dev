@@ -6752,6 +6752,209 @@ namespace Nested {
 }
 
 #[test]
+fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public Helper inner() => this;
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int TypedLocal() { Helper h = new Helper(); var v = h.entry; return v.Run(1); }
+        int TypedLocalChain() { Helper h = new Helper(); var v = h.inner().entry; return v.Run(1); }
+        int FieldChain() { var v = Util.STATIC_HELPER.entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bound-receiver field chain such as
+    // `h.entry` or `h.inner().entry` where the bound receiver's declared type
+    // is imported from another namespace pins the receiver to the member's
+    // declared type and walks the remaining hops in the declaring type's
+    // scope, so the cross-namespace caller still dispatches the final member
+    // on the canonical declared type independently of its own namespace.
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::FieldChain",
+            "Other::Caller::TypedLocal",
+            "Other::Caller::TypedLocalChain",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::FieldChain",
+            "Other::Caller::TypedLocal",
+            "Other::Caller::TypedLocalChain",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    class Caller {
+        int Call() { Helper h = new Helper(); var v = h.entry; return v.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_cross_namespace_bound_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public int count = 1;
+    public static Helper StaticHop() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int MissingHop() { Helper h = new Helper(); var v = h.missing.entry; return v.Run(1); }
+        int StaticHop() { Helper h = new Helper(); var v = h.StaticHop().entry; return v.Run(1); }
+        int PrimitiveHop() { Helper h = new Helper(); var v = h.count.entry; return v.Run(1); }
+        int Control() { Helper h = new Helper(); var v = h.entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bound-receiver field chain pins its
+    // receiver only when every hop resolves in the bound receiver's declared
+    // type scope to a uniquely declared field, property, or arity-matched
+    // non-static method-call hop with a usable declared type; missing hops,
+    // static method-call hops, and primitive field hops fail closed in a
+    // cross-namespace caller, while a resolvable bound-receiver field chain
+    // still traces.
+    for (caller, expected) in [
+        ("Other::Caller::MissingHop", Vec::<&str>::new()),
+        ("Other::Caller::StaticHop", Vec::<&str>::new()),
+        ("Other::Caller::PrimitiveHop", Vec::<&str>::new()),
+        ("Other::Caller::Control", vec!["Demo::Entry::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_constructed_and_factory_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
