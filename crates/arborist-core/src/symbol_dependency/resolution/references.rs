@@ -3746,7 +3746,8 @@ fn resolve_csharp_member_chain_binding<'a>(
         let (declaring_type_symbol, hop_type_name) = {
             // A field/property/event hop is looked up on the current type and,
             // when the current type does not declare it, through the unique
-            // class/record ancestor chain so the nearest declaration (or its
+            // class/record ancestor chain (or the interface-extends chain for
+            // interface-typed receivers) so the nearest declaration (or its
             // absence) is authoritative.
             let mut current_type_symbol = type_symbol;
             let mut visited_type_paths = BTreeSet::new();
@@ -3766,6 +3767,33 @@ fn resolve_csharp_member_chain_binding<'a>(
                         return Ok(None);
                     };
                     break (current_type_symbol, hop_type_name);
+                }
+                if current_type_symbol.node_kind == "interface_declaration" {
+                    // Interfaces have no class/record base to walk; resolve
+                    // the hop through the interface-extends chain instead,
+                    // with the same shadowing and ambiguity rules as
+                    // interface method dispatch.
+                    let mut visited_interface_paths = BTreeSet::new();
+                    match resolve_csharp_interface_member_hop(
+                        current_type_symbol,
+                        hop,
+                        raw_symbols,
+                        semantic_path_index,
+                        csharp_global_import_context,
+                        file_overrides,
+                        csharp_import_contexts_by_file,
+                        deadline,
+                        &mut visited_interface_paths,
+                    )? {
+                        CSharpInterfaceMemberHopResolution::Resolved(
+                            declaring_type_symbol,
+                            hop_type_name,
+                        ) => break (declaring_type_symbol, hop_type_name),
+                        CSharpInterfaceMemberHopResolution::NoHop
+                        | CSharpInterfaceMemberHopResolution::Blocked => {
+                            return Ok(None);
+                        }
+                    }
                 }
                 let Some(base_binding) = csharp_base_type_binding_for_type(
                     current_type_symbol,
@@ -4579,6 +4607,147 @@ fn resolve_csharp_interface_chain_method(
     Ok(resolved_symbol_id
         .map(CSharpInterfaceChainMethodResolution::Resolved)
         .unwrap_or(CSharpInterfaceChainMethodResolution::NoMethod))
+}
+
+enum CSharpInterfaceMemberHopResolution<'a> {
+    Resolved(&'a IndexedSymbol, String),
+    NoHop,
+    Blocked,
+}
+
+/// Resolves a field/property/event hop declared on an interface or on one
+/// branch of its unique interface-extends chain, mirroring interface method
+/// dispatch. A declaration on an interface shadows inheritance: an
+/// unresolvable same-name declaration blocks parent lookup rather than
+/// falling through. Exactly one branch must provide a uniquely resolvable
+/// hop, every other branch must prove it has no declaration, and a
+/// declaration reached identically through multiple branches still resolves
+/// once. Competing, ambiguous, cyclic, and unresolvable hops fail closed as
+/// `Blocked`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# interface member-hop resolution inputs explicit"
+)]
+fn resolve_csharp_interface_member_hop<'a>(
+    interface_symbol: &'a IndexedSymbol,
+    hop: &str,
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+    visited_interface_paths: &mut BTreeSet<String>,
+) -> Result<CSharpInterfaceMemberHopResolution<'a>> {
+    if let Some(deadline) = deadline {
+        deadline.check("resolving C# interface member hop")?;
+    }
+    if !visited_interface_paths.insert(interface_symbol.semantic_path.clone()) {
+        return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+    }
+    let member_bindings = match csharp_member_type_bindings_for_type(
+        &interface_symbol.file_path,
+        interface_symbol.byte_range,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        Some(member_bindings) => member_bindings,
+        None => {
+            visited_interface_paths.remove(&interface_symbol.semantic_path);
+            return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+        }
+    };
+    if member_bindings.contains(hop) {
+        let resolution = match member_bindings.type_for(hop) {
+            Some(hop_type_name) => {
+                CSharpInterfaceMemberHopResolution::Resolved(interface_symbol, hop_type_name)
+            }
+            None => CSharpInterfaceMemberHopResolution::Blocked,
+        };
+        visited_interface_paths.remove(&interface_symbol.semantic_path);
+        return Ok(resolution);
+    }
+
+    let source_namespace_path =
+        csharp_source_namespace_path(interface_symbol, raw_symbols).flatten();
+    let parent_bindings = match csharp_interface_parent_bindings_for_interface(
+        &interface_symbol.file_path,
+        interface_symbol.byte_range,
+        source_namespace_path,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )? {
+        CSharpInterfaceParents::None => {
+            visited_interface_paths.remove(&interface_symbol.semantic_path);
+            return Ok(CSharpInterfaceMemberHopResolution::NoHop);
+        }
+        CSharpInterfaceParents::Blocked => {
+            visited_interface_paths.remove(&interface_symbol.semantic_path);
+            return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+        }
+        CSharpInterfaceParents::Parents(parent_bindings) => parent_bindings,
+    };
+    let mut resolved_hop = None;
+    for parent_binding in parent_bindings {
+        let Some(parent_interface_path) = csharp_interface_type_path(
+            interface_symbol,
+            raw_symbols,
+            semantic_path_index,
+            &parent_binding,
+        ) else {
+            visited_interface_paths.remove(&interface_symbol.semantic_path);
+            return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+        };
+        let parent_indexes = semantic_path_index
+            .get(&parent_interface_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| raw_symbols[*index].node_kind == "interface_declaration")
+            .collect::<Vec<_>>();
+        let [parent_index] = parent_indexes.as_slice() else {
+            visited_interface_paths.remove(&interface_symbol.semantic_path);
+            return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+        };
+        match resolve_csharp_interface_member_hop(
+            &raw_symbols[*parent_index],
+            hop,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+            visited_interface_paths,
+        )? {
+            CSharpInterfaceMemberHopResolution::Resolved(declaring_type, hop_type_name) => {
+                if resolved_hop.as_ref().is_some_and(
+                    |(resolved_type, resolved_name): &(&IndexedSymbol, String)| {
+                        resolved_type.symbol_id != declaring_type.symbol_id
+                            || *resolved_name != hop_type_name
+                    },
+                ) {
+                    visited_interface_paths.remove(&interface_symbol.semantic_path);
+                    return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+                }
+                resolved_hop.get_or_insert((declaring_type, hop_type_name));
+            }
+            CSharpInterfaceMemberHopResolution::Blocked => {
+                visited_interface_paths.remove(&interface_symbol.semantic_path);
+                return Ok(CSharpInterfaceMemberHopResolution::Blocked);
+            }
+            CSharpInterfaceMemberHopResolution::NoHop => {}
+        }
+    }
+    visited_interface_paths.remove(&interface_symbol.semantic_path);
+    Ok(resolved_hop
+        .map(|(declaring_type, hop_type_name)| {
+            CSharpInterfaceMemberHopResolution::Resolved(declaring_type, hop_type_name)
+        })
+        .unwrap_or(CSharpInterfaceMemberHopResolution::NoHop))
 }
 
 /// Dispatches an instance call on a struct-typed receiver to a unique

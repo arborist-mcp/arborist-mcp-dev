@@ -12592,6 +12592,219 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_interface_chain_member_hop_instance_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+interface IBase {
+    Entry Entry { get; }
+}
+interface IMiddle : IBase {
+}
+interface IWorker : IMiddle, IBase {
+    Entry Own { get; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int SameInterfaceChain(IWorker worker) => worker.Own.helper.Run(1);
+    int ParentInterfaceChain(IWorker worker) => worker.Entry.helper.Run(1);
+    int MiddleTypedChain(IMiddle middle) => middle.Entry.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::MiddleTypedChain",
+                "Demo::Caller::ParentInterfaceChain",
+                "Demo::Caller::SameInterfaceChain",
+            ],
+        ),
+        ("Demo::Entry::Run", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_interface_chain_member_hop_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public Helper helper = new Helper();
+}
+interface IBase {
+    Entry Entry { get; }
+}
+interface IMiddle : IBase {
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call(IMiddle middle) => middle.Entry.helper.Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_interface_chain_member_hop_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+class Other {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+interface IBase {
+    Entry Entry { get; }
+}
+interface ILeft {
+    Entry Entry { get; }
+}
+interface IRight {
+    Other Entry { get; }
+}
+interface ICompeting : ILeft, IRight {
+}
+interface IMissingParent : IBase {
+}
+interface IBase2 {
+    Entry Entry { get; }
+}
+interface IShadowParent : IBase2 {
+    Unresolved Entry { get; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int MissingHop(IBase baseWorker) => baseWorker.missing.helper.Run(1);
+    int CompetingHop(ICompeting competing) => competing.Entry.helper.Run(1);
+    int ShadowedByUnresolvable(IShadowParent shadowParent) => shadowParent.Entry.helper.Run(1);
+    int Control(IMissingParent middle) => middle.Entry.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // Interface member hops fail closed when no parent branch declares the
+    // hop, when competing parent branches declare different hop types, or
+    // when the nearest interface declaration shadows a resolvable parent hop
+    // with an unresolvable declared type, while a resolvable parent-interface
+    // hop keeps tracing.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::CompetingHop", Vec::<&str>::new()),
+        ("Demo::Caller::ShadowedByUnresolvable", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
