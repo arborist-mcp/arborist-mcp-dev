@@ -2561,7 +2561,7 @@ fn resolve_csharp_initializer_chain_binding(
                 csharp_import_contexts_by_file,
                 deadline,
             )?
-            && let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            && let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
                 source_symbol,
                 binding,
                 &hops,
@@ -2572,8 +2572,10 @@ fn resolve_csharp_initializer_chain_binding(
                 csharp_import_contexts_by_file,
                 deadline,
             )?
+            && let Some(candidate) =
+                canonicalize_csharp_type_binding(scope_source_symbol, &binding, raw_symbols)
         {
-            candidate_bindings.push(binding);
+            candidate_bindings.push(candidate);
         }
         if let Some((method_name, call_arity)) = csharp_method_call_hop_spelling(receiver_name)
             && let Some(method) = resolve_csharp_var_factory_method(
@@ -2604,7 +2606,7 @@ fn resolve_csharp_initializer_chain_binding(
             )?
         {
             let candidate = if hops.is_empty() {
-                Some(factory_binding)
+                canonicalize_csharp_type_binding(method, &factory_binding, raw_symbols)
             } else {
                 resolve_csharp_member_chain_binding(
                     method,
@@ -2617,7 +2619,9 @@ fn resolve_csharp_initializer_chain_binding(
                     csharp_import_contexts_by_file,
                     deadline,
                 )?
-                .map(|(binding, _)| binding)
+                .and_then(|(binding, scope_source_symbol)| {
+                    canonicalize_csharp_type_binding(scope_source_symbol, &binding, raw_symbols)
+                })
             };
             if let Some(candidate) = candidate
                 && !candidate_bindings.contains(&candidate)

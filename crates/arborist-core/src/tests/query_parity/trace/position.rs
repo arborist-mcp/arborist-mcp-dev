@@ -6752,6 +6752,249 @@ namespace Nested {
 }
 
 #[test]
+fn traces_csharp_var_cross_namespace_constructed_and_factory_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public Helper inner() => this;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        int Constructed() { var v = new Helper().entry; return v.Run(1); }
+        int ConstructedFactory() { var v = new Helper().inner().entry; return v.Run(1); }
+        int FactoryRoot() { var v = Util.MakeHelper().entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("ImportedFactory.cs"),
+        "namespace Other {
+    using static Demo.Util;
+    class ImportedFactoryCaller {
+        int BareFactory() { var v = MakeHelper().entry; return v.Run(1); }
+        int BareFactoryArity() { var v = MakeHelper(1).entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a constructed-type root such as
+    // `new Helper().entry` (spelled `Helper().entry`) or a bare factory-call
+    // root such as `MakeHelper().entry` pins the receiver to the constructed
+    // type or the factory's declared return type and walks the remaining hops
+    // in the declaring type's scope, so a cross-namespace caller (a
+    // constructed type or static-imported factory resolved through `using
+    // Demo;` or `using static Demo.Util;`) still dispatches the final member
+    // on the canonical declared type independently of its own namespace.
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::Constructed",
+            "Other::Caller::ConstructedFactory",
+            "Other::Caller::FactoryRoot",
+            "Other::ImportedFactoryCaller::BareFactory",
+            "Other::ImportedFactoryCaller::BareFactoryArity",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::Constructed",
+            "Other::Caller::ConstructedFactory",
+            "Other::Caller::FactoryRoot",
+            "Other::ImportedFactoryCaller::BareFactory",
+            "Other::ImportedFactoryCaller::BareFactoryArity",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_cross_namespace_constructed_receiver_instance_calls_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    class Caller {
+        int Call() { var v = new Helper().entry; return v.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_cross_namespace_constructed_and_factory_receiver_calls()
+{
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Other {
+    public int Run(int value) => value;
+}
+class Holder {
+    public Other entry = new Other();
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static int MakeCount() => 1;
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    class Caller {
+        Helper Holder() => new Helper();
+        int MissingFactory() { var v = Missing().entry; return v.Run(1); }
+        int NewHolderAmbiguous() { var v = new Holder().entry; return v.Run(1); }
+        int CallHolderAmbiguous() { var v = Holder().entry; return v.Run(1); }
+        int PrimitiveFactory() { var v = Util.MakeCount().entry; return v.Run(1); }
+        int Control() { var v = new Helper().entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a call-shaped root pins its receiver only
+    // when exactly one of the constructed-type and factory interpretations
+    // resolves in the cross-namespace caller's scope with usable hops;
+    // unknown factories, constructed-type/factory interpretations that end on
+    // different declared types, and primitive-returning static factories fail
+    // closed, while a resolvable constructed-type root still traces (and a
+    // direct factory call that resolves as a callee is still reported even
+    // when the `var` receiver itself is ambiguous).
+    for (caller, expected) in [
+        ("Other::Caller::MissingFactory", Vec::<&str>::new()),
+        ("Other::Caller::NewHolderAmbiguous", Vec::<&str>::new()),
+        (
+            "Other::Caller::CallHolderAmbiguous",
+            vec!["Other::Caller::Holder"],
+        ),
+        (
+            "Other::Caller::PrimitiveFactory",
+            vec!["Demo::Util::MakeCount"],
+        ),
+        ("Other::Caller::Control", vec!["Demo::Entry::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_base_rooted_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
