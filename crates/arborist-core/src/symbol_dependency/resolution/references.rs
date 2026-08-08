@@ -2509,7 +2509,7 @@ fn resolve_csharp_initializer_chain_binding(
             return Ok(None);
         }
         let base_symbol = &raw_symbols[base_indexes[0]];
-        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
             base_symbol,
             CSharpBaseTypeBinding {
                 semantic_type_path: base_type_path,
@@ -2528,7 +2528,11 @@ fn resolve_csharp_initializer_chain_binding(
         else {
             return Ok(None);
         };
-        return Ok(Some(binding));
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
     }
     // A leading call-shaped segment such as `Holder()` or `MakeHelper()` is
     // shared by two initializer shapes: a constructed-type root

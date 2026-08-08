@@ -6752,6 +6752,223 @@ namespace Nested {
 }
 
 #[test]
+fn traces_csharp_var_cross_namespace_base_rooted_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace BaseNs;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public Helper inner() => this;
+}
+class Base {
+    public Helper holder = new Helper();
+    protected Helper MakeHelper() => new Helper();
+    protected Helper MakeHelper(int value) => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace CallerNs {
+    using BaseNs;
+    class Caller : Base {
+        int BaseField() { var v = base.holder.entry; return v.Run(1); }
+        int BaseFactory() { var v = base.MakeHelper().entry; return v.Run(1); }
+        int BaseFactoryArity() { var v = base.MakeHelper(1).entry; return v.Run(1); }
+        int BaseFactoryChain() { var v = base.MakeHelper().inner().entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a `base.`-rooted field or factory
+    // initializer such as `base.holder.entry` or `base.MakeHelper().entry`
+    // pins the receiver to the base type's member declared type and walks the
+    // remaining hops (including method-call hops) in the base type's scope,
+    // so a caller whose base type is imported from another namespace still
+    // dispatches the final member on the canonical declared type
+    // independently of its own namespace.
+    let live = trace_symbol_graph(&dir, "BaseNs::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "CallerNs::Caller::BaseFactory",
+            "CallerNs::Caller::BaseFactoryArity",
+            "CallerNs::Caller::BaseFactoryChain",
+            "CallerNs::Caller::BaseField",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "BaseNs::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "CallerNs::Caller::BaseFactory",
+            "CallerNs::Caller::BaseFactoryArity",
+            "CallerNs::Caller::BaseFactoryChain",
+            "CallerNs::Caller::BaseField",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_cross_namespace_base_rooted_receiver_instance_calls_from_dirty_vfs_overrides()
+{
+    let dir = temporary_dir();
+    let base_path = dir.join("Base.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &base_path,
+        "namespace BaseNs;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Base {
+    public Helper holder = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace CallerNs; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace CallerNs {
+    using BaseNs;
+    class Caller : Base {
+        int Call() { var v = base.holder.entry; return v.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "BaseNs::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "CallerNs::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "BaseNs::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "CallerNs::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_cross_namespace_base_rooted_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Base.cs"),
+        "namespace BaseNs;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Base {
+    public Helper holder = new Helper();
+    protected Helper MakeHelper() => new Helper();
+    public int primitive = 1;
+    public static Helper StaticHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace CallerNs {
+    using BaseNs;
+    class Caller : Base {
+        int MissingHop() { var v = base.missing.entry; return v.Run(1); }
+        int StaticHop() { var v = base.StaticHelper().entry; return v.Run(1); }
+        int PrimitiveHop() { var v = base.primitive.entry; return v.Run(1); }
+        int Control() { var v = base.holder.entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a `base.`-rooted initializer pins its
+    // receiver only when every hop resolves in the base type's cross-namespace
+    // scope to a uniquely declared field, property, or arity-matched
+    // non-static method-call hop with a usable declared type; missing hops,
+    // static method-call hops, and primitive field hops fail closed in a
+    // cross-namespace caller, while a resolvable `base.`-rooted field chain
+    // still traces.
+    for (caller, expected) in [
+        ("CallerNs::Caller::MissingHop", Vec::<&str>::new()),
+        ("CallerNs::Caller::StaticHop", Vec::<&str>::new()),
+        ("CallerNs::Caller::PrimitiveHop", Vec::<&str>::new()),
+        ("CallerNs::Caller::Control", vec!["BaseNs::Entry::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_static_imported_and_inherited_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
