@@ -1983,7 +1983,7 @@ fn resolve_csharp_var_factory_method<'a>(
             return Ok(None);
         }
         let base_symbol = &raw_symbols[base_indexes[0]];
-        let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+        let Some((binding, dispatch_source_symbol)) = resolve_csharp_base_member_chain_binding(
             base_symbol,
             CSharpBaseTypeBinding {
                 semantic_type_path: base_type_path,
@@ -2587,7 +2587,7 @@ fn resolve_csharp_initializer_chain_binding(
             return Ok(None);
         }
         let base_symbol = &raw_symbols[base_indexes[0]];
-        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+        let Some((binding, scope_source_symbol)) = resolve_csharp_base_member_chain_binding(
             base_symbol,
             CSharpBaseTypeBinding {
                 semantic_type_path: base_type_path,
@@ -3678,6 +3678,70 @@ fn resolve_csharp_inherited_field_initializer_binding<'a>(
 )]
 fn resolve_csharp_member_chain_binding<'a>(
     source_symbol: &'a IndexedSymbol,
+    binding: CSharpBaseTypeBinding,
+    hops: &[&str],
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
+    resolve_csharp_member_chain_binding_with_ancestor_fields(
+        source_symbol,
+        binding,
+        hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+        false,
+    )
+}
+
+/// Walks the intermediate hops of a `base.`-rooted receiver chain such as
+/// `base.member.helper(...)` or `base.inner().helper(...)`. Field, property,
+/// and event hops are looked up through the unique class/record ancestor
+/// chain, mirroring how `base.Method()` and method-call hops already walk
+/// ancestors, so a member inherited from a grandparent base still pins the
+/// next hop or final member.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# base-rooted member-chain hop resolution inputs explicit"
+)]
+fn resolve_csharp_base_member_chain_binding<'a>(
+    source_symbol: &'a IndexedSymbol,
+    binding: CSharpBaseTypeBinding,
+    hops: &[&str],
+    raw_symbols: &'a [IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
+    resolve_csharp_member_chain_binding_with_ancestor_fields(
+        source_symbol,
+        binding,
+        hops,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+        true,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# member-chain hop resolution inputs explicit"
+)]
+fn resolve_csharp_member_chain_binding_with_ancestor_fields<'a>(
+    source_symbol: &'a IndexedSymbol,
     mut binding: CSharpBaseTypeBinding,
     hops: &[&str],
     raw_symbols: &'a [IndexedSymbol],
@@ -3686,6 +3750,7 @@ fn resolve_csharp_member_chain_binding<'a>(
     file_overrides: Option<&BTreeMap<String, String>>,
     csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
+    walk_ancestor_fields: bool,
 ) -> Result<Option<(CSharpBaseTypeBinding, &'a IndexedSymbol)>> {
     let mut scope_source_symbol = source_symbol;
     for hop in hops {
@@ -3732,28 +3797,72 @@ fn resolve_csharp_member_chain_binding<'a>(
             scope_source_symbol = method_symbol;
             continue;
         }
-        let Some(member_bindings) = csharp_member_type_bindings_for_type(
-            &type_symbol.file_path,
-            type_symbol.byte_range,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        if !member_bindings.contains(hop) {
-            return Ok(None);
-        }
-        let Some(hop_type_name) = member_bindings.type_for(hop) else {
-            return Ok(None);
+        let (declaring_type_symbol, hop_type_name) = {
+            // A field/property/event hop is looked up on the current type; a
+            // base-rooted chain continues through the unique class/record
+            // ancestor chain when the current type does not declare the hop,
+            // while every other chain fails closed so the nearest declaration
+            // (or its absence) is authoritative.
+            let mut current_type_symbol = type_symbol;
+            let mut visited_type_paths = BTreeSet::new();
+            loop {
+                let Some(member_bindings) = csharp_member_type_bindings_for_type(
+                    &current_type_symbol.file_path,
+                    current_type_symbol.byte_range,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                if member_bindings.contains(hop) {
+                    let Some(hop_type_name) = member_bindings.type_for(hop) else {
+                        return Ok(None);
+                    };
+                    break (current_type_symbol, hop_type_name);
+                }
+                if !walk_ancestor_fields {
+                    return Ok(None);
+                }
+                let Some(base_binding) = csharp_base_type_binding_for_type(
+                    current_type_symbol,
+                    raw_symbols,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                let Some(base_type_path) =
+                    csharp_base_type_path(current_type_symbol, raw_symbols, &base_binding)
+                else {
+                    return Ok(None);
+                };
+                if !visited_type_paths.insert(base_type_path.clone()) {
+                    return Ok(None);
+                }
+                let base_indexes = semantic_path_index
+                    .get(&base_type_path)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+                    .collect::<Vec<_>>();
+                if base_indexes.len() != 1 {
+                    return Ok(None);
+                }
+                current_type_symbol = &raw_symbols[base_indexes[0]];
+            }
         };
         let Some(next_binding) = resolve_csharp_receiver_type_binding(
-            type_symbol,
+            declaring_type_symbol,
             &hop_type_name,
             raw_symbols,
             semantic_path_index,
-            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_source_namespace_path(declaring_type_symbol, raw_symbols).flatten(),
             csharp_global_import_context,
             file_overrides,
             csharp_import_contexts_by_file,
@@ -3763,7 +3872,7 @@ fn resolve_csharp_member_chain_binding<'a>(
             return Ok(None);
         };
         binding = next_binding;
-        scope_source_symbol = type_symbol;
+        scope_source_symbol = declaring_type_symbol;
     }
     Ok(Some((binding, scope_source_symbol)))
 }
@@ -4081,7 +4190,7 @@ fn resolve_csharp_base_member_chain_call(
     let Some(final_member) = hops.pop() else {
         return Ok(None);
     };
-    let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
+    let Some((binding, dispatch_source_symbol)) = resolve_csharp_base_member_chain_binding(
         base_symbol,
         CSharpBaseTypeBinding {
             semantic_type_path: base_type_path,
