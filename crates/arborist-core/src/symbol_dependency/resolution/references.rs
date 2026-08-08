@@ -3122,9 +3122,13 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
     }
     let (type_symbol, member_binding) = &candidates[0];
     if hops.is_empty() {
-        return Ok(Some(member_binding.clone()));
+        return Ok(canonicalize_csharp_type_binding(
+            type_symbol,
+            member_binding,
+            raw_symbols,
+        ));
     }
-    let Some((binding, _)) = resolve_csharp_member_chain_binding(
+    let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
         type_symbol,
         member_binding.clone(),
         hops,
@@ -3138,7 +3142,11 @@ fn resolve_csharp_static_imported_field_initializer_binding<'a>(
     else {
         return Ok(None);
     };
-    Ok(Some(binding))
+    Ok(canonicalize_csharp_type_binding(
+        scope_source_symbol,
+        &binding,
+        raw_symbols,
+    ))
 }
 
 /// Resolves the receiver type binding for a `var` local initialized from a
@@ -3250,9 +3258,13 @@ fn resolve_csharp_inherited_field_initializer_binding<'a>(
                 return Ok(None);
             };
             if hops.is_empty() {
-                return Ok(Some(member_binding));
+                return Ok(canonicalize_csharp_type_binding(
+                    base_symbol,
+                    &member_binding,
+                    raw_symbols,
+                ));
             }
-            let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
                 base_symbol,
                 member_binding,
                 hops,
@@ -3266,7 +3278,11 @@ fn resolve_csharp_inherited_field_initializer_binding<'a>(
             else {
                 return Ok(None);
             };
-            return Ok(Some(binding));
+            return Ok(canonicalize_csharp_type_binding(
+                scope_source_symbol,
+                &binding,
+                raw_symbols,
+            ));
         }
         ancestor_symbol = base_symbol;
     }
