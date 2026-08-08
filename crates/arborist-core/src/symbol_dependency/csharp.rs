@@ -682,6 +682,27 @@ fn collect_csharp_function_bindings(
     Ok(())
 }
 
+/// Returns the inner expression of a `parenthesized_expression` such as
+/// `(MakeFactory())` or `(group)`, recovering the anonymous keyword token for
+/// `(this)`; malformed or empty parentheses return `None` and fail closed.
+/// Mirrors the extractor's parenthesized unwrapping.
+fn csharp_parenthesized_inner_expression(
+    node: tree_sitter::Node<'_>,
+) -> Option<tree_sitter::Node<'_>> {
+    let inner = {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor).next()
+    };
+    match inner {
+        Some(inner) => Some(inner),
+        None => {
+            let mut cursor = node.walk();
+            node.children(&mut cursor)
+                .find(|child| !matches!(child.kind(), "(" | ")"))
+        }
+    }
+}
+
 /// Infers a receiver type binding for `var` locals. Constructor initializers
 /// such as `var helper = new Helper()` or `var helper = new Outer.Inner()`
 /// bind the constructed type; invocation initializers such as
@@ -701,7 +722,25 @@ fn csharp_var_initializer_type_binding(
     let Some(initializer) = csharp_declarator_initializer(declarator) else {
         return Ok(None);
     };
+    csharp_initializer_type_binding(initializer, source, bindings)
+}
+
+/// Infers a receiver type binding from an initializer expression, unwrapping
+/// parenthesized initializers such as `(MakeFactory())`, `(new Helper())`, or
+/// `(MakeHelper()).entry` to the same shape as the unparenthesized form.
+/// Mirrors the extractor's `var` initializer binding rules.
+fn csharp_initializer_type_binding(
+    initializer: tree_sitter::Node<'_>,
+    source: &str,
+    bindings: &CSharpReceiverTypeBindings,
+) -> Result<Option<String>> {
     match initializer.kind() {
+        "parenthesized_expression" => {
+            let Some(inner) = csharp_parenthesized_inner_expression(initializer) else {
+                return Ok(None);
+            };
+            csharp_initializer_type_binding(inner, source, bindings)
+        }
         "object_creation_expression" => {
             let Some(type_node) = initializer.child_by_field_name("type") else {
                 return Ok(None);
@@ -842,6 +881,16 @@ fn csharp_initializer_chain_spelling(
                 };
                 segments.push(spelling);
                 break;
+            }
+            "parenthesized_expression" => {
+                // A parenthesized segment such as `(MakeFactory())` in
+                // `(MakeFactory()).entry` or `(group).inner().helper` unwraps
+                // to its inner expression and keeps walking the chain so
+                // parentheses never break initializer-chain inference.
+                let Some(inner) = csharp_parenthesized_inner_expression(current) else {
+                    return Ok(None);
+                };
+                current = inner;
             }
             _ => return Ok(None),
         }
