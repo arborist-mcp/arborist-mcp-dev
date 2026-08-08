@@ -623,6 +623,29 @@ fn resolve_reference_path_with_deadline<'a>(
             CSharpInstanceReceiverResolution::Blocked => return Ok(None),
             CSharpInstanceReceiverResolution::NoBinding => {}
         }
+        // A dotted call rooted at a static type-qualified member such as
+        // `Util.STATIC_HELPER.entry.Run(1)`,
+        // `global::Demo.Util.STATIC_HELPER.entry.Run(1)`, or
+        // `Util.MakeHelper().entry.Run(1)` walks the static field/factory
+        // root and any instance hops before dispatching the final member as
+        // an instance call. It runs before the constructed-receiver path so a
+        // static factory call on a type is not mistaken for a constructor
+        // marker; a reference that is not a resolvable static-member chain
+        // falls through to the constructed-receiver and static type-call
+        // paths below.
+        if let Some(symbol_id) = resolve_csharp_static_field_member_chain_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         // A receiver spelling such as `Helper().Run` names a fresh constructor
         // call on a constructed type; it dispatches as an instance call and
         // never falls through to the static type-call paths. Malformed or
@@ -2993,6 +3016,71 @@ fn canonicalize_csharp_type_binding(
         alias_name: None,
         namespace_import_paths: Vec::new(),
     })
+}
+
+/// Resolves a static type-qualified member-chain call such as
+/// `Util.STATIC_HELPER.entry.Run(1)`, `global::Demo.Util.STATIC_HELPER.entry.Run(1)`,
+/// or `Util.MakeHelper().entry.Run(1)`. The first member after the resolved
+/// type must be a static field or property, or a unique arity-matched static
+/// factory method; any remaining hops walk the same member-chain rules, and
+/// the final member dispatches as an instance method on the resolved receiver
+/// type. Unknown, ambiguous, or unresolvable roots and hops, and missing or
+/// static final members fail closed instead of falling through to a same-named
+/// static type call.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# static field member-chain call inputs explicit"
+)]
+fn resolve_csharp_static_field_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((chain_prefix, final_member)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if chain_prefix.is_empty()
+        || final_member.is_empty()
+        || !is_safe_csharp_identifier(final_member)
+        || !chain_prefix.contains('.')
+    {
+        return Ok(None);
+    }
+    // The chain prefix names a static field/factory root followed by zero or
+    // more instance hops; resolving it pins the receiver type. A prefix that
+    // is not a resolvable static-member chain returns `None` so the caller
+    // falls through to the static type-call paths.
+    let Some(binding) = resolve_csharp_static_field_initializer_binding(
+        source_symbol,
+        chain_prefix,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
 }
 
 /// Resolves a static initializer type spelling such as `Util`,
