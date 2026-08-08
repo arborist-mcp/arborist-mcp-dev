@@ -12393,6 +12393,205 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_generic_static_root_member_chain_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+class Box<T> {
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Box<int> INSTANCE = new Box<int>();
+    public static Box<int> MakeBox() => new Box<int>();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int StaticFieldGenericChain() => Util.INSTANCE.entry.helper.Run(1);
+    int StaticFieldGenericVarChain() { var x = Util.INSTANCE.entry; return x.helper.Run(1); }
+    int StaticFactoryGenericChain() => Util.MakeBox().entry.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // A static field or static factory root whose declared type is a generic
+    // constructed type normalizes to the raw type before the member chain
+    // walks field/property/event hops, so the hops and final member resolve
+    // on the canonical raw type; the intermediate `Entry` hop never becomes
+    // the dispatch target.
+    for (target, expected) in [
+        (
+            "Demo::Helper::Run",
+            vec![
+                "Demo::Caller::StaticFactoryGenericChain",
+                "Demo::Caller::StaticFieldGenericChain",
+                "Demo::Caller::StaticFieldGenericVarChain",
+            ],
+        ),
+        ("Demo::Entry::Run", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_generic_static_root_member_chains() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public int Run(int value) => value;
+    public Helper helper = new Helper();
+}
+class Box<T> {
+    public Entry entry = new Entry();
+    public T value = default;
+}
+class Util {
+    public static Box<int> INSTANCE = new Box<int>();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Demo;
+class Caller {
+    int MissingHop() => Util.INSTANCE.missing.helper.Run(1);
+    int TypeParameterHop() { var v = Util.INSTANCE.value; return v.Run(1); }
+    int Control() => Util.INSTANCE.entry.helper.Run(1);
+}
+",
+    )
+    .unwrap();
+
+    // Hops that the raw generic type does not declare (or type-parameter hop
+    // declared types) still fail closed on static roots, while a resolvable
+    // hop keeps tracing.
+    for (caller, expected) in [
+        ("Demo::Caller::MissingHop", Vec::<&str>::new()),
+        ("Demo::Caller::TypeParameterHop", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Helper::Run"]),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_generic_static_root_member_chain_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Entry {
+    public Helper helper = new Helper();
+}
+class Box<T> {
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Box<int> INSTANCE = new Box<int>();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Caller {
+    int Call() => Util.INSTANCE.entry.helper.Run(1);
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::Call");
+}
+
+#[test]
 fn traces_csharp_constructor_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
