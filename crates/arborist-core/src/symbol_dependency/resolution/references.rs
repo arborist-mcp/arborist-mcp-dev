@@ -646,6 +646,26 @@ fn resolve_reference_path_with_deadline<'a>(
         )? {
             return Ok(Some(symbol_id));
         }
+        // A dotted call rooted at a static-imported member such as
+        // `STATIC_HELPER.entry.Run(1)` with `using static Demo.Util;` walks
+        // the static member root and any instance hops before dispatching the
+        // final member as an instance call; a reference that is not a
+        // resolvable static-imported member chain falls through to the
+        // constructed-receiver and static type-call paths below.
+        if let Some(symbol_id) = resolve_csharp_static_imported_member_chain_call(
+            source_symbol,
+            reference_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            call_arity,
+            deadline,
+        )? {
+            return Ok(Some(symbol_id));
+        }
         // A receiver spelling such as `Helper().Run` names a fresh constructor
         // call on a constructed type; it dispatches as an instance call and
         // never falls through to the static type-call paths. Malformed or
@@ -3061,6 +3081,79 @@ fn resolve_csharp_static_field_member_chain_call(
         chain_prefix,
         raw_symbols,
         semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    resolve_csharp_instance_method_on_binding(
+        source_symbol,
+        &binding,
+        final_member,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        call_arity,
+        deadline,
+    )
+}
+
+/// Resolves a static-imported member-chain call such as
+/// `STATIC_HELPER.entry.Run(1)` or `STATIC_HELPER.inner().entry.Run(1)` with
+/// `using static Demo.Util;`. The leading member must resolve as a static
+/// field or property on exactly one static-imported type; remaining hops walk
+/// the same member-chain rules, and the final member dispatches as an instance
+/// method on the resolved receiver type. Unknown, ambiguous, or instance
+/// members, unresolvable hops, and missing or static final members fail closed
+/// instead of falling through to a same-named static type call.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# static-imported member-chain call inputs explicit"
+)]
+fn resolve_csharp_static_imported_member_chain_call(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    call_arity: usize,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((chain_prefix, final_member)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if chain_prefix.is_empty()
+        || final_member.is_empty()
+        || !is_safe_csharp_identifier(final_member)
+    {
+        return Ok(None);
+    }
+    let (root_member, hops) = match chain_prefix.split_once('.') {
+        Some((root, hops)) => (root, hops.split('.').collect::<Vec<_>>()),
+        None => (chain_prefix, Vec::new()),
+    };
+    if !is_safe_csharp_identifier(root_member) || hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    // The chain prefix names a static-imported member root followed by zero
+    // or more instance hops; resolving it pins the receiver type. A prefix
+    // that is not a resolvable static-imported member chain returns `None` so
+    // the caller falls through to the remaining resolution paths.
+    let Some(binding) = resolve_csharp_static_imported_field_initializer_binding(
+        source_symbol,
+        root_member,
+        &hops,
+        raw_symbols,
+        semantic_path_index,
+        source_namespace_path,
         csharp_global_import_context,
         file_overrides,
         csharp_import_contexts_by_file,

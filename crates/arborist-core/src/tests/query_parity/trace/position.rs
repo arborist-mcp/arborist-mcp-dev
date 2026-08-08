@@ -6752,6 +6752,271 @@ namespace Nested {
 }
 
 #[test]
+fn traces_csharp_direct_static_imported_member_chain_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int EntryChain() { return STATIC_HELPER.entry.Run(1); }
+        int DirectRun() { return STATIC_HELPER.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("SameNs.cs"),
+        "namespace Demo;
+using static Demo.Util;
+class SameNsCaller {
+    int EntryChain() { return STATIC_HELPER.entry.Run(1); }
+    int DirectRun() { return STATIC_HELPER.Run(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct call chain rooted at a static-imported field or property such
+    // as `STATIC_HELPER.entry.Run(1)` or `STATIC_HELPER.Run(1)` with
+    // `using static Demo.Util;` pins the receiver to the declared member type
+    // and walks remaining hops in the declaring type's scope, so
+    // same-namespace and cross-namespace callers dispatch the final member on
+    // the canonical declared type.
+    for (target, expected) in [
+        (
+            "Demo::Entry::Run",
+            vec![
+                "Demo::SameNsCaller::EntryChain",
+                "Other::Caller::EntryChain",
+            ],
+        ),
+        (
+            "Demo::Helper::Run",
+            vec!["Demo::SameNsCaller::DirectRun", "Other::Caller::DirectRun"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_csharp_direct_static_imported_member_chain_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int Call() { return STATIC_HELPER.entry.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_direct_static_imported_member_chain_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+    public static int StaticRun(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public int count = 1;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public Helper INSTANCE_HELPER = new Helper();
+    public static int STATIC_COUNT = 1;
+}
+class Caller {
+    int NoImport() { return STATIC_HELPER.entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Imports.cs"),
+        "namespace Demo;
+using static Demo.Util;
+class CallerImports {
+    int MissingMember() { return MISSING.entry.Run(1); }
+    int InstanceMember() { return INSTANCE_HELPER.Run(1); }
+    int PrimitiveStatic() { return STATIC_COUNT.entry.Run(1); }
+    int MissingHop() { return STATIC_HELPER.missing.Run(1); }
+    int StaticFinal() { return STATIC_HELPER.StaticRun(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A direct chain rooted at a static-imported member traces only when the
+    // leading member resolves as a static field or property on exactly one
+    // static-imported type with a usable declared type, every hop resolves,
+    // and the final member is a matching instance method; a missing `using
+    // static` import, unknown or instance members, primitive static roots,
+    // missing hops, and static final members fail closed, while the resolvable
+    // chain still traces when the import is present.
+    for (caller, expected) in [
+        ("Demo::Caller::NoImport", Vec::<&str>::new()),
+        ("Demo::CallerImports::MissingMember", Vec::<&str>::new()),
+        ("Demo::CallerImports::InstanceMember", Vec::<&str>::new()),
+        ("Demo::CallerImports::PrimitiveStatic", Vec::<&str>::new()),
+        ("Demo::CallerImports::MissingHop", Vec::<&str>::new()),
+        ("Demo::CallerImports::StaticFinal", Vec::<&str>::new()),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            live.callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} live"
+        );
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        assert_eq!(
+            persisted
+                .callees
+                .iter()
+                .map(|symbol| symbol.symbol_id.as_str())
+                .collect::<Vec<_>>(),
+            expected,
+            "{caller} persisted"
+        );
+    }
+
+    fs::write(
+        dir.join("Imports.cs"),
+        "namespace Demo;
+using static Demo.Util;
+class CallerImports {
+    int MissingMember() { return MISSING.entry.Run(1); }
+    int InstanceMember() { return INSTANCE_HELPER.Run(1); }
+    int PrimitiveStatic() { return STATIC_COUNT.entry.Run(1); }
+    int MissingHop() { return STATIC_HELPER.missing.Run(1); }
+    int StaticFinal() { return STATIC_HELPER.StaticRun(1); }
+    int Control() { return STATIC_HELPER.entry.Run(1); }
+}
+",
+    )
+    .unwrap();
+    let caller = "Demo::CallerImports::Control";
+    let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+    assert_eq!(
+        live.callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Demo::Entry::Run"],
+        "{caller} live"
+    );
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+    assert_eq!(
+        persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Demo::Entry::Run"],
+        "{caller} persisted"
+    );
+}
+
+#[test]
 fn traces_csharp_direct_static_field_member_chain_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");
