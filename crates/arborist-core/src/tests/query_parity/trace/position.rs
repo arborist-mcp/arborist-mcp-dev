@@ -6479,6 +6479,279 @@ class AmbiguousCaller {
 }
 
 #[test]
+fn traces_csharp_var_alias_static_root_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "using U = Demo.Util;
+
+namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+    public Helper inner() => this;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+    public static Helper STATIC_HELPER = new Helper();
+}
+class Caller {
+    int AliasStaticField() { var v = U.STATIC_HELPER.entry; return v.Run(1); }
+    int AliasStaticFactory() { var v = U.MakeHelper().entry; return v.Run(1); }
+    int AliasStaticFactoryArity() { var v = U.MakeHelper(1).entry; return v.Run(1); }
+    int AliasStaticFactoryChain() { var v = U.MakeHelper().inner().entry; return v.Run(1); }
+    int SameNamespaceStaticField() { var v = Util.STATIC_HELPER.entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("ImportedCaller.cs"),
+        "namespace Other {
+    using Demo;
+    class ImportedCaller {
+        int NamespaceImportedStaticField() { var v = Util.STATIC_HELPER.entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from an alias-qualified static root such as
+    // `U.STATIC_HELPER` or `U.MakeHelper().entry` resolves the alias through
+    // the same declared-type rules as receiver references, pins the receiver
+    // to the resolved type's static member or static factory return type, and
+    // walks the remaining hops (including method-call hops) on that type; a
+    // namespace-imported root such as `Util.STATIC_HELPER` from another
+    // namespace resolves the same way.
+    let live = trace_symbol_graph(&dir, "Demo::Entry::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::AliasStaticFactory",
+            "Demo::Caller::AliasStaticFactoryArity",
+            "Demo::Caller::AliasStaticFactoryChain",
+            "Demo::Caller::AliasStaticField",
+            "Demo::Caller::SameNamespaceStaticField",
+            "Other::ImportedCaller::NamespaceImportedStaticField",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Entry::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::AliasStaticFactory",
+            "Demo::Caller::AliasStaticFactoryArity",
+            "Demo::Caller::AliasStaticFactoryChain",
+            "Demo::Caller::AliasStaticField",
+            "Demo::Caller::SameNamespaceStaticField",
+            "Other::ImportedCaller::NamespaceImportedStaticField",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_alias_static_root_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "using U = Demo.Util;
+
+namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public static Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "using U = Demo.Util;
+
+namespace Demo;
+class Caller {
+    int AliasStaticField() { var v = U.STATIC_HELPER.entry; return v.Run(1); }
+    int AliasStaticFactory() { var v = U.MakeHelper().entry; return v.Run(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::AliasStaticFactory",
+            "Demo::Caller::AliasStaticField",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Entry::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Demo::Caller::AliasStaticFactory",
+            "Demo::Caller::AliasStaticField",
+        ]
+    );
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_alias_static_root_receiver_calls() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "using U = Demo.Util;
+
+namespace Demo;
+class Entry {
+    public int Run(int value) => value;
+}
+class Helper {
+    public int Run(int value) => value;
+    public Entry entry = new Entry();
+}
+class Util {
+    public static Helper STATIC_HELPER = new Helper();
+    public static Helper MakeHelper() => new Helper();
+    public static int MakeCount() => 1;
+    public Helper InstanceHelper() => new Helper();
+}
+class Caller {
+    int MissingAlias() { var v = Missing.STATIC_HELPER.entry; return v.Run(1); }
+    int PrimitiveReturn() { var v = U.MakeCount().entry; return v.Run(1); }
+    int InstanceMember() { var v = U.InstanceHelper().entry; return v.Run(1); }
+    int Control() { var v = U.STATIC_HELPER.entry; return v.Run(1); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("AmbiguousImport.cs"),
+        "namespace Ambient {
+    class Util {
+        public static Helper STATIC_HELPER = new Helper();
+    }
+}
+namespace Nested {
+    using Demo;
+    using Ambient;
+    class AmbiguousCaller {
+        int AmbiguousImport() { var v = Util.STATIC_HELPER.entry; return v.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from an alias-qualified static root pins its
+    // receiver only when the leading type name resolves through the same
+    // alias and namespace-import rules as receiver type references to exactly
+    // one type declaration whose named member is static and whose declared
+    // type resolves to a unique indexed type with usable remaining hops;
+    // unresolved type names, primitive-returning static factories, instance
+    // members reached through a type name, and ambiguous namespace imports
+    // fail closed, while a resolvable alias-qualified static root still
+    // traces (and a static factory call that resolves as a direct callee is
+    // still reported even when the `var` receiver itself fails closed).
+    for (caller, expected) in [
+        ("Demo::Caller::MissingAlias", Vec::<&str>::new()),
+        (
+            "Demo::Caller::PrimitiveReturn",
+            vec!["Demo::Util::MakeCount"],
+        ),
+        ("Demo::Caller::InstanceMember", Vec::<&str>::new()),
+        ("Demo::Caller::Control", vec!["Demo::Entry::Run"]),
+        (
+            "Nested::AmbiguousCaller::AmbiguousImport",
+            Vec::<&str>::new(),
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_base_member_chain_receiver_instance_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let db_path = dir.join("symbols.db");

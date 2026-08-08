@@ -2722,9 +2722,13 @@ fn resolve_csharp_initializer_chain_binding(
 /// `var` receiver; any remaining hops walk the same member-chain rules on
 /// that type. A longer type prefix is tried when the current prefix does not
 /// resolve to a unique type or does not declare the member, so nested and
-/// namespace-qualified type paths resolve like static method calls; a resolved
-/// type whose named member is not static, an instance or missing method, an
-/// ambiguous type, and unresolvable hops return `None` and fail closed.
+/// namespace-qualified type paths resolve like static method calls; a prefix
+/// that does not resolve as a plain declared type may still resolve through
+/// the same alias and namespace-import rules as receiver type references
+/// (`using U = Demo.Util;` or `using Demo;`), dispatching to exactly one type
+/// declaration. A resolved type whose named member is not static, an instance
+/// or missing method, an ambiguous type, and unresolvable hops return `None`
+/// and fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# static field initializer binding inputs explicit"
@@ -2753,16 +2757,43 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         {
             return Ok(None);
         }
-        let Some(type_path) = resolve_csharp_static_initializer_type_path(
+        let type_path = match resolve_csharp_static_initializer_type_path(
             source_symbol,
             &type_name,
             raw_symbols,
             semantic_path_index,
-        ) else {
-            // The type prefix did not resolve to one unique type; a longer
-            // prefix may name a nested or namespace-qualified type such as
-            // `Outer.Util` or `Demo.Util`.
-            continue;
+        ) {
+            Some(type_path) => type_path,
+            None => {
+                // A type prefix that does not resolve as a plain declared type
+                // may still resolve through the same alias and namespace-import
+                // rules as receiver type references (`using U = Demo.Util;` or
+                // `using Demo;`); the resolved binding must dispatch to exactly
+                // one type declaration.
+                let Some(binding) = resolve_csharp_receiver_type_binding(
+                    source_symbol,
+                    &type_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_source_namespace_path(source_symbol, raw_symbols).flatten(),
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    continue;
+                };
+                let Some(type_path) = csharp_dispatchable_type_path(
+                    source_symbol,
+                    raw_symbols,
+                    &binding,
+                    csharp_is_type_declaration,
+                ) else {
+                    continue;
+                };
+                type_path
+            }
         };
         let type_indexes = semantic_path_index
             .get(&type_path)
@@ -2833,9 +2864,13 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
                 return Ok(None);
             };
             if hops.is_empty() {
-                return Ok(Some(factory_binding));
+                return Ok(canonicalize_csharp_type_binding(
+                    method_symbol,
+                    &factory_binding,
+                    raw_symbols,
+                ));
             }
-            let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
                 method_symbol,
                 factory_binding,
                 hops,
@@ -2849,7 +2884,11 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             else {
                 return Ok(None);
             };
-            return Ok(Some(binding));
+            return Ok(canonicalize_csharp_type_binding(
+                scope_source_symbol,
+                &binding,
+                raw_symbols,
+            ));
         }
         let Some(member_bindings) = csharp_member_type_bindings_for_type(
             &type_symbol.file_path,
@@ -2889,9 +2928,13 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
             return Ok(None);
         };
         if hops.is_empty() {
-            return Ok(Some(member_binding));
+            return Ok(canonicalize_csharp_type_binding(
+                type_symbol,
+                &member_binding,
+                raw_symbols,
+            ));
         }
-        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
             type_symbol,
             member_binding,
             hops,
@@ -2905,9 +2948,39 @@ fn resolve_csharp_static_field_initializer_binding<'a>(
         else {
             return Ok(None);
         };
-        return Ok(Some(binding));
+        return Ok(canonicalize_csharp_type_binding(
+            scope_source_symbol,
+            &binding,
+            raw_symbols,
+        ));
     }
     Ok(None)
+}
+
+/// Canonicalizes a resolved receiver binding to a global-qualified semantic
+/// path so the `var` receiver dispatches independently of the caller's
+/// namespace. Bindings resolved inside the declaring type's file scope are
+/// namespace-relative (`Helper` for `Demo::Helper`); pinning the canonical
+/// path keeps a cross-namespace caller such as
+/// `namespace Other { using Demo; var v = Util.STATIC_HELPER.entry; }` from
+/// re-resolving the relative name in its own namespace.
+fn canonicalize_csharp_type_binding(
+    scope_source_symbol: &IndexedSymbol,
+    binding: &CSharpBaseTypeBinding,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<CSharpBaseTypeBinding> {
+    let type_path = csharp_dispatchable_type_path(
+        scope_source_symbol,
+        raw_symbols,
+        binding,
+        csharp_is_type_declaration,
+    )?;
+    Some(CSharpBaseTypeBinding {
+        semantic_type_path: type_path,
+        is_global_qualified: true,
+        alias_name: None,
+        namespace_import_paths: Vec::new(),
+    })
 }
 
 /// Resolves a static initializer type spelling such as `Util`,
