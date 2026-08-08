@@ -507,11 +507,30 @@ fn java_parameter_binding(
 /// Infers a receiver type for `var` locals whose initializer is a constructor
 /// call such as `var value = new Helper(...)`. Non-constructor initializers,
 /// array creations, and malformed type spellings return `None` and fail closed.
+/// Returns the inner expression of a parenthesized initializer such as
+/// `(new Helper())`, `(makeFoo())`, or `(this.helper)`, so `var` locals with
+/// parenthesized initializers bind the same receiver type as the
+/// unparenthesized form. Malformed or empty parentheses return `None` and
+/// fail closed.
+fn java_parenthesized_initializer_expression(
+    mut initializer: tree_sitter::Node<'_>,
+) -> Option<tree_sitter::Node<'_>> {
+    loop {
+        if initializer.kind() != "parenthesized_expression" {
+            return Some(initializer);
+        }
+        initializer = initializer.named_child(0)?;
+    }
+}
+
 fn java_constructor_type_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
 ) -> Result<Option<String>> {
     let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    let Some(initializer) = java_parenthesized_initializer_expression(initializer) else {
         return Ok(None);
     };
     if initializer.kind() != "object_creation_expression" {
@@ -535,6 +554,9 @@ fn java_initializer_call_from_declarator(
     source: &str,
 ) -> Result<Option<(String, usize)>> {
     let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    let Some(initializer) = java_parenthesized_initializer_expression(initializer) else {
         return Ok(None);
     };
     if initializer.kind() != "method_invocation" {
@@ -582,6 +604,9 @@ fn java_initializer_field_access_from_declarator(
     source: &str,
 ) -> Result<Option<String>> {
     let Some(initializer) = declarator.child_by_field_name("value") else {
+        return Ok(None);
+    };
+    let Some(initializer) = java_parenthesized_initializer_expression(initializer) else {
         return Ok(None);
     };
     let reference = match initializer.kind() {
@@ -1122,6 +1147,62 @@ class Caller {
         assert!(shadowed_bindings.ambiguous_names.contains("factory"));
         assert_eq!(shadowed_bindings.type_for("factory"), None);
         assert_eq!(shadowed_bindings.initializer_call_for("factory"), None);
+    }
+
+    #[test]
+    fn var_locals_unwrap_parenthesized_initializers() {
+        let file = write_test_file(
+            "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    private Helper fieldHelper = new Helper();
+    int run() {
+        var constructed = (new Helper());
+        var factory = (makeHelper());
+        var field = (this.fieldHelper);
+        var bareField = (fieldHelper);
+        var array = (new int[3]);
+        return constructed.helper(1) + factory.helper(2) + field.helper(3);
+    }
+    Helper makeHelper() { return new Helper(); }
+}
+",
+        );
+        let context = java_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("constructed") == Some("Helper".to_string()))
+            .unwrap();
+        // Parenthesized constructor, factory, and field-access initializers
+        // bind the same receiver type as their unparenthesized forms.
+        assert_eq!(
+            run_bindings.type_for("constructed"),
+            Some("Helper".to_string())
+        );
+        assert!(run_bindings.contains("factory"));
+        assert_eq!(run_bindings.type_for("factory"), None);
+        assert_eq!(
+            run_bindings.initializer_call_for("factory"),
+            Some(("makeHelper".to_string(), 0))
+        );
+        assert_eq!(
+            run_bindings.initializer_field_for("field"),
+            Some("this.fieldHelper".to_string())
+        );
+        assert_eq!(
+            run_bindings.initializer_field_for("bareField"),
+            Some("fieldHelper".to_string())
+        );
+        // A parenthesized array creation still has no usable receiver type.
+        assert!(run_bindings.contains("array"));
+        assert_eq!(run_bindings.type_for("array"), None);
+        assert_eq!(run_bindings.initializer_call_for("array"), None);
     }
 
     #[test]

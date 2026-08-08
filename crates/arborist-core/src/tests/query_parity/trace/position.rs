@@ -25705,6 +25705,138 @@ class Caller {
 }
 
 #[test]
+fn traces_java_parenthesized_var_initializer_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    Helper makeHelper() { return new Helper(); }
+    int run() {
+        var constructed = (new Helper());
+        var factory = (makeHelper());
+        return constructed.helper(1) + factory.helper(2);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A parenthesized `var` initializer such as `(new Helper())` or
+    // `(makeHelper())` unwraps to the same receiver binding as the
+    // unparenthesized form, so the local dispatches the final member on the
+    // constructed or factory-returned declared type.
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_parenthesized_var_initializer_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    Helper makeHelper() { return new Helper(); }
+    int run() {
+        var constructed = (new Helper());
+        return constructed.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_parenthesized_var_initializer_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    Helper makeHelper() { return new Helper(); }
+    int makeCount() { return 1; }
+    int run() {
+        var arity = (makeHelper(1));
+        var primitive = (makeCount());
+        var array = (new int[3]);
+        var unknown = (MissingHelper());
+        return arity.helper(1) + primitive.helper(1) + array.helper(1) + unknown.helper(1);
+    }
+    int control() {
+        var ok = (makeHelper());
+        return ok.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A parenthesized `var` initializer fails closed exactly like its
+    // unparenthesized form: arity-mismatched factories, primitive return
+    // types, array creations, and unknown factories never bind a usable
+    // receiver type, while the resolvable factory initializer keeps tracing.
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Caller::control"
+    );
+}
+
+#[test]
 fn traces_java_generic_static_root_member_chain_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
