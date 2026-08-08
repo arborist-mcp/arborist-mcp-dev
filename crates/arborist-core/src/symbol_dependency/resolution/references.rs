@@ -2646,17 +2646,18 @@ fn resolve_csharp_initializer_chain_binding(
                 csharp_import_contexts_by_file,
                 deadline,
             )?
-            && let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
-                source_symbol,
-                binding,
-                &hops,
-                raw_symbols,
-                semantic_path_index,
-                csharp_global_import_context,
-                file_overrides,
-                csharp_import_contexts_by_file,
-                deadline,
-            )?
+            && let Some((binding, scope_source_symbol)) =
+                resolve_csharp_member_chain_binding_with_ancestor_fields(
+                    source_symbol,
+                    binding,
+                    &hops,
+                    raw_symbols,
+                    semantic_path_index,
+                    csharp_global_import_context,
+                    file_overrides,
+                    csharp_import_contexts_by_file,
+                    deadline,
+                )?
             && let Some(candidate) =
                 canonicalize_csharp_type_binding(scope_source_symbol, &binding, raw_symbols)
         {
@@ -4296,9 +4297,10 @@ fn resolve_csharp_constructor_receiver_call(
     // A constructor-rooted member chain such as `new Group().Make().Run(1)`
     // or `new Group().holder.helper.Run(1)` walks each intermediate hop as a
     // uniquely declared field, property, event, or arity-matched non-static
-    // method-call hop on the constructed type before dispatching the final
-    // member; unknown, ambiguous, or unresolvable hops and missing or static
-    // final members fail closed.
+    // method-call hop on the constructed type or its unique class/record
+    // ancestor chain (nearest declaring ancestor pins the hop) before
+    // dispatching the final member; unknown, ambiguous, or unresolvable hops
+    // and missing or static final members fail closed.
     if member_chain.contains('.') {
         let hops = member_chain.split('.').collect::<Vec<_>>();
         if hops.iter().any(|hop| hop.is_empty()) {
@@ -4307,17 +4309,18 @@ fn resolve_csharp_constructor_receiver_call(
         let Some(final_member) = hops.last() else {
             return Ok(CSharpConstructorReceiverResolution::Blocked);
         };
-        let Some((binding, dispatch_source_symbol)) = resolve_csharp_member_chain_binding(
-            source_symbol,
-            binding,
-            &hops[..hops.len() - 1],
-            raw_symbols,
-            semantic_path_index,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        let Some((binding, dispatch_source_symbol)) =
+            resolve_csharp_member_chain_binding_with_ancestor_fields(
+                source_symbol,
+                binding,
+                &hops[..hops.len() - 1],
+                raw_symbols,
+                semantic_path_index,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
         else {
             return Ok(CSharpConstructorReceiverResolution::Blocked);
         };
