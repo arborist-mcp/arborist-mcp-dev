@@ -8721,6 +8721,233 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_var_cross_namespace_factory_receiver_instance_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int StaticImportedFactory() { var helper = MakeHelper(); return helper.Run(1); }
+        int StaticImportedFactoryArity() { var helper = MakeHelper(1); return helper.Run(1); }
+        int TypeQualifiedFactory() { var helper = Util.MakeHelper(); return helper.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local initialized from a bare factory call such as
+    // `MakeHelper()` (static-imported from another namespace) or a
+    // type-qualified factory call such as `Util.MakeHelper()` pins the
+    // receiver to the factory's declared return type, canonicalized to its
+    // global-qualified semantic path, so the cross-namespace caller still
+    // dispatches the final member on the canonical declared type
+    // independently of its own namespace.
+    let live = trace_symbol_graph(&dir, "Demo::Helper::Run", TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::StaticImportedFactory",
+            "Other::Caller::StaticImportedFactoryArity",
+            "Other::Caller::TypeQualifiedFactory",
+        ]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, "Demo::Helper::Run", TraceDirection::Callers)
+            .unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|symbol| symbol.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        [
+            "Other::Caller::StaticImportedFactory",
+            "Other::Caller::StaticImportedFactoryArity",
+            "Other::Caller::TypeQualifiedFactory",
+        ]
+    );
+}
+
+#[test]
+fn traces_csharp_var_cross_namespace_factory_receiver_instance_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let caller_path = dir.join("Caller.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "namespace Other; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    class Caller {
+        int Call() { var helper = MakeHelper(); return helper.Run(1); }
+    }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Other::Caller::Call");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &caller_path,
+        overlay,
+        "Demo::Helper::Run",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Other::Caller::Call");
+}
+
+#[test]
+fn fails_closed_on_csharp_unresolvable_var_cross_namespace_factory_receivers() {
+    let dir = temporary_dir();
+    let types_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &types_path,
+        "namespace Demo;
+class Helper {
+    public int Run(int value) => value;
+}
+class Util {
+    public static Helper MakeHelper() => new Helper();
+    public static Helper MakeHelper(int value) => new Helper();
+    public static Helper MakeAmbiguous() => new Helper();
+    public static int MakeCount() => 1;
+}
+class OtherUtil {
+    public static Helper MakeAmbiguous() => new Helper();
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Caller.cs"),
+        "namespace Other {
+    using Demo;
+    using static Demo.Util;
+    using static Demo.OtherUtil;
+    class Caller {
+        int UnknownFactory() { var helper = Missing(); return helper.Run(1); }
+        int ArityMismatchFactory() { var helper = MakeHelper(1, 2); return helper.Run(1); }
+        int PrimitiveFactory() { var helper = MakeCount(); return helper.Run(1); }
+        int AmbiguousFactory() { var helper = MakeAmbiguous(); return helper.Run(1); }
+        int MissingHop() { var helper = MakeHelper().missing; return helper.Run(1); }
+        int UnknownTypeQualifiedFactory() { var helper = MissingUtil.MakeHelper(); return helper.Run(1); }
+        int Control() { var helper = MakeHelper(); return helper.Run(1); }
+    }
+}
+",
+    )
+    .unwrap();
+    let make_helper = format!(
+        "{}::Demo::Util::MakeHelper#overload[1]",
+        normalize_path(&types_path)
+    );
+
+    // A cross-namespace `var` factory-inferred receiver fails closed exactly
+    // like its same-namespace form: unknown, arity-mismatched, primitive
+    // return-type, or ambiguous factories bind no receiver type and never
+    // dispatch a final member, and a missing hop after the leading factory
+    // call still leaves the leading call traced as a direct callee while the
+    // final member does not dispatch. Legitimate bare factory calls still
+    // trace as direct callees when they resolve independently of the receiver
+    // binding, and the resolvable receiver still dispatches.
+    for (caller, expected) in [
+        ("Other::Caller::UnknownFactory", Vec::<String>::new()),
+        ("Other::Caller::ArityMismatchFactory", Vec::<String>::new()),
+        (
+            "Other::Caller::PrimitiveFactory",
+            vec!["Demo::Util::MakeCount".to_string()],
+        ),
+        ("Other::Caller::AmbiguousFactory", Vec::<String>::new()),
+        ("Other::Caller::MissingHop", vec![make_helper.clone()]),
+        (
+            "Other::Caller::UnknownTypeQualifiedFactory",
+            Vec::<String>::new(),
+        ),
+        (
+            "Other::Caller::Control",
+            vec![make_helper.clone(), "Demo::Helper::Run".to_string()],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.clone())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_csharp_var_cross_namespace_bound_receiver_instance_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();

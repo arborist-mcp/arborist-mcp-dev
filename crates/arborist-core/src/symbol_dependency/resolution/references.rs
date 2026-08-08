@@ -1825,7 +1825,11 @@ fn resolve_csharp_factory_receiver_binding(
     if return_type.is_empty() {
         return Ok(None);
     }
-    resolve_csharp_receiver_type_binding(
+    // Resolve the factory's declared return type in the factory's own scope
+    // and canonicalize it to the global-qualified semantic path, so a caller
+    // in another namespace dispatches the final member on the canonical
+    // declared type independently of its own imports.
+    let Some(binding) = resolve_csharp_receiver_type_binding(
         method,
         return_type,
         raw_symbols,
@@ -1835,7 +1839,15 @@ fn resolve_csharp_factory_receiver_binding(
         file_overrides,
         csharp_import_contexts_by_file,
         deadline,
-    )
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(canonicalize_csharp_type_binding(
+        method,
+        &binding,
+        raw_symbols,
+    ))
 }
 
 /// Resolves the factory call of a `var` initializer to a unique method
