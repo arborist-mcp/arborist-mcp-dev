@@ -1173,6 +1173,44 @@ fn resolve_reference_path_with_deadline<'a>(
         )? {
             return Ok(Some(symbol_id));
         }
+        // A dotted reference whose leading segment is a bare factory-call hop
+        // such as `makeFoo()` or `MakeHelper()` in `makeFoo().helper(...)` or
+        // `MakeHelper().entry.helper(...)` resolves the leading call through
+        // the same factory rules as a `var` initializer (a unique same-type
+        // method or explicit static-method import with matching non-varargs
+        // arity and a usable declared return type) and dispatches the
+        // trailing member chain on the factory's declared type; unknown,
+        // ambiguous, or arity-mismatched factories and unresolvable hops fail
+        // closed.
+        if let Some((root_spelling, member_chain)) = reference_name.split_once('.')
+            && !root_spelling.is_empty()
+            && !member_chain.is_empty()
+            && let Some((function_name, function_arity)) =
+                java_method_call_hop_spelling(root_spelling)
+            && !function_name.contains('.')
+            && let Some(root_type_path) = resolve_java_initializer_type_path(
+                source_symbol,
+                &function_name,
+                function_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            && let Some(symbol_id) = resolve_java_member_chain_from_type_path(
+                &root_type_path,
+                member_chain,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                call_arity,
+                deadline,
+            )?
+        {
+            return Ok(Some(symbol_id));
+        }
         if let Some(symbol_id) = resolve_java_nested_static_method_reference(
             source_symbol,
             reference_name,

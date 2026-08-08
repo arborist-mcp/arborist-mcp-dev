@@ -25208,6 +25208,224 @@ class Caller {
 }
 
 #[test]
+fn traces_java_factory_root_member_chain_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let entry_path = helper_dir.join("Entry.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Caller.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo {
+    public Entry entry = new Entry();
+    public int helper(int value) { return value; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &entry_path,
+        "package pkg.helper;
+public class Entry { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+public class Util {
+    public static Foo MakeHelper() { return new Foo(); }
+    public static Foo MakeHelper(int value) { return new Foo(); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.helper.Foo;
+import static pkg.util.Util.MakeHelper;
+public class Caller {
+    public Foo makeFoo() { return new Foo(); }
+    public int sameType() { return makeFoo().helper(1); }
+    public int sameTypeChained() { return makeFoo().entry.helper(1); }
+    public int imported() { return MakeHelper().helper(1); }
+    public int importedChained() { return MakeHelper().entry.helper(1); }
+    public int importedArity() { return MakeHelper(1).helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A bare factory-call root resolves through the same factory rules as a
+    // `var` initializer (a unique same-type method or explicit static-method
+    // import with matching arity) and dispatches the trailing member chain on
+    // the factory's declared type, including intermediate field hops and
+    // arity-matched overloads.
+    for (target, expected) in [
+        (
+            "pkg::helper::Foo::helper",
+            vec![
+                "pkg::caller::Caller::imported",
+                "pkg::caller::Caller::importedArity",
+                "pkg::caller::Caller::sameType",
+            ],
+        ),
+        (
+            "pkg::helper::Entry::helper",
+            vec![
+                "pkg::caller::Caller::importedChained",
+                "pkg::caller::Caller::sameTypeChained",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_java_factory_root_member_chain_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Foo { int helper(int value) { return value; } }
+class Caller { Foo makeFoo() { return new Foo(); } int run() { return 0; } }
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Foo { int helper(int value) { return value; } }
+class Caller {
+    Foo makeFoo() { return new Foo(); }
+    int run() { return makeFoo().helper(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "com::example::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        "com::example::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_factory_root_member_chain_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Foo {
+    Entry entry = new Entry();
+    int helper(int value) { return value; }
+}
+class Caller {
+    Foo makeFoo() { return new Foo(); }
+    int methodAsValue() { return makeFoo.entry.helper(1); }
+    int missingHop() { return makeFoo().missing.helper(1); }
+    int arityMismatch() { return makeFoo(1).helper(1); }
+    int unknownFactory() { return MissingHelper().helper(1); }
+    int control() { return makeFoo().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A factory root used as a field (without call parens), chains with
+    // missing hops, arity-mismatched or unknown factories still fail closed
+    // (the inner factory call itself may still be a legitimate callee), while
+    // a resolvable same-type factory root keeps tracing the final member.
+    for target in ["com::example::Foo::helper", "com::example::Entry::helper"] {
+        for caller in [
+            "com::example::Caller::methodAsValue",
+            "com::example::Caller::missingHop",
+            "com::example::Caller::arityMismatch",
+            "com::example::Caller::unknownFactory",
+        ] {
+            let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+            assert!(
+                !live.callers.iter().any(|symbol| symbol.symbol_id == caller),
+                "{caller} should not call {target} live"
+            );
+            rebuild_symbol_index(&dir, &db_path).unwrap();
+            let persisted =
+                trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+            assert!(
+                !persisted
+                    .callers
+                    .iter()
+                    .any(|symbol| symbol.symbol_id == caller),
+                "{caller} should not call {target} persisted"
+            );
+        }
+    }
+    let live =
+        trace_symbol_graph(&dir, "com::example::Foo::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::control");
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "com::example::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Caller::control"
+    );
+}
+
+#[test]
 fn traces_java_generic_static_root_member_chain_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
