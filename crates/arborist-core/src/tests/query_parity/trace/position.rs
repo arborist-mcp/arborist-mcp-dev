@@ -25208,6 +25208,180 @@ class Caller {
 }
 
 #[test]
+fn traces_java_generic_static_root_member_chain_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Box<T> {
+    Entry entry = new Entry();
+    int helper(int value) { return value; }
+}
+class Util {
+    static Box<String> STATIC_HELPER = new Box<String>();
+    static Box<String> MakeBox() { return new Box<String>(); }
+}
+class Caller {
+    int run() { return Util.STATIC_HELPER.helper(1); }
+    int chained() { return Util.STATIC_HELPER.entry.helper(1); }
+    int factory() { return Util.MakeBox().helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A type-qualified static root whose declared or factory-return type is
+    // generic normalizes to the raw base type, so the trailing member chain
+    // dispatches on the canonical raw class (direct final call, intermediate
+    // field hops, or a static factory-call root).
+    for (target, expected) in [
+        (
+            "com::example::Box::helper",
+            vec!["com::example::Caller::factory", "com::example::Caller::run"],
+        ),
+        (
+            "com::example::Entry::helper",
+            vec!["com::example::Caller::chained"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_java_generic_static_root_member_chain_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Box<T> { int helper(int value) { return value; } }
+class Util { static Box<String> STATIC_HELPER = new Box<String>(); }
+class Caller { int run() { return 0; } }
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Box<T> { int helper(int value) { return value; } }
+class Util { static Box<String> STATIC_HELPER = new Box<String>(); }
+class Caller {
+    int run() { return Util.STATIC_HELPER.helper(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "com::example::Box::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        "com::example::Box::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn java_generic_static_root_member_chain_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Box<T> {
+    Entry entry = new Entry();
+    int helper(int value) { return value; }
+}
+class Util {
+    static Box<String> STATIC_HELPER = new Box<String>();
+    static Box<String> MakeBox() { return new Box<String>(); }
+}
+class Caller {
+    int missingField() { return Util.MISSING.helper(1); }
+    int methodAsValue() { return Util.MakeBox.entry.helper(1); }
+    int missingHop() { return Util.STATIC_HELPER.missing.helper(1); }
+    int genericTypePrefix() { return Box<Integer>.STATIC_HELPER.helper(1); }
+    int control() { return Util.STATIC_HELPER.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A type-qualified generic-static root that is not a declared static
+    // field (a missing member or a method used as a value), chains with
+    // missing hops, and type-argument-prefix spellings that the Java grammar
+    // does not parse as method calls (and therefore produce no fact) still
+    // fail closed, while a resolvable generic static field root keeps tracing.
+    for (caller, expected) in [
+        ("com::example::Caller::missingField", Vec::<&str>::new()),
+        ("com::example::Caller::methodAsValue", Vec::<&str>::new()),
+        ("com::example::Caller::missingHop", Vec::<&str>::new()),
+        (
+            "com::example::Caller::genericTypePrefix",
+            Vec::<&str>::new(),
+        ),
+        (
+            "com::example::Caller::control",
+            vec!["com::example::Box::helper"],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, caller, TraceDirection::Callees).unwrap();
+        let mut callees = live
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, caller, TraceDirection::Callees).unwrap();
+        let mut callees = persisted
+            .callees
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callees.sort();
+        assert_eq!(callees, expected, "{caller} persisted");
+    }
+}
+
+#[test]
 fn traces_java_direct_type_qualified_static_root_member_chain_calls_across_files() {
     let dir = temporary_dir();
     let helper_dir = dir.join("src").join("pkg").join("helper");

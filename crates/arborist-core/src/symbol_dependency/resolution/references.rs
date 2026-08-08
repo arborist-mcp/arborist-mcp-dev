@@ -6731,9 +6731,11 @@ fn java_static_method_return_type_path(
 /// `Util.STATIC_HELPER.entry.helper(...)`, or `Util.MakeHelper().helper(...)`.
 /// Each prefix split resolves as a class or interface through the same
 /// same-package, explicit-import, fully-qualified, and nested type rules as
-/// other Java receivers; the first chain hop must be a uniquely declared
-/// static field (walking the direct-superclass chain) or an arity-matched
-/// static method call whose declared type continues the chain, and the
+/// other Java receivers, with generic prefixes such as `Box<Integer>`
+/// normalizing to the raw base type; the first chain hop must be a uniquely
+/// declared static field (walking the direct-superclass chain) or an
+/// arity-matched static method call whose declared type continues the chain,
+/// and the
 /// remaining hops dispatch through the same member-chain rules as bound
 /// receivers. Multiple or competing prefix interpretations, unknown or
 /// ambiguous types and roots, non-static roots, and unresolvable hops fail
@@ -6758,14 +6760,20 @@ fn resolve_java_direct_type_qualified_static_root_member_chain(
     }
     let mut resolved = BTreeSet::new();
     for split in 1..segments.len() {
-        let type_name = segments[..split].join(".");
+        let type_spelling = segments[..split].join(".");
         let chain = segments[split..].join(".");
         let Some((first_hop, remaining_chain)) = chain.split_once('.') else {
             continue;
         };
-        if matches!(type_name.as_str(), "this" | "super") {
+        if matches!(type_spelling.as_str(), "this" | "super") {
             continue;
         }
+        // Generic type prefixes such as `Box<Integer>` normalize to their raw
+        // base type before the same type-path rules apply; malformed generic
+        // spellings fail closed.
+        let Some(type_name) = java_dotted_type_name(&type_spelling) else {
+            continue;
+        };
         let Some(type_path) = resolve_java_receiver_type_path(
             source_symbol,
             &type_name,
