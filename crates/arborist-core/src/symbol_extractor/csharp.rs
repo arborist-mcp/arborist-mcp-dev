@@ -336,6 +336,33 @@ fn csharp_instance_member_chain_spelling(
                 segments.push(spelling);
                 break;
             }
+            "parenthesized_expression" => {
+                // A parenthesized segment such as `(MakeFactory())` in
+                // `(MakeFactory()).entry.Run` or `(group).inner().helper`
+                // unwraps to its inner expression and keeps walking the
+                // chain so parentheses never break member-chain tracing.
+                let inner = {
+                    let mut cursor = current.walk();
+                    current.named_children(&mut cursor).next()
+                };
+                let inner = match inner {
+                    Some(inner) => inner,
+                    None => {
+                        // `(this)` wraps an anonymous keyword token with no
+                        // named children; recover the keyword so a chain such
+                        // as `(this).MakeFactory()` keeps the `this.` spelling.
+                        let mut cursor = current.walk();
+                        let Some(inner) = current
+                            .children(&mut cursor)
+                            .find(|child| !matches!(child.kind(), "(" | ")"))
+                        else {
+                            return Ok(None);
+                        };
+                        inner
+                    }
+                };
+                current = inner;
+            }
             _ => return Ok(None),
         }
     }
@@ -362,7 +389,7 @@ fn csharp_direct_invocation_name(
         // receivers fall through to the static type-qualified handling below.
         if matches!(
             receiver.kind(),
-            "invocation_expression" | "member_access_expression"
+            "invocation_expression" | "member_access_expression" | "parenthesized_expression"
         ) && let Some(spelling) =
             csharp_instance_member_chain_spelling(node, source, bindings, false)?
         {
@@ -374,9 +401,11 @@ fn csharp_direct_invocation_name(
         // arity-matched factory method on the enclosing type or a
         // static-imported type; bare-call roots are only kept when static
         // type-qualified roots are allowed.
-        if receiver.kind() == "invocation_expression"
-            && let Some(spelling) =
-                csharp_instance_member_chain_spelling(node, source, bindings, true)?
+        if matches!(
+            receiver.kind(),
+            "invocation_expression" | "parenthesized_expression"
+        ) && let Some(spelling) =
+            csharp_instance_member_chain_spelling(node, source, bindings, true)?
             && spelling.contains('(')
         {
             return Ok(Some(spelling));
