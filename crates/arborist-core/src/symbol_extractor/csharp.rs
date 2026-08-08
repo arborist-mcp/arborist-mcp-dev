@@ -419,7 +419,27 @@ fn csharp_direct_invocation_name(
             {
                 return Ok(Some(name));
             }
-            return csharp_qualified_type_static_invocation_name(receiver, member, source);
+            if let Some(name) =
+                csharp_qualified_type_static_invocation_name(receiver, member, source)?
+            {
+                return Ok(Some(name));
+            }
+            // A static type-qualified chain that includes a method-call hop
+            // such as `Util.MakeHelper().entry.Run(1)` or
+            // `STATIC_HELPER.inner().entry.Run(1)` cannot be spelled as a
+            // plain dotted type path (the receiver text contains `()`), so
+            // keep the full chain spelling with static type-qualified roots
+            // allowed; the resolver dispatches the leading static factory
+            // method or static-imported member root before walking the
+            // remaining hops. Chains without a method-call hop are already
+            // covered by the dotted type-path spellings above.
+            if let Some(spelling) =
+                csharp_instance_member_chain_spelling(node, source, bindings, true)?
+                && spelling.contains('(')
+            {
+                return Ok(Some(spelling));
+            }
+            return Ok(None);
         }
         return csharp_global_qualified_static_invocation_name(receiver, member, source);
     }
