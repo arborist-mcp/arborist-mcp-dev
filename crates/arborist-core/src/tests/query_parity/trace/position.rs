@@ -25426,6 +25426,285 @@ class Caller {
 }
 
 #[test]
+fn traces_java_parenthesized_member_chain_receiver_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let helper_dir = dir.join("src").join("pkg").join("helper");
+    let util_dir = dir.join("src").join("pkg").join("util");
+    let caller_dir = dir.join("src").join("pkg").join("caller");
+    let helper_path = helper_dir.join("Foo.java");
+    let entry_path = helper_dir.join("Entry.java");
+    let util_path = util_dir.join("Util.java");
+    let caller_path = caller_dir.join("Caller.java");
+    let db_path = dir.join("symbols.db");
+    fs::create_dir_all(&helper_dir).unwrap();
+    fs::create_dir_all(&util_dir).unwrap();
+    fs::create_dir_all(&caller_dir).unwrap();
+    fs::write(
+        &helper_path,
+        "package pkg.helper;
+public class Foo {
+    public Entry entry = new Entry();
+    public int helper(int value) { return value; }
+    public Foo inner() { return this; }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &entry_path,
+        "package pkg.helper;
+public class Entry { public int helper(int value) { return value; } }
+",
+    )
+    .unwrap();
+    fs::write(
+        &util_path,
+        "package pkg.util;
+import pkg.helper.Foo;
+public class Util {
+    public static Foo MakeHelper() { return new Foo(); }
+    public static Foo MakeHelper(int value) { return new Foo(); }
+}
+",
+    )
+    .unwrap();
+    fs::write(
+        &caller_path,
+        "package pkg.caller;
+import pkg.helper.Foo;
+import pkg.util.Util;
+import static pkg.util.Util.MakeHelper;
+public class Caller {
+    public Foo makeFoo() { return new Foo(); }
+    public int parenBound(Foo group) { return (group).helper(1); }
+    public int parenBoundHop(Foo group) { return (group).inner().entry.helper(1); }
+    public int parenFactory() { return (makeFoo()).entry.helper(1); }
+    public int parenFactoryDirect() { return (makeFoo()).helper(1); }
+    public int parenImportedFactory() { return (MakeHelper()).entry.helper(1); }
+    public int parenImportedFactoryDirect() { return (MakeHelper()).helper(1); }
+    public int parenConstructed() { return (new Foo()).entry.helper(1); }
+    public int parenThis() { return (this).makeFoo().entry.helper(1); }
+    public int parenQualifiedFactory() { return (Util.MakeHelper()).entry.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A parenthesized receiver in a member chain such as
+    // `(group).helper(1)`, `(group).inner().entry.helper(1)`,
+    // `(makeFoo()).entry.helper(1)`, `(MakeHelper()).entry.helper(1)`,
+    // `(new Foo()).entry.helper(1)`, `(this).makeFoo().entry.helper(1)`, or
+    // `(Util.MakeHelper()).entry.helper(1)` unwraps the parentheses and keeps
+    // the same chain spelling as the unparenthesized form, so bound,
+    // same-type factory, static-imported factory, constructor-, `this`-,
+    // and type-qualified factory roots all dispatch the final member on the
+    // canonical declared type.
+    for (target, expected) in [
+        (
+            "pkg::helper::Foo::helper",
+            vec![
+                "pkg::caller::Caller::parenBound",
+                "pkg::caller::Caller::parenFactoryDirect",
+                "pkg::caller::Caller::parenImportedFactoryDirect",
+            ],
+        ),
+        (
+            "pkg::helper::Entry::helper",
+            vec![
+                "pkg::caller::Caller::parenBoundHop",
+                "pkg::caller::Caller::parenConstructed",
+                "pkg::caller::Caller::parenFactory",
+                "pkg::caller::Caller::parenImportedFactory",
+                "pkg::caller::Caller::parenQualifiedFactory",
+                "pkg::caller::Caller::parenThis",
+            ],
+        ),
+        (
+            "pkg::helper::Foo::inner",
+            vec!["pkg::caller::Caller::parenBoundHop"],
+        ),
+        (
+            "pkg::caller::Caller::makeFoo",
+            vec![
+                "pkg::caller::Caller::parenFactory",
+                "pkg::caller::Caller::parenFactoryDirect",
+                "pkg::caller::Caller::parenThis",
+            ],
+        ),
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        let mut callers = live
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} live");
+        rebuild_symbol_index(&dir, &db_path).unwrap();
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        let mut callers = persisted
+            .callers
+            .iter()
+            .map(|symbol| symbol.symbol_id.as_str())
+            .collect::<Vec<_>>();
+        callers.sort();
+        assert_eq!(callers, expected, "{target} persisted");
+    }
+}
+
+#[test]
+fn traces_java_parenthesized_member_chain_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Foo { int helper(int value) { return value; } }
+class Entry { int helper(int value) { return value; } }
+class Caller { Foo makeFoo() { return new Foo(); } int run() { return 0; } }
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Foo { int helper(int value) { return value; } }
+class Entry { int helper(int value) { return value; } }
+class Caller {
+    Foo makeFoo() { return new Foo(); }
+    int run() { return (makeFoo()).helper(1); }
+    int runConstructed() { return (new Entry()).helper(1); }
+}
+";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "com::example::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        "com::example::Entry::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(
+        live.callers[0].symbol_id,
+        "com::example::Caller::runConstructed"
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        "com::example::Foo::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        "com::example::Entry::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Caller::runConstructed"
+    );
+}
+
+#[test]
+fn java_parenthesized_member_chain_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Entry { int helper(int value) { return value; } }
+class Foo {
+    Entry entry = new Entry();
+    int helper(int value) { return value; }
+}
+class Caller {
+    Foo makeFoo() { return new Foo(); }
+    int makeCount() { return 1; }
+    int missingHop() { return (makeFoo()).missing.helper(1); }
+    int arityMismatch() { return (makeFoo(1)).entry.helper(1); }
+    int unknownFactory() { return (MissingHelper()).helper(1); }
+    int primitiveRoot() { return (makeCount()).entry.helper(1); }
+    int unboundRoot() { return (group).entry.helper(1); }
+    int control() { return (makeFoo()).entry.helper(1); }
+}
+",
+    )
+    .unwrap();
+
+    // A parenthesized chain root fails closed exactly like its
+    // unparenthesized form: missing hops, arity-mismatched or unknown
+    // factories, primitive return types, and unbound receivers never dispatch
+    // a chain member, while the resolvable same-type factory root keeps
+    // tracing the final member.
+    for target in ["com::example::Foo::helper", "com::example::Entry::helper"] {
+        for caller in [
+            "com::example::Caller::missingHop",
+            "com::example::Caller::arityMismatch",
+            "com::example::Caller::unknownFactory",
+            "com::example::Caller::primitiveRoot",
+            "com::example::Caller::unboundRoot",
+        ] {
+            let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+            assert!(
+                !live.callers.iter().any(|symbol| symbol.symbol_id == caller),
+                "{caller} should not call {target} live"
+            );
+            rebuild_symbol_index(&dir, &db_path).unwrap();
+            let persisted =
+                trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+            assert!(
+                !persisted
+                    .callers
+                    .iter()
+                    .any(|symbol| symbol.symbol_id == caller),
+                "{caller} should not call {target} persisted"
+            );
+        }
+    }
+    let live =
+        trace_symbol_graph(&dir, "com::example::Entry::helper", TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::control");
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index(
+        &db_path,
+        "com::example::Entry::helper",
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(
+        persisted.callers[0].symbol_id,
+        "com::example::Caller::control"
+    );
+}
+
+#[test]
 fn traces_java_generic_static_root_member_chain_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");

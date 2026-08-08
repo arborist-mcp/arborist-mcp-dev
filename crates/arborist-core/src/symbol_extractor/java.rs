@@ -240,8 +240,21 @@ fn java_constructor_receiver_chain_spelling(
 ) -> Result<Option<String>> {
     let mut segments = Vec::new();
     let mut current = node;
+    // Whether the leading root was reached through a parenthesized expression
+    // such as `(group)` or `(makeFoo())`. Parentheses make the root an
+    // explicit expression, so a plain identifier, `this`, `super`, or bare
+    // method-call root inside parentheses is kept as the leading chain
+    // segment; unparenthesized identifier roots keep the caller's raw-spelling
+    // fallback so local type-name exclusions still apply.
+    let mut in_parentheses = false;
     loop {
-        if current.kind() == "field_access" {
+        if current.kind() == "parenthesized_expression" {
+            let Some(inner) = current.named_child(0) else {
+                return Ok(None);
+            };
+            current = inner;
+            in_parentheses = true;
+        } else if current.kind() == "field_access" {
             let Some(field) = current.child_by_field_name("field") else {
                 return Ok(None);
             };
@@ -273,7 +286,15 @@ fn java_constructor_receiver_chain_spelling(
                 segments.push(format!("{method_name}({hop_arity})"));
             }
             let Some(object) = current.child_by_field_name("object") else {
-                return Ok(None);
+                // A bare-call root such as `(makeFoo())` in
+                // `(makeFoo()).entry.helper(...)` records the call as the
+                // leading chain segment; unparenthesized bare-call roots keep
+                // the caller's raw-spelling fallback so local type-name
+                // exclusions still apply.
+                if !in_parentheses {
+                    return Ok(None);
+                }
+                break;
             };
             current = object;
         } else if current.kind() == "object_creation_expression" {
@@ -293,6 +314,22 @@ fn java_constructor_receiver_chain_spelling(
                 return Ok(None);
             };
             segments.push(spelling);
+            break;
+        } else if current.kind() == "identifier" {
+            if !in_parentheses {
+                return Ok(None);
+            }
+            let base = crate::language::node_text(current, source)?.trim();
+            if base.is_empty() {
+                return Ok(None);
+            }
+            segments.push(base.to_string());
+            break;
+        } else if matches!(current.kind(), "this" | "super") {
+            if !in_parentheses {
+                return Ok(None);
+            }
+            segments.push(current.kind().to_string());
             break;
         } else {
             return Ok(None);
@@ -364,47 +401,68 @@ fn collect_direct_local_calls_from_node(
         && let Some(arguments) = node.child_by_field_name("arguments")
     {
         let name = crate::language::node_text(name_node, source)?.trim();
-        let reference = match node.child_by_field_name("object") {
-            None => (!name.is_empty()).then(|| name.to_string()),
-            Some(object) if object.kind() == "identifier" && !name.is_empty() => {
-                let object_name = crate::language::node_text(object, source)?.trim();
-                (!object_name.is_empty() && !qualified_call_exclusions.contains(object_name))
-                    .then(|| format!("{object_name}.{name}"))
-            }
-            Some(object)
-                if matches!(object.kind(), "field_access" | "method_invocation")
-                    && !name.is_empty() =>
-            {
-                if let Some(spelling) =
-                    java_constructor_receiver_chain_spelling(object, source, name)?
-                {
-                    Some(format!("{spelling}.{name}"))
-                } else {
+        let mut object = node.child_by_field_name("object");
+        let mut malformed_object = false;
+        // A parenthesized receiver such as `(group).helper(...)` or
+        // `((new Group())).helper(...)` unwraps to the same chain spelling as
+        // the unparenthesized form so the trailing member dispatches on the
+        // same declared type; malformed or empty parentheses fail closed
+        // without suppressing nested calls inside the invocation.
+        while object.is_some_and(|candidate| candidate.kind() == "parenthesized_expression") {
+            let Some(inner) = object.and_then(|candidate| candidate.named_child(0)) else {
+                malformed_object = true;
+                break;
+            };
+            object = Some(inner);
+        }
+        let reference = if malformed_object {
+            None
+        } else {
+            match object {
+                None => (!name.is_empty()).then(|| name.to_string()),
+                Some(object) if object.kind() == "identifier" && !name.is_empty() => {
                     let object_name = crate::language::node_text(object, source)?.trim();
-                    let receiver_name = object_name.split(['.', '(']).next().unwrap_or_default();
-                    (!object_name.is_empty()
-                        && !receiver_name.is_empty()
-                        && !qualified_call_exclusions.contains(receiver_name))
-                    .then(|| format!("{object_name}.{name}"))
+                    (!object_name.is_empty() && !qualified_call_exclusions.contains(object_name))
+                        .then(|| format!("{object_name}.{name}"))
                 }
-            }
-            Some(object) if matches!(object.kind(), "this" | "super") && !name.is_empty() => {
-                Some(format!("{}.{name}", object.kind()))
-            }
-            Some(object) if object.kind() == "object_creation_expression" && !name.is_empty() => {
-                // Direct anonymous constructor receivers such as
-                // `new Helper() { }.helper(...)` resolve on the constructed
-                // class type only when the anonymous body does not declare the
-                // invoked member; a same-name body declaration would change
-                // the actual dispatch target, so it produces no fact.
-                if java_anonymous_constructor_declared_members(object, source)?.contains(name) {
-                    None
-                } else {
-                    java_constructor_type_spelling(object, source)?
-                        .map(|spelling| format!("{spelling}.{name}"))
+                Some(object)
+                    if matches!(object.kind(), "field_access" | "method_invocation")
+                        && !name.is_empty() =>
+                {
+                    if let Some(spelling) =
+                        java_constructor_receiver_chain_spelling(object, source, name)?
+                    {
+                        Some(format!("{spelling}.{name}"))
+                    } else {
+                        let object_name = crate::language::node_text(object, source)?.trim();
+                        let receiver_name =
+                            object_name.split(['.', '(']).next().unwrap_or_default();
+                        (!object_name.is_empty()
+                            && !receiver_name.is_empty()
+                            && !qualified_call_exclusions.contains(receiver_name))
+                        .then(|| format!("{object_name}.{name}"))
+                    }
                 }
+                Some(object) if matches!(object.kind(), "this" | "super") && !name.is_empty() => {
+                    Some(format!("{}.{name}", object.kind()))
+                }
+                Some(object)
+                    if object.kind() == "object_creation_expression" && !name.is_empty() =>
+                {
+                    // Direct anonymous constructor receivers such as
+                    // `new Helper() { }.helper(...)` resolve on the constructed
+                    // class type only when the anonymous body does not declare the
+                    // invoked member; a same-name body declaration would change
+                    // the actual dispatch target, so it produces no fact.
+                    if java_anonymous_constructor_declared_members(object, source)?.contains(name) {
+                        None
+                    } else {
+                        java_constructor_type_spelling(object, source)?
+                            .map(|spelling| format!("{spelling}.{name}"))
+                    }
+                }
+                Some(_) => None,
             }
-            Some(_) => None,
         };
         if let Some(reference) = reference {
             let mut cursor = arguments.walk();
@@ -742,5 +800,64 @@ class Caller {
                 .any(|reference| reference == "Group().inner.helper"),
             "anonymous-rooted chains whose body declares a field hop must not canonicalize"
         );
+    }
+
+    #[test]
+    fn parenthesized_receivers_unwrap_to_the_same_chain_spelling() {
+        let source = r#"
+package com.example;
+
+class Entry {
+    int helper(int value) { return value; }
+}
+class Group {
+    Entry entry = new Entry();
+    Group inner() { return this; }
+}
+class Caller {
+    Group makeGroup() { return new Group(); }
+    int plainBound(Group group) { return group.entry.helper(1); }
+    int parenBound(Group group) { return (group).entry.helper(1); }
+    int plainBoundHop(Group group) { return group.inner().entry.helper(1); }
+    int parenBoundHop(Group group) { return (group).inner().entry.helper(1); }
+    int plainFactory() { return makeGroup().entry.helper(1); }
+    int parenFactory() { return (makeGroup()).entry.helper(1); }
+    int plainFactoryHop() { return makeGroup().inner().entry.helper(1); }
+    int parenFactoryHop() { return (makeGroup()).inner().entry.helper(1); }
+    int plainConstructed() { return new Group().entry.helper(1); }
+    int parenConstructed() { return (new Group()).entry.helper(1); }
+    int plainThis() { return this.makeGroup().entry.helper(1); }
+    int parenThis() { return (this).makeGroup().entry.helper(1); }
+    int parenDouble(Group group) { return ((group)).entry.helper(1); }
+}
+"#;
+        let path = Path::new("Caller.java");
+        let document = parse_document(path, source).unwrap();
+        let symbols =
+            index_java_symbols_with_deadline(path, source, document.tree.root_node(), None)
+                .unwrap();
+
+        for (plain, paren) in [
+            ("plainBound", "parenBound"),
+            ("plainBoundHop", "parenBoundHop"),
+            ("plainFactory", "parenFactory"),
+            ("plainFactoryHop", "parenFactoryHop"),
+            ("plainConstructed", "parenConstructed"),
+            ("plainThis", "parenThis"),
+            ("plainBound", "parenDouble"),
+        ] {
+            let plain_symbol = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == format!("com::example::Caller::{plain}"))
+                .unwrap();
+            let paren_symbol = symbols
+                .iter()
+                .find(|symbol| symbol.semantic_path == format!("com::example::Caller::{paren}"))
+                .unwrap();
+            assert_eq!(
+                paren_symbol.references_by_name, plain_symbol.references_by_name,
+                "{paren} must record the same reference spellings as {plain}"
+            );
+        }
     }
 }
