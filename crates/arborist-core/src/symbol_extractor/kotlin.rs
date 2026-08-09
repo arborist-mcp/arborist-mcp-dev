@@ -161,10 +161,14 @@ fn kotlin_call_spelling(callee: Node<'_>, source: &str) -> Result<Option<String>
 /// either; a call base marks its last segment with `()` so resolution can
 /// distinguish a constructor-call receiver from a class-name receiver, and an
 /// element-access base merges its bracket onto the accessed element's segment
-/// so resolution dispatches on the element component type. Nullable (`?.`),
-/// callable-reference (`::`), parenthesized, complex-index, and
-/// multi-dimensional receivers still fail closed and produce no direct-call
-/// fact so resolution never guesses a target.
+/// so resolution dispatches on the element component type. A parenthesized
+/// receiver such as `(group)` in `(group).entry.helper(...)` or
+/// `(makeGroup())` in `(makeGroup()).entry.helper(...)` unwraps to the same
+/// chain spelling as the unparenthesized form so the trailing member
+/// dispatches on the same resolved receiver. Nullable (`?.`),
+/// callable-reference (`::`), complex-index, and multi-dimensional receivers
+/// still fail closed and produce no direct-call fact so resolution never
+/// guesses a target.
 fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec<String>>> {
     if node.kind() == "identifier" {
         let segment = node_text(node, source)?.trim().to_string();
@@ -213,6 +217,17 @@ fn kotlin_navigation_segments(node: Node<'_>, source: &str) -> Result<Option<Vec
         last.push_str(subscript);
         last.push(']');
         return Ok(Some(segments));
+    }
+    // A parenthesized receiver such as `(group)` in `(group).entry.helper(...)`,
+    // `(makeGroup())` in `(makeGroup()).entry.helper(...)`, or `((group))` in
+    // `((group)).entry.helper(...)` unwraps to the same chain spelling as the
+    // unparenthesized form so the trailing member dispatches on the same
+    // resolved receiver; malformed or empty parentheses fail closed.
+    if node.kind() == "parenthesized_expression" {
+        let Some(inner) = node.named_child(0) else {
+            return Ok(None);
+        };
+        return kotlin_navigation_segments(inner, source);
     }
     if node.kind() != "navigation_expression" {
         return Ok(None);
