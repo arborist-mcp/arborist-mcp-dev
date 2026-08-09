@@ -31,7 +31,7 @@ pub(in crate::symbol_dependency) struct JavaReceiverTypeBindings {
     ambiguous_names: BTreeSet<String>,
     initializer_calls_by_name: BTreeMap<String, (String, usize)>,
     field_initializers_by_name: BTreeMap<String, String>,
-    element_access_initializers_by_name: BTreeMap<String, String>,
+    element_access_initializers_by_name: BTreeMap<String, (String, usize)>,
 }
 
 impl JavaReceiverTypeBindings {
@@ -98,14 +98,16 @@ impl JavaReceiverTypeBindings {
         self.field_initializers_by_name.get(name).cloned()
     }
 
-    /// Returns the array-typed base name for a `var` local bound from an
-    /// element-access initializer such as `var first = items[0]`, which
-    /// resolves to the base array's element component type. Ambiguous bindings
-    /// and names without an element-access initializer return `None`.
+    /// Returns the array-typed base spelling and call arity for a `var` local
+    /// bound from an element-access initializer such as `var first = items[0]`
+    /// or `var first = makeItems()[0]`, which resolves to the base array's
+    /// element component type; factory-call bases carry the call's argument
+    /// count. Ambiguous bindings and names without an element-access
+    /// initializer return `None`.
     pub(in crate::symbol_dependency) fn element_access_base_for(
         &self,
         name: &str,
-    ) -> Option<String> {
+    ) -> Option<(String, usize)> {
         if self.ambiguous_names.contains(name) {
             return None;
         }
@@ -453,10 +455,15 @@ fn collect_java_body_bindings(
                             {
                                 insert_java_initializer_field(bindings, &name, reference);
                                 String::new()
-                            } else if let Some(base_name) =
+                            } else if let Some((base_spelling, call_arity)) =
                                 java_initializer_element_access_from_declarator(declarator, source)?
                             {
-                                insert_java_element_access_initializer(bindings, &name, base_name);
+                                insert_java_element_access_initializer(
+                                    bindings,
+                                    &name,
+                                    base_spelling,
+                                    call_arity,
+                                );
                                 String::new()
                             } else {
                                 String::new()
@@ -688,16 +695,18 @@ fn java_initializer_field_access_from_declarator(
 }
 
 /// Records a `var` local whose initializer is an element access such as
-/// `var first = items[0]`, returning the array-typed base spelling so the
-/// local resolves to the base array's element component type. Plain-identifier
-/// bases such as `items`, `local`, or a bare enclosing-class field name, and
-/// field-access bases such as `this.fieldItems` or `group.holder.fieldItems`
-/// are recorded; method-call bases, multi-dimensional element access, and
-/// other initializer shapes record nothing and fail closed.
+/// `var first = items[0]`, returning the array-typed base spelling and call
+/// arity so the local resolves to the base array's element component type.
+/// Plain-identifier bases such as `items`, `local`, or a bare enclosing-class
+/// field name and field-access bases such as `this.fieldItems` or
+/// `group.holder.fieldItems` record the spelling with arity zero; factory-call
+/// bases such as `makeItems()` or `Util.makeItems()` record the reference with
+/// a trailing `()` marker and the call's argument count. Multi-dimensional
+/// element access and other initializer shapes record nothing and fail closed.
 fn java_initializer_element_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
     source: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(String, usize)>> {
     let Some(initializer) = declarator.child_by_field_name("value") else {
         return Ok(None);
     };
@@ -710,14 +719,42 @@ fn java_initializer_element_access_from_declarator(
     let Some(array) = initializer.child_by_field_name("array") else {
         return Ok(None);
     };
-    if !matches!(array.kind(), "identifier" | "field_access") {
-        return Ok(None);
-    }
-    let base_name = node_text(array, source)?.trim();
-    if base_name.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(base_name.to_string()))
+    let (base_spelling, call_arity) = match array.kind() {
+        "identifier" | "field_access" => {
+            let base_name = node_text(array, source)?.trim();
+            if base_name.is_empty() {
+                return Ok(None);
+            }
+            (base_name.to_string(), 0)
+        }
+        "method_invocation" => {
+            let Some(name_node) = array.child_by_field_name("name") else {
+                return Ok(None);
+            };
+            let name = node_text(name_node, source)?.trim();
+            if name.is_empty() {
+                return Ok(None);
+            }
+            let Some(arguments) = array.child_by_field_name("arguments") else {
+                return Ok(None);
+            };
+            let mut cursor = arguments.walk();
+            let arity = arguments.named_children(&mut cursor).count();
+            let reference = match array.child_by_field_name("object") {
+                None => name.to_string(),
+                Some(object) => {
+                    let object_text = node_text(object, source)?.trim();
+                    if object_text.is_empty() {
+                        return Ok(None);
+                    }
+                    format!("{object_text}.{name}")
+                }
+            };
+            (format!("{reference}()"), arity)
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some((base_spelling, call_arity)))
 }
 
 /// Walks a field-access or method-invocation chain down to its root object
@@ -1050,20 +1087,21 @@ fn insert_java_initializer_field(
     }
 }
 
-/// Records the element-access initializer base for a `var` local bound from
-/// an element access such as `var first = items[0]`. Repeated declarations
-/// with different bases make the name ambiguous so trace-time resolution
-/// fails closed.
+/// Records the element-access initializer base and call arity for a `var`
+/// local bound from an element access such as `var first = items[0]` or
+/// `var first = makeItems()[0]`. Repeated declarations with different bases
+/// make the name ambiguous so trace-time resolution fails closed.
 fn insert_java_element_access_initializer(
     bindings: &mut JavaReceiverTypeBindings,
     name: &str,
-    base_name: String,
+    base_spelling: String,
+    call_arity: usize,
 ) {
     if name.is_empty() || bindings.ambiguous_names.contains(name) {
         return;
     }
     match bindings.element_access_initializers_by_name.get(name) {
-        Some(existing) if *existing != base_name => {
+        Some(existing) if *existing != (base_spelling.clone(), call_arity) => {
             bindings.element_access_initializers_by_name.remove(name);
             bindings.ambiguous_names.insert(name.to_string());
         }
@@ -1071,7 +1109,7 @@ fn insert_java_element_access_initializer(
         None => {
             bindings
                 .element_access_initializers_by_name
-                .insert(name.to_string(), base_name);
+                .insert(name.to_string(), (base_spelling, call_arity));
         }
     }
 }
@@ -1412,8 +1450,11 @@ class Caller {
             "package com.example;
 class Helper { int helper(int value) { return value; } }
 class Group { Helper[] fieldItems; }
+class Util { static Helper[] makeItems() { return new Helper[2]; } }
 class Caller {
     private Helper[] fieldItems;
+    Helper[] makeItems() { return new Helper[2]; }
+    Helper[] makeItems(int value) { return new Helper[2]; }
     int run(Helper[] items, int[] counts, Helper[][] matrix, Group holder) {
         Helper[] local = new Helper[3];
         var first = items[0];
@@ -1423,6 +1464,9 @@ class Caller {
         var matrixAccess = matrix[0][0];
         var qualified = this.fieldItems[0];
         var fifth = holder.fieldItems[0];
+        var factory = makeItems()[0];
+        var factoryArity = makeItems(1)[0];
+        var qualifiedFactory = Util.makeItems()[0];
         return first.helper(1) + second.helper(2) + third.helper(3);
     }
 }
@@ -1437,7 +1481,9 @@ class Caller {
         let run_bindings = context
             .receiver_type_bindings_by_range
             .values()
-            .find(|bindings| bindings.element_access_base_for("first") == Some("items".to_string()))
+            .find(|bindings| {
+                bindings.element_access_base_for("first") == Some(("items".to_string(), 0))
+            })
             .unwrap();
         // Plain-identifier element-access initializers record the base name,
         // which resolves to the base array's element component type.
@@ -1448,7 +1494,7 @@ class Caller {
         ] {
             assert_eq!(
                 run_bindings.element_access_base_for(name),
-                Some(base.to_string()),
+                Some((base.to_string(), 0)),
                 "{name} must record its element-access base"
             );
             assert!(run_bindings.contains(name), "{name} must be bound");
@@ -1462,7 +1508,7 @@ class Caller {
         // component, so resolution fails closed at trace time.
         assert_eq!(
             run_bindings.element_access_base_for("unbound"),
-            Some("counts".to_string())
+            Some(("counts".to_string(), 0))
         );
         assert!(run_bindings.contains("unbound"));
         assert_eq!(run_bindings.array_component_for("counts"), None);
@@ -1474,8 +1520,24 @@ class Caller {
         ] {
             assert_eq!(
                 run_bindings.element_access_base_for(name),
-                Some(base.to_string()),
+                Some((base.to_string(), 0)),
                 "{name} must record its qualified element-access base"
+            );
+            assert!(run_bindings.contains(name), "{name} must be bound");
+            assert_eq!(run_bindings.type_for(name), None);
+        }
+        // Factory-call bases record the reference with a trailing `()` marker
+        // and the call's argument count so trace-time resolution can require
+        // an arity match.
+        for (name, base, arity) in [
+            ("factory", "makeItems()", 0usize),
+            ("factoryArity", "makeItems()", 1usize),
+            ("qualifiedFactory", "Util.makeItems()", 0usize),
+        ] {
+            assert_eq!(
+                run_bindings.element_access_base_for(name),
+                Some((base.to_string(), arity)),
+                "{name} must record its factory-call element-access base"
             );
             assert!(run_bindings.contains(name), "{name} must be bound");
             assert_eq!(run_bindings.type_for(name), None);
@@ -1514,11 +1576,13 @@ class Caller {
         let run_bindings = context
             .receiver_type_bindings_by_range
             .values()
-            .find(|bindings| bindings.element_access_base_for("plain") == Some("first".to_string()))
+            .find(|bindings| {
+                bindings.element_access_base_for("plain") == Some(("first".to_string(), 0))
+            })
             .unwrap();
         assert_eq!(
             run_bindings.element_access_base_for("plain"),
-            Some("first".to_string())
+            Some(("first".to_string(), 0))
         );
         // Conflicting element-access initializers make the name ambiguous.
         assert!(run_bindings.contains("shadowed"));

@@ -26321,24 +26321,29 @@ fn java_var_qualified_element_access_receiver_calls_fail_closed_for_unsupported_
         "package com.example;
 class Helper { int helper(int value) { return value; } }
 class Base { Helper[] inheritedItems = new Helper[1]; }
-class Group {
-    Helper[] fieldItems;
-    Helper[] makeItems() { return new Helper[1]; }
-}
 class Util { static Helper[] fieldItems = new Helper[1]; }
 class Caller extends Base {
     private Helper[] fieldItems;
-    int run(Group group, int[] counts, Helper[][] matrix) {
+    Helper[] makeItems() { return new Helper[2]; }
+    int[] makeCounts() { return new int[2]; }
+    Helper[][] makeMatrix() { return new Helper[2][2]; }
+    int run(int[] counts, Helper[][] matrix) {
         var superBase = super.inheritedItems[0];
         var staticBase = Util.fieldItems[0];
         var unbound = counts[0];
         var matrixAccess = matrix[0][0];
-        var methodBase = group.makeItems()[0];
+        var unknownFactory = makeUnknown()[0];
+        var primitiveFactory = makeCounts()[0];
+        var multiFactory = makeMatrix()[0];
+        var arityFactory = makeItems(1)[0];
         return superBase.helper(1)
             + staticBase.helper(2)
             + unbound.helper(3)
             + matrixAccess.helper(4)
-            + methodBase.helper(5);
+            + unknownFactory.helper(5)
+            + primitiveFactory.helper(6)
+            + multiFactory.helper(7)
+            + arityFactory.helper(8);
     }
     int control() {
         var ok = this.fieldItems[0];
@@ -26350,7 +26355,8 @@ class Caller extends Base {
     .unwrap();
 
     // `var` locals bound from element accesses with `super`-rooted, static
-    // type, primitive-array, multi-dimensional, or method-call bases all fail
+    // type, primitive-array, multi-dimensional, or unknown/primitive-/
+    // multi-dimensional-returning/arity-mismatched factory-call bases all fail
     // closed; only the `this`-rooted element access in `control` traces.
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
@@ -26365,6 +26371,108 @@ class Caller extends Base {
         persisted.callers[0].symbol_id,
         "com::example::Caller::control"
     );
+}
+
+#[test]
+fn traces_java_var_factory_call_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Group {
+    int helper(int value) { return value; }
+    Group inner() { return this; }
+}
+class Util {
+    static Helper[] makeItems() { return new Helper[2]; }
+    static Group[] makeGroups() { return new Group[1]; }
+}
+class Caller {
+    Helper[] makeItems() { return new Helper[2]; }
+    int run() {
+        var first = makeItems()[0];
+        var second = Util.makeItems()[0];
+        var third = Util.makeGroups()[0];
+        return first.helper(1)
+            + second.helper(2)
+            + third.helper(3);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access on a factory call such as
+    // `var first = makeItems()[0]` or `var second = Util.makeItems()[0]`
+    // resolves the factory through the same rules as other `var` initializers
+    // and dispatches on the array's element component type.
+    let helper_symbol = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+
+    let group_helper_symbol = "com::example::Group::helper";
+    let group_live =
+        trace_symbol_graph(&dir, group_helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(group_live.callers.len(), 1);
+    assert_eq!(group_live.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_java_var_factory_call_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.java");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "package com.example;
+class Helper { int helper(int value) { return value; } }
+class Caller {
+    Helper[] makeItems() { return new Helper[2]; }
+    int run() {
+        var first = makeItems()[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "com::example::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
 }
 
 #[test]

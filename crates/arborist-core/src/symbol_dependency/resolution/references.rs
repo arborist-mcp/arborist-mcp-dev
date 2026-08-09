@@ -6516,13 +6516,28 @@ fn resolve_java_instance_receiver_call(
             return Ok(JavaInstanceReceiverResolution::Blocked);
         };
         (type_path, member_chain)
-    } else if let Some(base_reference) = bindings.element_access_base_for(receiver_name) {
+    } else if let Some((base_reference, base_arity)) =
+        bindings.element_access_base_for(receiver_name)
+    {
         // A `var` local bound from an element access such as
         // `var first = items[0]` resolves to the base array's element
         // component type; a qualified base such as `var fourth = this.fieldItems[0]`
-        // resolves the field chain's terminal array field the same way.
-        // An unbound or non-array base fails closed.
-        let component_path = if base_reference.contains('.') {
+        // resolves the field chain's terminal array field, and a factory-call
+        // base such as `var first = makeItems()[0]` resolves through the same
+        // factory rules as other `var` initializers. An unbound or non-array
+        // base fails closed.
+        let component_path = if let Some(factory_call) = base_reference.strip_suffix("()") {
+            java_factory_array_component_type_path(
+                source_symbol,
+                factory_call,
+                base_arity,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+        } else if base_reference.contains('.') {
             java_qualified_element_access_component_type_path(
                 source_symbol,
                 &base_reference,
