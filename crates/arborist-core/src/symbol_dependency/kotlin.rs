@@ -224,7 +224,7 @@ fn kotlin_receiver_type_bindings_for_node(
         let mut cursor = class_body.walk();
         for child in class_body.named_children(&mut cursor) {
             if child.kind() == "property_declaration"
-                && let Some((name, type_name)) = kotlin_property_binding(child, source)?
+                && let Some((name, type_name)) = kotlin_property_binding(child, source, &bindings)?
             {
                 insert_kotlin_receiver_binding(&mut bindings, name, type_name);
             }
@@ -279,7 +279,7 @@ fn collect_kotlin_body_property_bindings(
         return Ok(());
     }
     if node.kind() == "property_declaration"
-        && let Some((name, type_name)) = kotlin_property_binding(node, source)?
+        && let Some((name, type_name)) = kotlin_property_binding(node, source, bindings)?
     {
         insert_kotlin_receiver_binding(bindings, name, type_name);
     }
@@ -290,7 +290,11 @@ fn collect_kotlin_body_property_bindings(
     Ok(())
 }
 
-fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(String, String)>> {
+fn kotlin_property_binding(
+    property: Node<'_>,
+    source: &str,
+    bindings: &KotlinReceiverTypeBindings,
+) -> Result<Option<(String, String)>> {
     let mut cursor = property.walk();
     let children = property.named_children(&mut cursor).collect::<Vec<_>>();
     let Some(variable) = children
@@ -333,7 +337,45 @@ fn kotlin_property_binding(property: Node<'_>, source: &str) -> Result<Option<(S
     {
         return Ok(Some((name, type_name)));
     }
+    // Fall back to an element-access initializer such as `val x = items[0]`:
+    // the base must be a plain identifier already bound to a single-level
+    // generic array whose element component type becomes the property's
+    // receiver type. Multi-dimensional element access, function-call
+    // subscripts, and bases without a usable array component fail closed.
+    if let Some(initializer) = children
+        .iter()
+        .find(|child| child.kind() == "index_expression")
+        .copied()
+        && let Some(base_name) = kotlin_element_access_base(initializer, source)?
+        && let Some(component_type) = bindings.array_component_for(&base_name)
+    {
+        return Ok(Some((name, component_type)));
+    }
     Ok(None)
+}
+
+/// Extracts the plain-identifier base of a single-level element-access
+/// initializer such as `items[0]`. Dotted bases, call bases, nested element
+/// access, and function-call, multi-index, or nullable subscripts return
+/// `None` so element-access-inferred bindings fail closed.
+fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
+    if initializer.kind() != "index_expression" {
+        return Ok(None);
+    }
+    let mut cursor = initializer.walk();
+    let children = initializer.named_children(&mut cursor).collect::<Vec<_>>();
+    if children.len() != 2 {
+        return Ok(None);
+    }
+    let base = node_text(children[0], source)?.trim();
+    if base.is_empty() || base.contains(['.', '(', '[', ' ']) {
+        return Ok(None);
+    }
+    let subscript = node_text(children[1], source)?.trim();
+    if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
+        return Ok(None);
+    }
+    Ok(Some(base.to_string()))
 }
 
 fn kotlin_parameter_binding(parameter: Node<'_>, source: &str) -> Result<Option<(String, String)>> {
@@ -721,6 +763,34 @@ mod tests {
             run_bindings.array_component_for("fieldItems"),
             Some("Helper".to_string())
         );
+    }
+
+    #[test]
+    fn element_access_initializer_properties_bind_component_types() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Holder {\n    val fieldItems: Array<Helper> = arrayOf()\n    fun run(items: Array<Helper>, counts: IntArray) {\n        val first = items[0]\n        val fromField = fieldItems[0]\n        val fromCounts = counts[0]\n        first.helper(1)\n    }\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| bindings.type_for("first") == Some("Helper".to_string()))
+            .unwrap();
+        // A `val` bound from a single-level element access inherits the base
+        // array's element component type, whether the base is a parameter or an
+        // enclosing-class array-typed property. A primitive-component base has
+        // no usable component, so its `val` is not bound.
+        assert_eq!(run_bindings.type_for("first"), Some("Helper".to_string()));
+        assert_eq!(
+            run_bindings.type_for("fromField"),
+            Some("Helper".to_string())
+        );
+        assert!(!run_bindings.contains("fromCounts"));
     }
 
     #[test]
