@@ -506,18 +506,73 @@ fn kotlin_is_type_node_kind(kind: &str) -> bool {
 }
 
 /// Extracts a named receiver type, allowing dotted qualified names such as
-/// `Outer.Inner`. Generic, nullable, and otherwise complex spellings still fail
-/// closed; empty or malformed dotted segments are rejected by the receiver path
-/// resolver.
+/// `Outer.Inner` and well-formed generic spellings such as `Box<String>` (which
+/// normalize to the raw dotted base name `Box`). Generic array spellings such
+/// as `Array<Helper>` remain capability-gated because array receiver handling
+/// is a dedicated slice that records the raw spelling, and nullable, otherwise
+/// complex, and malformed spellings still fail closed; empty or malformed
+/// dotted segments are rejected by the receiver path resolver.
 pub(in crate::symbol_dependency) fn kotlin_dotted_type_name(text: &str) -> Option<String> {
     let mut name = text.trim();
     if let Some(stripped) = name.strip_suffix('?') {
         name = stripped.trim();
     }
-    if name.is_empty() || name.contains(['<', '(', '[', ':', ',', ' ']) {
+    if name.is_empty() || name.contains(['(', '[', ':']) {
+        return None;
+    }
+    if name.contains('<') {
+        if name.starts_with("Array<") {
+            return None;
+        }
+        return kotlin_generic_type_base_name(name);
+    }
+    if name.contains('>') || name.contains([',', ' ']) {
         return None;
     }
     Some(name.to_string())
+}
+
+/// Strips a well-formed top-level type-argument list from a generic type
+/// spelling, returning the raw dotted base name. The argument list must be
+/// balanced and non-empty, and nothing may follow its closing bracket;
+/// malformed and otherwise complex spellings fail closed.
+fn kotlin_generic_type_base_name(name: &str) -> Option<String> {
+    let open = name.find('<')?;
+    let prefix = name[..open].trim();
+    if prefix.is_empty()
+        || prefix.starts_with('.')
+        || prefix.ends_with('.')
+        || prefix.contains("..")
+        || prefix.contains(['(', '[', ':', ',', ' '])
+    {
+        return None;
+    }
+    let suffix_len = name.len() - open;
+    let mut depth = 0usize;
+    let mut has_argument = false;
+    for (offset, byte) in name[open..].bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 && offset != suffix_len - 1 {
+                    return None;
+                }
+            }
+            _ => {
+                if depth == 0 {
+                    return None;
+                }
+                if !byte.is_ascii_whitespace() {
+                    has_argument = true;
+                }
+            }
+        }
+    }
+    (depth == 0 && has_argument).then(|| prefix.to_string())
 }
 
 /// Returns a receiver type spelling for a declared-type node: plain dotted
@@ -686,7 +741,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        KotlinImportBinding, KotlinReceiverTypeBindings,
+        KotlinImportBinding, KotlinReceiverTypeBindings, kotlin_dotted_type_name,
         kotlin_import_context_for_file_with_overrides_and_deadline,
         kotlin_receiver_type_bindings_for_function, resolve_kotlin_import_binding_for_reference,
     };
@@ -711,6 +766,50 @@ mod tests {
         TestFile {
             normalized_path: normalize_path(&file_path),
         }
+    }
+
+    #[test]
+    fn kotlin_dotted_type_name_normalizes_generic_receiver_types() {
+        assert_eq!(
+            kotlin_dotted_type_name("Box<String>").as_deref(),
+            Some("Box")
+        );
+        assert_eq!(
+            kotlin_dotted_type_name("Outer.Inner<String>").as_deref(),
+            Some("Outer.Inner")
+        );
+        assert_eq!(
+            kotlin_dotted_type_name("Box<String>?").as_deref(),
+            Some("Box")
+        );
+        assert_eq!(
+            kotlin_dotted_type_name("Box<Outer.Inner>").as_deref(),
+            Some("Box")
+        );
+        assert_eq!(
+            kotlin_dotted_type_name("Box<String, Int>").as_deref(),
+            Some("Box")
+        );
+        assert_eq!(kotlin_dotted_type_name("Box"), Some("Box".to_string()));
+        assert_eq!(
+            kotlin_dotted_type_name("Outer.Inner").as_deref(),
+            Some("Outer.Inner")
+        );
+    }
+
+    #[test]
+    fn kotlin_dotted_type_name_rejects_malformed_generic_spellings() {
+        // Generic arrays stay capability-gated for the array slice, and
+        // malformed, unbalanced, empty, or trailing generic spellings fail
+        // closed.
+        assert_eq!(kotlin_dotted_type_name("Array<Helper>"), None);
+        assert_eq!(kotlin_dotted_type_name("Box<"), None);
+        assert_eq!(kotlin_dotted_type_name("Box>"), None);
+        assert_eq!(kotlin_dotted_type_name("Box<>"), None);
+        assert_eq!(kotlin_dotted_type_name("Box<String"), None);
+        assert_eq!(kotlin_dotted_type_name("Box<String>Extra"), None);
+        assert_eq!(kotlin_dotted_type_name(""), None);
+        assert_eq!(kotlin_dotted_type_name("Box (String)"), None);
     }
 
     #[test]
