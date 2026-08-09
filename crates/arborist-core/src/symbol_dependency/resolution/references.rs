@@ -12277,23 +12277,40 @@ fn resolve_kotlin_constructor_receiver_call(
     }
     // The constructed type path must resolve to exactly one constructible
     // class; objects, aliases, unknown names, and non-constructible classes
-    // fail closed.
-    let Some(type_path) = resolve_kotlin_receiver_type_path(
+    // fail closed. When the `()`-marked root is not a type name at all, it
+    // may be a bare factory-call root such as `makeGroup()` in
+    // `makeGroup().entry.helper(...)`; the leading call then resolves through
+    // the same factory rules as a `var` initializer (a unique same-file,
+    // same-package, or explicitly imported top-level function with a
+    // declared return type) and the trailing member chain dispatches on the
+    // factory's declared return type. Unknown factories and factories
+    // without a declared return type fail closed.
+    let type_path = if let Some(type_path) = resolve_kotlin_receiver_type_path(
         source_symbol,
         type_path_text,
         raw_symbols,
         file_overrides,
         kotlin_import_contexts_by_file,
         deadline,
-    )?
-    else {
+    )? {
+        let candidates =
+            kotlin_constructible_class_indexes(&type_path, raw_symbols, semantic_path_index);
+        if candidates.len() != 1 {
+            return Ok(None);
+        }
+        type_path
+    } else if let Some(factory_type_path) = resolve_kotlin_initializer_type_path(
+        source_symbol,
+        type_path_text,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        factory_type_path
+    } else {
         return Ok(None);
     };
-    let candidates =
-        kotlin_constructible_class_indexes(&type_path, raw_symbols, semantic_path_index);
-    if candidates.len() != 1 {
-        return Ok(None);
-    }
     // Each intermediate hop must resolve to a uniquely declared property whose
     // explicit type or bare constructor initializer pins the next receiver;
     // missing and ambiguous property types fail closed.

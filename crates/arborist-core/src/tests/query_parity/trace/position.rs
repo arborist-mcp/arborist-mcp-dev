@@ -21667,21 +21667,20 @@ fn traces_kotlin_imported_constructor_chain_receiver_calls_in_live_workspace_and
 }
 
 #[test]
-fn does_not_trace_kotlin_constructor_chain_receiver_calls_with_function_call_or_non_constructible_bases()
- {
+fn does_not_trace_kotlin_constructor_chain_receiver_calls_with_unknown_or_non_constructible_bases()
+{
     let dir = temporary_dir();
     let source_path = dir.join("Callers.kt");
     fs::write(
         &source_path,
-        "package com.example\n\nclass Other {\n    fun helper(value: Int): Int = value\n}\n\nfun makeOther(): Other = Other()\n\ninterface Shape {\n    fun draw(): Int\n}\n\nabstract class AbstractBase {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int {\n    val a = makeOther().helper(1)\n    val b = Unknown().helper(2)\n    val c = Outer.Missing().helper(3)\n    val d = Shape().draw(4)\n    val e = AbstractBase().run(5)\n    return a + b + c + d + e\n}\n",
+        "package com.example\n\ninterface Shape {\n    fun draw(): Int\n}\n\nabstract class AbstractBase {\n    fun run(value: Int): Int = value\n}\n\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\n\nfun caller(): Int {\n    val a = Unknown().helper(1)\n    val b = Outer.Missing().helper(2)\n    val c = Shape().draw(3)\n    val d = AbstractBase().run(4)\n    return a + b + c + d\n}\n",
     )
     .unwrap();
 
-    // A function-call base, an unknown type, a missing nested type, and
-    // non-constructible bases (interface, abstract class) all fail closed
-    // instead of guessing a chain target.
+    // An unknown type, a missing nested type, and non-constructible bases
+    // (interface, abstract class) all fail closed instead of guessing a chain
+    // target.
     for helper_path in [
-        "com::example::Other::helper",
         "com::example::Outer::Inner::helper",
         "com::example::Shape::draw",
         "com::example::AbstractBase::run",
@@ -22976,6 +22975,102 @@ fn kotlin_super_rooted_member_calls_fail_closed_for_unsupported_references() {
     // An unknown `super`-rooted hop, a missing final member, and a class
     // without a resolvable superclass all fail closed; only the resolvable
     // bound receiver in `control` traces.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+
+#[test]
+fn traces_kotlin_factory_root_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nclass Outer {\n    class Inner {\n        fun helper(value: Int): Int = value\n    }\n}\nfun makeGroup(): Group = Group()\nfun makeInner(): Outer.Inner = Outer.Inner()\n\nfun caller(): Int {\n    return makeGroup().entry.helper(1) + makeInner().helper(2)\n}\n",
+    )
+    .unwrap();
+
+    // A bare factory-call root such as `makeGroup().entry.helper(...)`
+    // resolves the leading call through the same factory rules as a `var`
+    // initializer and dispatches the trailing member chain on the factory's
+    // declared return type, including dotted nested return types.
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Outer::Inner::helper",
+    ] {
+        let live = trace_symbol_graph(&dir, target, TraceDirection::Callers).unwrap();
+        assert_eq!(live.symbol.symbol_id, target);
+        assert_eq!(live.callers.len(), 1);
+        assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+    }
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    for target in [
+        "com::example::Entry::helper",
+        "com::example::Outer::Inner::helper",
+    ] {
+        let persisted =
+            trace_symbol_graph_from_index(&db_path, target, TraceDirection::Callers).unwrap();
+        assert_eq!(persisted.callers.len(), 1);
+        assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+    }
+}
+
+#[test]
+fn traces_kotlin_factory_root_member_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nfun makeGroup(): Group = Group()\n\nfun caller(): Int {\n    return makeGroup().entry.helper(1)\n}\n";
+    let target = "com::example::Entry::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_factory_root_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Entry {\n    fun helper(value: Int): Int = value\n}\nclass Group {\n    val entry: Entry = Entry()\n}\nfun makeGroup(): Group = Group()\nfun ambiguousGroup(): Group = Group()\nfun ambiguousGroup(count: Int): Group = Group()\nfun makeUnknown(): Unknown = TODO()\n\nfun caller(): Int {\n    return unknownFactory().entry.helper(1) + ambiguousGroup(1).entry.helper(2) + Util.makeGroup().entry.helper(3) + makeUnknown().entry.helper(4)\n}\n\nfun control(): Int {\n    return makeGroup().entry.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // An unknown factory, an ambiguous overload set, a dotted factory root,
+    // and a factory whose declared return type does not resolve all fail
+    // closed; only the resolvable factory root in `control` traces.
     let helper_path = "com::example::Entry::helper";
     let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
