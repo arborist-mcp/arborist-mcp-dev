@@ -16803,15 +16803,25 @@ class Group {
     public Holder holder = new Holder();
     public Helper[] fieldItems = new Helper[1];
 }
-class Caller {
+class Base {
+    public Helper[] inheritedItems = new Helper[1];
+}
+class Util {
+    public static Helper[] fieldItems = new Helper[1];
+}
+class Caller : Base {
     private Helper[] fieldItems = new Helper[2];
     int run(Group group) {
         var first = this.fieldItems[0];
         var second = group.fieldItems[0];
         var third = group.holder.fieldItems[0];
+        var sixth = base.inheritedItems[0];
+        var seventh = Util.fieldItems[0];
         return first.helper(1)
             + second.helper(2)
-            + third.helper(3);
+            + third.helper(3)
+            + sixth.helper(4)
+            + seventh.helper(5);
     }
 }
 ",
@@ -16820,8 +16830,10 @@ class Caller {
 
     // A `var` local bound from an element access with a qualified base such as
     // `var first = this.fieldItems[0]`, `var second = group.fieldItems[0]`,
-    // or a multi-hop field chain `var third = group.holder.fieldItems[0]`
-    // dispatches on the terminal array field's element component type.
+    // a multi-hop field chain `var third = group.holder.fieldItems[0]`, a
+    // `base`-rooted field `var sixth = base.inheritedItems[0]`, or a static
+    // type field `var seventh = Util.fieldItems[0]` dispatches on the terminal
+    // array field's element component type.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -16849,10 +16861,12 @@ fn traces_csharp_var_qualified_element_access_receiver_calls_from_dirty_vfs_over
 class Helper {
     public int helper(int value) => value;
 }
+class Util {
+    public static Helper[] fieldItems = new Helper[2];
+}
 class Caller {
-    private Helper[] fieldItems = new Helper[2];
     int run() {
-        var first = this.fieldItems[0];
+        var first = Util.fieldItems[0];
         return first.helper(1);
     }
 }
@@ -16897,6 +16911,10 @@ class Group {
     public Helper[] fieldItems = new Helper[1];
     public Helper[] makeItems() => new Helper[1];
 }
+class Util {
+    public static Helper[] fieldItems = new Helper[1];
+    public Helper[] instanceItems = new Helper[1];
+}
 class Caller {
     private Helper[] fieldItems = new Helper[2];
     private Helper holder = new Helper();
@@ -16905,10 +16923,14 @@ class Caller {
         var unbound = unknownObj.fieldItems[0];
         var matrixAccess = matrix[0][0];
         var methodBase = group.makeItems()[0];
+        var baseBase = base.fieldItems[0];
+        var staticInstanceField = Util.instanceItems[0];
         return nonArray.helper(1)
             + unbound.helper(2)
             + matrixAccess.helper(3)
-            + methodBase.helper(4);
+            + methodBase.helper(4)
+            + baseBase.helper(5)
+            + staticInstanceField.helper(6);
     }
     int control() {
         var ok = this.fieldItems[0];
@@ -16920,9 +16942,10 @@ class Caller {
     .unwrap();
 
     // `var` locals bound from element accesses with a non-array `this`-rooted
-    // member, an unbound receiver, a multi-dimensional element access, or a
-    // method-call base all fail closed; only the `this`-rooted element access
-    // in `control` traces.
+    // member, an unbound receiver, a multi-dimensional element access, a
+    // method-call base, an unresolvable `base` receiver, or a non-static
+    // field on a static type receiver all fail closed; only the `this`-rooted
+    // element access in `control` traces.
     let helper_symbol = "Demo::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);

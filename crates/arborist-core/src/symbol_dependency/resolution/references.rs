@@ -3695,15 +3695,19 @@ fn resolve_csharp_bare_factory_array_member_chain(
 }
 
 /// Resolves the element component type binding of a qualified element-access
-/// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]` or
-/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`.
-/// `this`-rooted bases start on the enclosing type; other receivers must be
-/// bound locals, parameters, or enclosing-class fields with a usable declared
-/// type. Intermediate hops resolve through the same field/property/event and
-/// method-call-hop rules as member chains, and the terminal hop must be a
-/// uniquely declared single-level array member whose element component type
-/// pins the receiver. Unknown, ambiguous, or non-array terminal members,
-/// unbound or non-array receivers, and method-call bases fail closed.
+/// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]`,
+/// `base.inheritedItems` in `var sixth = base.inheritedItems[0]`,
+/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`, or
+/// `Util.fieldItems` in `var seventh = Util.fieldItems[0]`. `this`-rooted
+/// bases start on the enclosing type, `base`-rooted bases on the unique base
+/// type, other bound receivers on their declared type, and unbound receivers
+/// on the named static type (requiring a static terminal field). Intermediate
+/// hops resolve through the same field/property/event and method-call-hop
+/// rules as member chains, and the terminal hop must be a uniquely declared
+/// single-level array member whose element component type pins the receiver.
+/// Unknown, ambiguous, or non-array terminal members, unbound or non-array
+/// receivers, method-call bases, and non-static fields on a static type
+/// receiver fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps C# qualified element-access base resolution inputs explicit"
@@ -3730,18 +3734,15 @@ fn csharp_qualified_element_access_component_type_path(
     if hops.iter().any(|hop| hop.is_empty()) {
         return Ok(None);
     }
-    // The terminal hop is the accessed array member; mark it as an
-    // element-access hop so the member-chain walk requires a single-level
-    // array member and pins its element component type.
+    // The terminal hop is the accessed array member; a call-shaped or
+    // bracket-shaped terminal is not a plain field and fails closed.
     let Some(terminal) = hops.pop() else {
         return Ok(None);
     };
     if terminal.contains(['(', '[', ']', ')']) {
         return Ok(None);
     }
-    hops.push(format!("{terminal}[0]"));
-    let hop_refs = hops.iter().map(String::as_str).collect::<Vec<_>>();
-    let (initial_binding, scope_source_symbol) = if receiver == "this" {
+    let (initial_binding, scope_source_symbol, require_static_terminal) = if receiver == "this" {
         let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
         };
@@ -3764,11 +3765,61 @@ fn csharp_qualified_element_access_component_type_path(
                 namespace_import_paths: Vec::new(),
             },
             type_candidates[0],
+            false,
         )
-    } else {
-        let Some(type_name) = bindings.type_for(receiver) else {
+    } else if receiver == "base" {
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
             return Ok(None);
         };
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if type_candidates.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = type_candidates[0];
+        let Some(base_binding) = csharp_base_type_binding_for_type(
+            type_symbol,
+            raw_symbols,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(base_type_path) = csharp_base_type_path(type_symbol, raw_symbols, &base_binding)
+        else {
+            return Ok(None);
+        };
+        let base_indexes = semantic_path_index
+            .get(&base_type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_base_constructible_type(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if base_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let base_symbol = &raw_symbols[base_indexes[0]];
+        (
+            CSharpBaseTypeBinding {
+                semantic_type_path: base_type_path,
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            base_symbol,
+            false,
+        )
+    } else if let Some(type_name) = bindings.type_for(receiver) {
         let Some(binding) = resolve_csharp_receiver_type_binding(
             source_symbol,
             &type_name,
@@ -3783,23 +3834,120 @@ fn csharp_qualified_element_access_component_type_path(
         else {
             return Ok(None);
         };
-        (binding, source_symbol)
+        (binding, source_symbol, false)
+    } else {
+        // An unbound receiver names a static type; the terminal array member
+        // must be declared static on that type.
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            receiver,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        (binding, source_symbol, true)
     };
-    let Some((binding, _)) = resolve_csharp_member_chain_binding(
-        scope_source_symbol,
-        initial_binding,
-        &hop_refs,
-        raw_symbols,
-        semantic_path_index,
-        csharp_global_import_context,
-        file_overrides,
-        csharp_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
+    // Intermediate hops walk the same field/property/event and method-call-hop
+    // rules as any other member chain.
+    let intermediate_refs = hops.iter().map(String::as_str).collect::<Vec<_>>();
+    let (binding, scope_source_symbol) = if intermediate_refs.is_empty() {
+        (initial_binding, scope_source_symbol)
+    } else {
+        let Some((binding, scope_source_symbol)) = resolve_csharp_member_chain_binding(
+            scope_source_symbol,
+            initial_binding,
+            &intermediate_refs,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        (binding, scope_source_symbol)
     };
-    Ok(Some(binding))
+    if require_static_terminal {
+        // A static type receiver requires the terminal array member to be
+        // declared static on the resolved type; the element component type
+        // resolves in the declaring type's own file and enclosing scope.
+        let Some(type_path) = csharp_dispatchable_type_path(
+            scope_source_symbol,
+            raw_symbols,
+            &binding,
+            csharp_is_type_declaration,
+        ) else {
+            return Ok(None);
+        };
+        let type_indexes = semantic_path_index
+            .get(&type_path)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|index| csharp_is_type_declaration(&raw_symbols[*index]))
+            .collect::<Vec<_>>();
+        if type_indexes.len() != 1 {
+            return Ok(None);
+        }
+        let type_symbol = &raw_symbols[type_indexes[0]];
+        let Some(member_bindings) = csharp_member_type_bindings_for_type(
+            &type_symbol.file_path,
+            type_symbol.byte_range,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !member_bindings.is_static_member(&terminal) {
+            return Ok(None);
+        }
+        let Some(component_type) = member_bindings.array_component_for(&terminal) else {
+            return Ok(None);
+        };
+        resolve_csharp_receiver_type_binding(
+            type_symbol,
+            &component_type,
+            raw_symbols,
+            semantic_path_index,
+            csharp_source_namespace_path(type_symbol, raw_symbols).flatten(),
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )
+    } else {
+        // The terminal hop is the accessed array member; mark it as an
+        // element-access hop so the member-chain walk requires a single-level
+        // array member and pins its element component type.
+        let terminal_refs = [format!("{terminal}[0]")];
+        let terminal_refs = terminal_refs.iter().map(String::as_str).collect::<Vec<_>>();
+        let Some((binding, _)) = resolve_csharp_member_chain_binding(
+            scope_source_symbol,
+            binding,
+            &terminal_refs,
+            raw_symbols,
+            semantic_path_index,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(binding))
+    }
 }
 
 /// Resolves a static initializer type spelling such as `Util`,
