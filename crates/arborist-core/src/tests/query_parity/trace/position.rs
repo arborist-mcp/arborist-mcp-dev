@@ -24920,6 +24920,132 @@ fn kotlin_nullable_receiver_member_calls_fail_closed_for_unsupported_references(
 }
 
 #[test]
+fn traces_kotlin_nullable_class_receiver_hierarchy_member_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nopen class Base {\n    fun baseHelper(value: Int): Int = value\n}\nclass Derived : Base()\ninterface Root {\n    fun render(value: Int): Int = value\n}\ninterface Mid : Root\nclass Impl : Root\nclass ChainImpl : Mid\n\nfun baseCaller(derived: Derived?): Int {\n    return derived.baseHelper(1)\n}\n\nfun ifaceCaller(impl: Impl?): Int {\n    return impl.render(1)\n}\n\nfun chainCaller(impl: ChainImpl?): Int {\n    return impl.render(1)\n}\n",
+    )
+    .unwrap();
+
+    // A nullable class-typed receiver normalizes to its raw class declaration
+    // before the same class-hierarchy dispatch, so members declared on a
+    // direct superclass or on an implemented interface (directly or through
+    // an interface extends chain) still trace exactly once.
+    let base_helper_path = "com::example::Base::baseHelper";
+    let live = trace_symbol_graph(&dir, base_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, base_helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::baseCaller");
+
+    let render_path = "com::example::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::chainCaller", "com::example::ifaceCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, base_helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::baseCaller");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::chainCaller", "com::example::ifaceCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_nullable_class_receiver_hierarchy_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\ninterface Root {\n    fun render(value: Int): Int = value\n}\nclass Impl : Root\n\nfun caller(impl: Impl?): Int {\n    return impl.render(1)\n}\n";
+    let target = "com::example::Root::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_nullable_class_receiver_hierarchy_member_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface A {\n    fun helper(value: Int): Int = value\n}\ninterface B {\n    fun helper(value: Int): Int = value\n}\ninterface MissingParent : Unknown\nclass Competing : A, B\nclass Unresolvable : MissingParent\nclass NoInterface\ninterface Root {\n    fun render(value: Int): Int = value\n}\nclass Good : Root\n\nfun competingCaller(competing: Competing?): Int {\n    return competing.helper(1)\n}\n\nfun unresolvableCaller(unresolvable: Unresolvable?): Int {\n    return unresolvable.helper(1)\n}\n\nfun noInterfaceCaller(noInterface: NoInterface?): Int {\n    return noInterface.helper(1)\n}\n\nfun control(good: Good?): Int {\n    return good.render(1)\n}\n",
+    )
+    .unwrap();
+
+    // Competing implemented interfaces, an unresolvable implemented
+    // interface, and a nullable class receiver with no implemented interface
+    // all fail closed; only the uniquely resolvable nullable class receiver
+    // in `control` traces through the interface fallback.
+    let helper_path = "com::example::A::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        live.callers.is_empty(),
+        "competing and unresolvable nullable class receivers must fail closed"
+    );
+
+    let render_path = "com::example::Root::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert!(
+        persisted.callers.is_empty(),
+        "competing and unresolvable nullable class receivers must fail closed"
+    );
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+}
+#[test]
 fn traces_java_typed_parameter_receiver_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Types.java");
