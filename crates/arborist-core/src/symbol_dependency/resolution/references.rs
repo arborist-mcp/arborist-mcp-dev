@@ -10567,7 +10567,8 @@ fn resolve_kotlin_qualified_receiver_call(
     )?;
     // An element-access receiver such as `items[0]` strips the bracket and
     // dispatches on the base array's element component type; the base must be
-    // bound with a usable single-level array component, and
+    // bound with a usable single-level array component or a factory-call
+    // initializer whose declared return type is a single-level array, and
     // multi-dimensional element access such as `matrix[0][0]` fails closed.
     let (receiver_name, array_access) =
         if let Some((base, _)) = kotlin_array_access_spelling(receiver) {
@@ -10587,13 +10588,49 @@ fn resolve_kotlin_qualified_receiver_call(
         .is_some_and(|bindings| bindings.contains(receiver_name))
     {
         let type_name = if array_access {
-            let Some(component_type) = bindings
+            if let Some(component_type) = bindings
                 .as_ref()
                 .and_then(|bindings| bindings.array_component_for(receiver_name))
-            else {
+            {
+                component_type
+            } else if let Some(initializer_name) = bindings
+                .as_ref()
+                .and_then(|bindings| bindings.type_for(receiver_name))
+                && !initializer_name.is_empty()
+                && !initializer_name.contains('.')
+                && resolve_kotlin_receiver_type_path(
+                    source_symbol,
+                    &initializer_name,
+                    raw_symbols,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                )?
+                .is_none()
+            {
+                // A `val` local initialized from a factory call whose declared
+                // return type is a single-level array, such as
+                // `val items = makeItems()` with
+                // `fun makeItems(): Array<Helper>`, dispatches an element
+                // access on the array's element component type through the
+                // same factory rules as a direct factory-call element-access
+                // receiver. Direct member calls on the array, unknown
+                // factories, non-array return types, and qualified callees
+                // fail closed.
+                return resolve_kotlin_factory_array_element_member_call(
+                    source_symbol,
+                    &initializer_name,
+                    method,
+                    call_arity,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    kotlin_import_contexts_by_file,
+                    deadline,
+                );
+            } else {
                 return Ok(None);
-            };
-            component_type
+            }
         } else if let Some(type_name) = bindings
             .as_ref()
             .and_then(|bindings| bindings.type_for(receiver_name))
