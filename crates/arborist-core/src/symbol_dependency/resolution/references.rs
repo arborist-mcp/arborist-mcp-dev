@@ -10597,7 +10597,6 @@ fn resolve_kotlin_qualified_receiver_call(
                 .as_ref()
                 .and_then(|bindings| bindings.type_for(receiver_name))
                 && !initializer_name.is_empty()
-                && !initializer_name.contains('.')
                 && resolve_kotlin_receiver_type_path(
                     source_symbol,
                     &initializer_name,
@@ -10611,12 +10610,13 @@ fn resolve_kotlin_qualified_receiver_call(
                 // A `val` local initialized from a factory call whose declared
                 // return type is a single-level array, such as
                 // `val items = makeItems()` with
-                // `fun makeItems(): Array<Helper>`, dispatches an element
-                // access on the array's element component type through the
-                // same factory rules as a direct factory-call element-access
-                // receiver. Direct member calls on the array, unknown
-                // factories, non-array return types, and qualified callees
-                // fail closed.
+                // `fun makeItems(): Array<Helper>` or
+                // `val items = Util.makeItems()` with a companion, object, or
+                // bound-receiver callee, dispatches an element access on the
+                // array's element component type through the same factory
+                // rules as a direct factory-call element-access receiver.
+                // Direct member calls on the array, unknown factories, and
+                // non-array return types fail closed.
                 return resolve_kotlin_factory_array_element_member_call(
                     source_symbol,
                     &initializer_name,
@@ -10754,14 +10754,161 @@ fn resolve_kotlin_qualified_receiver_call(
     Ok(None)
 }
 
-/// Resolves the terminal member of a bare factory-call element-access receiver
-/// such as `makeItems()[0].helper(...)`: the leading call resolves through the
-/// same factory rules as a property initializer (a unique same-file,
-/// same-package, or explicitly imported top-level function with a declared
-/// return type), the declared return type must be a single-level generic array,
-/// and the final member dispatches on the array's element component type.
-/// Unknown or ambiguous factories, missing return types, primitive or
-/// multi-dimensional return arrays, and unresolved component types fail closed.
+/// Finds the unique function declaration symbol path under `scope_path` whose
+/// base name is `function_name` and which declares a return type, mirroring the
+/// uniqueness discipline of `resolve_kotlin_property_initializer_function_path`.
+/// Unknown, ambiguous, and return-type-less functions fail closed.
+fn kotlin_scope_function_path(
+    scope_path: &str,
+    function_name: &str,
+    raw_symbols: &[IndexedSymbol],
+) -> Option<String> {
+    let candidates = raw_symbols
+        .iter()
+        .filter(|candidate| {
+            candidate.node_kind == "function_declaration"
+                && candidate.base_name == function_name
+                && candidate.scope_path.as_deref() == Some(scope_path)
+                && candidate.return_type.is_some()
+        })
+        .map(|candidate| candidate.symbol_id.clone())
+        .collect::<Vec<_>>();
+    (candidates.len() == 1).then(|| candidates[0].clone())
+}
+
+/// Resolves a `val` local's qualified factory-call initializer callee such as
+/// `Util.makeItems` in `val items = Util.makeItems()` to a unique function
+/// symbol path. Object-declaration roots such as `Factory.makeItems` dispatch
+/// to the object's members, class or interface roots such as `Util.makeItems`
+/// dispatch to the companion object's members, explicit companion hops such as
+/// `Util.Companion.makeItems` or `Util.Factory.makeItems` dispatch through the
+/// canonical companion scope, and bound-receiver chains such as
+/// `group.makeItems` resolve the receiver's declared type path before looking
+/// up the member function. Unknown or ambiguous receivers, members, and
+/// callees fail closed so qualified initializer resolution stays conservative.
+#[allow(clippy::too_many_arguments)]
+fn resolve_kotlin_qualified_initializer_function_path(
+    source_symbol: &IndexedSymbol,
+    reference_name: &str,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let Some((receiver_ref, function_name)) = reference_name.rsplit_once('.') else {
+        return Ok(None);
+    };
+    if receiver_ref.is_empty() || function_name.is_empty() {
+        return Ok(None);
+    }
+    // A bound receiver shadows any same-named type; resolve the receiver's
+    // declared type path and look up the member function on it.
+    let bindings = kotlin_receiver_type_bindings_for_function(
+        &source_symbol.file_path,
+        source_symbol.byte_range,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )?;
+    if bindings
+        .as_ref()
+        .is_some_and(|bindings| bindings.contains(receiver_ref))
+    {
+        let Some(type_name) = bindings
+            .as_ref()
+            .and_then(|bindings| bindings.type_for(receiver_ref))
+        else {
+            return Ok(None);
+        };
+        let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        return Ok(kotlin_scope_function_path(
+            &type_path,
+            function_name,
+            raw_symbols,
+        ));
+    }
+    // An explicit companion hop such as `Util.Companion` or `Util.Factory`
+    // maps to the class's canonical `Type::Companion` scope.
+    if let Some((owner_ref, companion_name)) = receiver_ref.rsplit_once('.')
+        && let Some(class_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            owner_ref,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        && let Some(companion_scope) = resolve_kotlin_explicit_companion_scope(
+            &class_path,
+            companion_name,
+            raw_symbols,
+            semantic_path_index,
+        )
+    {
+        return Ok(kotlin_scope_function_path(
+            &companion_scope,
+            function_name,
+            raw_symbols,
+        ));
+    }
+    // An object-declaration root such as `Factory.makeItems` dispatches to the
+    // object's members.
+    if let Some(object_path) = resolve_kotlin_object_receiver_path(
+        source_symbol,
+        receiver_ref,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        return Ok(kotlin_scope_function_path(
+            &object_path,
+            function_name,
+            raw_symbols,
+        ));
+    }
+    // A class or interface root such as `Util.makeItems` dispatches to the
+    // companion object's members; instance members fail closed because a class
+    // name cannot be an instance receiver.
+    if let Some(type_path) = resolve_kotlin_receiver_type_path(
+        source_symbol,
+        receiver_ref,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )? {
+        let companion_scope = format!("{type_path}::Companion");
+        return Ok(kotlin_scope_function_path(
+            &companion_scope,
+            function_name,
+            raw_symbols,
+        ));
+    }
+    Ok(None)
+}
+
+/// Resolves the terminal member of a bare or qualified factory-call
+/// element-access receiver such as `makeItems()[0].helper(...)`: the leading
+/// call resolves through the same factory rules as a property initializer (a
+/// unique same-file, same-package, or explicitly imported top-level function
+/// with a declared return type, or a qualified companion, object, or
+/// bound-receiver member for dotted callees), the declared return type must be
+/// a single-level generic array, and the final member dispatches on the
+/// array's element component type. Unknown or ambiguous factories, missing
+/// return types, primitive or multi-dimensional return arrays, and unresolved
+/// component types fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_factory_array_element_member_call(
     source_symbol: &IndexedSymbol,
@@ -10774,15 +10921,32 @@ fn resolve_kotlin_factory_array_element_member_call(
     kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
     deadline: Option<&WorkspaceScanDeadline>,
 ) -> Result<Option<String>> {
-    let Some(factory_path) = resolve_kotlin_property_initializer_function_path(
-        source_symbol,
-        function_name,
-        raw_symbols,
-        file_overrides,
-        kotlin_import_contexts_by_file,
-        deadline,
-    )?
-    else {
+    // A bare callee such as `makeItems` resolves through the property
+    // initializer rules (a unique same-file, same-package, or explicitly
+    // imported top-level function with a declared return type); a qualified
+    // callee such as `Util.makeItems` resolves through the qualified
+    // initializer rules (object, companion, or bound-receiver member).
+    let factory_path = if function_name.contains('.') {
+        resolve_kotlin_qualified_initializer_function_path(
+            source_symbol,
+            function_name,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    } else {
+        resolve_kotlin_property_initializer_function_path(
+            source_symbol,
+            function_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+    };
+    let Some(factory_path) = factory_path else {
         return Ok(None);
     };
     let Some(factory) = raw_symbols
