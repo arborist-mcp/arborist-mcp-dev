@@ -20375,6 +20375,50 @@ fn kotlin_interface_chain_member_calls_fail_closed_for_unsupported_references() 
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::controlChain");
 }
+#[test]
+fn traces_kotlin_generic_interface_chain_member_calls_in_live_workspace_and_persisted_index() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Base<T> {\n    fun render(value: Int): Int = value\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n\nfun caller(renderer: Derived<String>): Int {\n    return renderer.render(1)\n}\n\nfun midCaller(renderer: Mid<Int>): Int {\n    return renderer.render(1)\n}\n",
+    )
+    .unwrap();
+
+    // A generic interface-typed receiver such as `Derived<String>` normalizes
+    // to its raw interface and dispatches a member declared on a parent
+    // interface through the extends chain, resolving uniquely through any
+    // number of intermediate generic interfaces.
+    let render_path = "com::example::Base::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, render_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::midCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::caller", "com::example::midCaller"]
+    );
+}
+
 
 #[test]
 fn traces_kotlin_typealias_receiver_member_calls_in_live_workspace_and_persisted_index() {
@@ -20399,6 +20443,155 @@ fn traces_kotlin_typealias_receiver_member_calls_in_live_workspace_and_persisted
     assert_eq!(persisted.callers.len(), 1);
     assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
 }
+#[test]
+fn traces_kotlin_generic_interface_chain_property_and_method_hop_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface Base<T> {\n    val entry: Entry\n    fun inner(): Entry\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\nclass Entry {\n    fun helper(value: Int): Int = value\n}\n\nfun propertyCaller(holder: Derived<String>): Int {\n    return holder.entry.helper(1)\n}\n\nfun methodCaller(holder: Derived<Int>): Int {\n    return holder.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Property hops and method-call hops declared on a parent interface resolve
+    // through the same generic interface extends chain, so the trailing member
+    // dispatches on the declared property type or method return type.
+    let helper_path = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    let mut callers = live
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    let mut callers = persisted
+        .callers
+        .iter()
+        .map(|caller| caller.symbol_id.as_str())
+        .collect::<Vec<_>>();
+    callers.sort();
+    assert_eq!(
+        callers,
+        vec!["com::example::methodCaller", "com::example::propertyCaller"]
+    );
+}
+
+#[test]
+fn traces_kotlin_cross_file_imported_generic_interface_chain_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let caller_path = dir.join("Caller.kt");
+    let interface_path = dir.join("Renderer.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &caller_path,
+        "package com.example\n\nimport org.util.Derived\n\nfun caller(renderer: Derived<String>): Int {\n    return renderer.render(1)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        &interface_path,
+        "package org.util\n\ninterface Base<T> {\n    fun render(value: Int): Int = value\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n",
+    )
+    .unwrap();
+
+    // The generic interface extends chain resolves parent interfaces in each
+    // interface's own file and package scope, so a caller in another package
+    // dispatches the inherited member once the generic leaf interface is
+    // imported and normalized to its raw base.
+    let render_path = "org::util::Base::render";
+    let live = trace_symbol_graph(&dir, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.indexed_files, 2);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, render_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.indexed_files, 2);
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn traces_kotlin_generic_interface_chain_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(&source_path, "package com.example\n\nclass Stale {}\n").unwrap();
+    let overlay = "package com.example\n\ninterface Base<T> {\n    fun render(value: Int): Int = value\n}\ninterface Mid<T> : Base<T>\ninterface Derived<T> : Mid<T>\n\nfun caller(renderer: Derived<String>): Int {\n    return renderer.render(1)\n}\n";
+    let target = "com::example::Base::render";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        target,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
+fn kotlin_generic_interface_chain_receiver_calls_fail_closed_for_unsupported_references() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\ninterface A<T> {\n    fun helper(value: Int): Int = value\n}\ninterface B<T> {\n    fun helper(value: Int): Int = value\n}\ninterface Ambiguous<T> : A<T>, B<T>\ninterface UnknownParent<T> : Missing<T>\nclass Entry {\n    fun helper(value: Int): Int = value\n}\ninterface Base<T> {\n    fun inner(): Entry\n    fun helper(value: Int): Int = value\n}\ninterface Chain<T> : Base<T>\n\nfun ambiguousCaller(ambiguous: Ambiguous<String>): Int {\n    return ambiguous.helper(1)\n}\n\nfun unknownParentCaller(unknown: UnknownParent<Int>): Int {\n    return unknown.helper(1)\n}\n\nfun unknownHop(chain: Chain<String>): Int {\n    return chain.unknown().helper(1)\n}\n\nfun control(chain: Chain<Long>): Int {\n    return chain.helper(1)\n}\n\nfun controlChain(chain: Chain<String>): Int {\n    return chain.inner().helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // Competing generic interface branches, an unresolvable generic parent
+    // interface, and an unknown method-call hop all fail closed; only the
+    // uniquely resolvable inherited member and method-call hop in `control`
+    // and `controlChain` trace.
+    let helper_path = "com::example::Base::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::control");
+
+    let entry_helper = "com::example::Entry::helper";
+    let live = trace_symbol_graph(&dir, entry_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::controlChain");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::control");
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, entry_helper, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::controlChain");
+}
+
 
 #[test]
 fn traces_kotlin_typealias_property_chain_receiver_calls_in_live_workspace_and_persisted_index() {
