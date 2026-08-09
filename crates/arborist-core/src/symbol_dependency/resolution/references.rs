@@ -1826,21 +1826,43 @@ fn resolve_csharp_instance_receiver_call(
         // An element-access receiver such as `items[0].helper(...)` on a
         // single-level array-typed receiver dispatches on the array's element
         // component type; indexing a non-array, primitive-array, or
-        // multi-dimensional-array receiver fails closed.
-        let Some(component_type) = array_component else {
+        // multi-dimensional-array receiver fails closed. A `var` local
+        // initialized from a bare factory call whose declared return type is
+        // a single-level array (`var items = makeItems()`) dispatches the
+        // element access through the factory's element component type too;
+        // qualified factory callees are the qualified-factory slice.
+        if let Some(component_type) = array_component {
+            resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else if let Some((factory_name, factory_arity)) = csharp_var_factory_spelling(raw_binding)
+            && !factory_name.contains('.')
+            && let Some(binding) = csharp_factory_array_component_binding(
+                source_symbol,
+                &factory_name,
+                factory_arity,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        {
+            Some(binding)
+        } else {
             return Ok(CSharpInstanceReceiverResolution::Blocked);
-        };
-        resolve_csharp_receiver_type_binding(
-            source_symbol,
-            &component_type,
-            raw_symbols,
-            semantic_path_index,
-            source_namespace_path,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        }
     } else if array_component.is_some() {
         // A direct member call on an array-typed receiver such as
         // `items.helper(...)` fails closed; only element-access receivers
