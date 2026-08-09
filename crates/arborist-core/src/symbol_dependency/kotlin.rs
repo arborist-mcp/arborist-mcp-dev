@@ -372,12 +372,14 @@ fn kotlin_property_binding(
     // binds the property to the base array's element component type, a
     // qualified base such as `group.holder.fieldItems` records the base
     // spelling so trace-time resolution can walk the property chain to the
-    // terminal array field's component type, and a factory-call base such as
-    // `makeItems()` records the callee with a trailing `()` marker so
+    // terminal array field's component type, a `super`-rooted base such as
+    // `super.inheritedItems` records the spelling so trace-time resolution can
+    // walk the direct superclass's property chain, and a factory-call base
+    // such as `makeItems()` records the callee with a trailing `()` marker so
     // trace-time resolution can walk the factory's declared return array.
     // Multi-dimensional element access, function-call subscripts,
-    // `this`/`super` roots, qualified call callees, and bases without a
-    // usable array component fail closed.
+    // `this` roots, qualified call callees, and bases without a usable array
+    // component fail closed.
     if let Some(initializer) = children
         .iter()
         .find(|child| child.kind() == "index_expression")
@@ -395,12 +397,13 @@ fn kotlin_property_binding(
 }
 
 /// Extracts the base of a single-level element-access initializer such as
-/// `items[0]` or `makeItems()[0]`. Plain-identifier and dotted field-chain
-/// bases return their spelling, and a factory-call base with a simple
+/// `items[0]`, `super.inheritedItems[0]`, or `makeItems()[0]`.
+/// Plain-identifier and dotted field-chain bases (including `super`-rooted
+/// chains) return their spelling, and a factory-call base with a simple
 /// identifier callee returns the callee with a trailing `()` marker so
 /// trace-time resolution can walk the factory's declared return array.
-/// Qualified call callees, nested element access, and function-call,
-/// multi-index, or nullable subscripts return `None` so
+/// `this`-rooted chains, qualified call callees, nested element access, and
+/// function-call, multi-index, or nullable subscripts return `None` so
 /// element-access-inferred bindings fail closed.
 fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
     if initializer.kind() != "index_expression" {
@@ -442,10 +445,7 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
                     .chars()
                     .all(|character| character.is_ascii_alphanumeric() || character == '_')
         })
-        || base
-            .split('.')
-            .next()
-            .is_some_and(|first| matches!(first, "this" | "super"))
+        || base.split('.').next().is_some_and(|first| first == "this")
     {
         return Ok(None);
     }
@@ -961,6 +961,38 @@ mod tests {
         assert_eq!(run_bindings.element_access_base_for("plain"), None);
         assert!(!run_bindings.contains("qualified"));
         assert!(!run_bindings.contains("member"));
+    }
+
+    #[test]
+    fn super_rooted_element_access_initializers_record_base_spellings() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    val inheritedItems: Array<Helper> = arrayOf()\n}\n\nclass Caller : Base() {\n    fun run(items: Array<Helper>): Int {\n        val fromSuper = super.inheritedItems[0]\n        val fromThis = this.inheritedItems[0]\n        val plain = items[0]\n        fromSuper.helper(1)\n    }\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| {
+                bindings.element_access_base_for("fromSuper")
+                    == Some("super.inheritedItems".to_string())
+            })
+            .unwrap();
+        // A `super`-rooted base records the spelling with no usable type so
+        // trace-time resolution can walk the direct superclass's property
+        // chain; a plain base still binds the element component type directly.
+        // A `this`-rooted base stays rejected and unbound.
+        assert_eq!(
+            run_bindings.element_access_base_for("fromSuper"),
+            Some("super.inheritedItems".to_string())
+        );
+        assert_eq!(run_bindings.type_for("fromSuper"), None);
+        assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
+        assert!(!run_bindings.contains("fromThis"));
     }
 
     #[test]

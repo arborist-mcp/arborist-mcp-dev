@@ -60,7 +60,7 @@ use super::type_alias::{
 };
 use crate::language::{
     JavaDirectSuperclassReference, detect_language,
-    java_direct_interface_references_for_declaration, java_direct_superclass_reference,
+    java_direct_interface_references_for_declaration, java_direct_superclass_reference, node_text,
     normalize_path, parse_document, read_source,
 };
 use crate::model::LanguageId;
@@ -10827,18 +10827,126 @@ fn resolve_kotlin_factory_array_element_member_call(
     )
 }
 
+/// Resolves the direct superclass type path of the class enclosing
+/// `source_symbol`, such as `Base` in `class Caller : Base()`, by locating the
+/// enclosing class declaration's first delegation specifier. The superclass
+/// must be a pure dotted type spelling with no type arguments, nullable, or
+/// delegation (`by`) modifiers, and must resolve through the same type-path
+/// rules as any receiver type. Classes without a resolvable superclass fail
+/// closed.
+fn resolve_kotlin_superclass_path(
+    source_symbol: &IndexedSymbol,
+    raw_symbols: &[IndexedSymbol],
+    file_overrides: Option<&BTreeMap<String, String>>,
+    kotlin_import_contexts_by_file: &mut BTreeMap<String, KotlinImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<String>> {
+    let path = Path::new(&source_symbol.file_path);
+    let normalized_path = normalize_path(path);
+    let source = file_overrides
+        .and_then(|overrides| overrides.get(&normalized_path))
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(|| read_source(path))?;
+    let document = parse_document(path, &source)?;
+    let mut stack = vec![document.tree.root_node()];
+    let mut superclass_reference = None;
+    while let Some(node) = stack.pop() {
+        if let Some(deadline) = deadline {
+            deadline.check("locating Kotlin superclass")?;
+        }
+        if node.kind() == "function_declaration"
+            && (node.start_byte(), node.end_byte()) == source_symbol.byte_range
+        {
+            let mut ancestor = node.parent();
+            while let Some(candidate) = ancestor {
+                if candidate.kind() == "class_declaration" {
+                    let mut cursor = candidate.walk();
+                    let Some(specifiers) = candidate
+                        .named_children(&mut cursor)
+                        .find(|child| child.kind() == "delegation_specifiers")
+                    else {
+                        return Ok(None);
+                    };
+                    let mut specifier_cursor = specifiers.walk();
+                    let Some(specifier) = specifiers.named_children(&mut specifier_cursor).next()
+                    else {
+                        return Ok(None);
+                    };
+                    superclass_reference =
+                        kotlin_delegation_specifier_type_name(specifier, &source)?;
+                    break;
+                }
+                ancestor = candidate.parent();
+            }
+            break;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    let Some(superclass_reference) = superclass_reference else {
+        return Ok(None);
+    };
+    resolve_kotlin_receiver_type_path(
+        source_symbol,
+        &superclass_reference,
+        raw_symbols,
+        file_overrides,
+        kotlin_import_contexts_by_file,
+        deadline,
+    )
+}
+
+/// Extracts the pure dotted type spelling of a class's first delegation
+/// specifier such as `Base` in `class Caller : Base()` or `Base` in
+/// `class Caller : Base`. Constructor invocations unwrap to their `type`
+/// child; delegation (`by`) specifiers and other shapes fail closed.
+fn kotlin_delegation_specifier_type_name(
+    specifier: tree_sitter::Node<'_>,
+    source: &str,
+) -> Result<Option<String>> {
+    // A `delegation_specifier` such as `Base()` or `Base` wraps the concrete
+    // type node; unwrap it before extracting the pure dotted spelling.
+    let specifier = match specifier.kind() {
+        "delegation_specifier" => {
+            let mut cursor = specifier.walk();
+            specifier.named_children(&mut cursor).next()
+        }
+        _ => Some(specifier),
+    };
+    let Some(specifier) = specifier else {
+        return Ok(None);
+    };
+    let type_node = match specifier.kind() {
+        "constructor_invocation" => {
+            let mut cursor = specifier.walk();
+            specifier.named_children(&mut cursor).next()
+        }
+        "type" => Some(specifier),
+        _ => None,
+    };
+    let Some(type_node) = type_node else {
+        return Ok(None);
+    };
+    let text = node_text(type_node, source)?.trim();
+    Ok(kotlin_dotted_type_name(text))
+}
+
 /// Dispatches the terminal member of a receiver name bound from a qualified
-/// element-access initializer such as `val x = group.holder.fieldItems[0]` or
-/// a factory-call element-access initializer such as `val x = makeItems()[0]`.
+/// element-access initializer such as `val x = group.holder.fieldItems[0]`,
+/// a `super`-rooted initializer such as `val x = super.inheritedItems[0]`, a
+/// companion-object initializer such as `val x = Util.fieldItems[0]`, or a
+/// factory-call initializer such as `val x = makeItems()[0]`.
 /// A factory-call base records the callee with a trailing `()` marker and
 /// resolves through the same factory rules as a direct factory-call
-/// element-access receiver. Otherwise the base's first hop must be a bound
-/// receiver with a usable declared type; intermediate hops walk the same
-/// property-type rules as chained receivers, and the terminal hop must be a
-/// uniquely declared single-level array property whose element component type
-/// receives the dispatch. Unbound or non-array first hops, unknown or
-/// non-array terminal properties, and unresolvable intermediate hops fail
-/// closed.
+/// element-access receiver. Otherwise the base's first hop must be `super`
+/// (the direct superclass path), a bound receiver with a usable declared
+/// type, or an unbound type whose terminal property lives on its companion
+/// object; intermediate hops walk the same property-type rules as chained
+/// receivers, and the terminal hop must be a uniquely declared single-level
+/// array property whose element component type receives the dispatch.
+/// Unbound or non-array first hops, unknown or non-array terminal properties,
+/// and unresolvable intermediate hops fail closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_qualified_element_access_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -10882,19 +10990,67 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
     if first_hop.is_empty() || chain.is_empty() {
         return Ok(None);
     }
-    let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop)) else {
-        return Ok(None);
-    };
-    let Some(mut current_path) = resolve_kotlin_initializer_type_path(
-        source_symbol,
-        &first_type_name,
-        raw_symbols,
-        file_overrides,
-        kotlin_import_contexts_by_file,
-        deadline,
-    )?
-    else {
-        return Ok(None);
+    let mut current_path = if first_hop == "super" {
+        // A `super`-rooted base such as `val x = super.inheritedItems[0]`
+        // starts on the direct superclass path; a class without a resolvable
+        // superclass fails closed.
+        let Some(superclass_path) = resolve_kotlin_superclass_path(
+            source_symbol,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        superclass_path
+    } else if let Some(first_type_name) = bindings.and_then(|bindings| bindings.type_for(first_hop))
+    {
+        let Some(type_path) = resolve_kotlin_initializer_type_path(
+            source_symbol,
+            &first_type_name,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        type_path
+    } else {
+        // An unbound first hop names a type whose terminal array property
+        // lives on its companion object, the Kotlin analog of a Java static
+        // field such as `Util.fieldItems` in `val x = Util.fieldItems[0]`.
+        // The class must declare a companion object; anonymous companions are
+        // discovered through their `Type::Companion::` member scope while
+        // named companions surface as an indexed `companion_object` symbol.
+        // Missing, ambiguous, or non-class roots fail closed.
+        let Some(type_path) = resolve_kotlin_receiver_type_path(
+            source_symbol,
+            first_hop,
+            raw_symbols,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        let companion_scope_prefix = format!("{type_path}::Companion::");
+        let companion_exists = semantic_path_index.iter().any(|(path, indexes)| {
+            path.starts_with(&companion_scope_prefix)
+                || indexes.iter().copied().any(|index| {
+                    let candidate = &raw_symbols[index];
+                    candidate.node_kind == "companion_object"
+                        && candidate.scope_path.as_deref() == Some(type_path.as_str())
+                })
+        });
+        if !companion_exists {
+            return Ok(None);
+        }
+        format!("{type_path}::Companion")
     };
     let hops = chain.split('.').collect::<Vec<_>>();
     for (index, hop) in hops.iter().enumerate() {

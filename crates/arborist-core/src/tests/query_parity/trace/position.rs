@@ -22218,6 +22218,62 @@ fn kotlin_var_qualified_element_access_receiver_calls_fail_closed_for_unsupporte
 }
 
 #[test]
+fn traces_kotlin_var_super_rooted_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nopen class Base {\n    val inheritedItems: Array<Helper> = arrayOf()\n}\n\nclass Caller : Base() {\n    fun run(): Int {\n        val first = super.inheritedItems[0]\n        return first.helper(1)\n    }\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access with a `super`-rooted base
+    // such as `val first = super.inheritedItems[0]` dispatches on the direct
+    // superclass's array property element component type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::Caller::run");
+}
+
+#[test]
+fn traces_kotlin_var_companion_object_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+ {
+    let dir = temporary_dir();
+    let source_path = dir.join("Callers.kt");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Util {\n    companion object {\n        val fieldItems: Array<Helper> = arrayOf()\n    }\n}\n\nfun caller(): Int {\n    val first = Util.fieldItems[0]\n    return first.helper(1)\n}\n",
+    )
+    .unwrap();
+
+    // A `val` local bound from an element access with a companion-object root
+    // such as `val first = Util.fieldItems[0]` dispatches on the companion
+    // object's array property element component type.
+    let helper_path = "com::example::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(live.symbol.symbol_id, helper_path);
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "com::example::caller");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_path, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "com::example::caller");
+}
+
+#[test]
 fn traces_kotlin_var_factory_call_element_access_receiver_calls_in_live_workspace_and_persisted_index()
  {
     let dir = temporary_dir();
