@@ -10791,13 +10791,17 @@ fn resolve_kotlin_factory_array_element_member_call(
 }
 
 /// Dispatches the terminal member of a receiver name bound from a qualified
-/// element-access initializer such as `val x = group.holder.fieldItems[0]`.
-/// The base's first hop must be a bound receiver with a usable declared type;
-/// intermediate hops walk the same property-type rules as chained receivers,
-/// and the terminal hop must be a uniquely declared single-level array property
-/// whose element component type receives the dispatch. Unbound or non-array
-/// first hops, unknown or non-array terminal properties, and unresolvable
-/// intermediate hops fail closed.
+/// element-access initializer such as `val x = group.holder.fieldItems[0]` or
+/// a factory-call element-access initializer such as `val x = makeItems()[0]`.
+/// A factory-call base records the callee with a trailing `()` marker and
+/// resolves through the same factory rules as a direct factory-call
+/// element-access receiver. Otherwise the base's first hop must be a bound
+/// receiver with a usable declared type; intermediate hops walk the same
+/// property-type rules as chained receivers, and the terminal hop must be a
+/// uniquely declared single-level array property whose element component type
+/// receives the dispatch. Unbound or non-array first hops, unknown or
+/// non-array terminal properties, and unresolvable intermediate hops fail
+/// closed.
 #[allow(clippy::too_many_arguments)]
 fn resolve_kotlin_qualified_element_access_receiver_call(
     source_symbol: &IndexedSymbol,
@@ -10815,6 +10819,26 @@ fn resolve_kotlin_qualified_element_access_receiver_call(
     else {
         return Ok(None);
     };
+    // A factory-call base such as `val x = makeItems()[0]` records the callee
+    // with a trailing `()` marker; resolve the factory's declared return array
+    // through the same rules as a direct factory-call element-access receiver
+    // and dispatch the member on the array's element component type.
+    if let Some(function_name) = base.strip_suffix("()") {
+        if function_name.is_empty() {
+            return Ok(None);
+        }
+        return resolve_kotlin_factory_array_element_member_call(
+            source_symbol,
+            function_name,
+            method,
+            call_arity,
+            raw_symbols,
+            semantic_path_index,
+            file_overrides,
+            kotlin_import_contexts_by_file,
+            deadline,
+        );
+    }
     let Some((first_hop, chain)) = base.split_once('.') else {
         return Ok(None);
     };

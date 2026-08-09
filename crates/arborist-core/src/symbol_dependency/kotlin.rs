@@ -369,11 +369,14 @@ fn kotlin_property_binding(
     }
     // Fall back to an element-access initializer such as `val x = items[0]`:
     // a plain-identifier base already bound to a single-level generic array
-    // binds the property to the base array's element component type, while a
+    // binds the property to the base array's element component type, a
     // qualified base such as `group.holder.fieldItems` records the base
     // spelling so trace-time resolution can walk the property chain to the
-    // terminal array field's component type. Multi-dimensional element access,
-    // function-call subscripts, `this`/`super` roots, and bases without a
+    // terminal array field's component type, and a factory-call base such as
+    // `makeItems()` records the callee with a trailing `()` marker so
+    // trace-time resolution can walk the factory's declared return array.
+    // Multi-dimensional element access, function-call subscripts,
+    // `this`/`super` roots, qualified call callees, and bases without a
     // usable array component fail closed.
     if let Some(initializer) = children
         .iter()
@@ -384,17 +387,21 @@ fn kotlin_property_binding(
         if let Some(component_type) = bindings.array_component_for(&base_name) {
             return Ok(Some((name, component_type, None)));
         }
-        if base_name.contains('.') {
+        if base_name.contains('.') || base_name.ends_with("()") {
             return Ok(Some((name, String::new(), Some(base_name))));
         }
     }
     Ok(None)
 }
 
-/// Extracts the plain-identifier base of a single-level element-access
-/// initializer such as `items[0]`. Dotted bases, call bases, nested element
-/// access, and function-call, multi-index, or nullable subscripts return
-/// `None` so element-access-inferred bindings fail closed.
+/// Extracts the base of a single-level element-access initializer such as
+/// `items[0]` or `makeItems()[0]`. Plain-identifier and dotted field-chain
+/// bases return their spelling, and a factory-call base with a simple
+/// identifier callee returns the callee with a trailing `()` marker so
+/// trace-time resolution can walk the factory's declared return array.
+/// Qualified call callees, nested element access, and function-call,
+/// multi-index, or nullable subscripts return `None` so
+/// element-access-inferred bindings fail closed.
 fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Option<String>> {
     if initializer.kind() != "index_expression" {
         return Ok(None);
@@ -403,6 +410,27 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
     let children = initializer.named_children(&mut cursor).collect::<Vec<_>>();
     if children.len() != 2 {
         return Ok(None);
+    }
+    let subscript = node_text(children[1], source)?.trim();
+    if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
+        return Ok(None);
+    }
+    // A factory-call base such as `makeItems()` records the identifier callee
+    // with a trailing `()` marker; qualified callees such as
+    // `Util.makeItems()` and non-identifier callees fail closed because
+    // qualified non-constructor initializers are capability-gated.
+    if children[0].kind() == "call_expression" {
+        let Some(callee) = children[0].named_child(0) else {
+            return Ok(None);
+        };
+        if callee.kind() != "identifier" {
+            return Ok(None);
+        }
+        let callee_name = node_text(callee, source)?.trim();
+        if callee_name.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(format!("{callee_name}()")));
     }
     let base = node_text(children[0], source)?.trim();
     if base.is_empty()
@@ -419,10 +447,6 @@ fn kotlin_element_access_base(initializer: Node<'_>, source: &str) -> Result<Opt
             .next()
             .is_some_and(|first| matches!(first, "this" | "super"))
     {
-        return Ok(None);
-    }
-    let subscript = node_text(children[1], source)?.trim();
-    if subscript.is_empty() || subscript.contains(['[', '(', ')', ',', '?', '.']) {
         return Ok(None);
     }
     Ok(Some(base.to_string()))
@@ -904,6 +928,39 @@ mod tests {
         assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
         assert_eq!(run_bindings.element_access_base_for("plain"), None);
         assert!(!run_bindings.contains("fromThis"));
+    }
+
+    #[test]
+    fn factory_call_element_access_initializers_record_base_spellings() {
+        let file = write_test_file(
+            "package com.example\n\nclass Helper {\n    fun helper(value: Int): Int = value\n}\n\nclass Util {\n    fun makeItems(): Array<Helper> = arrayOf()\n}\n\nfun makeItems(): Array<Helper> = arrayOf()\n\nfun caller(items: Array<Helper>, group: Util): Int {\n    val factory = makeItems()[0]\n    val plain = items[0]\n    val qualified = Util.makeItems()[0]\n    val member = group.makeItems()[0]\n    factory.helper(1)\n}\n",
+        );
+        let context = kotlin_import_context_for_file_with_overrides_and_deadline(
+            &file.normalized_path,
+            None,
+            None,
+        )
+        .unwrap();
+        let run_bindings = context
+            .receiver_type_bindings_by_range
+            .values()
+            .find(|bindings| {
+                bindings.element_access_base_for("factory") == Some("makeItems()".to_string())
+            })
+            .unwrap();
+        // A factory-call base records the callee with a trailing `()` marker
+        // and no usable type; a plain base still binds the element component
+        // type directly. Qualified and member-call callees are rejected and
+        // stay unbound.
+        assert_eq!(
+            run_bindings.element_access_base_for("factory"),
+            Some("makeItems()".to_string())
+        );
+        assert_eq!(run_bindings.type_for("factory"), None);
+        assert_eq!(run_bindings.type_for("plain"), Some("Helper".to_string()));
+        assert_eq!(run_bindings.element_access_base_for("plain"), None);
+        assert!(!run_bindings.contains("qualified"));
+        assert!(!run_bindings.contains("member"));
     }
 
     #[test]
