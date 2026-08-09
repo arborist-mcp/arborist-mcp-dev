@@ -26232,16 +26232,22 @@ fn traces_java_var_qualified_element_access_receiver_calls_in_live_workspace_and
         "package com.example;
 class Helper { int helper(int value) { return value; } }
 class Holder { Helper[] fieldItems = new Helper[1]; }
-class Group { Holder holder = new Holder(); }
-class Caller {
+class Group { Holder holder = new Holder(); Helper[] fieldItems = new Helper[1]; }
+class Base { Helper[] inheritedItems = new Helper[1]; }
+class Util { static Helper[] fieldItems = new Helper[1]; }
+class Caller extends Base {
     private Helper[] fieldItems = new Helper[2];
     int run(Group group) {
         var first = this.fieldItems[0];
         var second = group.fieldItems[0];
         var third = group.holder.fieldItems[0];
+        var sixth = super.inheritedItems[0];
+        var seventh = Util.fieldItems[0];
         return first.helper(1)
             + second.helper(2)
-            + third.helper(3);
+            + third.helper(3)
+            + sixth.helper(4)
+            + seventh.helper(5);
     }
 }
 ",
@@ -26250,8 +26256,10 @@ class Caller {
 
     // A `var` local bound from an element access with a qualified base such as
     // `var first = this.fieldItems[0]`, `var second = group.fieldItems[0]`,
-    // or a multi-hop field chain `var third = group.holder.fieldItems[0]`
-    // dispatches on the terminal array field's element component type.
+    // a multi-hop field chain `var third = group.holder.fieldItems[0]`, a
+    // `super`-rooted field `var sixth = super.inheritedItems[0]`, or a static
+    // type field `var seventh = Util.fieldItems[0]` dispatches on the terminal
+    // array field's element component type.
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);
@@ -26277,10 +26285,10 @@ fn traces_java_var_qualified_element_access_receiver_calls_from_dirty_vfs_overri
     .unwrap();
     let overlay = "package com.example;
 class Helper { int helper(int value) { return value; } }
+class Util { static Helper[] fieldItems = new Helper[2]; }
 class Caller {
-    private Helper[] fieldItems = new Helper[2];
     int run() {
-        var first = this.fieldItems[0];
+        var first = Util.fieldItems[0];
         return first.helper(1);
     }
 }
@@ -26320,30 +26328,32 @@ fn java_var_qualified_element_access_receiver_calls_fail_closed_for_unsupported_
         &source_path,
         "package com.example;
 class Helper { int helper(int value) { return value; } }
-class Base { Helper[] inheritedItems = new Helper[1]; }
-class Util { static Helper[] fieldItems = new Helper[1]; }
-class Caller extends Base {
+class Util {
+    static Helper[] fieldItems = new Helper[1];
+    Helper[] instanceItems = new Helper[1];
+}
+class Caller {
     private Helper[] fieldItems;
     Helper[] makeItems() { return new Helper[2]; }
     int[] makeCounts() { return new int[2]; }
     Helper[][] makeMatrix() { return new Helper[2][2]; }
     int run(int[] counts, Helper[][] matrix) {
-        var superBase = super.inheritedItems[0];
-        var staticBase = Util.fieldItems[0];
+        var superBase = super.fieldItems[0];
         var unbound = counts[0];
         var matrixAccess = matrix[0][0];
         var unknownFactory = makeUnknown()[0];
         var primitiveFactory = makeCounts()[0];
         var multiFactory = makeMatrix()[0];
         var arityFactory = makeItems(1)[0];
+        var staticInstanceField = Util.instanceItems[0];
         return superBase.helper(1)
-            + staticBase.helper(2)
-            + unbound.helper(3)
-            + matrixAccess.helper(4)
-            + unknownFactory.helper(5)
-            + primitiveFactory.helper(6)
-            + multiFactory.helper(7)
-            + arityFactory.helper(8);
+            + unbound.helper(2)
+            + matrixAccess.helper(3)
+            + unknownFactory.helper(4)
+            + primitiveFactory.helper(5)
+            + multiFactory.helper(6)
+            + arityFactory.helper(7)
+            + staticInstanceField.helper(8);
     }
     int control() {
         var ok = this.fieldItems[0];
@@ -26354,10 +26364,11 @@ class Caller extends Base {
     )
     .unwrap();
 
-    // `var` locals bound from element accesses with `super`-rooted, static
-    // type, primitive-array, multi-dimensional, or unknown/primitive-/
-    // multi-dimensional-returning/arity-mismatched factory-call bases all fail
-    // closed; only the `this`-rooted element access in `control` traces.
+    // `var` locals bound from element accesses with an unresolvable `super`
+    // base, primitive-array or multi-dimensional bases, unknown/primitive-/
+    // multi-dimensional-returning/arity-mismatched factory-call bases, and
+    // non-static fields on a static type receiver all fail closed; only the
+    // `this`-rooted element access in `control` traces.
     let helper_symbol = "com::example::Helper::helper";
     let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
     assert_eq!(live.callers.len(), 1);

@@ -6681,10 +6681,11 @@ fn java_array_access_field_name(hop: &str) -> Option<&str> {
 }
 
 /// Resolves the element component type of an array-typed field hop such as
-/// `items[0]` on an owning type path: the field must be uniquely declared and
-/// its declared type must be a single-level array whose component resolves in
-/// the field's own file and enclosing scope. Unknown, ambiguous, non-array,
-/// primitive, or multi-dimensional field types fail closed.
+/// `items[0]` on an owning type path: the field must be uniquely declared
+/// (and static when `require_static` is set) and its declared type must be a
+/// single-level array whose component resolves in the field's own file and
+/// enclosing scope. Unknown, ambiguous, non-array, primitive, or
+/// multi-dimensional field types fail closed.
 #[allow(
     clippy::too_many_arguments,
     reason = "keeps Java field type resolution inputs explicit"
@@ -6692,6 +6693,7 @@ fn java_array_access_field_name(hop: &str) -> Option<&str> {
 fn java_array_field_component_type_path(
     owner_type_path: &str,
     field_name: &str,
+    require_static: bool,
     raw_symbols: &[IndexedSymbol],
     semantic_path_index: &BTreeMap<String, Vec<usize>>,
     file_overrides: Option<&BTreeMap<String, String>>,
@@ -6701,7 +6703,7 @@ fn java_array_field_component_type_path(
     let candidates = java_field_type_candidates(
         owner_type_path,
         field_name,
-        false,
+        require_static,
         raw_symbols,
         semantic_path_index,
     );
@@ -6727,16 +6729,19 @@ fn java_array_field_component_type_path(
 }
 
 /// Resolves the element component type path of a qualified element-access base
-/// such as `this.fieldItems` in `var fourth = this.fieldItems[0]` or
-/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`.
-/// `this`-rooted bases start on the enclosing type path; other receivers must
-/// be bound locals, parameters, or enclosing-class fields with a usable
-/// declared type. Intermediate hops resolve through the same inherited-field
-/// rules as field chains, and the terminal hop must be a uniquely declared
-/// single-level array field whose component resolves in the field's own file
-/// and enclosing scope. Unknown, ambiguous, or non-array terminal fields,
-/// unbound or non-array receivers, method-call hops, and static type
-/// receivers fail closed.
+/// such as `this.fieldItems` in `var fourth = this.fieldItems[0]`,
+/// `super.inheritedItems` in `var sixth = super.inheritedItems[0]`,
+/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`, or
+/// `Util.fieldItems` in `var seventh = Util.fieldItems[0]`. `this`-rooted
+/// bases start on the enclosing type path, `super`-rooted bases on the direct
+/// superclass path, other bound receivers on their declared type, and unbound
+/// receivers on the named static type (requiring a static terminal field).
+/// Intermediate hops resolve through the same inherited-field rules as field
+/// chains, and the terminal hop must be a uniquely declared single-level
+/// array field whose component resolves in the field's own file and enclosing
+/// scope. Unknown, ambiguous, or non-array terminal fields, unbound or
+/// non-array receivers, method-call hops, and unresolved static types fail
+/// closed.
 #[allow(clippy::too_many_arguments)]
 fn java_qualified_element_access_component_type_path(
     source_symbol: &IndexedSymbol,
@@ -6754,28 +6759,58 @@ fn java_qualified_element_access_component_type_path(
     if receiver.is_empty() || chain.is_empty() {
         return Ok(None);
     }
-    let initial_type_path = if receiver == "this" {
-        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
-            return Ok(None);
-        };
-        scope_path.to_string()
-    } else {
-        let Some(type_name) = bindings.type_for(receiver) else {
-            return Ok(None);
-        };
-        let Some(type_path) = resolve_java_receiver_type_path(
-            source_symbol,
-            &type_name,
-            raw_symbols,
-            semantic_path_index,
-            file_overrides,
-            java_import_contexts_by_file,
-            deadline,
-        )?
-        else {
-            return Ok(None);
-        };
-        type_path
+    let (initial_type_path, require_static_terminal) = match receiver {
+        "this" => {
+            let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+                return Ok(None);
+            };
+            (scope_path.to_string(), false)
+        }
+        "super" => {
+            let Some(superclass_path) = java_simple_superclass_path(
+                source_symbol,
+                raw_symbols,
+                semantic_path_index,
+                file_overrides,
+                java_import_contexts_by_file,
+                deadline,
+            )?
+            else {
+                return Ok(None);
+            };
+            (superclass_path, false)
+        }
+        _ => {
+            if let Some(type_name) = bindings.type_for(receiver) {
+                let Some(type_path) = resolve_java_receiver_type_path(
+                    source_symbol,
+                    &type_name,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                (type_path, false)
+            } else {
+                let Some(type_path) = resolve_java_receiver_type_path(
+                    source_symbol,
+                    receiver,
+                    raw_symbols,
+                    semantic_path_index,
+                    file_overrides,
+                    java_import_contexts_by_file,
+                    deadline,
+                )?
+                else {
+                    return Ok(None);
+                };
+                (type_path, true)
+            }
+        }
     };
     let hops = chain.split('.').collect::<Vec<_>>();
     if hops.is_empty() || hops.iter().any(|hop| hop.is_empty()) {
@@ -6788,6 +6823,7 @@ fn java_qualified_element_access_component_type_path(
             java_array_field_component_type_path(
                 &current_type_path,
                 hop,
+                require_static_terminal,
                 raw_symbols,
                 semantic_path_index,
                 file_overrides,
@@ -6861,6 +6897,7 @@ fn resolve_java_member_chain_from_type_path(
                     java_array_field_component_type_path(
                         &current_type_path,
                         array_field,
+                        false,
                         raw_symbols,
                         semantic_path_index,
                         file_overrides,
