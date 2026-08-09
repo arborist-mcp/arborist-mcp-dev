@@ -1873,24 +1873,42 @@ fn resolve_csharp_instance_receiver_call(
             csharp_import_contexts_by_file,
             deadline,
         )?
-    } else if let Some(base_name) = bindings.element_access_base_for(receiver_name) {
+    } else if let Some(base_reference) = bindings.element_access_base_for(receiver_name) {
         // A `var` local bound from an element access such as
         // `var first = items[0]` resolves to the base array's element
-        // component type; an unbound or non-array base fails closed.
-        let Some(component_type) = bindings.array_component_for(&base_name) else {
-            return Ok(CSharpInstanceReceiverResolution::Blocked);
-        };
-        resolve_csharp_receiver_type_binding(
-            source_symbol,
-            &component_type,
-            raw_symbols,
-            semantic_path_index,
-            source_namespace_path,
-            csharp_global_import_context,
-            file_overrides,
-            csharp_import_contexts_by_file,
-            deadline,
-        )?
+        // component type; a qualified base such as
+        // `var fourth = this.fieldItems[0]` resolves the field chain's
+        // terminal array field the same way. An unbound or non-array base
+        // fails closed.
+        if base_reference.contains('.') {
+            csharp_qualified_element_access_component_type_path(
+                source_symbol,
+                &base_reference,
+                &bindings,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        } else {
+            let Some(component_type) = bindings.array_component_for(&base_reference) else {
+                return Ok(CSharpInstanceReceiverResolution::Blocked);
+            };
+            resolve_csharp_receiver_type_binding(
+                source_symbol,
+                &component_type,
+                raw_symbols,
+                semantic_path_index,
+                source_namespace_path,
+                csharp_global_import_context,
+                file_overrides,
+                csharp_import_contexts_by_file,
+                deadline,
+            )?
+        }
     } else if raw_binding.is_empty() {
         None
     } else {
@@ -3674,6 +3692,114 @@ fn resolve_csharp_bare_factory_array_member_chain(
         call_arity,
         deadline,
     )
+}
+
+/// Resolves the element component type binding of a qualified element-access
+/// base such as `this.fieldItems` in `var fourth = this.fieldItems[0]` or
+/// `group.holder.fieldItems` in `var fifth = group.holder.fieldItems[0]`.
+/// `this`-rooted bases start on the enclosing type; other receivers must be
+/// bound locals, parameters, or enclosing-class fields with a usable declared
+/// type. Intermediate hops resolve through the same field/property/event and
+/// method-call-hop rules as member chains, and the terminal hop must be a
+/// uniquely declared single-level array member whose element component type
+/// pins the receiver. Unknown, ambiguous, or non-array terminal members,
+/// unbound or non-array receivers, and method-call bases fail closed.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps C# qualified element-access base resolution inputs explicit"
+)]
+fn csharp_qualified_element_access_component_type_path(
+    source_symbol: &IndexedSymbol,
+    base_reference: &str,
+    bindings: &CSharpReceiverTypeBindings,
+    raw_symbols: &[IndexedSymbol],
+    semantic_path_index: &BTreeMap<String, Vec<usize>>,
+    source_namespace_path: Option<&str>,
+    csharp_global_import_context: Option<&CSharpGlobalImportContext>,
+    file_overrides: Option<&BTreeMap<String, String>>,
+    csharp_import_contexts_by_file: &mut BTreeMap<String, CSharpImportContext>,
+    deadline: Option<&WorkspaceScanDeadline>,
+) -> Result<Option<CSharpBaseTypeBinding>> {
+    let Some((receiver, chain)) = base_reference.split_once('.') else {
+        return Ok(None);
+    };
+    if receiver.is_empty() || chain.is_empty() {
+        return Ok(None);
+    }
+    let mut hops = chain.split('.').map(str::to_string).collect::<Vec<_>>();
+    if hops.iter().any(|hop| hop.is_empty()) {
+        return Ok(None);
+    }
+    // The terminal hop is the accessed array member; mark it as an
+    // element-access hop so the member-chain walk requires a single-level
+    // array member and pins its element component type.
+    let Some(terminal) = hops.pop() else {
+        return Ok(None);
+    };
+    if terminal.contains(['(', '[', ']', ')']) {
+        return Ok(None);
+    }
+    hops.push(format!("{terminal}[0]"));
+    let hop_refs = hops.iter().map(String::as_str).collect::<Vec<_>>();
+    let (initial_binding, scope_source_symbol) = if receiver == "this" {
+        let Some(scope_path) = source_symbol.scope_path.as_deref() else {
+            return Ok(None);
+        };
+        let type_candidates = raw_symbols
+            .iter()
+            .filter(|candidate| {
+                candidate.file_path == source_symbol.file_path
+                    && candidate.semantic_path == scope_path
+                    && csharp_is_type_declaration(candidate)
+            })
+            .collect::<Vec<_>>();
+        if type_candidates.len() != 1 {
+            return Ok(None);
+        }
+        (
+            CSharpBaseTypeBinding {
+                semantic_type_path: scope_path.to_string(),
+                is_global_qualified: true,
+                alias_name: None,
+                namespace_import_paths: Vec::new(),
+            },
+            type_candidates[0],
+        )
+    } else {
+        let Some(type_name) = bindings.type_for(receiver) else {
+            return Ok(None);
+        };
+        let Some(binding) = resolve_csharp_receiver_type_binding(
+            source_symbol,
+            &type_name,
+            raw_symbols,
+            semantic_path_index,
+            source_namespace_path,
+            csharp_global_import_context,
+            file_overrides,
+            csharp_import_contexts_by_file,
+            deadline,
+        )?
+        else {
+            return Ok(None);
+        };
+        (binding, source_symbol)
+    };
+    let Some((binding, _)) = resolve_csharp_member_chain_binding(
+        scope_source_symbol,
+        initial_binding,
+        &hop_refs,
+        raw_symbols,
+        semantic_path_index,
+        csharp_global_import_context,
+        file_overrides,
+        csharp_import_contexts_by_file,
+        deadline,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(binding))
 }
 
 /// Resolves a static initializer type spelling such as `Util`,

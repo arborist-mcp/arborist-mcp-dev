@@ -781,10 +781,12 @@ fn csharp_var_initializer_type_binding(
 }
 
 /// Records a `var` local whose initializer is an element access such as
-/// `var first = items[0]`, returning the array-typed base identifier so the
-/// local resolves to the base array's element component type. Qualified or
-/// parenthesized bases, multi-dimensional element access, and other
-/// initializer shapes record nothing and fail closed. Mirrors the
+/// `var first = items[0]`, returning the array-typed base spelling so the
+/// local resolves to the base array's element component type. Plain-identifier
+/// bases such as `items`, `local`, or a bare enclosing-class field name, and
+/// member-access bases such as `this.fieldItems` or `group.holder.fieldItems`
+/// are recorded; method-call bases, multi-dimensional element access, and
+/// other initializer shapes record nothing and fail closed. Mirrors the
 /// extractor's element-access binding rules.
 fn csharp_initializer_element_access_from_declarator(
     declarator: tree_sitter::Node<'_>,
@@ -808,7 +810,7 @@ fn csharp_initializer_element_access_from_declarator(
     let Some(array) = initializer.child_by_field_name("expression") else {
         return Ok(None);
     };
-    if array.kind() != "identifier" {
+    if !matches!(array.kind(), "identifier" | "member_access_expression") {
         return Ok(None);
     }
     let base_name = node_text(array, source)?.trim();

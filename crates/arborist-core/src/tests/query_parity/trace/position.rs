@@ -16786,6 +16786,156 @@ class Caller {
 }
 
 #[test]
+fn traces_csharp_var_qualified_element_access_receiver_calls_in_live_workspace_and_persisted_index()
+{
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Holder {
+    public Helper[] fieldItems = new Helper[1];
+}
+class Group {
+    public Holder holder = new Holder();
+    public Helper[] fieldItems = new Helper[1];
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    int run(Group group) {
+        var first = this.fieldItems[0];
+        var second = group.fieldItems[0];
+        var third = group.holder.fieldItems[0];
+        return first.helper(1)
+            + second.helper(2)
+            + third.helper(3);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // A `var` local bound from an element access with a qualified base such as
+    // `var first = this.fieldItems[0]`, `var second = group.fieldItems[0]`,
+    // or a multi-hop field chain `var third = group.holder.fieldItems[0]`
+    // dispatches on the terminal array field's element component type.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn traces_csharp_var_qualified_element_access_receiver_calls_from_dirty_vfs_overrides() {
+    let dir = temporary_dir();
+    let source_path = dir.join("Types.cs");
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        &source_path,
+        "namespace Demo; class Stale {}
+",
+    )
+    .unwrap();
+    let overlay = "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    int run() {
+        var first = this.fieldItems[0];
+        return first.helper(1);
+    }
+}
+";
+    let helper_symbol = "Demo::Helper::helper";
+
+    let live = trace_symbol_graph_with_source(
+        &dir,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::run");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted = trace_symbol_graph_from_index_with_source(
+        &db_path,
+        &source_path,
+        overlay,
+        helper_symbol,
+        TraceDirection::Callers,
+    )
+    .unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::run");
+}
+
+#[test]
+fn csharp_var_qualified_element_access_receiver_calls_fail_closed_for_unsupported_bases() {
+    let dir = temporary_dir();
+    let db_path = dir.join("symbols.db");
+    fs::write(
+        dir.join("Types.cs"),
+        "namespace Demo;
+class Helper {
+    public int helper(int value) => value;
+}
+class Group {
+    public Helper[] fieldItems = new Helper[1];
+    public Helper[] makeItems() => new Helper[1];
+}
+class Caller {
+    private Helper[] fieldItems = new Helper[2];
+    private Helper holder = new Helper();
+    int run(Group group, int[] counts, Helper[][] matrix) {
+        var nonArray = this.holder[0];
+        var unbound = unknownObj.fieldItems[0];
+        var matrixAccess = matrix[0][0];
+        var methodBase = group.makeItems()[0];
+        return nonArray.helper(1)
+            + unbound.helper(2)
+            + matrixAccess.helper(3)
+            + methodBase.helper(4);
+    }
+    int control() {
+        var ok = this.fieldItems[0];
+        return ok.helper(1);
+    }
+}
+",
+    )
+    .unwrap();
+
+    // `var` locals bound from element accesses with a non-array `this`-rooted
+    // member, an unbound receiver, a multi-dimensional element access, or a
+    // method-call base all fail closed; only the `this`-rooted element access
+    // in `control` traces.
+    let helper_symbol = "Demo::Helper::helper";
+    let live = trace_symbol_graph(&dir, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(live.callers.len(), 1);
+    assert_eq!(live.callers[0].symbol_id, "Demo::Caller::control");
+
+    rebuild_symbol_index(&dir, &db_path).unwrap();
+    let persisted =
+        trace_symbol_graph_from_index(&db_path, helper_symbol, TraceDirection::Callers).unwrap();
+    assert_eq!(persisted.callers.len(), 1);
+    assert_eq!(persisted.callers[0].symbol_id, "Demo::Caller::control");
+}
+
+#[test]
 fn traces_java_explicit_this_method_calls_in_live_workspace_and_persisted_index() {
     let dir = temporary_dir();
     let source_path = dir.join("Counter.java");
